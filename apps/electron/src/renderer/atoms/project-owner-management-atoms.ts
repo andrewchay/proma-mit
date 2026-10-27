@@ -30,7 +30,7 @@ export const confirmOwnerTeamWorkspaceAccessAtom = atom(null, async (get, set, i
     const next = new Map(get(ownerTeamWorkspaceApprovalStatesAtom)); next.set(key, { busy: false, approved: false, error: cause instanceof Error ? cause.message : '团队工作区授权未完成' }); set(ownerTeamWorkspaceApprovalStatesAtom, next)
   }
 })
-export const ownerManagementApiAtom = atom<(Pick<OwnerManagementApi, 'getOwnerManagement' | 'answerOwnerManagementQuestion'> & Partial<Pick<OwnerManagementApi, 'sendOwnerManagementMessage' | 'decideOwnerConversationChange'>>) | null>(null)
+export const ownerManagementApiAtom = atom<(Pick<OwnerManagementApi, 'getOwnerManagement' | 'answerOwnerManagementQuestion'> & Partial<Pick<OwnerManagementApi, 'sendOwnerManagementMessage' | 'decideOwnerConversationChange' | 'retakeOwnerAssignment'>>) | null>(null)
 interface OwnerConversationNotice { messageId: string; title: string; createdAt: number; taskId?: string }
 export const ownerConversationNoticesAtom = atom(new Map<string, OwnerConversationNotice>())
 export const ownerConversationNavigationAtom = atom<{ projectId: string; taskId?: string; at: number } | null>(null)
@@ -113,4 +113,14 @@ export const sendOwnerMessageAtom = atom(null, async (get, set, subject: Project
     return true
   } catch (cause) { update({ error: cause instanceof Error ? cause.message : '消息尚未确认保存，原输入已保留' }); return false }
   finally { update({ sending: false }) }
+})
+
+/** 用户显式重排人员：仅在已确认方案与有效授权下由主进程校验，重复点击按请求ID幂等。 */
+export const retakeOwnerAssignmentAtom = atom(null, async (get, set, subject: ProjectOwnerGoalSubject): Promise<{ ok: boolean; message: string }> => {
+  const api = get(ownerManagementApiAtom) ?? window.electronAPI?.paa?.project
+  if (!api?.retakeOwnerAssignment) return { ok: false, message: '当前版本未提供重排入口' }
+  const result = await api.retakeOwnerAssignment({ ...subject, requestId: crypto.randomUUID() })
+  if (!result.ok) return { ok: false, message: result.error.message }
+  await set(loadOwnerManagementAtom, subject.projectId)
+  return { ok: true, message: result.value.enqueued ? '已按当前已确认方案重新安排人员；进度会在这里更新。' : '已有管理请求正在运行，未重复排队。' }
 })

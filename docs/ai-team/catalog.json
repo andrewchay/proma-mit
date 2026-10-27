@@ -124,6 +124,13 @@
           "summary": "准备使用支持并基于真实记录跟踪客户问题和承诺。",
           "tier": "core",
           "cardPath": "cards/customer-success.json"
+        },
+        {
+          "roleSlug": "support-escalation-specialist",
+          "name": "客户支持与升级专员",
+          "summary": "分级整理客户问题、排查记录与升级交接，不擅自承诺 SLA 或补偿。",
+          "tier": "core",
+          "cardPath": "cards/support-escalation-specialist.json"
         }
       ]
     },

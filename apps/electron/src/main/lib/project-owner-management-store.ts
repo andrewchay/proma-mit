@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import type { OwnerExecutionObservation, OwnerManagementDelivery, OwnerManagementEvent, OwnerManagementMessage, OwnerManagementTraceEntry, OwnerManagementView, ProjectOwnerGoalDraft, ProjectOwnerPlanDraft, ProjectOwnerManager } from '@gravitas/shared'
+import type { DevelopmentSnapshotFile, OwnerExecutionObservation, OwnerManagementDelivery, OwnerManagementEvent, OwnerManagementMessage, OwnerManagementTraceEntry, OwnerManagementView, ProjectOwnerGoalDraft, ProjectOwnerPlanDraft, ProjectOwnerManager } from '@gravitas/shared'
 import * as store from './project-sqlite-store'
 import { requestOwnerManagementChanged, requestOwnerManagementWake } from './project-owner-management-events'
 
@@ -7,7 +7,7 @@ interface PayloadRow { payload: string; integrity_hash: string }
 interface EventRow extends PayloadRow { consumed_at: number | null }
 const tracePhases = ['assignment_preparation', 'assignment_run', 'execution_start', 'executor', 'reviewer', 'owner_quality', 'owner_response'] as const
 const traceStates = ['started', 'queued', 'completed', 'failed', 'blocked', 'waiting', 'stalled', 'expired'] as const
-const traceDetails = ['team_check', 'provider_pending', 'result_ready', 'start_verified', 'no_update', 'grant_expired', 'decision_required', 'authorization_changed'] as const
+const traceDetails = ['team_check', 'provider_pending', 'result_ready', 'start_verified', 'no_update', 'grant_expired', 'decision_required', 'authorization_changed', 'claim_without_fact'] as const
 function parseTraceEntry(input: unknown): OwnerManagementTraceEntry {
   if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Owner诊断Trace记录无效')
   const value = input as Record<string, unknown>
@@ -30,6 +30,37 @@ function read<T>(row: PayloadRow): T {
   if (!value || typeof value !== 'object' || digest(value) !== row.integrity_hash) throw new Error('Owner管理记录完整性无效，请保留数据核查')
   return value as T
 }
+/** 文本按正文哈希，代码按冻结文件集合哈希；传输JSON不是源码版本的哈希域。 */
+function deliveryContentMatchesArtifact(content: string, artifactHash: string): boolean {
+  const sha = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex')
+  if (sha(content) === artifactHash) return true
+  const record = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+  try {
+    const value: unknown = JSON.parse(content)
+    if (!record(value) || value.contentHash !== artifactHash || !Array.isArray(value.files) || !value.files.length
+      || Object.keys(value).some(key => !['executionId', 'workspaceId', 'baseCommit', 'contentHash', 'files'].includes(key))
+      || typeof value.executionId !== 'string' || !value.executionId || typeof value.workspaceId !== 'string' || !value.workspaceId
+      || typeof value.baseCommit !== 'string' || !/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(value.baseCommit)) return false
+    const files: DevelopmentSnapshotFile[] = [], paths = new Set<string>()
+    for (const entry of value.files as unknown[]) {
+      if (!record(entry) || !record(entry.file)) return false
+      const file = entry.file, before = entry.oldContent, after = entry.newContent
+      if (typeof file.path !== 'string' || !file.path || file.path.includes('\0') || paths.has(file.path)
+        || !['add', 'modify', 'delete'].includes(String(file.changeType))
+        || !(before === null || typeof before === 'string') || !(after === null || typeof after === 'string')
+        || (file.changeType === 'add' ? before !== null || after === null : file.changeType === 'delete' ? before === null || after !== null : before === null || after === null)
+        || (before === null ? null : sha(before)) !== file.oldSha256 || (after === null ? null : sha(after)) !== file.newSha256
+        || Buffer.byteLength(after ?? '', 'utf8') !== file.newBytes) return false
+      paths.add(file.path)
+      files.push({ path: file.path, changeType: file.changeType as DevelopmentSnapshotFile['changeType'], oldSha256: file.oldSha256 as string | null,
+        newSha256: file.newSha256 as string | null, newBytes: Number(file.newBytes) })
+    }
+    const hash = createHash('sha256')
+    for (const file of files.sort((left, right) => left.path.localeCompare(right.path))) hash.update(`${file.path}\0${file.changeType}\0${file.oldSha256 ?? ''}\0${file.newSha256 ?? ''}\n`)
+    return hash.digest('hex') === artifactHash
+  } catch { return false }
+}
+
 function assertDeliveryMessage(message: Pick<OwnerManagementMessage, 'role' | 'kind' | 'delivery' | 'deliveryReference' | 'teamWorkspaceProposal' | 'teamWorkspaceApproval'>): void {
   const proposal = message.teamWorkspaceProposal
   if (proposal !== undefined && (message.role !== 'assistant' || message.kind !== 'attention'
@@ -58,7 +89,7 @@ function assertDeliveryMessage(message: Pick<OwnerManagementMessage, 'role' | 'k
       || !Array.isArray(item.acceptanceCriteria) || item.acceptanceCriteria.length < 1 || item.acceptanceCriteria.length > 32
       || item.acceptanceCriteria.some(value => typeof value !== 'string' || !value.trim() || value.length > 1000)
       || !/^[a-f0-9]{64}$/.test(item.artifactHash) || typeof item.content !== 'string' || Buffer.byteLength(item.content, 'utf8') > 65_536
-      || createHash('sha256').update(item.content, 'utf8').digest('hex') !== item.artifactHash
+      || !deliveryContentMatchesArtifact(item.content, item.artifactHash)
       || typeof item.ownerDecision !== 'string' || !item.ownerDecision.trim() || item.ownerDecision.length > 4000
       || typeof item.reviewerSummary !== 'string' || !item.reviewerSummary.trim() || item.reviewerSummary.length > 2000) throw new Error('Owner成果条目无效')
     totalBytes += Buffer.byteLength(item.content, 'utf8')
@@ -106,7 +137,7 @@ export function appendOwnerManagementMessage(input: Omit<OwnerManagementMessage,
   const existing = store.getProjectDb().prepare('SELECT payload, integrity_hash FROM project_owner_management_messages WHERE id = ?').get(id) as PayloadRow | undefined
   if (existing) {
     const old = read<OwnerManagementMessage>(existing)
-    if (old.projectId !== input.projectId || old.conversationId !== manager.conversationId || old.content !== input.content || old.planningTaskId !== input.planningTaskId || old.questionId !== input.questionId || old.taskId !== input.taskId || old.goalRevision !== input.goalRevision || old.changeId !== input.changeId || JSON.stringify(old.changeDecision) !== JSON.stringify(input.changeDecision) || JSON.stringify(old.executionObservation) !== JSON.stringify(input.executionObservation) || JSON.stringify(old.delivery) !== JSON.stringify(input.delivery) || JSON.stringify(old.deliveryReference) !== JSON.stringify(input.deliveryReference) || JSON.stringify(old.teamWorkspaceProposal) !== JSON.stringify(input.teamWorkspaceProposal) || JSON.stringify(old.teamWorkspaceApproval) !== JSON.stringify(input.teamWorkspaceApproval)) throw new Error('Owner管理消息与已有事件不一致')
+    if (old.projectId !== input.projectId || old.conversationId !== manager.conversationId || old.content !== input.content || old.planningTaskId !== input.planningTaskId || old.questionId !== input.questionId || old.taskId !== input.taskId || JSON.stringify(old.employeeInteraction) !== JSON.stringify(input.employeeInteraction) || JSON.stringify(old.runEvidence) !== JSON.stringify(input.runEvidence) || old.goalRevision !== input.goalRevision || old.changeId !== input.changeId || JSON.stringify(old.changeDecision) !== JSON.stringify(input.changeDecision) || JSON.stringify(old.executionObservation) !== JSON.stringify(input.executionObservation) || JSON.stringify(old.delivery) !== JSON.stringify(input.delivery) || JSON.stringify(old.deliveryReference) !== JSON.stringify(input.deliveryReference) || JSON.stringify(old.teamWorkspaceProposal) !== JSON.stringify(input.teamWorkspaceProposal) || JSON.stringify(old.teamWorkspaceApproval) !== JSON.stringify(input.teamWorkspaceApproval)) throw new Error('Owner管理消息与已有事件不一致')
     return old
   }
   const message: OwnerManagementMessage = { ...input, id, conversationId: manager.conversationId, createdAt: Date.now() }
@@ -151,6 +182,11 @@ export function recordOwnerManagementDelegationConfirmed(projectId: string, revi
   enqueue(projectId, 'delegation_confirmed', revision, taskId, delegationId)
 }
 /** 活跃管理委托下，待审方案缺少安排记录时只生成一次可恢复检查事件。 */
+/** 用户手动重排：sourceId 带请求ID，重复点击不会重复排队。 */
+export function recordOwnerManagementManualRecheck(projectId: string, planRevision: number, requestId: string, taskId?: string): OwnerManagementEvent {
+  return enqueue(projectId, 'assignment_recheck', planRevision, taskId, `manual-retry:${requestId}`)
+}
+
 export function recordOwnerManagementAssignmentRecheck(projectId: string, planRevision: number, delegationId: string, taskId?: string): OwnerManagementEvent {
   return enqueue(projectId, 'assignment_recheck', planRevision, taskId, delegationId)
 }
@@ -215,7 +251,10 @@ export function getOwnerManagementView(projectId: string): OwnerManagementView {
     if (entry.projectId !== projectId) throw new Error('Owner诊断Trace项目归属无效')
     return entry
   })
-  return { manager, messages, pendingEvents: listPendingOwnerManagementEvents(projectId).length, questions: [], trace }
+  const employeeInteractions = (require('./project-owner-employee-interactions') as typeof import('./project-owner-employee-interactions')).listOwnerEmployeeInteractions(projectId)
+  const projection = manager ? (require('./project-owner-state-projection') as typeof import('./project-owner-state-projection')).readOwnerStateProjection(projectId) : null
+  const actionRequests = (require('./project-owner-action-approval') as typeof import('./project-owner-action-approval')).listOwnerPendingActionRequests(projectId)
+  return { manager, messages, ...(projection ? { stateProjection: { stateHash: projection.stateHash, dirtyDomains: projection.dirtyDomains, lastReconciledAt: projection.lastReconciledAt } } : {}), ...(actionRequests.length ? { actionRequests } : {}), ...(employeeInteractions.length ? { employeeInteractions } : {}), pendingEvents: listPendingOwnerManagementEvents(projectId).length, questions: [], trace }
 }
 
 /** 可信回调只追加来源事件；真正的问题展示由后台重读Run与快照后处理。 */
@@ -290,6 +329,34 @@ export function recordOwnerManagementObservation(projectId: string, goalRevision
     const state = observation.trigger === 'terminal' ? observation.executionStatus === 'completed' ? 'completed' : 'failed' : observation.trigger === 'expired' ? 'expired' : 'stalled'
     appendOwnerManagementTrace({ eventId: `${eventId}:trace`, projectId, ...(taskId ? { taskId } : {}), phase: observation.role, state, createdAt: message.createdAt, detailCode: observation.trigger === 'terminal' ? 'result_ready' : observation.trigger === 'expired' ? 'grant_expired' : 'no_update' })
     const subject = observation.role === 'reviewer' ? '独立检查' : '员工执行'
+    const needsManualReconciliation = observation.trigger === 'terminal'
+      && observation.executionStatus !== 'completed'
+      && (observation.commandState === 'needs_reconcile' || observation.actualCostMicros === null)
+    if (needsManualReconciliation) {
+      appendOwnerManagementMessage({ projectId, eventId: `${eventId}:progress`, role: 'assistant', kind: 'attention', ...(taskId ? { taskId } : {}), goalRevision,
+        content: observation.requestsSent === 0
+          ? `${subject}失败，没有可核验成果。本次失败发生在发送模型请求之前，没有产生模型费用，保守预留会在核对后退回；系统不会自动重发。失败原因：${observation.error.trim().slice(0, 300) || '未记录'}`
+          : `${subject}失败，没有可核验成果。当前记录中的模型用量或实际费用未知，保守预留仍保留；系统不会自动重发。请先在服务商账单按模型与请求时间核对。当前版本不能把外部账单核对结果写回应用，也不会在核对前启动后续步骤。` })
+      return true
+    }
+    // 独立检查有结论时，Owner 主动说明发现、影响与建议，而不是只报“检查已返回”。
+    // 全部来自权威观察与评审证据，不做超出事实的推断；同一观察只写一次。
+    const review = observation.review
+    if (observation.trigger === 'terminal' && observation.role === 'reviewer' && observation.executionStatus === 'completed' && review) {
+      const findings = review.findings.map(value => value.trim()).filter(Boolean)
+      const summary = review.summary.trim()
+      const lead = summary ? `（${summary}）` : ''
+      const listed = findings.slice(0, 3).map((value, index) => `${index + 1}) ${value}`).join('；')
+      const more = findings.length > 3 ? `；另有 ${findings.length - 3} 项` : ''
+      const content = review.verdict === 'changes_requested'
+        ? `发现：独立检查未通过${lead}，提出 ${findings.length} 项修改${listed ? `：${listed}${more}` : ''}。\n影响：本轮成果已保留但不能作为交付；受影响部分需要在剩余返工次数与额度内重做，范围不扩大。\n建议：先按上述修改点调整执行内容和验收依据，再重新独立检查；若修改要求超出已确认的目标、资料或费用边界，我会停下来请你决定。`
+        : review.verdict === 'approved'
+          ? `发现：独立检查通过${lead}，${findings.length ? `仍记录 ${findings.length} 项非阻断项：${listed}${more}` : '没有阻断项'}。\n影响：成果可以进入交付，不需要为此改动方案或追加授权。\n建议：我继续整理交付说明（成果位置、依据、限制）；除业务取舍外不需要你再次确认。`
+          : `发现：独立检查结论为 ${review.verdict}${lead}。\n影响：结论不是通过，本轮不能按已通过处理，相关部分仍需在授权内核对或返工。\n建议：先核对检查依据与本轮成果，再决定返工还是请你对边界作决定；我不会自动扩大范围。`
+      appendOwnerManagementMessage({ projectId, eventId: `${eventId}:plan-update`, role: 'assistant', kind: 'management_progress', ...(taskId ? { taskId } : {}), goalRevision, content })
+      enqueue(projectId, 'execution_observed', goalRevision, taskId, message.id)
+      return true
+    }
     const progress = observation.trigger === 'stalled'
       ? `${subject}长时间没有新进度。我正在核对已有运行状态与授权，不会重复派发。`
       : observation.trigger === 'expired'
@@ -300,5 +367,14 @@ export function recordOwnerManagementObservation(projectId: string, goalRevision
     appendOwnerManagementMessage({ projectId, eventId: `${eventId}:progress`, role: 'assistant', kind: 'management_progress', ...(taskId ? { taskId } : {}), goalRevision, content: progress })
     enqueue(projectId, 'execution_observed', goalRevision, taskId, message.id)
     return true
+  })
+}
+
+/** 员工问题属于系统来源；不伪装成用户消息，也不修改目标或授予执行许可。 */
+export function recordOwnerEmployeeInteractionMessage(interaction: import('@gravitas/shared').OwnerEmployeeInteraction, goalRevision: number, taskId?: string): OwnerManagementMessage {
+  return transaction(() => {
+    const message = appendOwnerManagementMessage({ projectId: interaction.projectId, eventId: `employee-interaction:${interaction.id}:${interaction.revision}`, role: 'assistant', kind: 'employee_interaction', ...(taskId ? { taskId } : {}), goalRevision, employeeInteraction: interaction, content: `员工提出问题，我已接管：\n${interaction.summary}\n我会先核对已确认边界；需要你决定时只在这里讨论，不需要进入员工会话。` })
+    enqueue(interaction.projectId, 'message_received', goalRevision, taskId, message.id)
+    return message
   })
 }

@@ -224,6 +224,8 @@ export const PROJECT_IPC_CHANNELS = {
   GET_OWNER_MANAGEMENT: 'project:get-owner-management',
   CONFIRM_OWNER_TEAM_WORKSPACE_ACCESS: 'project:confirm-owner-team-workspace-access',
   SEND_OWNER_MANAGEMENT_MESSAGE: 'project:send-owner-management-message',
+  /** 用户显式要求按当前已确认方案重新安排人员；消耗既有管理额度。 */
+  RETAKE_OWNER_ASSIGNMENT: 'project:retake-owner-assignment',
   DECIDE_OWNER_CONVERSATION_CHANGE: 'project:decide-owner-conversation-change',
   SET_OWNER_MANAGEMENT_STATUS: 'project:set-owner-management-status',
   GET_OWNER_GOAL_DRAFT: 'project:get-owner-goal-draft',
@@ -533,7 +535,7 @@ export interface PrepareControlledTaskInput {
 }
 export interface ControlledTaskStartPreview {
   /** 仅Owner已冻结的JSON资料；无岗位全文/文件/历史/凭据。费用确认不保证金额硬上限。 */
-  ownerPlanning?: { purpose: 'owner_planning' | 'owner_execution_assignment'; linkId: string; ownerName: string; bindingRevision: number; goalRevision: number; planRevision: number; contextFingerprint: string; promptHash: string; protocolVersion: import('./project-owner').OwnerPlanningLink['protocolVersion']; assignmentProtocolVersion?: '2'; reasoningEffort?: 'low'; maxRequests: 1; maxOutputTokens: 4096 | 8192; systemPrompt: string; userPrompt: string; context: import('./project-owner').ProjectOwnerPlanningContext; assignmentContext?: import('./project-owner').OwnerExecutionAssignmentContext; managementSupported: boolean; costs: 'unknown_no_hard_cap' }
+  ownerPlanning?: { purpose: 'owner_planning' | 'owner_execution_assignment'; linkId: string; ownerName: string; bindingRevision: number; goalRevision: number; planRevision: number; contextFingerprint: string; promptHash: string; protocolVersion: import('./project-owner').OwnerPlanningLink['protocolVersion']; assignmentProtocolVersion?: '2'; reasoningEffort?: 'low'; maxRequests: 1; maxOutputTokens: 4096 | 8192 | 32768; systemPrompt: string; userPrompt: string; context: import('./project-owner').ProjectOwnerPlanningContext; assignmentContext?: import('./project-owner').OwnerExecutionAssignmentContext; managementSupported: boolean; costs: 'unknown_no_hard_cap' }
   taskId: string
   previewHash: string
   expiresAt: number

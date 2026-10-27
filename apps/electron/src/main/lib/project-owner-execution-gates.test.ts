@@ -79,7 +79,7 @@ test('Given 完整文本交付 Owner执行 When 构建工具白名单 Then 不�
   const f = fixture(false, true), sessionId = syntheticRunningExecution(f)
   const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
   gates.admitOwnerExecutionGateSession(executionId, sessionId)
-  expect([...gates.getOwnerExecutionToolNames(sessionId)!].sort()).toEqual(['ReadKnowledgeSource', 'SearchKnowledge'])
+  expect([...gates.getOwnerExecutionToolNames(sessionId)!].sort()).toEqual(['AskUserQuestion', 'ReadKnowledgeSource', 'SearchKnowledge'])
 })
 test('Given合法Owner gate When文件写入 Then仅工作区内Write/Edit可进入逐次审批且审批前不执行', () => {
   const f = fixture(), sessionId = syntheticRunningExecution(f)
@@ -89,7 +89,8 @@ test('Given合法Owner gate When文件写入 Then仅工作区内Write/Edit可进
   expect(gates.isOwnerWorkspaceFileActionCandidate(sessionId, 'Edit', { file_path: 'edit.md' })).toBe(true)
   expect(gates.isOwnerWorkspaceFileActionCandidate(sessionId, 'Write', { file_path: '../outside.txt' })).toBe(false)
   expect(gates.isOwnerWorkspaceFileActionCandidate(sessionId, 'Bash', { command: 'touch denied.txt' })).toBe(false)
-  expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'Write', { file_path: 'denied.txt', content: 'test' })).toThrow('逐次人工审批')
+  // 无研发范围时不自动授予文件写入权限。
+  expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'Write', { file_path: 'new-file.txt', content: 'test' })).toThrow('人工审批')
   expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'Bash', { command: 'touch denied.txt' })).toThrow('仅允许工作区内Write/Edit')
 })
 test('Given 空集合白名单 When ReadKnowledgeSource任意documentId Then 拒且无审计行', () => {
@@ -160,5 +161,36 @@ test('Given Owner用途工具目录 When 尚未准入或已准入 Then 不向模
   expect([...gates.getOwnerExecutionToolNames(sessionId)!]).toEqual([])
   const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
   gates.admitOwnerExecutionGateSession(executionId, sessionId)
-  expect([...gates.getOwnerExecutionToolNames(sessionId)!].sort()).toEqual(['Edit', 'ReadKnowledgeSource', 'SearchKnowledge', 'Write'])
+  expect([...gates.getOwnerExecutionToolNames(sessionId)!].sort()).toEqual(['AskUserQuestion', 'Edit', 'ReadKnowledgeSource', 'SearchKnowledge', 'Write'])
+})
+
+test('Given无研发范围的Owner执行 When写入风险分级 Then新建和覆盖均须审批', () => {
+  const f = fixture(), sessionId = syntheticRunningExecution(f)
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  // 没有显式研发范围，新建普通文件也不能自动获得写权限。
+  // 父目录必须已存在（既有候选语义），因此在工作区根下新建。
+  expect(gates.classifyOwnerWorkspaceWrite(sessionId, 'Write', { file_path: 'game.html', content: 'x' })).toBe('high')
+  expect(gates.isOwnerAutoAllowedWorkspaceWrite(sessionId, 'Write', { file_path: 'game.html', content: 'x' })).toBe(false)
+  // 覆盖已有文件：高风险，必须人工审批（写入夹具冻结的那个工作区根）。
+  const { mkdirSync, writeFileSync } = require('node:fs') as typeof import('node:fs')
+  const { getAgentWorkspace } = require('./agent-workspace-manager') as typeof import('./agent-workspace-manager')
+  const { getAgentWorkspaceCwd } = require('./agent-workspace-manager') as typeof import('./agent-workspace-manager')
+  const frozenWorkspace = getAgentWorkspace(f.record.source.workspaceId)!
+  const frozenRoot = getAgentWorkspaceCwd(frozenWorkspace, sessionId)
+  mkdirSync(frozenRoot, { recursive: true })
+  writeFileSync(join(frozenRoot, 'existing.md'), 'old')
+  expect(gates.classifyOwnerWorkspaceWrite(sessionId, 'Write', { file_path: 'existing.md', content: 'new' })).toBe('high')
+  // 敏感文件与 Edit 一律高风险。
+  expect(gates.classifyOwnerWorkspaceWrite(sessionId, 'Write', { file_path: '.env', content: 'KEY=1' })).toBe('high')
+  expect(gates.classifyOwnerWorkspaceWrite(sessionId, 'Edit', { file_path: 'game.html', old_string: 'a', new_string: 'b' })).toBe('high')
+  // 工作区外路径不构成候选写入。
+  expect(gates.classifyOwnerWorkspaceWrite(sessionId, 'Write', { file_path: '../escape.txt', content: 'x' })).toBeNull()
+  expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'Edit', { file_path: 'game.html', old_string: 'a', new_string: 'b' })).toThrow('人工审批')
+})
+
+
+test('Given间接执行入口 When分类 Then配置/hooks/脚本不能自动放行而普通页面不受误分类', () => {
+  for (const path of ['.github/workflows/ci.yml', 'package.json', '.husky/pre-commit', '.vscode/tasks.json', 'Dockerfile', 'vite.config.ts', 'scripts/install.sh', '.npmrc', 'src/.env.test']) expect(gates.isOwnerHighRiskWritePath(path)).toBe(true)
+  for (const path of ['index.html', 'src/game.ts', 'styles.css', 'notes.md']) expect(gates.isOwnerHighRiskWritePath(path)).toBe(false)
 })

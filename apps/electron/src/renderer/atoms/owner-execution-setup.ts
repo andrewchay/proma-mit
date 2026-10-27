@@ -61,23 +61,34 @@ export function ownerExecutionSetupSuggestion(
 }
 
 /** 当前输入是否足以进入预算问答；最终写入仍必须通过原始预览与服务端校验。 */
-export function ownerExecutionPeopleReady(editor: OwnerExecutionEditor, plan: ProjectOwnerPlanDraft): boolean {
+export function ownerExecutionPeopleBlockers(editor: OwnerExecutionEditor, plan: ProjectOwnerPlanDraft): string[] {
   const view = editor.view
-  if (!view || !editor.loaded || editor.requiresReview || view.executionConfigurationRecommendationState === 'stale') return false
+  const blockers: string[] = []
+  if (!view || !editor.loaded) return ['尚未读取项目执行配置']
+  if (editor.requiresReview || view.executionConfigurationRecommendationState === 'stale') blockers.push('项目执行配置已变化，需要重新读取并核对')
   const workspaceId = editor.workspaceId || view.workspaceRecommendation.workspaceId || ''
-  if (!view.choices.workspaces.some(workspace => workspace.id === workspaceId)) return false
+  if (!view.choices.workspaces.some(workspace => workspace.id === workspaceId)) blockers.push('未找到可用于本次执行的工作区')
   const steps = plan.proposal.steps.filter(step => editor.selectedStepKeys.includes(step.key))
-  if (!steps.length || steps.length !== editor.selectedStepKeys.length || steps.some(step => step.dependencies.some(key => !editor.selectedStepKeys.includes(key)))) return false
+  if (!steps.length || steps.length !== editor.selectedStepKeys.length || steps.some(step => step.dependencies.some(key => !editor.selectedStepKeys.includes(key)))) blockers.push('执行步骤与当前方案不匹配，或缺少前置步骤')
   const roles = [...new Set(steps.map(step => step.roleKey))]
   const employees = roles.map(role => view.choices.employees.find(employee => employee.id === (editor.roleAssignments[role] || (roles.length === 1 ? editor.executorEmployeeId : ''))))
   const reviewer = view.choices.employees.find(employee => employee.id === editor.reviewerEmployeeId)
-  if (!reviewer || employees.some(employee => !employee || employee.id === reviewer.id)) return false
-  const all = [...employees, reviewer], mixed = supportsOwnerMixedTeam(all)
-  if (all.some(employee => !employee || !employee.modelId || !supportsOwnerExecutionKind(employee, editor.executionKind) || !employee.workspaceIds.includes(workspaceId)
-    || !mixed && (employee.channelId !== reviewer.channelId || employee.modelId !== reviewer.modelId || employee.runtime !== reviewer.runtime))) return false
+  if (employees.some(employee => !employee)) blockers.push('至少一个执行岗位没有匹配到员工')
+  if (!reviewer) blockers.push('没有匹配到独立评审员')
+  if (reviewer && employees.some(employee => employee?.id === reviewer.id)) blockers.push('独立评审员不能同时承担执行岗位')
+  const all = [...employees, reviewer]
+  const presentEmployees = all.filter((employee): employee is (typeof view.choices.employees)[number] => Boolean(employee))
+  const mixed = presentEmployees.length === all.length && supportsOwnerMixedTeam(presentEmployees)
+  if (all.some(employee => !employee || !employee.modelId || !supportsOwnerExecutionKind(employee, editor.executionKind) || !employee.workspaceIds.includes(workspaceId))) blockers.push('执行员工或评审员未启用、模型未配置、能力不匹配或未加入所选工作区')
+  if (reviewer && !mixed && all.some(employee => employee && (employee.channelId !== reviewer.channelId || employee.modelId !== reviewer.modelId || employee.runtime !== reviewer.runtime))) blockers.push('执行团队与评审员的模型或运行时不一致')
   const config = view.executionConfigurationRecommendation
-  if (!mixed && config && (reviewer.channelId !== config.channelId || reviewer.modelId !== config.modelId || reviewer.runtime !== config.runtime) && !editor.acknowledgeOwnerConfigurationOverride) return false
-  return !(view.workspaceRecommendation.source === 'owner_binding' && workspaceId !== view.workspaceRecommendation.workspaceId && !editor.acknowledgeOwnerWorkspaceOverride)
+  if (reviewer && !mixed && config && (reviewer.channelId !== config.channelId || reviewer.modelId !== config.modelId || reviewer.runtime !== config.runtime) && !editor.acknowledgeOwnerConfigurationOverride) blockers.push('执行配置与 Owner 绑定不一致，尚未完成确认')
+  if (view.workspaceRecommendation.source === 'owner_binding' && workspaceId !== view.workspaceRecommendation.workspaceId && !editor.acknowledgeOwnerWorkspaceOverride) blockers.push('工作区与 Owner 绑定不一致，尚未完成确认')
+  return [...new Set(blockers)]
+}
+
+export function ownerExecutionPeopleReady(editor: OwnerExecutionEditor, plan: ProjectOwnerPlanDraft): boolean {
+  return ownerExecutionPeopleBlockers(editor, plan).length === 0
 }
 
 /** 仅投影已由服务端核验的Owner安排；费用和资料许可仍由最终确认提供。 */

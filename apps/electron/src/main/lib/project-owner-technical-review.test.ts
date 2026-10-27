@@ -57,7 +57,7 @@ test('Given所有冻结验证命令均有新鲜、未截断且成功的原始回
   }])).not.toThrow()
 })
 
-test('Given代码验证回执缺失、失败、过期、截断或原始输出摘要不完整 When Reviewer 建议通过 Then拒绝批准', () => {
+test('Given代码验证回执缺失、失败、超期、截断或原始输出摘要不完整 When Reviewer 建议通过 Then拒绝批准', () => {
   const valid = {
     command: 'bun test', validationId: `val-${'a'.repeat(64)}`, attemptState: 'completed' as const, freshness: 'fresh' as const,
     status: 'passed' as const, exitCode: 0, timedOut: false, outputTail: '通过', outputTruncated: false,
@@ -71,6 +71,8 @@ test('Given代码验证回执缺失、失败、过期、截断或原始输出摘
     { ...valid, timedOut: true },
     { ...valid, outputTruncated: true },
     { ...valid, rawOutputSha256: undefined },
+    // 超过有效期的证据即便字段齐全也不得支撑通过。
+    { ...valid, expired: true },
   ]
   for (const evidence of invalid) expect(() => assertOwnerDevelopmentValidationForVerdict('approved', [evidence])).toThrow('不能批准')
   expect(() => assertOwnerDevelopmentValidationForVerdict('changes_requested', [{ ...valid, status: 'failed' }])).not.toThrow()

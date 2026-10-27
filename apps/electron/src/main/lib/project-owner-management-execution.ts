@@ -1,8 +1,9 @@
 /** 业务事实唤醒Owner；只准备受控管理分析，不发行员工许可、不自动重试业务请求。 */
 import type { OwnerExecutionObservation } from '@gravitas/shared'
 import { ownerExecutionHash } from './project-owner-execution-hash'
-import { readOwnerCommandRuntime } from './project-owner-employee-runtime'
+import { readOwnerCommandRuntime, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { getProjectOwnerGoalDraft } from './project-owner-goal-service'
+import { getProjectOwnerPlanDraft } from './project-owner-plan-service'
 import { getOwnerManager, recordOwnerManagementObservation } from './project-owner-management-store'
 import { listOwnerTechnicalReviewEvidence } from './project-owner-technical-review'
 import * as store from './project-sqlite-store'
@@ -34,6 +35,7 @@ export function readOwnerExecutionObservation(projectId: string, executionId: st
     executionStatus: execution.status, commandState: command.state, grantState: command.grant_state,
     ...(execution.completedAt === undefined ? {} : { completedAt: execution.completedAt }), resultSummary: (execution.resultSummary ?? '').slice(0, 16000), error: (execution.error ?? '').slice(0, 2000),
     actualCostMicros: command.actual_cost_micros, reservedCostMicros: command.reserved_cost_micros,
+    requestsSent: (store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_request_reservations WHERE command_id=?').get(command.id) as { count: number }).count,
     ...(review ? { review: { verdict: review.verdict, summary: review.summary.slice(0, 2000), findings: review.findings.slice(0, 8).map(item => `${item.severity}: ${item.description} → ${item.requestedChange}`.slice(0, 1000)) } } : {}),
   } }
 }
@@ -49,6 +51,12 @@ export function scanOwnerExecutionObservations(projectId: string, now = Date.now
       try {
         const source = readOwnerExecutionObservation(projectId, row.id, trigger, now), goal = getProjectOwnerGoalDraft(projectId, source.taskId)
         if (!goal) break
+        const frozen = readOwnerCommandFrozenSource(source.observation.commandId).source
+        const preparation = store.getProjectDb().prepare('SELECT json_extract(payload,\'$.source.goalRevision\') AS goal_revision FROM project_owner_execution_preparations WHERE id=?').get(frozen.originalPreparation.id) as { goal_revision: number } | undefined
+        const plan = getProjectOwnerPlanDraft(projectId, source.taskId)
+        if (preparation?.goal_revision !== goal.revision || !plan || plan.revision !== frozen.planRevision) break
+        // 正常完成的员工交给独立Reviewer；此时Owner没有待决策事项，不额外调用模型总结进度。
+        if (frozen.qualityManagementVersion === 1 && source.observation.role === 'executor' && source.observation.executionStatus === 'completed') break
         recordOwnerManagementObservation(projectId, goal.revision, source.observation, source.taskId, ownerExecutionHash(source.observation))
         break
       } catch { /* 该触发不适用或来源不可核验；不生成模型请求。 */ }

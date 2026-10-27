@@ -4,7 +4,7 @@ import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { readOwnerCommandRuntime, assertOwnerCommandPrice } from './project-owner-employee-runtime'
 /** Owner业务执行侧休眠门禁：资料fence/逐请求核验/purpose。本片不发行、不派工，gate行无生产创建路径。 */
 import { createHash, randomUUID } from 'node:crypto'
-import { lstatSync, realpathSync } from 'node:fs'
+import { existsSync, lstatSync, realpathSync } from 'node:fs'
 import { resolveAgentRuntimeBaseUrl } from '@gravitas/shared'
 import type { OwnerExecutionRevalidationRecord } from '@gravitas/shared'
 import { dirname, relative, resolve, sep } from 'node:path'
@@ -147,7 +147,7 @@ export function getOwnerExecutionToolNames(sessionId: string): ReadonlySet<strin
   if (context.kind === 'unrestricted') return null
   if (context.kind !== 'owner_business') return new Set()
   const fileActions = context.record.source.textDeliveryVersion === 1 ? [] : ['Write', 'Edit']
-  return new Set([...OWNER_TOOL_ALLOWED, ...(developmentScopeForExecution(context) ? ['Read'] : []), ...fileActions])
+  return new Set([...OWNER_TOOL_ALLOWED, 'AskUserQuestion', ...(developmentScopeForExecution(context) ? ['Read'] : []), ...fileActions])
 }
 
 function frozenSourceIds(record: OwnerExecutionRevalidationRecord): string[] {
@@ -192,9 +192,55 @@ function recordKnowledgeReadPermission(context: Extract<OwnerSessionGateContext,
   store.getProjectDb().prepare('INSERT INTO project_owner_execution_knowledge_reads(id,session_id,execution_id,revalidation_id,source_id,knowledge_base_id,document_id,content_hash,char_start,char_end,read_at) VALUES(?,?,?,?,?,?,?,?,NULL,NULL,?)').run(randomUUID(), context.gate!.sessionId, context.gate!.executionId, context.record.id, sourceId, knowledgeBaseId, documentId, contentHash, Date.now())
 }
 /** purpose感知工具谓词：Owner知识读取走资料fence，工作区Write/Edit须先通过逐次审批。 */
+/** 覆盖已有文件、受保护路径、敏感文件名与研发范围外一律视为高危写入；其余为工作区内新建。 */
+const OWNER_HIGH_RISK_BASENAMES = new Set(['.env', '.env.local', '.env.production', '.npmrc', '.gitconfig', 'id_rsa', 'id_ed25519'])
+/** 这些入口可被后续安装、构建、提交或编辑器动作间接执行，不自动授权。 */
+export function isOwnerHighRiskWritePath(relativePath: string): boolean {
+  const segments = relativePath.toLowerCase().split('/')
+  const basename = segments.at(-1) ?? ''
+  return segments.some(segment => segment.startsWith('.'))
+    || OWNER_HIGH_RISK_BASENAMES.has(basename)
+    || /\.(sh|bash|zsh|ps1|bat|cmd|exe|dll|node)$/i.test(basename)
+    || /^(package\.json|bun\.lockb?|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|makefile|dockerfile|justfile|taskfile\.ya?ml)$/i.test(basename)
+    || /^(vite|webpack|rollup|next|electron-builder|eslint|prettier)\.config\./i.test(basename)
+}
+export type OwnerWorkspaceWriteRisk = 'normal' | 'high'
+export function classifyOwnerWorkspaceWrite(sessionId: string, toolName: string, args?: Record<string, unknown>): OwnerWorkspaceWriteRisk | null {
+  if (toolName !== 'Write' && toolName !== 'Edit' && toolName !== 'MultiEdit') return null
+  if (!isOwnerWorkspaceFileActionCandidate(sessionId, toolName, args)) return null
+  const context = resolveOwnerExecutionGateSession(sessionId)
+  if (context.kind !== 'owner_business') return null
+  const filePath = typeof args?.file_path === 'string' ? args.file_path.trim() : ''
+  if (!filePath) return 'high'
+  const workspace = getAgentWorkspace(context.record.source.workspaceId)
+  if (!workspace) return 'high'
+  const root = resolve(getAgentWorkspaceCwd(workspace, sessionId))
+  const target = resolve(root, filePath)
+  const relativePath = relative(root, target).split(sep).join('/')
+  const basename = relativePath.split('/').at(-1) ?? ''
+  if (basename.startsWith('.env') || OWNER_HIGH_RISK_BASENAMES.has(basename)) return 'high'
+  if (relativePath.split('/').includes('.git')) return 'high'
+  const scope = developmentScopeForExecution(context)
+  // 无研发范围不推导为整个工作区可写；审批不会自动扩大后续执行权限。
+  if (!scope) return 'high'
+  if (isOwnerHighRiskWritePath(relativePath)) return 'high'
+  if (scope && (isProtectedDevelopmentPath(normalizeRepoRelativePath(relativePath)) || !pathWithinAllowed(normalizeRepoRelativePath(relativePath), scope.allowedPaths))) return 'high'
+  if (toolName !== 'Write') return 'high'
+  // 新建普通文本文件可自动放行；覆盖已有文件需要用户确认。
+  return existsSync(target) ? 'high' : 'normal'
+}
+/** 权限层用：Owner 工作区内低风险新建可直接执行，高风险仍走逐次人工审批。 */
+export function isOwnerAutoAllowedWorkspaceWrite(sessionId: string, toolName: string, args?: Record<string, unknown>): boolean {
+  return classifyOwnerWorkspaceWrite(sessionId, toolName, args) === 'normal'
+}
+
 export function assertToolAllowedForSessionPurpose(sessionId: string, toolName: string, args?: Record<string, unknown>): void {
   const context = resolveOwnerExecutionGateSession(sessionId)
   if (context.kind === 'unrestricted') return
+  if (context.kind === 'owner_business' && toolName === 'AskUserQuestion') {
+    if (args?.interactionType === 'computer_use_takeover') throw new Error('Owner员工暂不支持系统接管请求')
+    return
+  }
   if (context.kind === 'owner_business' && toolName === 'Read') {
     assertOwnerDevelopmentRead(sessionId, args)
     return
@@ -202,10 +248,11 @@ export function assertToolAllowedForSessionPurpose(sessionId: string, toolName: 
   if (!OWNER_TOOL_ALLOWED.has(toolName)) {
     if (context.kind === 'restricted') throw new Error(context.reason)
     if (context.kind === 'owner_business') {
-      if (context.record.source.textDeliveryVersion !== 1
-        && isOwnerWorkspaceFileActionCandidate(sessionId, toolName, args)
-        && hasApprovedOwnerAction(sessionId, { toolName, toolInput: args ?? {} })) return
-      throw new Error('Owner业务会话仅允许工作区内Write/Edit经逐次人工审批后执行')
+      if (context.record.source.textDeliveryVersion !== 1 && isOwnerWorkspaceFileActionCandidate(sessionId, toolName, args)) {
+        if (classifyOwnerWorkspaceWrite(sessionId, toolName, args) === 'normal') return
+        if (hasApprovedOwnerAction(sessionId, { toolName, toolInput: args ?? {} })) return
+      }
+      throw new Error('Owner业务会话仅允许工作区内Write/Edit；覆盖、敏感路径或越界写入须经逐次人工审批')
     }
     assertNoOwnerBusinessSession(sessionId)
     return

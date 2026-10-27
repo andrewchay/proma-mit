@@ -64,15 +64,18 @@ function formatToolName(toolName: string): string {
 /** PermissionBanner 属性接口 */
 interface PermissionBannerProps {
   sessionId: string
+  /** 嵌入Owner面板时禁用全局快捷键，避免一个按键批准多个横幅。 */
+  keyboardShortcuts?: boolean
 }
 
 /** 决策选项 */
 type Decision = 'allow' | 'allowAlways' | 'deny'
 
-export function PermissionBanner({ sessionId }: PermissionBannerProps): React.ReactElement | null {
+export function PermissionBanner({ sessionId, keyboardShortcuts = true }: PermissionBannerProps): React.ReactElement | null {
   const [allRequests, setAllRequests] = useAtom(allPendingPermissionRequestsAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const requests = allRequests.get(sessionId) ?? []
+  const [responseError, setResponseError] = React.useState('')
   const [responding, setResponding] = React.useState(false)
   const [focusedIdx, setFocusedIdx] = React.useState(0)
   const respondRef = React.useRef<(behavior: 'allow' | 'deny', alwaysAllow?: boolean) => void>()
@@ -102,7 +105,7 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
 
   // 键盘导航：↑↓ 选择决策，Enter 确认
   React.useEffect(() => {
-    if (!request || decisions.length === 0) return
+    if (!keyboardShortcuts || !request || decisions.length === 0) return
     const handleKeyDown = (e: KeyboardEvent): void => {
       if (
         e.target instanceof HTMLInputElement ||
@@ -128,7 +131,7 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
     }
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [request?.requestId, request, decisions, focusedIdx])
+  }, [request?.requestId, request, decisions, focusedIdx, keyboardShortcuts])
 
   /** 关闭权限请求 & 终止 Agent */
   const handleDismiss = (): void => {
@@ -159,6 +162,7 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
   const respond = async (behavior: 'allow' | 'deny', alwaysAllow = false): Promise<void> => {
     if (responding) return
     setResponding(true)
+    setResponseError('')
 
     try {
       const currentRequest = request
@@ -178,6 +182,7 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
         return map
       })
     } catch (error) {
+      setResponseError(error instanceof Error ? error.message : '审批未确认成功，请核对后重试')
       console.error('[PermissionBanner] 响应失败:', error)
     } finally {
       setResponding(false)
@@ -261,6 +266,7 @@ export function PermissionBanner({ sessionId }: PermissionBannerProps): React.Re
         </div>
       </div>
 
+      {responseError && <p role="alert" className="px-4 py-2 text-sm text-destructive">审批失败：{responseError}。原请求仍保留，操作未获新授权。</p>}
       {/* 操作内容 */}
       <div className="px-4 pb-2 space-y-1.5">
         {request.requiresPerActionApproval && (

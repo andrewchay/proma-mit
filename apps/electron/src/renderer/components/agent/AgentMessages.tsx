@@ -88,6 +88,8 @@ function getSDKMessageStableKey(message: SDKMessage): string {
 
 /** AgentMessages 属性接口 */
 interface AgentMessagesProps {
+  /** 监控模式：仅查看记录，禁用编辑、重试等执行操作。 */
+  readOnly?: boolean
   sessionId: string
   /** 用户在前端选择的模型 ID（用于显示渠道配置的 Model Name） */
   sessionModelId?: string
@@ -435,7 +437,7 @@ function AgentRunningIndicator({ startedAt }: { startedAt?: number }): React.Rea
   )
 }
 
-export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persistedSDKMessages, streaming, streamState, liveMessages, sessionPath, attachedDirs, stoppedByUser, onRetry, onRetryInNewSession, onFork, onRewind, onCompact }: AgentMessagesProps): React.ReactElement {
+export function AgentMessages({ readOnly = false, sessionId, sessionModelId, messagesLoaded, persistedSDKMessages, streaming, streamState, liveMessages, sessionPath, attachedDirs, stoppedByUser, onRetry, onRetryInNewSession, onFork, onRewind, onCompact }: AgentMessagesProps): React.ReactElement {
   const userProfile = useAtomValue(userProfileAtom)
   const setMinimapCache = useSetAtom(tabMinimapCacheAtom)
   const channels = useAtomValue(channelsAtom)
@@ -703,7 +705,7 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
               const isLive = liveGroupSet.has(group)
               const isErrorGroup = group.type === 'assistant-turn'
                 && group.assistantMessages.some((m) => !!m.error)
-              const shouldDisableActions = isLive && !isErrorGroup
+              const shouldDisableActions = readOnly || (isLive && !isErrorGroup)
               // 仅在最后一个 assistant-turn 上显示"已被用户中断" badge
               const isLastAssistantTurn = !streaming && stoppedByUser
                 && group.type === 'assistant-turn'
@@ -711,6 +713,7 @@ export function AgentMessages({ sessionId, sessionModelId, messagesLoaded, persi
               return (
                 <MessageGroupRenderer
                   key={getGroupId(group)}
+                  readOnly={readOnly}
                   group={group}
                   sessionId={sessionId}
                   allMessages={allSDKMessages}

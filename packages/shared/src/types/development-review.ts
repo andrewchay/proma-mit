@@ -159,6 +159,21 @@ export interface DevelopmentValidationResult {
   rawOutputByteLength?: number
   /** 老记录无此字段仍可展示，但不能补造fresh可信绑定。 */
   binding?: DevelopmentValidationBinding
+  /**
+   * 证据来源。缺省视为 command，兼容全部历史记录。
+   * browser_assertions 由受管浏览器执行系统内置断言，不依赖仓库脚本。
+   */
+  method?: 'command' | 'browser_assertions'
+  /** 浏览器断言的逐项结果；command 方式通常为空。 */
+  checks?: DevelopmentValidationCheck[]
+}
+
+/** 单条运行断言的结论。skipped 不代表通过，只表示该环境不适用。 */
+export interface DevelopmentValidationCheck {
+  id: string
+  title: string
+  status: 'passed' | 'failed' | 'skipped'
+  detail: string
 }
 
 /** 确认应用前下发的精确操作清单；过期必须重新预检。 */

@@ -113,6 +113,11 @@ export function getOwnerRuntimeBinding(projectId: string, atRevision?: number): 
   if (rows.some((row, index) => row.revision !== index + 1)) throw new Error('Owner配置记录历史不连续')
   return (atRevision === undefined ? versions.at(-1) : versions.find(version => version.revision === revision(atRevision, 1))) ?? null
 }
+/** 历史管理载体仍属于Owner身份，不能当作业务员工或独立评审员复用。 */
+export function getOwnerRuntimeCarrierIds(): ReadonlySet<string> {
+  const rows = store.getProjectDb().prepare('SELECT project_id, revision, payload FROM project_owner_runtime_revisions').all() as Array<{ project_id: string; revision: number; payload: string }>
+  return new Set(rows.map(row => parseBinding(row.payload, row.project_id, row.revision).carrierId))
+}
 export function saveOwnerRuntimeBinding(projectId: string, expectedRevision: number, raw: unknown): OwnerRuntimeBinding {
   const input = object(raw, ['ownerName', 'carrierId', 'workspaceId', 'changeReason'])
   const ownerName = text(input.ownerName, '职责名称'), carrierId = text(input.carrierId, '载体ID', 128), workspaceId = text(input.workspaceId, '工作区ID', 128), changeReason = text(input.changeReason, '变更原因', 2000)
@@ -232,18 +237,18 @@ export function prepareOwnerPlanning(projectId: string, raw: unknown): OwnerPlan
     const existingConversation = existingSnapshot?.source_snapshot ? (JSON.parse(existingSnapshot.source_snapshot) as import('@gravitas/shared').ProjectOwnerPlanningContext).conversation : undefined
     const historyThroughMessageId = existingConversation?.historyThroughMessageId
     const baseContext = getProjectOwnerPlanningContext(projectId, taskId)
-    const context = conversationMessageId ? withOwnerConversationContext(baseContext, conversationMessageId, historyThroughMessageId, existingConversation ? existingConversation.interactionVersion ?? 1 : 2, existingConversation ? existingConversation.deliveryReview?.version ?? 0 : 1, existingConversation ? existingConversation.observationMessageBindingVersion ?? 0 : 1) : baseContext
+    const context = conversationMessageId ? withOwnerConversationContext(baseContext, conversationMessageId, historyThroughMessageId, existingConversation ? existingConversation.interactionVersion ?? 1 : 2, existingConversation ? existingConversation.deliveryReview?.version ?? 0 : 1, existingConversation ? existingConversation.observationMessageBindingVersion ?? 0 : 1, existingConversation ? existingConversation.employeeInteractionVersion ?? 0 : 1, existingConversation?.employeeInteractions, existingConversation ? existingConversation.deliveredArtifacts !== undefined : true) : baseContext
     const plan = getProjectOwnerPlanDraft(projectId, taskId)
     if (binding.revision !== bindingRevision || context.goal.revision !== goalRevision || context.fingerprint !== contextFingerprint || (plan?.revision ?? 0) !== planRevision || !ownerCarrierBindingMatches(binding, facts)) throw new Error('Owner目标、来源、计划或载体配置已更新，请重新确认')
     let request = buildProjectOwnerPlanningRequest(context)
     const useLowGlmReasoning = getChannelById(binding.channelId)?.provider === 'zhipu' && /^glm-5\.3(?:-flash)?$/i.test(binding.modelId)
-    const makeLink = (id: string, planningTaskId: string, createdAt: number, protocolVersion: OwnerPlanningLink['protocolVersion'] = '2'): OwnerPlanningLink => ({ schemaVersion: 1, id, projectId, requestId, planningTaskId, ...(taskId === undefined ? {} : { targetTaskId: taskId }), ...(conversationMessageId ? { conversationMessageId } : {}), bindingRevision, goalRevision, goalVersion: context.goal.goal.goalVersion, planRevision, contextFingerprint, carrierFingerprint: facts.carrierFingerprint, protocolVersion, ...((protocolVersion === '3' || protocolVersion === '5') ? { reasoningEffort: 'low' as const } : {}), promptHash: hash(request), purpose: 'owner_planning', maxRequests: 1, maxOutputTokens: protocolVersion === '1' ? 4096 : 8192, createdAt })
+    const makeLink = (id: string, planningTaskId: string, createdAt: number, protocolVersion: OwnerPlanningLink['protocolVersion'] = '2'): OwnerPlanningLink => ({ schemaVersion: 1, id, projectId, requestId, planningTaskId, ...(taskId === undefined ? {} : { targetTaskId: taskId }), ...(conversationMessageId ? { conversationMessageId } : {}), bindingRevision, goalRevision, goalVersion: context.goal.goal.goalVersion, planRevision, contextFingerprint, carrierFingerprint: facts.carrierFingerprint, protocolVersion, ...((['3', '5', '6'].includes(protocolVersion)) ? { reasoningEffort: 'low' as const } : {}), promptHash: hash(request), purpose: 'owner_planning', maxRequests: 1, maxOutputTokens: protocolVersion === '1' ? 4096 : protocolVersion === '6' ? 32768 : 8192, createdAt })
     const existing = store.getProjectDb().prepare('SELECT * FROM project_owner_planning_links WHERE project_id = ? AND request_id = ?').get(projectId, requestId) as LinkRow | undefined
     if (existing) {
       let value: OwnerPlanningLink
       try {
         const candidate = JSON.parse(existing.payload) as Record<string, unknown>
-        if (candidate.protocolVersion !== '1' && candidate.protocolVersion !== '2' && candidate.protocolVersion !== '3' && candidate.protocolVersion !== '4' && candidate.protocolVersion !== '5') throw new Error('关联协议版本无效')
+        if (candidate.protocolVersion !== '1' && candidate.protocolVersion !== '2' && candidate.protocolVersion !== '3' && candidate.protocolVersion !== '4' && candidate.protocolVersion !== '5' && candidate.protocolVersion !== '6') throw new Error('关联协议版本无效')
         request = resolveProjectOwnerPlanningRequest(context, digest(candidate.promptHash))
         const expected = makeLink(text(existing.id, '关联ID', 128), text(existing.planning_task_id, '规划任务ID', 128), revision(candidate.createdAt, 1), candidate.protocolVersion)
         object(candidate, Object.keys(expected))
@@ -269,7 +274,7 @@ export function prepareOwnerPlanning(projectId: string, raw: unknown): OwnerPlan
     const id = randomUUID()
     const prepared = prepareControlledTask({ requestId: `owner-planning:${id}`, projectId, employeeId: binding.carrierId, workspaceId: binding.workspaceId, title: `Owner规划：${context.sources.task?.title ?? context.sources.project.title}`.slice(0, 200), description: '仅提出目标规划/必要澄清；不计作目标业务任务交付，不自动组织员工，不授权业务执行。', priority: 'medium' })
     const jsonOutput = facts.modelId === 'deepseek-flash' && getAgentProviderProtocol(getChannelById(binding.channelId)!.provider, 'ai-sdk') === 'openai-chat'
-    const result = makeLink(id, prepared.taskId, Date.now(), useLowGlmReasoning ? '5' : jsonOutput ? '4' : '2')
+    const result = makeLink(id, prepared.taskId, Date.now(), useLowGlmReasoning ? '6' : jsonOutput ? '4' : '2')
     store.getProjectDb().prepare('INSERT INTO project_owner_planning_links (id, project_id, request_id, planning_task_id, input_hash, payload, source_snapshot) VALUES (?, ?, ?, ?, ?, ?, ?)').run(id, projectId, requestId, prepared.taskId, inputHash, JSON.stringify(result), JSON.stringify(context))
     store.getProjectDb().prepare('UPDATE controlled_task_preparations SET owner_planning_link_id = ? WHERE task_id = ?').run(id, prepared.taskId)
     return result

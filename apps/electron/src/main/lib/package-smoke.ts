@@ -40,6 +40,8 @@ import {
   saveNewMediaAccountSecret,
 } from './new-media/new-media-account-secret-store'
 
+import { runOwnerRuntimeVerificationSmoke } from './owner-runtime-verification-smoke'
+
 export async function runPackageSmoke(): Promise<void> {
   assert(app.isPackaged, '必须验证实际安装包')
   assert(process.env.PROMA_TEST_CONFIG_DIR, '必须指定临时配置目录')
@@ -50,6 +52,12 @@ export async function runPackageSmoke(): Promise<void> {
   } finally { database.close() }
   const root = getConfigDir()
   assert(existsSync(join(root, '.package-smoke-empty')), '配置目录必须由烟测脚本创建')
+  if (process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RESUME_PROJECT_ID) {
+    // 新profile的平台正反例已独立通过；恢复只推进原项目，不重建免费夹具或业务事实。
+    await runOwnerRealChain()
+    console.log(JSON.stringify({ packageSmoke: 'resumed_owner_project', version: app.getVersion() }))
+    return
+  }
   // 使用打包后实际 SQLite 引擎验证 WAL 落盘与关闭重开，不以 Bun 测试替代生产存储证据。
   const walPath = join(root, 'package-smoke-wal.sqlite')
   let walDatabase = openNativeSqlite(walPath)
@@ -81,6 +89,8 @@ export async function runPackageSmoke(): Promise<void> {
     .map(skill => skill.slug)
   assert(disabledSkills.every(slug => inactiveSlugs.includes(slug)), 'Skill Set 停用状态未落盘')
   const kimiCompaction = await runLiveKimiCompactionSmoke(workspace, root)
+  await runOwnerExecutionParamProbe()
+  await runOwnerRealChain()
   assert(listWorkflowTemplates().some(t => t.id === 'marketing-campaign'), '缺少 Campaign 模板')
   // 营销 skills 订阅分发烟测：订阅 influencer → 工作区出现 22 个营销 skill
   // 注意：偏好（settings）与权益（签名快照）缺一不可。签名快照由
@@ -180,10 +190,12 @@ export async function runPackageSmoke(): Promise<void> {
   assert(gateBlocked, '无权益时新建笔记未被拒绝')
 
   const newMedia = await runNewMediaSmoke()
+  const ownerRuntimeVerification = await runOwnerRuntimeVerificationSmoke(root)
 
   console.log(JSON.stringify({
     packageSmoke: 'passed',
     newMedia,
+    ownerRuntimeVerification,
     version: app.getVersion(),
     tools: tools.length,
     defaultSkills: defaultSkillSlugs.length,
@@ -257,6 +269,77 @@ async function runNewMediaSmoke(): Promise<Record<string, unknown>> {
 interface KimiCompactionSmokeResult {
   contextWindow: number
   runtimes: AgentRuntime[]
+}
+
+/**
+ * 真实服务商参数探针：确认员工执行请求（大 max_tokens、reasoning_effort）是否被接受。
+ *
+ * 只读取渠道凭据并发送最小提示，不写入项目数据库，也不代表业务链路验收。
+ * 失败不抛出，只打印结果，便于一次看到全部对照项。
+ */
+async function runOwnerRealChain(): Promise<void> {
+  if (!process.env.GRAVITAS_OWNER_CHAIN_SMOKE_CHANNEL_ID) return
+  const { runOwnerRealChainSmoke } = await import('./owner-real-chain-smoke')
+  const report = await runOwnerRealChainSmoke()
+  writeFileSync(join(getConfigDir(), 'owner-real-chain-report.json'), JSON.stringify(report, null, 2), { flag: 'wx', mode: 0o600 })
+  console.log(`[owner-real-chain] ${JSON.stringify(report)}`)
+}
+
+async function runOwnerExecutionParamProbe(): Promise<void> {
+  const channelId = process.env.GRAVITAS_OWNER_PARAM_PROBE_CHANNEL_ID
+  if (!channelId) return
+  const channelManager = await import('./channel-manager')
+  const channel = channelManager.getChannelById(channelId)
+  assert(channel, '参数探针渠道不存在')
+  const apiKey = channelManager.decryptApiKey(channel.id)
+  const model = process.env.GRAVITAS_OWNER_PARAM_PROBE_MODEL ?? channel.models.find(item => item.enabled)?.id ?? channel.models[0]?.id
+  assert(model, '参数探针缺少可用模型')
+  const baseUrl = (channel.baseUrl ?? '').replace(/\/+$/, '')
+  const attempts: Array<{ name: string; body: Record<string, unknown> }> = [
+    { name: 'baseline-8192', body: { model, max_tokens: 8192 } },
+    { name: 'max-tokens-131072', body: { model, max_tokens: 131_072 } },
+    { name: 'max-tokens-131072+reasoning-low', body: { model, max_tokens: 131_072, reasoning_effort: 'low' } },
+  ]
+  // 第二层：真实走 AI SDK 出口，对比“仅参数”和“参数+工具”两种调用形态。
+  const { createAgentAISDKModel } = await import('@gravitas/core/providers/ai-sdk-bridge')
+  const { streamText, tool } = await import('ai')
+  const { z } = await import('zod')
+  const runtimeShapes = [
+    { name: 'sdk-no-tools', tools: undefined },
+    { name: 'sdk-with-tool', tools: { lookup: tool({ description: '查询', inputSchema: z.object({ query: z.string() }) }) } },
+  ] as const
+  for (const shape of runtimeShapes) {
+    const started = Date.now()
+    try {
+      const probeModel = createAgentAISDKModel({ provider: 'zhipu', protocol: 'openai-chat', providerName: 'proma-zhipu', apiKey, baseUrl, modelId: model })
+      const result = streamText({
+        model: probeModel,
+        messages: [{ role: 'user', content: '只回复 ok' }],
+        maxOutputTokens: 131_072,
+        maxRetries: 0,
+        ...(shape.tools ? { tools: shape.tools } : {}),
+        providerOptions: { openai: { reasoningEffort: 'low' } },
+      })
+      const text = await result.text
+      console.log(`[owner-param-probe] ${JSON.stringify({ attempt: shape.name, status: 'ok', ms: Date.now() - started, body: text.slice(0, 60) })}`)
+    } catch (error) {
+      console.log(`[owner-param-probe] ${JSON.stringify({ attempt: shape.name, status: 'error', ms: Date.now() - started, body: String(error).slice(0, 300) })}`)
+    }
+  }
+  for (const attempt of attempts) {
+    const started = Date.now()
+    try {
+      const response = await fetch(`${baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ ...attempt.body, messages: [{ role: 'user', content: '只回复 ok' }] }),
+      })
+      const text = (await response.text()).replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [已隐藏]').slice(0, 300)
+      console.log(`[owner-param-probe] ${JSON.stringify({ attempt: attempt.name, status: response.status, ms: Date.now() - started, body: text })}`)
+    } catch (error) {
+      console.log(`[owner-param-probe] ${JSON.stringify({ attempt: attempt.name, status: 'fetch-error', ms: Date.now() - started, body: String(error).slice(0, 200) })}`)
+    }
+  }
 }
 
 async function runLiveKimiCompactionSmoke(

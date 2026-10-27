@@ -27,6 +27,7 @@ import { DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS, parseDevelopmentValidationRec
 import { completeOwnerDevelopmentValidationAttempt, ownerDevelopmentValidationId, reserveOwnerDevelopmentValidationAttempt } from './development-validation-attempt'
 import { ownerExecutionHash } from './project-owner-execution-hash'
 import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
+import { executeBrowserVerificationCommand, isBrowserVerificationCommand } from './owner-runtime-verification-command'
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 
@@ -104,7 +105,16 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
   }
 
   const startedAt = Date.now()
-  const { exitCode, timedOut, output, rawOutputSha256, rawOutputByteLength } = await runCommand(trimmed, world.worktreePath, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+  // browser: 前缀走受管浏览器内置断言，复用同一套证据格式与门禁；其余仍按 argv 直接执行。
+  const browserRun = isBrowserVerificationCommand(trimmed)
+    ? await executeBrowserVerificationCommand({
+        workspaceRoot: world.worktreePath,
+        targetPaths: world.scope.targetPaths ?? [],
+        command: trimmed,
+        timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      })
+    : undefined
+  const { exitCode, timedOut, output, rawOutputSha256, rawOutputByteLength } = browserRun ?? await runCommand(trimmed, world.worktreePath, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
   const finishedAt = Date.now()
 
   const staleAfter = !validationWorldStillMatches(world)
@@ -125,6 +135,7 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
     outputTruncated: output.length > DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS,
     rawOutputSha256,
     rawOutputByteLength,
+    ...(browserRun ? { method: 'browser_assertions' as const, checks: browserRun.checks } : {}),
     binding: world.binding,
   }
   writeJsonFileAtomic(join(world.sessionDirectory, `development-validation-${result.id}.json`), result)

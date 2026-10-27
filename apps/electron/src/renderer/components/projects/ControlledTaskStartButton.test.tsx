@@ -61,7 +61,7 @@ test('Given Owner规划确认预检 When 查看默认摘要 Then 只展示目标
     '你提供的约束：不派工',
     '最多发送 1 次请求',
     '这次请求可能收费，目前无法提供硬性金额上限',
-    'Owner无法在应用预算内继续自动安排员工和跟进',
+    '无法按可核验预算自动安排员工',
     '请求状态或费用未知时会暂停核对，不会自动重试',
     '查看模型和发送资料细节',
     '查看完整发送资料和固定指令',
@@ -75,5 +75,5 @@ test('Given Owner规划确认预检 When 查看默认摘要 Then 只展示目标
 
 test('Given 模型已有审核价格证据 When 展示规划预检 Then 不显示无法自动推进提示', () => {
   const html = renderToStaticMarkup(<OwnerPlanningPreflightSummary ownerPlanning={{ ...ownerPlanning, managementSupported: true }} />)
-  expect(html).not.toContain('Owner无法在应用预算内继续自动安排员工和跟进')
+  expect(html).not.toContain('无法按可核验预算自动安排员工')
 })

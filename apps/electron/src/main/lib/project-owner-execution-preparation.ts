@@ -6,7 +6,7 @@ import { validateControlledTarget } from './agent-controlled-context'
 import { freezeOwnerEmployeeRuntime } from './project-owner-employee-runtime'
 import { validateDevelopmentTarget } from './agent-development-context'
 import { getChannelById } from './channel-manager'
-import { getOwnerCarrierFacts, getOwnerRuntimeBinding, ownerCarrierBindingMatches } from './project-owner-runtime-binding'
+import { getOwnerCarrierFacts, getOwnerRuntimeBinding, getOwnerRuntimeCarrierIds, ownerCarrierBindingMatches } from './project-owner-runtime-binding'
 import { readCatalog } from './knowledge-catalog-service'
 /** 追加式来源准备，不是授权账本；保存永远不调用Runner/Provider或创建业务Task。 */
 import { randomUUID } from 'node:crypto'
@@ -192,6 +192,7 @@ export function getOwnerExecutionPreparation(rawSubject: unknown): OwnerExecutio
   })
   const projectWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id))
   const targetFacts = { getChannel: getChannelById, getWorkspace: (id: string) => workspaceById.get(id) }
+  const ownerCarrierIds = getOwnerRuntimeCarrierIds()
   const employees = listAgentEmployees()
     .filter(
       (employee) =>
@@ -235,7 +236,7 @@ export function getOwnerExecutionPreparation(rawSubject: unknown): OwnerExecutio
         modelId: employee.modelId,
         runtime: employee.runtime,
         permissionMode: (employee.permissionMode === 'auto' ? 'auto' : 'safe') as 'safe' | 'auto',
-        ...(employee.id === ownerBinding?.carrierId ? { isOwnerCarrier: true } : {}),
+        ...(ownerCarrierIds.has(employee.id) ? { isOwnerCarrier: true } : {}),
       }
     })
   const catalog = readCatalog(),
@@ -333,6 +334,9 @@ export function previewOwnerExecutionPreparation(
     input = parseOwnerExecutionInput(rawInput),
     records = history(subject.projectId)
   if (!input.roleAssignments) throw new Error('新Owner准备必须显式绑定每个稳定roleKey的执行员工')
+  if (input.executionKind === 'development' && !input.developmentScope?.verificationCommands?.length) {
+    throw new Error('Owner研发执行必须先声明白名单验证命令，不能在缺少正式验证安排时派工')
+  }
   if (
     (records.at(-1)?.revision ?? 0) !== input.expectedPreparationRevision ||
     (getPilotPolicy(subject.projectId)?.revision ?? null) !== input.expectedPolicyRevision

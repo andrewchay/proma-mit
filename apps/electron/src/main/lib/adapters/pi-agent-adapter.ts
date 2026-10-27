@@ -33,7 +33,8 @@ import { inspectImageWithVisionRelay, isVisionRelayConfigured, isVisionRelayElig
 import { isTransientNetworkError } from '../error-patterns'
 import { getAgentSessionMeta } from '../agent-session-manager'
 import { compactSessionNow, maybeAutoCompact, estimateOutgoingContextTokens } from '../agent-runtime/context-compaction'
-import { assertOwnerExecutionRequestsSettled } from '../project-owner-execution-request-exit'
+import { awaitOwnerExecutionRequestsSettled } from '../project-owner-execution-request-exit'
+import { isOwnerAutoAllowedWorkspaceWrite } from '../project-owner-execution-gates'
 
 export interface PiAgentQueryOptions extends AgentQueryInput {
   /** 仅用于保守的请求间/工具前软门禁；不是单次请求美元硬上限。 */
@@ -306,19 +307,25 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     }
     let customTools = createPiToolBridge({
       toolContext: guardControlledPiToolContext(sessionId, {
-        cwd, sessionId, permissionMode, ...toolContextOverrides,
+        cwd, sessionId, permissionMode, ...toolContextOverrides, ownerWorkspaceWrite: Boolean(ownerCommand),
       }),
       allowSubAgent: !controlled,
       canUseTool: controlled || canUseTool ? async (name, args, signal) => {
-        if (ownerCommand) assertOwnerExecutionRequestsSettled(sessionId)
+        if (ownerCommand) await awaitOwnerExecutionRequestsSettled(sessionId)
         // purpose感知：无Owner证据=原行为；有证据时仅知识工具可经fence（休眠能力）。
         const ownerApprovalCandidate = isOwnerWorkspaceFileActionCandidate(sessionId, name, args)
+        // 工作区内低风险新建免逐次审批；覆盖/敏感路径/越界仍走权限链路请用户裁决。
+        if (ownerApprovalCandidate && isOwnerAutoAllowedWorkspaceWrite(sessionId, name, args)) {
+          assertControlledPermissionChange(sessionId, actualProvider().permissionMode)
+          if (ownerCommand) await awaitOwnerExecutionRequestsSettled(sessionId)
+          return { allowed: true }
+        }
         if (!ownerApprovalCandidate) assertToolAllowedForSessionPurpose(sessionId, name, args)
         assertControlledPermissionChange(sessionId, actualProvider().permissionMode)
         const result = await canUseTool?.(name, args, signal)
         if (result?.allowed) assertToolAllowedForSessionPurpose(sessionId, name, args)
         assertControlledPermissionChange(sessionId, actualProvider().permissionMode)
-        if (ownerCommand) assertOwnerExecutionRequestsSettled(sessionId)
+        if (ownerCommand) await awaitOwnerExecutionRequestsSettled(sessionId)
         return result ?? { allowed: false, message: '未配置权限回调' }
       } : undefined,
       mcpTools,

@@ -20,7 +20,7 @@ const electronProbe = spawnSync(electronBinary, ['-e',
 const runners = [{ bin: nodeBinary, env: {} }, ...(electronProbe.status === 0 ? [{ bin: electronBinary, env: { ELECTRON_RUN_AS_NODE: '1' } }] : [])]
 buildSync({ entryPoints: [join(import.meta.dir, 'project-owner-native-recovery-child.ts')], outfile: childFile,
   bundle: true, platform: 'node', format: 'cjs', target: 'node24', absWorkingDir: process.cwd(),
-  external: ['better-sqlite3', 'electron'] })
+  external: ['better-sqlite3', 'electron', 'fsevents', 'playwright-core', 'chromium-bidi/lib/cjs/bidiMapper/BidiMapper', 'chromium-bidi/lib/cjs/cdp/CdpConnection'] })
 afterAll(() => { rmSync(stageRoot, { recursive: true, force: true }); for (const root of dataRoots) rmSync(root, { recursive: true, force: true }) })
 
 async function killAt(runner: typeof runners[number], runnerEnv: NodeJS.ProcessEnv, mode: string, marker: string): Promise<string> {

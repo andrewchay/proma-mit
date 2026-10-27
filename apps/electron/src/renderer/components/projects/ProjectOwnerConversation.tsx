@@ -36,7 +36,7 @@ export function ProjectOwnerConversation({ projectId, taskId }: { projectId: str
   const workspace = facts?.workspaces.find(item => item.id === setup.workspaceId)
   const workspaceBound = Boolean(workspace && facts?.bindings.some(item => item.workspaceId === workspace.id))
   const configured = Boolean(facts && ownerSetupBindingAvailable(facts) && !setup.dirty)
-  const busy = setup.loading || setup.saving || goal.saving
+  const busy = setup.loading || setup.saving || goal.saving || delegation.busy
   const goalReady = Boolean(goal.loaded && !goal.loading && goal.snapshot && !goal.dirty && !goal.conflict && !goal.requiresReview)
   const currentGoal = goal.snapshot
   const goalFormOpen = !goal.snapshot || setup.editingGoal || goal.dirty || goal.conflict || goal.requiresReview
@@ -44,8 +44,8 @@ export function ProjectOwnerConversation({ projectId, taskId }: { projectId: str
   const canConfirm = goalReady && !busy && !setup.needsRefresh && !!selectedModel && (setup.newWorkspace || !!workspace)
     && (!needsWorkspaceApproval || setup.authorizeWorkspace)
   const canSubmitGoal = !busy && !goal.loading && !goal.conflict && !goal.requiresReview && canSaveOwnerGoal(goal)
-  const showSetupSummary = !configured
-  const canAutoPrepare = goalReady && Boolean(facts) && !setup.needsRefresh && !setup.dirty
+  const showSetupSummary = !configured || setup.editingConfiguration
+  const canAutoPrepare = goalReady && Boolean(facts) && !setup.needsRefresh && !setup.dirty && !setup.editingConfiguration
     && !setup.newWorkspace && Boolean(selectedModel && workspace && workspaceBound)
   const autoPrepareKey = `${projectId}:${taskId ?? ''}:${goal.snapshot?.revision ?? 0}`
   useEffect(() => {
@@ -86,7 +86,7 @@ export function ProjectOwnerConversation({ projectId, taskId }: { projectId: str
       {goalReady && currentGoal && <OwnerManagementConversation projectId={projectId} taskId={taskId}
         currentFocus={<div className="mt-3 space-y-4">
           <section className="rounded-xl bg-primary/5 p-4" aria-label="当前项目目标">
-            <div className="flex items-start justify-between gap-3"><h4 className="text-sm font-semibold">项目目标</h4><button type="button" className="shrink-0 text-xs text-primary underline-offset-4 hover:underline" onClick={() => change({ editingGoal: true })}>调整目标</button></div>
+            <div className="flex items-start justify-between gap-3"><h4 className="text-sm font-semibold">项目目标</h4><div className="flex shrink-0 items-center gap-2"><OwnerModuleStatus tone="accent">已保存 · v{currentGoal.goal.goalVersion}</OwnerModuleStatus><button type="button" className="text-xs text-primary underline-offset-4 hover:underline" onClick={() => change({ editingGoal: true })}>调整目标</button></div></div>
             <p className="mt-2 whitespace-pre-wrap text-sm leading-6">{currentGoal.goal.objective}</p>
             {currentGoal.goal.constraints.length > 0 && <p className="mt-2 text-xs leading-5 text-muted-foreground"><span className="font-medium">约束：</span>{currentGoal.goal.constraints.join('；')}</p>}
             {currentGoal.goal.acceptanceCriteria.length > 0 && <p className="mt-2 text-xs leading-5 text-muted-foreground"><span className="font-medium">完成标准：</span>{currentGoal.goal.acceptanceCriteria.join('；')}</p>}
@@ -100,6 +100,10 @@ export function ProjectOwnerConversation({ projectId, taskId }: { projectId: str
           {plan.snapshot && <details className="rounded-xl bg-card p-3 shadow-sm sm:col-span-2"><summary className="cursor-pointer text-sm font-medium">方案记录 · {plan.snapshot.state === 'confirmed' ? '已确认' : plan.snapshot.state === 'stale' ? '需更新' : '待审阅'}</summary><div className="mt-2 space-y-2 text-xs leading-5 text-muted-foreground"><p>{plan.snapshot.proposal.summary}</p><p><span className="font-medium text-foreground">交付步骤：</span>{plan.snapshot.proposal.steps.map(step => step.title).join('、')}</p></div></details>}
           <div className="rounded-xl bg-card p-3 text-xs leading-5 text-muted-foreground shadow-sm sm:col-span-2">每轮交付、验收意见和后续修改记录会按时间保留在下方对话历史中。</div>
         </div>}>
+        {facts?.binding && <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-muted/40 px-4 py-3 text-xs">
+          <p>当前 Owner 模型：{facts.binding.modelId}</p>
+          <button type="button" className="text-primary underline underline-offset-4" disabled={busy} onClick={() => change({ editingConfiguration: true })}>更换 Owner 模型</button>
+        </div>}
         {showSetupSummary && <div className="space-y-3 rounded-2xl rounded-tl-sm bg-muted/60 p-4">
           {setup.error && <p role="alert" className="text-sm text-destructive">{setup.error}</p>}
           {setup.loading && <p role="status" className="text-sm text-muted-foreground">Owner正在检查项目资料与可用能力。</p>}
@@ -108,10 +112,12 @@ export function ProjectOwnerConversation({ projectId, taskId }: { projectId: str
           {setup.needsRefresh && <button type="button" className="text-sm text-primary underline underline-offset-4" disabled={busy} onClick={() => void loadSetup(subject)}>重新检查</button>}
           {selectedModel && (canAutoPrepare || setup.saving) && <p role="status" className="text-sm leading-6">Owner正在沿用项目已授权的资料范围完成本地准备，不会发送模型请求。</p>}
           {selectedModel && needsWorkspaceApproval && <><p className="text-sm leading-6">为了避免混用其他项目的文件，Owner会为本项目使用独立资料空间。请确认是否允许读取和保存本项目所需资料。</p><label className="flex items-start gap-2 rounded-lg bg-amber-500/10 p-3 text-xs leading-5"><input type="checkbox" className="mt-1" checked={setup.authorizeWorkspace} onChange={event => change({ authorizeWorkspace: event.target.checked })} />允许Owner为本项目建立并使用独立资料空间。业务执行仍须另行授权。</label><button type="button" className={actionClass} disabled={!canConfirm} onClick={() => void confirm(subject)}>确认资料访问并继续</button></>}
-          {selectedModel && !needsWorkspaceApproval && !canAutoPrepare && !setup.saving && <button type="button" className={actionClass} disabled={!canConfirm} onClick={() => void confirm(subject)}>继续本地准备</button>}
+          {selectedModel && !needsWorkspaceApproval && !canAutoPrepare && !setup.saving && <button type="button" className={actionClass} disabled={!canConfirm} onClick={() => void confirm(subject)}>{setup.editingConfiguration ? '保存 Owner 模型' : '继续本地准备'}</button>}
           {selectedModel && <p className="text-xs leading-5 text-muted-foreground">Owner会在已确认的项目资料和费用边界内规划；超出范围或缺少授权时，会在这里说明并征求你的决定。</p>}
         </div>}
-        {facts?.binding && <OwnerManagementDelegationCard projectId={projectId} taskId={taskId} />}
+        {facts?.binding && (setup.editingConfiguration || setup.dirty
+          ? <p role="status" className="text-xs text-muted-foreground">请先保存 Owner 模型，再核对项目预算；当前修改尚未生效。</p>
+          : <OwnerManagementDelegationCard projectId={projectId} taskId={taskId} />)}
         {goalReady && delegation.view?.state === 'none' && !facts?.binding && <p role="alert" className="rounded-xl bg-amber-500/10 px-4 py-3 text-sm leading-6">Owner提示需要恢复项目管理授权，但当前 Owner 运行配置尚未就绪，因此授权卡暂不可用。请先完成上方“本地准备”；准备完成后，项目总预算与管理范围卡会显示在这里。此提示不会发送模型请求。</p>}
       </OwnerManagementConversation>}
     </div>

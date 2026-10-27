@@ -1,9 +1,10 @@
 import { applyOwnerQualityDecision } from './project-owner-quality-actions'
+import { readOwnerClaimFacts, stripUnsupportedClaims } from './project-owner-claim-audit'
 import { createHash } from 'node:crypto'
 import { applyOwnerClarificationAnswers, type AnswerOwnerManagementQuestionRequest, type OwnerManagementQuestion, type ProjectOwnerGoalDraft, type OwnerManagementView } from '@gravitas/shared'
 import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt } from './project-owner-planning-run-service'
 import { readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
-import { appendOwnerManagementMessage, recordOwnerManagementAnswer, getOwnerManager, getOwnerManagementView } from './project-owner-management-store'
+import { appendOwnerManagementMessage, appendOwnerManagementTrace, recordOwnerManagementAnswer, getOwnerManager, getOwnerManagementView } from './project-owner-management-store'
 import { getProjectOwnerGoalDraft, saveProjectOwnerGoalDraft } from './project-owner-goal-service'
 import { assertLocalActorEnabled, getProjectOwnerPlanDraft } from './project-owner-plan-service'
 import { getOwnerManagementDelegation } from './project-owner-management-delegation'
@@ -66,6 +67,16 @@ export function projectOwnerManagementRunResult(projectId: string, executionId: 
   if (!outcome || !receipt || !manager || receipt.projectId !== projectId || receipt.executionId !== executionId || receipt.purpose !== 'owner_planning') throw new Error('Owner管理运行结论身份不一致')
   const snapshot = readOwnerPlanningSnapshot(receipt.planningTaskId)
   if (!snapshot) throw new Error('Owner问题缺少冻结来源')
+  if (outcome.employeeDecision) {
+    if (!snapshot.link.conversationMessageId || getProjectOwnerGoalDraft(projectId, snapshot.link.targetTaskId)?.revision !== snapshot.link.goalRevision) return
+    const interactions = require('./project-owner-employee-interactions') as typeof import('./project-owner-employee-interactions')
+    const current = interactions.getOwnerEmployeeInteraction(projectId, outcome.employeeDecision.interactionId)
+    if (!(current?.state === 'resolved' && current.decision?.sourceMessageId === receipt.id)) {
+      interactions.deliverOwnerEmployeeDecision({ projectId, decision: outcome.employeeDecision, sourceMessageId: receipt.id })
+    }
+    appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: 'reply', planningTaskId: receipt.planningTaskId, content: `${outcome.reply}\n决定已回传原员工请求，员工可继续工作。` })
+    return
+  }
   if (outcome.qualityDecision) {
     const action = applyOwnerQualityDecision(projectId, executionId)
     appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: 'reply', planningTaskId: receipt.planningTaskId, content: `${action.detail}\n判断依据：${action.decision.reason}` })
@@ -73,7 +84,16 @@ export function projectOwnerManagementRunResult(projectId: string, executionId: 
   }
   if (outcome.state === 'replied' && outcome.reply) {
     if (!snapshot.link.conversationMessageId || getProjectOwnerGoalDraft(projectId, snapshot.link.targetTaskId)?.revision !== snapshot.link.goalRevision) return
-    appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: outcome.changeProposal ? 'change_proposal' : 'reply', ...(outcome.changeProposal ? { changeId: receipt.id } : {}), planningTaskId: receipt.planningTaskId, content: outcome.reply })
+    if (!outcome.changeProposal && snapshot.context.conversation?.employeeInteractions?.length) {
+      const interactions = require('./project-owner-employee-interactions') as typeof import('./project-owner-employee-interactions')
+      interactions.markOwnerEmployeeDiscussion(projectId, snapshot.context.conversation.employeeInteractions)
+    }
+    // 模型可能声称“正在后台复查”，但本地没有排队任务或运行中执行；这类说法在写入前按事实剔除。
+    const claims = stripUnsupportedClaims(outcome.reply, readOwnerClaimFacts(projectId))
+    if (claims.removed.length > 0) {
+      appendOwnerManagementTrace({ eventId: `${eventId}:claim-trace`, projectId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), phase: 'owner_response', state: 'completed', createdAt: Date.now(), detailCode: 'claim_without_fact' })
+    }
+    appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: outcome.changeProposal ? 'change_proposal' : 'reply', ...(outcome.changeProposal ? { changeId: receipt.id } : {}), planningTaskId: receipt.planningTaskId, content: claims.content })
     return
   }
   if (outcome.state === 'needs_clarification' && outcome.clarification) {
@@ -97,8 +117,40 @@ export function projectOwnerManagementRunResult(projectId: string, executionId: 
         : `方案已准备好。${plan.proposal.summary}\n我正在为方案准备内部安排，不会提前启动员工。请审阅结果与完成标准；需要调整时直接告诉我，确认开始后我会负责执行。`
     appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: 'plan_proposal', content })
   } else {
-    appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: 'attention', content: '这次规划未得到可继续使用的结果。我已保留记录；核对来源、运行结果或费用后再决定下一步，不会自动重复调用。' })
+    const reason = safeFailureDetail(outcome.detail)
+    appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: 'attention', runEvidence: buildOwnerRunEvidence(receipt), content: `这次规划未得到可继续使用的结果。我已保留记录；${reason ? `失败原因：${reason}。` : ''}${ownerRunEvidenceSummary(receipt)}费用或运行状态未知时不会自动重复调用。` })
   }
+}
+
+/** 结构化证据：与文本摘要同源，供UI只读展开。 */
+export function buildOwnerRunEvidence(receipt: { usage: { inputTokens: number | null; outputTokens: number | null } | null; cost: { source: string; usd: number | null }; stopped: boolean }): import('@gravitas/shared').OwnerRunEvidence {
+  return {
+    inputTokens: typeof receipt.usage?.inputTokens === 'number' ? receipt.usage.inputTokens : null,
+    outputTokens: typeof receipt.usage?.outputTokens === 'number' ? receipt.usage.outputTokens : null,
+    costSource: receipt.cost.source === 'runtime_reported' ? 'runtime_reported' : 'unknown',
+    costUsd: receipt.cost.source === 'runtime_reported' && typeof receipt.cost.usd === 'number' ? receipt.cost.usd : null,
+    stopped: receipt.stopped, autoRetried: false,
+  }
+}
+
+/** 失败请求的证据摘要：只用本地回执，不推断账单，也不宣称已停止。 */
+export function ownerRunEvidenceSummary(receipt: { usage: { inputTokens: number | null; outputTokens: number | null } | null; cost: { source: string; usd: number | null }; stopped: boolean }): string {
+  const usage = receipt.usage
+  const tokens = usage && (typeof usage.inputTokens === 'number' || typeof usage.outputTokens === 'number')
+    ? `本轮用量：输入 ${usage.inputTokens ?? '未知'} / 输出 ${usage.outputTokens ?? '未知'} tokens；`
+    : ''
+  const cost = receipt.cost.source === 'runtime_reported' && typeof receipt.cost.usd === 'number'
+    ? `费用回执：${receipt.cost.usd} 美元（服务商报告）；`
+    : '费用回执：尚未取得可信成本，按未知保留预留；'
+  const stopped = receipt.stopped ? '该请求已被请求停止，但停止是否生效仍需原运行记录确认；' : ''
+  return `${tokens}${cost}${stopped}这次没有自动重试。`
+}
+
+function safeFailureDetail(detail: string): string {
+  return detail.replace(/Bearer\s+[^\s,;]+/gi, 'Bearer [已隐藏]')
+    .replace(/(api[_-]?key|authorization|access[_-]?token)\s*[:=]\s*[^,\s;]+/gi, '$1=[已隐藏]')
+    .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[已隐藏凭据]')
+    .replace(/[\r\n\t]+/g, ' ').slice(0, 300)
 }
 
 export function answerOwnerManagementQuestion(raw: unknown): ProjectOwnerGoalDraft {

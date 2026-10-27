@@ -1,4 +1,5 @@
 import type { OwnerExecutionAssignmentInput, ProjectOwnerGoalSubject } from '@gravitas/shared'
+import { getAgentWorkspace } from './agent-workspace-manager'
 import { getOwnerExecutionPreparation } from './project-owner-execution-preparation'
 import { getOwnerCarrierFacts, getOwnerRuntimeBinding, ownerCarrierBindingMatches } from './project-owner-runtime-binding'
 import { getProjectOwnerPlanDraft, getProjectOwnerPlanningContext } from './project-owner-plan-service'
@@ -25,6 +26,7 @@ export function getCurrentOwnerExecutionAssignmentContext(subject: ProjectOwnerG
     const capabilities = view.choices.workspaceCapabilities.find(item => item.workspaceId === workspace.id)
     return {
       ...workspace,
+      ...(getAgentWorkspace(workspace.id)?.rootPath ? { rootPath: getAgentWorkspace(workspace.id)!.rootPath } : {}),
       capabilities: [
         ...(capabilities?.mcpServers.map(server => `MCP:${server.name}:${server.type}`) ?? []),
         ...(capabilities?.skills.map(skill => `Skill:${skill.slug}:${skill.name}`) ?? []),

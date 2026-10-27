@@ -558,6 +558,12 @@ function migrate(database: SqliteCompat): void {
       id TEXT PRIMARY KEY, project_id TEXT NOT NULL, execution_id TEXT NOT NULL UNIQUE,
       payload TEXT NOT NULL, integrity_hash TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS project_owner_employee_interactions (
+      id TEXT NOT NULL, project_id TEXT NOT NULL, request_id TEXT NOT NULL,
+      revision INTEGER NOT NULL CHECK (revision > 0), payload TEXT NOT NULL, integrity_hash TEXT NOT NULL,
+      PRIMARY KEY (id, revision), UNIQUE (request_id, revision)
+    );
+    CREATE INDEX IF NOT EXISTS idx_owner_employee_interactions ON project_owner_employee_interactions(project_id, id, revision);
     CREATE TABLE IF NOT EXISTS project_owner_management_answers (
       question_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, request_id TEXT NOT NULL,
       payload TEXT NOT NULL, integrity_hash TEXT NOT NULL, UNIQUE(project_id, request_id)
@@ -1279,6 +1285,16 @@ function migrate(database: SqliteCompat): void {
       PRIMARY KEY (grant_id, created_at, action)
     )`)
   }
+  // 可重建的Owner项目状态投影：只保存状态向量的摘要，用于判断是否出现需要Owner判断的变化。
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_state_projections (
+    project_id TEXT PRIMARY KEY, state_hash TEXT NOT NULL, vector_json TEXT NOT NULL,
+    dirty_domains_json TEXT NOT NULL, last_reconciled_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+  )`)
+  // 管理循环失败退避持久化：重启后沿用次数与截止，避免"重启即清空"导致高频重试。
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_management_failures (
+    project_id TEXT PRIMARY KEY, failure_key TEXT NOT NULL, attempt_count INTEGER NOT NULL,
+    retry_until INTEGER NOT NULL, notified INTEGER NOT NULL DEFAULT 0, updated_at INTEGER NOT NULL
+  )`)
   database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_revalidations (
     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, task_id TEXT, revision INTEGER NOT NULL,
     request_id TEXT NOT NULL, payload TEXT NOT NULL, integrity_hash TEXT NOT NULL,

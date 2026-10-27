@@ -33,7 +33,7 @@ const rendererPlan = await import('../../renderer/atoms/project-owner-plan-atoms
 const rendererGoal = await import('../../renderer/atoms/project-owner-goal-atoms')
 const ipcHandlers = new Map<string, (event: unknown, request: unknown) => unknown>()
 registerProjectOwnerExecutionIpcHandlers({ handle: (channel, handler) => { ipcHandlers.set(channel, handler) } })
-interface Scenario { extraQualityCriteria?: boolean; omitQualityKind?: boolean; rework?: boolean; ownerDefect?: boolean; dependent?: boolean; hold?: boolean; maxRework?: number; legacy?: boolean; development?: boolean; validationFails?: boolean; durableStartIntent?: boolean }
+interface Scenario { extraQualityCriteria?: boolean; omitQualityKind?: boolean; rework?: boolean; ownerDefect?: boolean; dependent?: boolean; hold?: boolean; maxRework?: number; legacy?: boolean; development?: boolean; validationFails?: boolean; durableStartIntent?: boolean; emptyReview?: boolean }
 interface Trace { role: string; taskId: string; round: number; prompt: string }
 const scenarios = new Map<string, Scenario>(), traces = new Map<string, Trace[]>()
 const pending = new Map<string, { finish: () => void; executionId: string }>()
@@ -48,6 +48,7 @@ beforeAll(async () => {
       const development = (await import('./project-owner-employee-runtime')).readOwnerCommandFrozenSource(execution.ownerCommandId).source.executionKind === 'development'
       log.push({ role: command.role, taskId: execution.entityId, round: command.rework_ordinal, prompt: input.userMessage })
       const workspace = workspaces.getAgentWorkspace(store.getTask(execution.entityId)!.workspaceId!)!
+      if (development && command.role === 'executor' && command.rework_ordinal > 0) expect(readFileSync(join(workspaces.getAgentWorkspaceCwd(workspace,input.sessionId),'src/solution.cjs'),'utf8')).toContain('answer: 42')
       if (development && command.role === 'executor') writeFileSync(join(workspaces.getAgentWorkspaceCwd(workspace, input.sessionId), 'src/solution.cjs'), `module.exports = { answer: ${scenario.validationFails ? 0 : 42} }\n`)
       const transport = Object.assign(async () => new Response(JSON.stringify({ choices: [], usage: { prompt_tokens: 2, completion_tokens: 3 } }), { headers: { 'content-type': 'application/json' } }), { preconnect: () => {} }) as typeof globalThis.fetch
       const fetch = boundary.createControlledProviderFetch(input.sessionId, () => ({ runtime: 'ai-sdk', cwd: workspaces.getAgentWorkspaceCwd(workspace, input.sessionId), modelId: input.modelId!, permissionMode: 'safe' }), transport)
@@ -63,7 +64,7 @@ beforeAll(async () => {
           content = JSON.stringify({ schemaVersion: 2, artifactHash: artifact.contentSha256, verdict: change ? 'changes_requested' : 'approved', summary: change ? '缺少受众依据' : '范围清楚', criteria: [{ criterion: '明确目标范围与受众依据', status: change ? 'not_met' : 'met', evidence: change ? '未说明受众依据' : '有明确范围', quote: change ? null : artifact.content }], findings: change ? [{ severity: 'high', description: '未说明受众依据', requestedChange: '补充依据与适用范围' }] : [], blockerReason: null })
         }
       }
-      callbacks.onComplete([{ id: randomUUID(), role: 'assistant', content, createdAt: Date.now() }])
+      callbacks.onComplete(scenario.emptyReview && command.role === 'reviewer' ? [] : [{ id: randomUUID(), role: 'assistant', content, createdAt: Date.now() }])
       return
     }
     const current = source.resolveOwnerPlanningSession(input.sessionId)!, conversation = current.context.conversation!
@@ -122,7 +123,9 @@ async function until(predicate: () => boolean, projectId?: string) {
   const commands = projectId ? store.getProjectDb().prepare('SELECT role,state FROM project_owner_execution_commands WHERE project_id=? ORDER BY created_at').all(projectId) : []
   const actions = projectId ? actionRows(projectId).map(action => ({ taskId: action.taskId, state: action.state, detail: action.detail })) : []
   const schedule = projectId ? scheduler.getOwnerAutonomousScheduleStatus(projectId) : null
-  throw new Error(`等待Owner质量管理闭环超时：${JSON.stringify({ tasks: tasks.map(item => ({ id: item.id, status: item.status })), commands, actions, schedule })}`)
+  throw new Error(`等待Owner质量管理闭环超时：${JSON.stringify({ tasks: tasks.map(item => ({ id: item.id, status: item.status })), commands, actions, schedule,
+    management: projectId ? delegation.getOwnerManagementDelegation(projectId) : null,
+    failures: projectId ? store.listAgentExecutionsByProject(projectId).filter(item => item.status === 'failed').map(item => item.error) : [] })}`)
 }
 async function fixture(scenario: Scenario = {}) {
   const repo = scenario.development ? join(directory, `repo-${randomUUID()}`) : undefined
@@ -434,6 +437,15 @@ test('Given代码任务交付且白名单验证成功 WhenReviewer与Owner检查
     expect(reviews).toHaveLength(2)
     expect(reviews.every(item => item.verdict === 'approved' && item.artifactVerified && item.validationEvidenceVerified)).toBe(true)
     expect(reviews.every(item => item.validationEvidence?.length === 1 && item.validationEvidence[0]?.status === 'passed' && item.validationEvidence[0]?.outputTruncated === false)).toBe(true)
+    const validations = await import('./development-validation-service')
+    for (const review of reviews) {
+      const evidence = review.validationEvidence![0]!
+      const saved = validations.readDevelopmentValidationEvidence(review.taskId, review.executorExecutionId, evidence.validationId)
+      expect(saved.freshness).toBe('fresh')
+      if (!review.artifactHash) throw new Error('已批准评审缺少成果摘要')
+      expect(saved.result.snapshotContentHash).toBe(review.artifactHash)
+      expect(saved.result.rawOutputSha256).toEqual(evidence.rawOutputSha256)
+    }
     const actions = actionRows(f.project.id)
     expect(actions.map(item => item.state)).toEqual(['accepted', 'accepted'])
     expect(actions.every(item => item.decision.artifactHash === reviews.find(review => review.taskId === item.taskId)?.artifactHash)).toBe(true)
@@ -465,6 +477,9 @@ test('Given代码白名单验证失败且Reviewer仍声称通过 WhenOwner质量
     const validation = validations.listDevelopmentValidations(executor.source_task_id).find(item => item.executionId === executor.execution_id)
     expect(validation).toMatchObject({ status: 'failed', exitCode: 1 })
     expect((await import('./project-owner-technical-review')).listOwnerTechnicalReviewEvidence(f.project.id)).toHaveLength(0)
+    const messages = (await import('./project-owner-management-store')).getOwnerManagementView(f.project.id).messages
+    expect(messages.some(message => message.eventId.startsWith('owner-review-evidence-rejected:') && message.content.includes('没有可采信的评审结果'))).toBe(true)
+    expect(messages.some(message => message.kind === 'delivery')).toBe(false)
     expect(actionRows(f.project.id)).toHaveLength(0)
     expect(f.tasks().every(task => task.status === 'paused')).toBe(true)
     expect(traces.get(f.project.id)!.filter(item => item.role === 'owner_quality')).toHaveLength(0)
@@ -667,7 +682,8 @@ test('GivenTask更新后活动写入故障 When执行Owner验收 ThenSAVEPOINT�
 for (const compatibility of [
   { name: '缺kind', scenario: { omitQualityKind: true }, detail: 'Owner执行跟进只允许分析回应或必要协商' },
   { name: '附加已满足项目标准', scenario: { extraQualityCriteria: true }, detail: 'Owner质量决定与准确评审/成果不匹配' },
-]) test(`Given旧版本将${compatibility.name}质量决定拒绝 When本地重验完整原文 Then追加恢复记录并保持原失败和调用次数`, async () => {
+  { name: '代码引用容器误判', scenario: { development: true }, detail: 'Owner质量决定未按准确标准逐项判断或引用不符' },
+] as Array<{ name: string; scenario: Scenario; detail: string }>) test(`Given旧版本将${compatibility.name}质量决定拒绝 When本地重验完整原文 Then追加恢复记录并保持原失败和调用次数`, async () => {
   const f = await fixture(compatibility.scenario)
   try {
     await until(() => f.tasks().every(task => task.status === 'completed'), f.project.id)
@@ -681,7 +697,7 @@ for (const compatibility of [
     expect(runs.recoverLegacyOwnerConversationReply(outcome.executionId)).toMatchObject({ state: 'replied', qualityDecision: { verdict: 'accept' } })
     const originalText = runs.getOwnerPlanningRunReceipt(outcome.receiptId)!.responseText
     if (compatibility.scenario.omitQualityKind) expect(originalText).not.toContain('"kind"')
-    else expect(JSON.parse(originalText).decision.criteria).toHaveLength(2)
+    else expect(JSON.parse(originalText).decision.criteria).toHaveLength(compatibility.scenario.extraQualityCriteria ? 2 : 1)
     expect(runs.getOwnerPlanningRunOutcome(outcome.executionId)?.qualityDecision?.criteria).toHaveLength(1)
     expect(store.getProjectDb().prepare("SELECT json_extract(payload, '$.state') AS state FROM project_owner_planning_run_outcomes WHERE execution_id=?").get(outcome.executionId)).toEqual({ state: 'failed' })
     expect(actions.applyOwnerQualityDecision(f.project.id, outcome.executionId)).toEqual(action)
@@ -689,3 +705,65 @@ for (const compatibility of [
     expect(traces.get(f.project.id)).toHaveLength(before)
   } finally { f.stop() }
 }, 15000)
+
+
+test('Given独立评审回调返回空文本 When收尾 Then持久说明无有效评审且不验收交付', async () => {
+  const f = await fixture({ emptyReview: true })
+  try {
+    const records = await import('./project-owner-management-store')
+    await until(() => records.getOwnerManagementView(f.project.id).messages.some(message => message.eventId.startsWith('owner-review-evidence-rejected:')), f.project.id)
+    expect((await import('./project-owner-technical-review')).listOwnerTechnicalReviewEvidence(f.project.id)).toHaveLength(0)
+    expect(actionRows(f.project.id)).toHaveLength(0)
+    expect(records.getOwnerManagementView(f.project.id).messages.some(message => message.kind === 'delivery')).toBe(false)
+    expect(store.listAgentExecutionsByProject(f.project.id).some(execution => execution.ownerCommandId && execution.status === 'completed')).toBe(true)
+  } finally { f.stop() }
+}, 15000)
+
+
+test('Given已恢复的accept尚未执行而验证随后过期 When首次应用 Then历史仍可读但动作阻断且任务不完成', async () => {
+  const f = await fixture({ hold: true, development: true })
+  try {
+    await until(() => pending.has(f.project.id), f.project.id); f.stop()
+    const held = pending.get(f.project.id)!
+    held.finish()
+    const outcome = runs.getOwnerPlanningRunOutcome(held.executionId)!
+    expect(outcome.qualityDecision?.verdict).toBe('accept')
+    const failed = { executionId: outcome.executionId, receiptId: outcome.receiptId, state: 'failed', detail: 'Owner质量决定未按准确标准逐项判断或引用不符' }
+    const integrityHash = createHash('sha256').update(JSON.stringify(failed)).digest('hex')
+    store.getProjectDb().prepare('UPDATE project_owner_planning_run_outcomes SET payload=? WHERE execution_id=?').run(JSON.stringify({ ...failed, integrityHash }), outcome.executionId)
+    expect(runs.recoverLegacyOwnerConversationReply(outcome.executionId)?.qualityDecision?.verdict).toBe('accept')
+    const later = Date.now() + 31 * 60_000, clock = spyOn(Date, 'now').mockReturnValue(later)
+    try {
+      expect(runs.getOwnerPlanningRunOutcome(outcome.executionId)?.qualityDecision?.verdict).toBe('accept')
+      const action = actions.applyOwnerQualityDecision(f.project.id, outcome.executionId)
+      expect(action.state).toBe('blocked')
+      expect(action.detail).toContain('不能在独立检查未通过')
+      expect(f.tasks()[0]!.status).toBe('paused')
+    } finally { clock.mockRestore() }
+  } finally { f.stop() }
+}, 15000)
+
+
+test('Given研发首轮完整冻结源码与Owner返工决定 When启动返工 Then使用新会话继承源码并保留原会话证据', async () => {
+  const f = await fixture({ development: true, rework: true, ownerDefect: true })
+  try {
+    await until(() => f.tasks().every(task => task.status === 'completed'), f.project.id)
+    const records=await import('./project-owner-management-store')
+    await until(()=>records.getOwnerManagementView(f.project.id).messages.some(item=>item.kind==='delivery'),f.project.id)
+    const delivered=records.getOwnerManagementView(f.project.id).messages.find(item=>item.kind==='delivery')!.delivery!
+    expect(delivered.items[0]!.artifactHash).toBe(actionRows(f.project.id).at(-1)!.artifactHash)
+    const damaged=structuredClone(delivered), serialized=JSON.parse(damaged.items[0]!.content)
+    serialized.files[0].newContent+='tampered'
+    damaged.items[0]!.content=JSON.stringify(serialized)
+    expect(()=>records.appendOwnerManagementMessage({projectId:f.project.id,eventId:randomUUID(),role:'assistant',kind:'delivery',content:'invalid',delivery:damaged})).toThrow('Owner成果条目无效')
+    const executions=store.listAgentExecutionsByProject(f.project.id).filter(item=>item.ownerCommandId)
+    const executors=executions.filter(item=>store.getProjectDb().prepare("SELECT 1 FROM project_owner_execution_commands WHERE id=? AND role='executor'").get(item.ownerCommandId!)).sort((left,right)=>left.startedAt-right.startedAt)
+    expect(executors).toHaveLength(2)
+    expect(new Set(executors.map(item=>item.sessionId)).size).toBe(2)
+    expect(actionRows(f.project.id).map(item=>item.state)).toEqual(['rework_authorized','accepted'])
+    const first=executors[0]!, workspace=workspaces.getAgentWorkspace(store.getTask(first.entityId)!.workspaceId!)!
+    const content=readFileSync(join(workspaces.getAgentWorkspaceCwd(workspace,first.sessionId),'src/solution.cjs'),'utf8')
+    expect(content).toContain('answer: 42')
+    expect(executors[1]!.prompt).toContain(first.id)
+  } finally { f.stop() }
+},30000)

@@ -50,11 +50,11 @@ test('Given DeepSeek Flash OpenAI兼容绑定 When新建准备 Then冻结v4 JSON
   expect(source.resolveOwnerPlanningTask(link.planningTaskId)?.link).toEqual(link)
   expect(service.prepareOwnerPlanning(f.project.id, input)).toEqual(link)
 })
-test('Given 智谱GLM-5.3-FLASH绑定 When 准备Owner规划 Then 冻结v3和low推理强度', () => {
+test('Given 智谱GLM-5.3-FLASH绑定 When 准备Owner规划 Then 冻结v6、low推理强度与32768输出上限', () => {
   const f = fixture('zhipu', 'glm-5.3-flash')
   service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding)
   const link = service.prepareOwnerPlanning(f.project.id, request(f.project.id))
-  expect(link).toMatchObject({ protocolVersion: '5', reasoningEffort: 'low', maxOutputTokens: 8192 })
+  expect(link).toMatchObject({ protocolVersion: '6', reasoningEffort: 'low', maxOutputTokens: 32768 })
   expect(source.readOwnerPlanningSnapshot(link.planningTaskId)?.link).toEqual(link)
   expect(source.resolveOwnerPlanningTask(link.planningTaskId)?.binding.modelId).toBe('glm-5.3-flash')
 })

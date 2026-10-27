@@ -15,6 +15,8 @@ import { publishOwnerManagementCompletion } from './project-owner-management-del
 import { onOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
 import { listOwnerExecutionAssignmentRuns } from './project-owner-execution-assignment-service'
 import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt, recoverLegacyOwnerConversationReply, recoverLegacyOwnerAssignmentProposal } from './project-owner-planning-run-service'
+import { ensureOwnerDefaultTeam } from './project-owner-default-team'
+import { getOwnerTeamWorkspaceProposal } from './project-owner-team-workspace-access'
 
 /** 即使当前没有可继续处理的Run，也要把失效授权反馈写回Owner对话。 */
 function reportStaleManagementDelegations(projectId: string): void {
@@ -148,11 +150,22 @@ export function reconcileOwnerManagement(projectId: string): void {
   // 提交前收到唤醒不能消费未提交事件；启动扫描会补偿进程关闭时未发出的唤醒。
   if (db.isTransactionActive() || !store.getProject(projectId) || getOwnerManager(projectId)?.status !== 'active') return
   reportStaleManagementDelegations(projectId)
+  try {
+    const interactions = require('./project-owner-employee-interactions') as typeof import('./project-owner-employee-interactions')
+    interactions.expireOwnerEmployeeInteractions(projectId)
+  } catch (cause) { console.warn('[Owner管理] 员工等待到期核对失败', projectId, cause) }
   // 同轮先投影可信回调，再准备用户积压消息，避免后续请求漏掉刚到达的Owner回应。
   const isResult = (event: OwnerManagementEvent) => event.kind === 'planning_result' || event.kind === 'assignment_result'
   const events = listPendingOwnerManagementEvents(projectId).sort((a, b) => Number(isResult(b)) - Number(isResult(a)))
   for (const event of events) {
     try {
+      // Promise投递不可回滚：先在事务外完成权威决定回流，事务内仅幂等补写和消费事件。
+      if (event.kind === 'planning_result' && event.sourceId) {
+        const runs = require('./project-owner-planning-run-service') as typeof import('./project-owner-planning-run-service')
+        if (runs.getOwnerPlanningRunOutcome(event.sourceId)?.employeeDecision) {
+          projectOwnerManagementRunResult(projectId, event.sourceId, event.id)
+        }
+      }
       db.transaction(() => {
         if (getOwnerManager(projectId)?.status !== 'active') return
         // 同库其他消费者已完成时，不重复发消息或准备。
@@ -178,6 +191,7 @@ export function reconcileOwnerManagement(projectId: string): void {
     if (taskId === null || !hasUnstartedOwnerConversation(projectId, taskId)) continue
     preparePendingOwnerConversation(projectId, taskId)
   }
+  recoverMissingOwnerDefaultTeams(projectId)
   recoverMissingProposedPlanAssignment(projectId)
   recoverProtocolRejectedOwnerAssignments(projectId)
   if (getOwnerManager(projectId)?.status === 'active') {
@@ -186,12 +200,30 @@ export function reconcileOwnerManagement(projectId: string): void {
   }
 }
 
+/** 旧Owner记录挡住组队时，启动后在原有效授权内补齐；只有本次新建团队才续接安排。 */
+function recoverMissingOwnerDefaultTeams(projectId: string): void {
+  const subjects = store.getProjectDb().prepare('SELECT DISTINCT subject_key FROM project_owner_revisions WHERE project_id=?').all(projectId) as { subject_key: string }[]
+  for (const { subject_key: key } of subjects) {
+    const taskId = key === 'project' ? undefined : key.startsWith('task:') ? key.slice(5) : null
+    if (taskId === null) continue
+    const plan = getProjectOwnerPlanDraft(projectId, taskId), view = getOwnerManagementDelegation(projectId, taskId)
+    if (plan?.state !== 'confirmed' || view.state !== 'active' || !view.delegation
+      || hasActiveOwnerManagementRequest(view.delegation.id) || getOwnerTeamWorkspaceProposal(projectId, taskId)) continue
+    const binding = getOwnerRuntimeBinding(projectId)
+    if (!binding) continue
+    store.getProjectDb().transaction(() => {
+      if (!ensureOwnerDefaultTeam(projectId, binding, plan.proposal.steps.map(step => step.roleKey))) return
+      prepareOwnerManagementAssignment({ id: `default-team-recovery:${projectId}:${taskId ?? 'project'}:${plan.revision}:${binding.revision}`, projectId, ...(taskId ? { taskId } : {}), kind: 'plan_confirmed', sourceRevision: plan.revision, createdAt: Date.now(), consumedAt: null })
+    })()
+  }
+}
+
 /** 旧版解析器误拒绝的完整普通回应可从原文本地恢复，再由Owner接着履行已确认计划。 */
 function recoverLegacyOwnerConversationReplies(projectId: string): void {
   const executions = store.getProjectDb().prepare(`SELECT o.execution_id FROM project_owner_planning_run_outcomes o
     JOIN project_owner_planning_run_receipts r ON r.id = o.receipt_id
     WHERE json_extract(r.payload, '$.projectId') = ? AND json_extract(r.payload, '$.purpose') = 'owner_planning'
-      AND json_extract(o.payload, '$.state') = 'failed' AND json_extract(o.payload, '$.detail') IN ('Owner规划响应包含未知字段', 'Owner执行跟进只允许分析回应或必要协商', 'Owner质量决定与准确评审/成果不匹配')
+      AND json_extract(o.payload, '$.state') = 'failed' AND json_extract(o.payload, '$.detail') IN ('Owner规划响应包含未知字段', 'Owner执行跟进只允许分析回应或必要协商', 'Owner质量决定与准确评审/成果不匹配', 'Owner质量决定未按准确标准逐项判断或引用不符')
     ORDER BY r.rowid`).all(projectId) as { execution_id: string }[]
   for (const { execution_id: executionId } of executions) {
     try {
@@ -272,10 +304,43 @@ function recoverMissingProposedPlanAssignment(projectId: string): void {
 export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementChanged) => void): () => void {
   let stopped = false
   const inFlight = new Set<string>(), pending = new Set<string>()
+  /**
+   * 失败退避：对账失败多为"来源/回执不匹配"这类确定性错误，立即重试只会空转。
+   * 次数与截止持久化到 SQLite，重启后继续退避；同一错误第 3 次起只提示一次。
+   */
+  const failures = require('./project-owner-management-failures') as typeof import('./project-owner-management-failures')
+  const noteBlocked = (projectId: string, key: string) => {
+    try {
+      appendOwnerManagementMessage({
+        projectId,
+        eventId: `owner-loop-blocked:${projectId}:${key.slice(0, 24)}`,
+        role: 'assistant',
+        kind: 'attention',
+        content: '我暂停了这个项目的自动推进：待处理记录的来源或回执与当前版本不一致，反复重试也不会自行恢复。原始记录都保留，没有删除也没有伪造用量；请在这里重新说明需求，或新建项目从当前版本重新开始。',
+      })
+    } catch { /* 提示失败不影响退避本身 */ }
+  }
   const run = (projectId: string): void => {
     if (stopped) return
-    try { scanOwnerExecutionObservations(projectId); reconcileOwnerManagement(projectId) }
-    catch (cause) { console.warn('[Owner管理] 对账失败，保留待处理事件', projectId, cause); return }
+    const blocked = failures.readOwnerManagementFailure(projectId)
+    if (blocked && blocked.retryUntil > Date.now()) return
+    try {
+      // 先记录状态投影：只用于观测“哪些域发生了变化”，阶段C才据此决定是否调用模型。
+      // 没有Owner管理者的项目不建立投影，避免为未启用管理的项目留下痕迹。
+      if (getOwnerManager(projectId)?.status === 'active') {
+        ;(require('./project-owner-state-projection') as typeof import('./project-owner-state-projection')).reconcileOwnerStateProjection(projectId)
+      }
+      ;(require('./project-owner-employee-interactions') as typeof import('./project-owner-employee-interactions')).reconcileLostOwnerEmployeeInteractions(projectId)
+      scanOwnerExecutionObservations(projectId)
+      reconcileOwnerManagement(projectId)
+      failures.clearOwnerManagementFailure(projectId)
+    } catch (cause) {
+      const key = cause instanceof Error ? cause.message : String(cause)
+      const failure = failures.recordOwnerManagementFailure(projectId, key)
+      if (failure.attemptCount >= 3 && failures.markOwnerManagementFailureNotified(projectId, key)) noteBlocked(projectId, key)
+      console.warn('[Owner管理] 对账失败，保留待处理事件', projectId, `第${failure.attemptCount}次`, cause)
+      return
+    }
     if (inFlight.has(projectId)) { pending.add(projectId); return }
     inFlight.add(projectId)
     void (async () => {
@@ -296,7 +361,7 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
         const conversations = new Set<string>()
         for (const link of links) {
           if (stopped) break
-          const subject = JSON.parse(link.payload) as { targetTaskId?: string; conversationMessageId?: string; purpose?: string }
+          const subject = JSON.parse(link.payload) as { targetTaskId?: string; conversationMessageId?: string; purpose?: string; requestId?: string; goalRevision?: number }
           const subjectKey = subject.targetTaskId ?? 'project'
           if (subject.conversationMessageId) {
             if (conversations.has(subjectKey)) continue
@@ -308,7 +373,12 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
           if (subject.purpose === 'owner_planning' && !subject.conversationMessageId) {
             // 一旦主体已有对话消息链接，旧版初始规划不能在当前消息之后再单独运行，
             // 否则会与用户刚恢复的对话请求重复消耗预算并产生竞争结果。
-            if (conversationSubjects.has(subjectKey)) continue
+            // 同版本答复不会产生goal_saved；其已核验的answer_saved准备必须能接续旧对话。
+            // 这里只解除重复规划过滤，来源、额度和请求准入仍由启动路径完整重验。
+            const answerContinuation = subject.requestId?.startsWith('management:') && store.getProjectDb().prepare(
+              "SELECT 1 FROM project_owner_management_events WHERE project_id = ? AND id = ? AND json_extract(payload, '$.kind') = 'answer_saved' AND json_extract(payload, '$.taskId') IS ? AND json_extract(payload, '$.sourceRevision') = ? AND consumed_at IS NOT NULL",
+            ).get(projectId, subject.requestId.slice('management:'.length), subject.targetTaskId ?? null, subject.goalRevision ?? null)
+            if (conversationSubjects.has(subjectKey) && !answerContinuation) continue
             const plan = getProjectOwnerPlanDraft(projectId, subject.targetTaskId)
             if (plan && ['proposed', 'confirmed'].includes(plan.state)) continue
           }

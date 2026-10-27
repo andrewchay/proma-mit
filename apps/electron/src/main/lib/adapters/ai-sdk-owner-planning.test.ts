@@ -18,6 +18,8 @@ let block = false
 const source = { binding: { modelId: 'bound-model', runtime: 'ai-sdk', workspaceId: 'ws', channelId: 'channel' }, request: { systemPrompt: 'authority-system', userPrompt: 'authority-user' }, link: { maxOutputTokens: 8192 }, sessionId: 'owner' }
 mock.module('electron', () => buildElectronMock())
 mock.module('../project-owner-planning-source', () => ({ resolveOwnerPlanningSession: (id: string) => id === 'owner' ? source : null }))
+// 本文件只验证Owner管理回合，不加载员工Reviewer的完整业务依赖。
+mock.module('../project-owner-reviewer-protocol-repair', () => ({ isOwnerReviewerProtocolRepairSession: () => false, ownerReviewerProtocolCorrection: () => null }))
 mock.module('../controlled-provider-boundary', () => ({ isControlledProviderSession: () => true, createControlledProviderFetch: () => globalThis.fetch, assertControlledPermissionChange: () => {} }))
 mock.module('../channel-manager', () => ({ getChannelById: () => ({ provider: 'openai', baseUrl: 'https://example.invalid/v1' }), decryptApiKey: () => 'fake' }))
 mock.module('../agent-workspace-manager', () => ({ getAgentWorkspace: () => ({}), getAgentWorkspaceCwd: () => dir, getWorkspaceSkills: () => { enriched++; return [] } }))

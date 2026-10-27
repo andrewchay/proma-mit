@@ -1,5 +1,6 @@
 import { assertOwnerReviewerTextDelivery } from './project-owner-text-delivery'
 import { isOwnerDevelopmentValidationArtifact, ownerDevelopmentArtifactFromPrompt } from './project-owner-development-artifact'
+import { isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
 import type { OwnerDevelopmentValidationArtifact } from './project-owner-development-artifact'
 import type { OwnerDevelopmentDeliveryArtifact } from '@gravitas/shared'
 import { ownerDevelopmentValidationId } from './development-validation-attempt'
@@ -59,9 +60,10 @@ export function assertOwnerDevelopmentValidationForVerdict(
   evidence: OwnerDevelopmentValidationArtifact[],
 ): void {
   if (verdict === 'approved' && evidence.some(item => item.attemptState !== 'completed' || item.freshness !== 'fresh'
+    || isOwnerValidationEvidenceExpired(item)
     || item.status !== 'passed' || item.exitCode !== 0 || item.timedOut !== false || item.outputTruncated !== false
     || !item.rawOutputSha256 || !Number.isSafeInteger(item.rawOutputByteLength))) {
-    throw new Error('Owner代码验证存在失败、截断或未知证据，Reviewer不能批准')
+    throw new Error('Owner代码验证存在失败、截断、过期或未知证据，Reviewer不能批准')
   }
 }
 

@@ -29,7 +29,10 @@ export interface OwnerManagementMessage {
   conversationId: string
   eventId: string
   role: 'user' | 'assistant'
-  kind: 'goal' | 'configuration_required' | 'planning_confirmation' | 'attention' | 'clarification' | 'answer' | 'plan_proposal' | 'management_progress' | 'execution_arranged' | 'conversation' | 'reply' | 'change_proposal' | 'change_decision' | 'execution_observation' | 'delivery'
+  kind: 'goal' | 'configuration_required' | 'planning_confirmation' | 'attention' | 'clarification' | 'answer' | 'plan_proposal' | 'management_progress' | 'execution_arranged' | 'conversation' | 'reply' | 'change_proposal' | 'change_decision' | 'execution_observation' | 'employee_interaction' | 'delivery'
+  employeeInteraction?: import('./project-owner-employee-interaction').OwnerEmployeeInteraction
+  /** 失败请求的结构化证据；只来自本地回执，不含账单确认。 */
+  runEvidence?: OwnerRunEvidence
   executionObservation?: OwnerExecutionObservation
   delivery?: OwnerManagementDelivery
   deliveryReference?: OwnerManagementDeliveryReference
@@ -43,6 +46,15 @@ export interface OwnerManagementMessage {
   teamWorkspaceProposal?: OwnerTeamWorkspaceProposal
   teamWorkspaceApproval?: { sourceMessageId: string; workspaceId: string; scopeFingerprint: string }
   createdAt: number
+}
+
+export interface OwnerRunEvidence {
+  inputTokens: number | null
+  outputTokens: number | null
+  costSource: 'runtime_reported' | 'unknown'
+  costUsd: number | null
+  stopped: boolean
+  autoRetried: false
 }
 
 /** Owner提出的项目资料范围建议；只有用户确认后才会绑定工作区。 */
@@ -81,7 +93,7 @@ export interface OwnerManagementDeliveryItem {
 
 export type OwnerManagementTracePhase = 'assignment_preparation' | 'assignment_run' | 'execution_start' | 'executor' | 'reviewer' | 'owner_quality' | 'owner_response'
 export type OwnerManagementTraceState = 'started' | 'queued' | 'completed' | 'failed' | 'blocked' | 'waiting' | 'stalled' | 'expired'
-export type OwnerManagementTraceDetailCode = 'team_check' | 'provider_pending' | 'result_ready' | 'start_verified' | 'no_update' | 'grant_expired' | 'decision_required' | 'authorization_changed'
+export type OwnerManagementTraceDetailCode = 'team_check' | 'provider_pending' | 'result_ready' | 'start_verified' | 'no_update' | 'grant_expired' | 'decision_required' | 'authorization_changed' | 'claim_without_fact'
 
 /** 本地诊断白名单；eventId 对外呈现为单向摘要，禁止附带Prompt、模型回复、思维链、凭证或任意正文。 */
 export interface OwnerManagementTraceEntry {
@@ -98,6 +110,11 @@ export interface OwnerManagementView {
   manager: ProjectOwnerManager | null
   messages: OwnerManagementMessage[]
   pendingEvents: number
+  /** 仅持久审批账本中仍绑定运行中Owner执行的请求身份；参数只从实时权限队列读取。 */
+  actionRequests?: Array<{ requestId: string; sessionId: string; taskId: string }>
+  employeeInteractions?: import('./project-owner-employee-interaction').OwnerEmployeeInteraction[]
+  /** 可重建状态投影摘要；只读展示，未出现待处理变化时不代表已调用模型。 */
+  stateProjection?: { stateHash: string; dirtyDomains: string[]; lastReconciledAt: number }
   questions: OwnerManagementQuestion[]
   changes?: OwnerConversationChangeView[]
   trace?: OwnerManagementTraceEntry[]
@@ -157,6 +174,8 @@ export interface OwnerManagementApi {
   onOwnerManagementChanged: (callback: (change: { projectId: string; messageId?: string }) => void) => () => void
   answerOwnerManagementQuestion: (request: AnswerOwnerManagementQuestionRequest) => Promise<ProjectOwnerGoalResult<ProjectOwnerGoalDraft>>
   getOwnerManagement: (request: { projectId: string }) => Promise<ProjectOwnerGoalResult<OwnerManagementView>>
+  /** 仅在已确认方案与有效授权下重排一次；请求ID保证幂等。 */
+  retakeOwnerAssignment: (request: { projectId: string; taskId?: string; requestId: string }) => Promise<ProjectOwnerGoalResult<{ enqueued: boolean }>>
   confirmOwnerTeamWorkspaceAccess: (request: ConfirmOwnerTeamWorkspaceAccessRequest) => Promise<ProjectOwnerGoalResult<void>>
   /** 仅暂停/恢复管理循环，不代表撤销业务授权或停止已启动员工。 */
   setOwnerManagementStatus: (request: { projectId: string; expectedRevision: number; status: 'active' | 'paused' }) => Promise<ProjectOwnerGoalResult<ProjectOwnerManager>>
@@ -228,7 +247,8 @@ export interface OwnerManagementDelegationPreview extends OwnerManagementDelegat
   workspaceName: string
   priceEvidenceId: string
   perRequestCeilingMicros: number
-  maxOutputTokens: 8192
+  /** 兼容旧授权记录（8192）与 GLM 长推理协议（32768）。 */
+  maxOutputTokens: 8192 | 32768
 }
 
 /** 后台从准确Owner命令读取；回报与技术评审是分析资料，不是成果已验证的证明。 */
@@ -251,6 +271,8 @@ export interface OwnerExecutionObservation {
   error: string
   actualCostMicros: number | null
   reservedCostMicros: number
+  /** 该命令实际发出的模型请求数；为 0 表示失败发生在发送之前，没有产生模型费用。 */
+  requestsSent?: number
   review?: { verdict: string; summary: string; findings: string[] }
 }
 export interface OwnerManagementDelegation extends OwnerManagementDelegationPreview {
@@ -279,4 +301,6 @@ export interface OwnerManagementDelegationView {
   reservedCostMicros: number
   detail: string
   attentionCheck?: OwnerManagementAttentionCheck
+  /** Owner模型开销占项目总预算的占比上限用量；只读展示，不代表账单。 */
+  ownerModelBudget?: { limitMicros: number; usedMicros: number; settledMicros: number; inFlightMicros: number; remainingMicros: number; ratio: number }
 }

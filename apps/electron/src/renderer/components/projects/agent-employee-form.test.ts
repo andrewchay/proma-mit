@@ -17,8 +17,8 @@ test('缺项、停用模型、失效工作区、未知权限都有明确反馈',
 test('旧普通员工不强加新模型/工作区要求', () => {
   expect(getEmployeeSaveIssues({ ...form, executionProfile: 'general', modelId: '', workspaceIds: [] }, channels, workspaces)).toEqual([])
 })
-test('20份模板保留完整规则，只预填安全岗位、不覆盖真实绑定', () => {
-  expect(templates).toHaveLength(20)
+test('21份模板保留完整规则，只预填安全岗位、不覆盖真实绑定', () => {
+  expect(templates).toHaveLength(21)
   for (const template of templates) {
     const changes = employeeTemplateChanges(template)
     expect(changes).toMatchObject({ executionProfile: 'controlled', permissionMode: 'safe', workflowId: '', roleTemplateId: template.id })
