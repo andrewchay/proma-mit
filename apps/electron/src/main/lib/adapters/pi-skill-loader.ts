@@ -13,6 +13,8 @@
 import { readFileSync, lstatSync, realpathSync } from 'node:fs'
 import { relative, resolve, dirname, basename } from 'node:path'
 import type { ResourceLoader, Skill } from '@earendil-works/pi-coding-agent'
+import { composeOdDesignContext, parseOdRequirements, resolveDesignCraftDir } from '../design-context'
+import { getWorkspaceSkillsDir, getDefaultSkillsDir } from '../config-paths'
 
 /** 用户在 prompt 中显式请求 Skill 的命令模式：/skill:xxx */
 const SKILL_COMMAND_PATTERN = /\/skill:([A-Za-z0-9][A-Za-z0-9._-]*)/g
@@ -136,10 +138,26 @@ export function buildSkillLookup(skills: Skill[]): Map<string, Skill> {
 }
 
 /** 读取 SKILL.md 全文并包成 XML 块（供按需注入 prompt） */
-export function formatSkillForPrompt(skill: Skill): string | undefined {
+export function formatSkillForPrompt(skill: Skill, opts?: { workspaceSlug?: string; cwd?: string }): string | undefined {
   try {
-    const body = stripSkillFrontmatter(readFileSync(skill.filePath, 'utf-8')).trim()
-    return `<skill name="${escapeXmlAttribute(skill.name)}" location="${escapeXmlAttribute(skill.filePath)}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`
+    const raw = readFileSync(skill.filePath, 'utf-8')
+    const body = stripSkillFrontmatter(raw).trim()
+
+    // OpenDesign 语义：craft/design-system 上下文注入在 skill 正文之上。
+    // 组装失败静默降级，不阻塞正文展开。
+    let odContext = ''
+    try {
+      const requirements = parseOdRequirements(raw)
+      odContext = composeOdDesignContext({
+        requirements,
+        craftDir: opts?.workspaceSlug
+          ? resolveDesignCraftDir({ workspaceSlug: opts.workspaceSlug, getWorkspaceSkillsDir, getDefaultSkillsDir })
+          : resolveDesignCraftDir({ getDefaultSkillsDir }),
+        cwd: opts?.cwd,
+      })
+    } catch { /* 忽略 */ }
+
+    return `<skill name="${escapeXmlAttribute(skill.name)}" location="${escapeXmlAttribute(skill.filePath)}">\nReferences are relative to ${skill.baseDir}.\n\n${odContext ? odContext + '\n\n' : ''}${body}\n</skill>`
   } catch (error) {
     console.warn(`[Pi SDK] Skill 展开失败: ${skill.filePath}`, error)
     return undefined
@@ -156,6 +174,7 @@ export async function preparePromptWithPromaSkills(
   resourceLoader: ResourceLoader,
   prompt: string,
   explicitSkillNames?: string[],
+  odContext?: { workspaceSlug?: string; cwd?: string },
 ): Promise<string> {
   await resourceLoader.reload()
 
@@ -169,7 +188,7 @@ export async function preparePromptWithPromaSkills(
   for (const requestedName of requestedNames) {
     const skill = skillLookup.get(requestedName)
     if (!skill || injectedSkillNames.has(skill.name)) continue
-    const block = formatSkillForPrompt(skill)
+    const block = formatSkillForPrompt(skill, odContext)
     if (!block) continue
     injectedSkillNames.add(skill.name)
     blocks.push(block)
