@@ -2,7 +2,7 @@ import type { ToolContext } from './agent-runtime/types'
 /** 非代码准备任务的模型出口。仅按权威execution识别，不接受客户端授权标志。 */
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import type { AnyModel, ProviderRequestOptions } from '@earendil-works/pi-ai'
-import { getAgentProviderProtocol, resolveAgentRuntimeBaseUrl } from '@gravitas/shared'
+import { resolveAgentRuntimeBaseUrl } from '@gravitas/shared'
 import { existsSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { getConfigDir } from './config-paths'
@@ -21,6 +21,7 @@ import { assertOwnerExecutionRequestGate } from './project-owner-execution-gates
 import { assertOwnerCommandRuntimeContext } from './project-owner-execution-start'
 import { createOwnerRequestFetch } from './project-owner-execution-request-exit'
 import { getPilotReviewedPriceEvidenceForModel } from './project-pilot-request-evidence'
+import { ownerEmployeePriceProviderKind, readOwnerCommandRuntime } from './project-owner-employee-runtime'
 
 export interface ControlledProviderContext {
 	runtime: 'pi' | 'ai-sdk'
@@ -37,6 +38,9 @@ export function isControlledProviderSession(sessionId: string): boolean {
 		store.getAgentEmployee(execution.agentId)?.executionProfile === 'controlled' ||
 		(execution.entityType === 'task' && requiresControlledStart(execution.entityId))
 	)
+}
+export function hasOwnerCommandExecutionSession(sessionId: string): boolean {
+	return Boolean(store.getAgentExecutionBySessionId(sessionId)?.ownerCommandId)
 }
 /** 每次最终payload/HTTP发送前重读；异步初始化与既有payload钩子不能沿用旧确认。 */
 export function assertControlledProviderBoundary(
@@ -182,7 +186,8 @@ export function createControlledProviderFetch(
 			throw new Error('模型请求出口与确认渠道不一致')
     // async请求体/代理初始化后重新读权威Owner用途；普通controlled保留原语义。
     const owner = resolveOwnerPlanningSession(sessionId)
-    if ((owner || ownerCommandId) && current.runtime !== 'ai-sdk') throw new Error('Owner受控出口仅允许AI SDK Runtime')
+    if (owner && current.runtime !== 'ai-sdk') throw new Error('Owner规划请求仅允许AI SDK Runtime')
+    if (ownerCommandId && !['ai-sdk', 'pi'].includes(current.runtime)) throw new Error('Owner员工运行时与冻结协议不兼容')
     store.getProjectDb().transaction(() => {
       assertControlledProviderBoundary(sessionId, current, base.toString())
       if (ownerCommandId) {
@@ -206,9 +211,9 @@ export function createControlledProviderFetch(
 		const ownerEmployee = store.getAgentEmployee(ownerExecution.agentId)
 		const ownerChannel = ownerEmployee && getChannelById(ownerEmployee.channelId)
 		if (!ownerChannel) throw new Error('Owner执行渠道不可用，拒绝绑定价格证据')
-		const protocol = getAgentProviderProtocol(ownerChannel.provider, 'ai-sdk')
-		const providerKind = protocol === 'openai-chat' ? 'openai' : protocol === 'anthropic-messages' ? 'anthropic' : 'google'
-		const priceEvidenceId = getPilotReviewedPriceEvidenceForModel(actual().modelId, providerKind)?.evidenceId
+        const frozen = readOwnerCommandRuntime(ownerCommandId)
+        const providerKind = ownerEmployeePriceProviderKind(frozen.runtime, ownerChannel.provider, frozen.modelId)
+        const priceEvidenceId = getPilotReviewedPriceEvidenceForModel(actual().modelId, providerKind)?.evidenceId
 		return createOwnerRequestFetch({ commandId: ownerCommandId, executionId: ownerExecution.id, sessionId, priceEvidenceId, baseFetch: guardedFetch })
 	}
 	return guardedFetch

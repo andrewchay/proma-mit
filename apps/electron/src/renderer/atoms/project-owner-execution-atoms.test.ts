@@ -240,6 +240,8 @@ test('Given controlled托管工作区 When 准备 Then 不附研发scope且知�
   const { store } = setup()
   const input = ownerExecutionInput(store.get, subject)
   expect(input?.developmentScope).toBeUndefined()
+  expect(input?.qualityManagementVersion).toBe(1)
+  expect(input?.textDeliveryVersion).toBe(1)
   expect(input?.knowledgeSourceIds).toEqual([])
   expect(input?.maxCostMicros).toBe(1000001)
   expect(canPreviewOwnerExecution(store.get, subject)).toBe(true)
@@ -408,6 +410,8 @@ test('Given development When 明确选择范围 Then controlled切换不会携�
     allowedPaths: ['src/'],
     verificationCommands: ['bun test'],
   })
+  expect(ownerExecutionInput(store.get, subject)?.qualityManagementVersion).toBe(1)
+  expect(ownerExecutionInput(store.get, subject)?.textDeliveryVersion).toBeUndefined()
   store.set(ownerExecutionEditorsAtom, new Map([['["a",null]', { ...editor(store), view }]]))
   store.set(editOwnerExecutionAtom, { subject, patch: { executionKind: 'controlled' } })
   expect(ownerExecutionInput(store.get, subject)?.developmentScope).toBeUndefined()

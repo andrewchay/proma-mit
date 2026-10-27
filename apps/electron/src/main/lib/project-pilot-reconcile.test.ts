@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   closeProjectDb, createAgentExecution, createProject, createTask,
-  createSubTask, createTaskDependency, initProjectDb, updateAgentExecution, updateTask,
+  createSubTask, createTaskDependency, getProjectDb, initProjectDb, updateAgentExecution, updateTask,
 } from './project-sqlite-store'
 import { observeProjectPilot } from './project-pilot-reconcile'
 import { getProjectChain, updateProjectChain } from './project-chain-service'
@@ -37,6 +37,16 @@ test('项目只读对账：依赖解除后 waiting 转 ready，重复读取不�
   expect(second.fingerprint).not.toBe(first.fingerprint)
   expect((await observeProjectPilot(project.id)).fingerprint).toBe(second.fingerprint)
   expect(second.tasks.every((task) => task.executionId === undefined)).toBe(true)
+})
+
+test('Owner规划承载任务是内部记录，不进入项目进展与用户待处理事项', async () => {
+  const project = createProject({ title: '规划过滤', description: '' })
+  const internal = createTask(project.id, { title: 'Owner规划：小游戏', description: '仅内部规划承载任务' })
+  const business = createTask(project.id, { title: '业务任务', description: '' })
+  getProjectDb().prepare('INSERT INTO project_owner_planning_links (id, project_id, request_id, planning_task_id, input_hash, payload) VALUES (?, ?, ?, ?, ?, ?)')
+    .run('planning-link', project.id, 'planning-request', internal.id, 'hash', '{}')
+  const observation = await observeProjectPilot(project.id)
+  expect(observation.tasks.map((task) => task.taskId)).toEqual([business.id])
 })
 
 test('子任务候选保留父任务与顶层任务定位，不会误当作任务列表的顶层行', async () => {

@@ -11,7 +11,11 @@ export const DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS = 8000
 
 const HASH = /^[a-f0-9]{64}$/
 const BASE_REVISION = /^(?:[a-f0-9]{40}|[a-f0-9]{64})$/
-const RECORD_KEYS = ['id', 'taskId', 'executionId', 'command', 'startedAt', 'finishedAt', 'exitCode', 'timedOut', 'status', 'snapshotContentHash', 'outputTail', 'outputTruncated', 'binding']
+const RECORD_KEYS = ['id', 'taskId', 'executionId', 'command', 'startedAt', 'finishedAt', 'exitCode', 'timedOut', 'status', 'snapshotContentHash', 'outputTail', 'outputTruncated', 'rawOutputSha256', 'rawOutputByteLength', 'binding', 'method', 'checks']
+const CHECK_KEYS = ['id', 'title', 'status', 'detail']
+const CHECK_STATUSES = ['passed', 'failed', 'skipped']
+const CHECK_DETAIL_CHARS = 2000
+const MAX_CHECKS = 64
 const BINDING_KEYS = ['version', 'projectId', 'workspaceId', 'sessionId', 'snapshotId', 'baseCommit', 'scopeHash', 'verificationConfigHash']
 
 export function parseDevelopmentValidationRecord(
@@ -29,11 +33,28 @@ export function parseDevelopmentValidationRecord(
   if (input.exitCode !== null && !isTime(input.exitCode)) return undefined
   if (typeof input.timedOut !== 'boolean' || typeof input.outputTruncated !== 'boolean') return undefined
   if (typeof input.outputTail !== 'string' || input.outputTail.length > DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS) return undefined
+  if ((input.rawOutputSha256 === undefined) !== (input.rawOutputByteLength === undefined)
+    || input.rawOutputSha256 !== undefined && (typeof input.rawOutputSha256 !== 'string' || !HASH.test(input.rawOutputSha256) || !isTime(input.rawOutputByteLength))) return undefined
   if (typeof input.snapshotContentHash !== 'string' || !HASH.test(input.snapshotContentHash)) return undefined
   if (typeof input.status !== 'string' || !['passed', 'failed', 'stale', 'timeout'].includes(input.status)) return undefined
   if (input.timedOut !== (input.status === 'timeout')) return undefined
   if (input.status === 'passed' && input.exitCode !== 0) return undefined
   if (input.status === 'timeout' && input.exitCode !== null) return undefined
+  if (input.method !== undefined && input.method !== 'command' && input.method !== 'browser_assertions') return undefined
+  if (input.checks !== undefined) {
+    // 断言结果仅供 browser_assertions 使用；逐项校验，任何畸形即整条作废（fail-closed）。
+    if (input.method !== 'browser_assertions' || !Array.isArray(input.checks) || input.checks.length > MAX_CHECKS) return undefined
+    const seen = new Set<string>()
+    for (const check of input.checks) {
+      if (!isRecord(check) || Object.keys(check).some((key) => !CHECK_KEYS.includes(key))) return undefined
+      if (typeof check.id !== 'string' || !check.id.trim() || seen.has(check.id)) return undefined
+      if (typeof check.title !== 'string' || !check.title.trim()) return undefined
+      if (typeof check.status !== 'string' || !CHECK_STATUSES.includes(check.status)) return undefined
+      if (typeof check.detail !== 'string' || check.detail.length > CHECK_DETAIL_CHARS) return undefined
+      seen.add(check.id)
+    }
+  }
+  if (input.method === 'browser_assertions' && (!Array.isArray(input.checks) || input.checks.length === 0)) return undefined
   if (input.binding !== undefined) {
     const binding = input.binding
     if (!isRecord(binding) || Object.keys(binding).some((key) => !BINDING_KEYS.includes(key))) return undefined

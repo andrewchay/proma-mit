@@ -33,3 +33,10 @@ export function assertNoOwnerBusinessSession(sessionId: string): void {
     throw new Error('Owner业务会话用途受限，不能调用模型或继续工具执行')
   }
 }
+
+/** 删除前先核对权威引用，不能先取消待决请求或移除会话索引。 */
+export function assertOwnerSessionDeletionAllowed(sessionId: string): void {
+  if (hasOwnerBusinessSessionEvidence(sessionId)) {
+    throw new Error('该会话承载项目 Owner 的成果与执行证据，不能作为普通聊天删除；请保留记录并在项目中处理。')
+  }
+}

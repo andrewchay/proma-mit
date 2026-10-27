@@ -6,7 +6,7 @@ import { addOwnerDeliveryFeedbackToGoalAtom, applyOwnerDeliveryFeedback } from '
 
 test('Given审阅者提出有效意见 When应用到交付命令 Then按精确命令替换草案意见并保留其他约束', () => {
   expect(applyOwnerDeliveryFeedback(['不能发布', 'Owner交付修改意见（命令 cmd-1）：旧意见'], 'cmd-1', '  补充验证   正常数量  ')).toEqual({
-    ok: true, constraints: ['不能发布', 'Owner交付修改意见（命令 cmd-1）：补充验证 正常数量'],
+    ok: true, constraints: ['不能发布', 'Owner交付修改意见：补充验证 正常数量'],
   })
 })
 
@@ -26,7 +26,8 @@ test('Given项目与Task Goal隔离 When对具体交付提交意见 Then只编�
   const result = await store.set(addOwnerDeliveryFeedbackToGoalAtom, { ...task, commandId: 'delivery-1', feedback: '补充验收正常边界' })
   expect(result).toEqual({ ok: true })
   expect(getOwnerGoalEditor(store.get(ownerGoalEditorsAtom), project).constraintsText).toBe('原约束')
-  expect(getOwnerGoalEditor(store.get(ownerGoalEditorsAtom), task).constraintsText).toContain('Owner交付修改意见（命令 delivery-1）：补充验收正常边界')
+  expect(getOwnerGoalEditor(store.get(ownerGoalEditorsAtom), task).constraintsText).toContain('Owner交付修改意见：补充验收正常边界')
+  expect(getOwnerGoalEditor(store.get(ownerGoalEditorsAtom), task).constraintsText).not.toContain('delivery-1')
   expect(getOwnerGoalEditor(store.get(ownerGoalEditorsAtom), task).dirty).toBe(true)
 })
 
@@ -39,6 +40,7 @@ test('Given材料化Task尚无Goal When提交带冻结标准的交付意见 Then
   expect(draft.snapshot).toBeNull()
   expect(draft.objective).toBe('产品定位方案')
   expect(draft.criteriaText).toBe('有引用\n有取舍')
-  expect(draft.constraintsText).toContain('命令 cmd')
+  expect(draft.constraintsText).toContain('Owner交付修改意见：补充来源')
+  expect(draft.constraintsText).not.toContain('cmd')
   expect(draft.codeSourceAccess).toBe('none')
 })

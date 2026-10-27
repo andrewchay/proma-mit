@@ -1,3 +1,6 @@
+import { assertOwnerReviewerTextDelivery } from './project-owner-text-delivery'
+import { readOwnerCommandRuntime, assertOwnerCommandPrice } from './project-owner-employee-runtime'
+import { resolveOwnerEmployeeInvocation } from './project-owner-employee-invocation'
 /** Owner命令专用、显式dispatch入口；不由heartbeat、普通排队或启动恢复调用。 */
 import { isAgentCompatibleProvider } from '@gravitas/shared'
 import { getAgentWorkspace } from './agent-workspace-manager'
@@ -63,9 +66,11 @@ async function dispatchOwnerCommandExecutionForMode(raw: unknown, expectedMode: 
     throw new Error('Owner命令、执行或活动授权归属无法核验')
   }
   if (grant.dispatch_mode !== expectedMode) throw new Error(expectedMode === 'manual' ? '自主命令只能由主进程Scheduler派发' : '此命令不属于自主授权模式')
-  if (grant.runtime !== 'ai-sdk') throw new Error('Owner dispatcher当前只支持AI SDK Runtime')
+  const runtime = readOwnerCommandRuntime(command.id)
+  if (grant.runtime !== runtime.runtime) throw new Error('Owner dispatcher Runtime 与冻结员工配置不一致')
+  assertOwnerCommandPrice(runtime)
   const employee = store.getAgentEmployee(command.employee_id)
-  const channel = getChannelById(grant.channel_id)
+  const channel = getChannelById(runtime.channelId)
   const workspace = getAgentWorkspace(grant.workspace_id)
   const view = getOwnerExecutionRevalidation({ projectId: command.project_id })
   const record = view.revalidation
@@ -78,16 +83,18 @@ async function dispatchOwnerCommandExecutionForMode(raw: unknown, expectedMode: 
     || record.id !== grant.revalidation_id || record.integrityHash !== grant.revalidation_integrity_hash
     || record.source.materialization.id !== grant.materialization_id
     || record.source.materialization.integrityHash !== grant.materialization_integrity_hash
-    || record.source.runtime !== 'ai-sdk' || record.source.channelId !== grant.channel_id
+    || record.source.runtime !== runtime.runtime || record.source.channelId !== grant.channel_id
     || record.source.modelId !== grant.model_id || record.source.workspaceId !== grant.workspace_id
     || !frozenTask || roleEmployeeId !== command.employee_id || (command.role === 'executor' && frozenTask.executor && task?.assignee?.userId !== `agent-${command.employee_id}`) || !employee?.enabled || employee.workflowId
-    || employee.runtime !== 'ai-sdk' || employee.channelId !== grant.channel_id || employee.modelId !== grant.model_id
-    || employee.executionProfile !== record.source.executionKind || !channel?.enabled || !isAgentCompatibleProvider(channel.provider, 'ai-sdk')
-    || !channel.models.some(item => item.id === grant.model_id && item.enabled)
+    || employee.runtime !== runtime.runtime || employee.channelId !== runtime.channelId || employee.modelId !== runtime.modelId
+    || !channel?.enabled || !isAgentCompatibleProvider(channel.provider, runtime.runtime)
+    || !channel.models.some(item => item.id === runtime.modelId && item.enabled)
     || !workspace || !hasProjectWorkspaceBinding(command.project_id, grant.workspace_id)
     || !task || task.projectId !== command.project_id || task.status !== 'paused') {
     throw new Error('Owner派发来源、员工、渠道、工作区或任务状态已变化')
   }
+  resolveOwnerEmployeeInvocation(employee, record.source)
+  if (command.role === 'reviewer') assertOwnerReviewerTextDelivery(command.id)
   const link = database.prepare('SELECT revalidation_revision FROM project_owner_execution_command_links WHERE command_id=? AND execution_id=?').get(command.id, execution.id) as { revalidation_revision: number } | undefined
   if (!link || link.revalidation_revision !== record.revision) throw new Error('Owner命令与重验证版本链接不一致')
   const started = await startOwnerCommandExecution({

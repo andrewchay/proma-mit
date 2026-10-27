@@ -1,6 +1,9 @@
+import { recordOwnerManagementPlanConfirmed } from './project-owner-management-store'
 /** Owner计划附属版本：只保存/确认内容，不产生任务、执行、授权或模型调用。 */
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { readCatalog } from './knowledge-catalog-service'
+import { parseOwnerPlanningKnowledgeSources } from './project-owner-planning-knowledge'
 import { getAgentWorkspace } from './agent-workspace-manager'
 import type {
   ProjectOwnerDeliveryContext, ProjectOwnerGoalDraft, ProjectOwnerPlanDraft, ProjectOwnerPlanningContext,
@@ -66,7 +69,7 @@ function getCodeSearchWorkspace(projectId: string): { id: string; rootPath: stri
   const raw = JSON.parse(rows.at(-1)!.payload) as Record<string, unknown>
   const allowed = ['schemaVersion', 'projectId', 'revision', 'ownerRole', 'ownerName', 'carrierId', 'workspaceId', 'channelId', 'modelId', 'runtime', 'carrierFingerprint', 'carrierConfigurationFingerprint', 'actor', 'savedAt', 'changeReason']
   if (!raw || Object.keys(raw).some(key => !allowed.includes(key)) || raw.schemaVersion !== 1 || raw.projectId !== projectId || raw.revision !== rows.length
-    || raw.ownerRole !== 'project_owner' || raw.actor !== 'local-user' || raw.runtime !== 'ai-sdk'
+    || raw.ownerRole !== 'project_owner' || !['local-user', 'system:owner-manager'].includes(String(raw.actor)) || raw.runtime !== 'ai-sdk'
     || typeof raw.carrierId !== 'string' || typeof raw.workspaceId !== 'string' || !raw.workspaceId.trim()
     || typeof raw.channelId !== 'string' || typeof raw.modelId !== 'string'
     || typeof raw.carrierFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(raw.carrierFingerprint)
@@ -107,10 +110,17 @@ export function getProjectOwnerPlanningContext(projectId: string, taskId?: strin
   const task = taskId === undefined ? undefined : getTask(taskId)!
   const codeWorkspace = goal.goal.codeSourceAccess === 'bound_workspace' ? getCodeSearchWorkspace(projectId) : null
   const delivery = getOwnerDeliverySources(projectId, taskId, goal)
+  const catalog = readCatalog()
+  const boundBases = new Set(catalog.bindings.filter(binding => binding.projectId === projectId).map(binding => binding.knowledgeBaseId))
+  const sourceIds = new Set(catalog.knowledgeBases.filter(base => base.enabled && boundBases.has(base.id)).flatMap(base => base.sourceIds))
+  const availableSources = catalog.sources.filter(source => source.enabled && sourceIds.has(source.id))
+    .map(source => ({ id: source.id, name: source.name })).sort((left, right) => left.id.localeCompare(right.id))
+  const knowledgeSources = availableSources.length ? parseOwnerPlanningKnowledgeSources(availableSources) : undefined
   const sources: ProjectOwnerPlanSources = {
     project: { id: project.id, title: text(project.title, '项目标题'), description: text(project.description, '项目说明', 12000, true) },
     ...(task === undefined ? {} : { task: { id: task.id, projectId: task.projectId, title: text(task.title, '任务标题'), description: text(task.description, '任务说明', 12000, true) } }),
     roles: getProjectOwnerRoleAdviceCatalog(),
+    ...(knowledgeSources ? { knowledgeSources } : {}),
     ...(codeWorkspace ? {
       code: locateOwnerCode(codeWorkspace.rootPath, [goal.goal.objective, ...goal.goal.constraints, ...goal.goal.acceptanceCriteria,
         project.title, project.description, ...(task ? [task.title, task.description] : [])].filter(Boolean).join('\n'), codeWorkspace.id),
@@ -121,7 +131,7 @@ export function getProjectOwnerPlanningContext(projectId: string, taskId?: strin
 }
 
 function parseSources(input: unknown, projectId: string, taskId?: string): ProjectOwnerPlanSources {
-  const value = record(input, ['project', 'task', 'roles', 'code', 'delivery'])
+  const value = record(input, ['project', 'task', 'roles', 'knowledgeSources', 'code', 'delivery'])
   const p = record(value.project, ['id', 'title', 'description'])
   if (p.id !== projectId) throw new Error('Owner 计划项目来源不匹配')
   const project = { id: projectId, title: text(p.title, '项目标题'), description: text(p.description, '项目说明', 12000, true) }
@@ -142,6 +152,7 @@ function parseSources(input: unknown, projectId: string, taskId?: string): Proje
       sourceSha256: digest(role.sourceSha256), rulesSha256: digest(role.rulesSha256) }
   })
   if (new Set(roles.map((role) => role.key)).size !== roles.length) throw new Error('Owner 计划岗位来源重复')
+  const knowledgeSources = parseOwnerPlanningKnowledgeSources(value.knowledgeSources)
   let code: ProjectOwnerPlanSources['code']
   if (value.code !== undefined) {
     const source = record(value.code, ['workspaceId', 'rootFingerprint', 'filesScanned', 'truncated', 'files'])
@@ -211,7 +222,7 @@ function parseSources(input: unknown, projectId: string, taskId?: string): Proje
     })
     if (new Set(delivery.map((item) => item.commandId)).size !== delivery.length) throw new Error('Owner交付反馈命令重复')
   }
-  return { project, ...(task === undefined ? {} : { task }), roles, ...(code === undefined ? {} : { code }), ...(delivery ? { delivery } : {}) }
+  return { project, ...(task === undefined ? {} : { task }), roles, ...(knowledgeSources ? { knowledgeSources } : {}), ...(code === undefined ? {} : { code }), ...(delivery ? { delivery } : {}) }
 }
 
 /** 历史按冻结的合法目标/岗位来源解析，角色升级只使当前计划失效，不重写历史。 */
@@ -220,7 +231,8 @@ function parseRow(row: PlanRow, projectId: string, taskId: string | undefined, g
     const value = record(JSON.parse(row.payload), ['schemaVersion', 'projectId', 'taskId', 'revision', 'planVersion', 'goalRevision', 'goalVersion', 'state', 'actor', 'origin', 'savedAt', 'changeReason', 'contextFingerprint', 'planFingerprint', 'sources', 'proposal', 'sourceRun'])
     if (value.schemaVersion !== 1 || value.projectId !== projectId || value.taskId !== taskId
       || value.revision !== row.revision || (value.state !== 'proposed' && value.state !== 'confirmed')
-      || !((value.origin === 'manual' && value.actor === 'local-user' && value.sourceRun === undefined) || (value.origin === 'generated' && value.actor === (value.state === 'confirmed' ? 'local-user' : 'system:owner-planner') && value.sourceRun !== undefined))) throw new Error('计划元信息无效')
+      || !((value.origin === 'manual' && (value.actor === 'local-user' || (value.state === 'confirmed' && value.actor === 'system:owner-manager')) && value.sourceRun === undefined)
+        || (value.origin === 'generated' && (value.state === 'proposed' ? value.actor === 'system:owner-planner' : ['local-user', 'system:owner-manager'].includes(String(value.actor))) && value.sourceRun !== undefined))) throw new Error('计划元信息无效')
     const revision = positive(row.revision)
     const planVersion = positive(value.planVersion)
     if (planVersion > revision) throw new Error('计划版本超过修订')
@@ -232,7 +244,8 @@ function parseRow(row: PlanRow, projectId: string, taskId: string | undefined, g
     if ((goal.goal.codeSourceAccess === 'bound_workspace') !== Boolean(sources.code)) throw new Error('计划中的代码资料授权与冻结来源不一致')
     const contextFingerprint = digest(value.contextFingerprint)
     if (contextFingerprint !== fingerprint(goal, sources)) throw new Error('计划来源指纹不匹配')
-    const rawProposal = record(value.proposal, ['projectId', 'taskId', 'goalVersion', 'mode', 'summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment'])
+    const rawProposal = record(value.proposal, ['projectId', 'taskId', 'goalVersion', 'mode', 'summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment'])
+    if (value.origin === 'manual' && rawProposal.deliveryFeedbackAssessment !== undefined) throw new Error('手动计划不能伪造Owner成果反馈评估')
     if (rawProposal.mode !== 'proposal_only') throw new Error('计划夹带执行模式')
     const { mode: _mode, ...proposalInput } = rawProposal
     const proposal = parseProjectOwnerPlanProposal(proposalInput, goal.goal, sources.roles.map((role) => role.key), sources.code?.files ?? [], false, sources.delivery ?? [])
@@ -323,7 +336,9 @@ function append(plan: ProjectOwnerPlanDraft): void {
 /** 驱动transaction契约不返回回调值，事务外只在成功提交后交付结果。 */
 function planTransaction(operation: () => ProjectOwnerPlanDraft): ProjectOwnerPlanDraft {
   let result: ProjectOwnerPlanDraft | undefined
-  getProjectDb().transaction(() => { result = operation() })()
+  const db = getProjectDb()
+  if (db.isTransactionActive()) result = operation()
+  else db.transaction(() => { result = operation() })()
   if (!result) throw new Error('Owner 计划保存失败')
   return result
 }
@@ -349,8 +364,17 @@ export function saveProjectOwnerPlanDraft(projectId: string, expectedGoalRevisio
   })
 }
 
-/** 内容确认与执行授权严格分离。没有Model/Task/Execution/Pilot服务依赖或事件。 */
+/** 内容确认与执行授权分离；提交后唤醒Owner管理判断，不直接调用模型或派工。 */
 export function confirmProjectOwnerPlanDraft(projectId: string, expectedGoalRevision: number, expectedRevision: number, taskId?: string): ProjectOwnerPlanDraft {
+  return confirmProjectOwnerPlanDraftAs(projectId, expectedGoalRevision, expectedRevision, taskId, 'local-user')
+}
+
+/** 已授权的项目Owner在原目标/资料范围内接纳自身生成的方案；不是伪造用户审批。 */
+export function confirmProjectOwnerPlanDraftForOwner(projectId: string, expectedGoalRevision: number, expectedRevision: number, taskId?: string): ProjectOwnerPlanDraft {
+  return confirmProjectOwnerPlanDraftAs(projectId, expectedGoalRevision, expectedRevision, taskId, 'system:owner-manager')
+}
+
+function confirmProjectOwnerPlanDraftAs(projectId: string, expectedGoalRevision: number, expectedRevision: number, taskId: string | undefined, actor: 'local-user' | 'system:owner-manager'): ProjectOwnerPlanDraft {
   return planTransaction(() => {
     const context = getProjectOwnerPlanningContext(projectId, taskId)
     const current = readCurrent(context)
@@ -358,9 +382,11 @@ export function confirmProjectOwnerPlanDraft(projectId: string, expectedGoalRevi
     assertLocalActorEnabled()
     if (!current) throw new Error('请先保存 Owner 计划提案')
     if (current.state === 'stale') throw new ProjectOwnerPlanConflictError()
-    if (current.state === 'confirmed') return current
-    const confirmed: ProjectOwnerPlanDraft = { ...current, revision: current.revision + 1, state: 'confirmed', actor: 'local-user', savedAt: Date.now() }
+    if (current.state === 'confirmed') { recordOwnerManagementPlanConfirmed(current); return current }
+    if (actor === 'system:owner-manager' && !((current.origin === 'generated' && current.sourceRun) || (current.origin === 'manual' && current.actor === 'local-user'))) throw new Error('Owner只能接纳有可信来源的待审方案')
+    const confirmed: ProjectOwnerPlanDraft = { ...current, revision: current.revision + 1, state: 'confirmed', actor, savedAt: Date.now() }
     append(confirmed)
+    recordOwnerManagementPlanConfirmed(confirmed)
     return confirmed
   })
 }

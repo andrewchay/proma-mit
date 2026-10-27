@@ -108,3 +108,8 @@ test('Given 问题来源之后计划修订 When 应用旧答复 Then 拒绝并�
   expect(result).toEqual({ ok: false, reason: 'source_stale' })
   expect(getOwnerGoalEditor(store.get(ownerGoalEditorsAtom), subject)).toEqual(original)
 })
+
+
+test('Given 不同key却重复问句 When 合并答复 Then 拒绝而不无声覆盖其中一个答案', () => {
+  expect(applyOwnerClarificationAnswers([], [{ key: 'a', question: '同一问题？' }, { key: 'b', question: '同一问题？' }], { a: '第一答复', b: '第二答复' })).toEqual({ ok: false, reason: 'invalid' })
+})

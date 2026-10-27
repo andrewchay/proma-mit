@@ -190,8 +190,13 @@ export const PROJECT_IPC_CHANNELS = {
   MATERIALIZE_OWNER_TASKS: 'project:materialize-owner-tasks',
   GET_OWNER_EXECUTION_PREPARATION: 'project:get-owner-execution-preparation',
   LIST_OWNER_EXECUTION_PREPARATION_HISTORY: 'project:list-owner-execution-preparation-history',
+  LAUNCH_OWNER_PREPARED_EXECUTION: 'project:launch-owner-prepared-execution',
+  SAVE_OWNER_EXECUTION_START_INTENT: 'project:save-owner-execution-start-intent',
+  RESUME_OWNER_EXECUTION_START_INTENT: 'project:resume-owner-execution-start-intent',
   PREVIEW_OWNER_EXECUTION_PREPARATION: 'project:preview-owner-execution-preparation',
   SAVE_OWNER_EXECUTION_PREPARATION: 'project:save-owner-execution-preparation',
+  PREPARE_OWNER_EXECUTION_ASSIGNMENT: 'project:prepare-owner-execution-assignment',
+  LIST_OWNER_EXECUTION_ASSIGNMENT_RUNS: 'project:list-owner-execution-assignment-runs',
   GET_OWNER_AUTONOMOUS_SCHEDULE_STATUS: 'project:get-owner-autonomous-schedule-status',
   PREVIEW_OWNER_EXECUTION_COMMAND_ACK: 'project:preview-owner-execution-command-ack',
   QUEUE_OWNER_EXECUTION_COMMAND: 'project:queue-owner-execution-command',
@@ -201,6 +206,7 @@ export const PROJECT_IPC_CHANNELS = {
   PREVIEW_OWNER_PREFLIGHT_RECONCILIATION: 'project:preview-owner-preflight-reconciliation',
   CONFIRM_OWNER_PREFLIGHT_RECONCILIATION: 'project:confirm-owner-preflight-reconciliation',
   GET_OWNER_RUNTIME_BINDING: 'project:get-owner-runtime-binding',
+  ENSURE_OWNER_RUNTIME_BINDING: 'project:ensure-owner-runtime-binding',
   SAVE_OWNER_RUNTIME_BINDING: 'project:save-owner-runtime-binding',
   PREPARE_OWNER_PLANNING: 'project:prepare-owner-planning',
   LIST_OWNER_PLANNING_RUNS: 'project:list-owner-planning-runs',
@@ -209,6 +215,19 @@ export const PROJECT_IPC_CHANNELS = {
   LIST_OWNER_PLAN_HISTORY: 'project:list-owner-plan-history',
   SAVE_OWNER_PLAN_DRAFT: 'project:save-owner-plan-draft',
   CONFIRM_OWNER_PLAN_DRAFT: 'project:confirm-owner-plan-draft',
+  OWNER_MANAGEMENT_CHANGED: 'project:owner-management-changed',
+  ANSWER_OWNER_MANAGEMENT_QUESTION: 'project:answer-owner-management-question',
+  PREVIEW_OWNER_MANAGEMENT_DELEGATION: 'project:preview-owner-management-delegation',
+  CONFIRM_OWNER_MANAGEMENT_DELEGATION: 'project:confirm-owner-management-delegation',
+  GET_OWNER_MANAGEMENT_DELEGATION: 'project:get-owner-management-delegation',
+  REVOKE_OWNER_MANAGEMENT_DELEGATION: 'project:revoke-owner-management-delegation',
+  GET_OWNER_MANAGEMENT: 'project:get-owner-management',
+  CONFIRM_OWNER_TEAM_WORKSPACE_ACCESS: 'project:confirm-owner-team-workspace-access',
+  SEND_OWNER_MANAGEMENT_MESSAGE: 'project:send-owner-management-message',
+  /** 用户显式要求按当前已确认方案重新安排人员；消耗既有管理额度。 */
+  RETAKE_OWNER_ASSIGNMENT: 'project:retake-owner-assignment',
+  DECIDE_OWNER_CONVERSATION_CHANGE: 'project:decide-owner-conversation-change',
+  SET_OWNER_MANAGEMENT_STATUS: 'project:set-owner-management-status',
   GET_OWNER_GOAL_DRAFT: 'project:get-owner-goal-draft',
   SAVE_OWNER_GOAL_DRAFT: 'project:save-owner-goal-draft',
   CREATE_PROJECT: 'project:create-project',
@@ -516,7 +535,7 @@ export interface PrepareControlledTaskInput {
 }
 export interface ControlledTaskStartPreview {
   /** 仅Owner已冻结的JSON资料；无岗位全文/文件/历史/凭据。费用确认不保证金额硬上限。 */
-  ownerPlanning?: { purpose: 'owner_planning'; linkId: string; ownerName: string; bindingRevision: number; goalRevision: number; planRevision: number; contextFingerprint: string; promptHash: string; protocolVersion: '1' | '2' | '3'; reasoningEffort?: 'low'; maxRequests: 1; maxOutputTokens: 4096 | 8192; systemPrompt: string; userPrompt: string; context: import('./project-owner').ProjectOwnerPlanningContext; costs: 'unknown_no_hard_cap' }
+  ownerPlanning?: { purpose: 'owner_planning' | 'owner_execution_assignment'; linkId: string; ownerName: string; bindingRevision: number; goalRevision: number; planRevision: number; contextFingerprint: string; promptHash: string; protocolVersion: import('./project-owner').OwnerPlanningLink['protocolVersion']; assignmentProtocolVersion?: '2'; reasoningEffort?: 'low'; maxRequests: 1; maxOutputTokens: 4096 | 8192 | 32768; systemPrompt: string; userPrompt: string; context: import('./project-owner').ProjectOwnerPlanningContext; assignmentContext?: import('./project-owner').OwnerExecutionAssignmentContext; managementSupported: boolean; costs: 'unknown_no_hard_cap' }
   taskId: string
   previewHash: string
   expiresAt: number

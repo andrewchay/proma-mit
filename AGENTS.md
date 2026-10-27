@@ -548,3 +548,17 @@ React UI 更新
 - 打包必须包含 default-tools、default-skills 与工作流模板；`scripts/package-smoke.ts` 验证实际 Electron 的发现、执行、数据库重开、新工作区核心 Skills 和分组停用。真实 Kimi 压缩烟测只能在显式设置 `GRAVITAS_PACKAGE_SMOKE_KIMI_CHANNEL_ID` 与 `GRAVITAS_PACKAGE_SMOKE_CHANNELS_PATH` 时运行，并必须验证持久化历史、`compact_boundary`、最近 20 条保留、`pi/automatic` 审计及当前回合继续完成。原生 helper 构建失败必须向上传播。
 - 服务端 Executor 只允许 Linux bubblewrap，采用 apps/executor/seccomp.json；无 namespace 能力时拒绝执行。CI 会在托管 runner 无法创建内层 namespace 时仅运行契约测试并明确警告，完整隔离验收必须在支持该能力的 Linux runner 执行。配置与恶意代码测试见 apps/executor/SECURITY.md。
 - 存储职责、备份与恢复见 docs/storage-contract.md。新共享 Node 工具需从 packages/shared/src/utils/node.ts 导出；通用工具仍需对应 utils/index.ts 导出。
+
+
+## Owner 权威边界
+
+目标/方案、管理委托、员工执行许可和质量验收分别绑定版本与来源。恢复或读取历史记录不得扩大原权限，Runtime completed不代表业务完成；独立评审和Owner验收须落库。保留未知用量/费用及原始失败，普通对话不能改写权威目标或继承旧执行许可。
+
+
+## Owner 验证与历史兼容
+
+真实冒烟必须显式设置渠道、模型、预算、累计请求和证据导出；跨profile保留历史消耗，未知费用继续占额。GLM管理请求使用64KiB发送包络，超限拒绝，不能截断成果凑通过。Owner的20%预算门禁包含下一次整笔预留。
+
+研发交付按冻结文件集合版本校验，不把传输JSON正文SHA当作artifactHash；逐文件检查源码哈希/字节数并保留篡改反例。历史接受可按可信回执时间读取，首次accept仍实时检查新鲜度。
+
+成果正文在对话中直接显示；HTML下载只导出唯一完整代码块，不在应用内执行。追问需携带同项目、任务及历史边界内的整轮成果目录，旧快照重建/请求重用按原字段是否存在控制，不升级历史请求。普通会话删除不得破坏Owner引用的成果或证据。

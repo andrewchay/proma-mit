@@ -1,3 +1,7 @@
+import { freezeOwnerEmployeeRuntime } from './project-owner-employee-runtime'
+import { ownerExecutionHash } from './project-owner-execution-hash'
+import type { AgentEmployee } from './project-types'
+import { ownerControlledEmployee } from './project-owner-employee-invocation'
 /** 只构造业务准备事实；不开放工具、模型、资料读取或任务执行。 */
 import { execFileSync } from 'node:child_process'
 import { AGENT_RUNTIME_CAPABILITIES, getAgentProviderProtocol } from '@gravitas/shared'
@@ -37,22 +41,7 @@ export class OwnerExecutionPreparationConflictError extends Error {
   }
 }
 
-/** 键顺序不构成身份；摘要不是防任意SQL写入的认证。 */
-export function ownerExecutionHash(value: unknown): string {
-  function stable(v: unknown): unknown {
-    if (Array.isArray(v)) return v.map(stable)
-    if (v && typeof v === 'object')
-      return Object.fromEntries(
-        Object.entries(v)
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([key, item]) => [key, stable(item)]),
-      )
-    return v
-  }
-  return createHash('sha256')
-    .update(JSON.stringify(stable(value)))
-    .digest('hex')
-}
+export { ownerExecutionHash } from './project-owner-execution-hash'
 export function ownerExecutionObject(
   raw: unknown,
   fields: readonly string[],
@@ -99,6 +88,9 @@ export function parseOwnerExecutionInput(raw: unknown): OwnerExecutionPreparatio
     'expectedPlanRevision',
     'selectedStepKeys',
     'executionKind',
+    'employeeRuntimeVersion',
+    'textDeliveryVersion',
+    'qualityManagementVersion',
     'developmentScope',
     'executorEmployeeId',
     'reviewerEmployeeId',
@@ -114,6 +106,9 @@ export function parseOwnerExecutionInput(raw: unknown): OwnerExecutionPreparatio
     'expiresAt',
     'changeReason',
   ])
+  if (o.qualityManagementVersion !== undefined && (o.qualityManagementVersion !== 1 || o.executionKind === 'controlled' && o.textDeliveryVersion !== 1)) throw new Error('Owner质量管理须绑定本次执行类型支持的完整成果')
+  if (o.textDeliveryVersion !== undefined && (o.textDeliveryVersion !== 1 || o.executionKind !== 'controlled')) throw new Error('Owner完整文本交付只支持新版非代码执行')
+  if (o.employeeRuntimeVersion !== undefined && o.employeeRuntimeVersion !== 2) throw new Error('Owner逐员工模型协议版本无效')
   if (o.executionKind !== 'development' && o.executionKind !== 'controlled')
     throw new Error('Owner执行准备模式无效')
   if (o.acknowledgeOwnerConfigurationOverride !== undefined && typeof o.acknowledgeOwnerConfigurationOverride !== 'boolean')
@@ -171,6 +166,9 @@ export function parseOwnerExecutionInput(raw: unknown): OwnerExecutionPreparatio
     expectedPlanRevision: integer(o.expectedPlanRevision, 1),
     selectedStepKeys: strings(o.selectedStepKeys),
     executionKind: o.executionKind,
+    ...(o.employeeRuntimeVersion === 2 ? { employeeRuntimeVersion: 2 as const } : {}),
+    ...(o.textDeliveryVersion === 1 ? { textDeliveryVersion: 1 as const } : {}),
+    ...(o.qualityManagementVersion === 1 ? { qualityManagementVersion: 1 as const } : {}),
     ...(developmentScope === undefined ? {} : { developmentScope }),
     executorEmployeeId: text(o.executorEmployeeId),
     reviewerEmployeeId: text(o.reviewerEmployeeId),
@@ -286,17 +284,21 @@ export function buildOwnerExecutionSource(
     ? roleAssignments.map((assignment) => ({ roleKey: assignment.roleKey, employee: getAgentEmployee(assignment.employeeId) }))
     : [{ roleKey: selectedRoleKeys[0]!, employee: getAgentEmployee(input.executorEmployeeId) }]
   const executor = roleEmployees[0]?.employee
+  const canInvokeForExecution = (employee: AgentEmployee | undefined) => Boolean(employee && (employee.executionProfile === input.executionKind || input.executionKind === 'controlled' && ['general', 'development'].includes(employee.executionProfile ?? 'general')))
   if (!executor?.enabled || !reviewer?.enabled || input.reviewerEmployeeId === executor.id
-    || roleEmployees.some(({ employee }) => !employee?.enabled || employee.executionProfile !== input.executionKind || employee.id === reviewer.id)
-    || reviewer.executionProfile !== input.executionKind)
+    || roleEmployees.some(({ employee }) => !employee?.enabled || !canInvokeForExecution(employee) || employee.id === reviewer.id)
+    || !canInvokeForExecution(reviewer))
     throw new Error('Owner执行或评审员工不存在、已停用、模式不符或职责重叠')
   const facts = { getChannel: getChannelById, getWorkspace: getAgentWorkspace }
   const validate = input.executionKind === 'controlled' ? validateControlledTarget : validateDevelopmentTarget
-  const target = validate(executor, input.workspaceId, facts)
-  validate(reviewer, input.workspaceId, facts)
-  for (const { employee } of roleEmployees) validate(employee!, input.workspaceId, facts)
+  const forValidation = (employee: typeof executor) => input.executionKind === 'controlled' && employee.executionProfile !== 'controlled' ? ownerControlledEmployee(employee) : employee
+  const target = validate(forValidation(executor), input.workspaceId, facts)
+  validate(forValidation(reviewer), input.workspaceId, facts)
+  for (const { employee } of roleEmployees) validate(forValidation(employee!), input.workspaceId, facts)
   const compatibleEmployees = [...roleEmployees.map((item) => item.employee!), reviewer]
-  if (compatibleEmployees.some((employee) => employee.channelId !== executor.channelId
+  const employeeRuntimes = input.employeeRuntimeVersion === 2 ? [...new Map(compatibleEmployees.map(employee => [employee.id, freezeOwnerEmployeeRuntime(employee)])).values()].sort((a, b) => a.employeeId.localeCompare(b.employeeId)) : undefined
+  if (employeeRuntimes?.some(runtime => runtime.runtime !== executor.runtime)) throw new Error('Owner同一执行批次的执行与评审员工必须使用同一受控Runtime')
+  if (!employeeRuntimes && compatibleEmployees.some((employee) => employee.channelId !== executor.channelId
     || employee.modelId !== executor.modelId || employee.runtime !== executor.runtime))
     throw new Error('Owner各岗位执行与评审必须明确同渠道、模型与Runtime')
   const binding = getOwnerRuntimeBinding(subject.projectId)
@@ -306,7 +308,7 @@ export function buildOwnerExecutionSource(
       throw new Error('Owner规划载体配置已漂移，请重新核对绑定来源')
     if (input.workspaceId !== binding.workspaceId && input.acknowledgeOwnerWorkspaceOverride !== true)
       throw new Error('选择工作区与Owner绑定默认工作区不同，须明确确认覆盖后才能预览')
-    if (compatibleEmployees.some((employee) => employee.channelId !== binding.channelId
+    if (!employeeRuntimes && compatibleEmployees.some((employee) => employee.channelId !== binding.channelId
       || employee.modelId !== binding.modelId || employee.runtime !== binding.runtime)
       && input.acknowledgeOwnerConfigurationOverride !== true)
       throw new Error('执行或评审配置与Owner绑定默认配置不同，须明确确认覆盖后才能预览')
@@ -372,26 +374,10 @@ export function buildOwnerExecutionSource(
       contentHash: null,
     }
   })
-  // 排除heartbeat/统计更新时间；冻结真正影响执行配置的字段，不持久化原始prompt或密钥。
-  const configurationHash = (employee: typeof executor): string =>
-    ownerExecutionHash({
-      id: employee.id,
-      enabled: employee.enabled,
-      name: employee.name,
-      role: employee.role,
-      roleTemplateId: employee.roleTemplateId,
-      executionProfile: employee.executionProfile,
-      runtime: employee.runtime,
-      permissionMode: employee.permissionMode,
-      workspaceId: employee.workspaceId,
-      workspaceIds: employee.workspaceIds,
-      channelId: employee.channelId,
-      modelId: employee.modelId,
-      workflowId: employee.workflowId,
-      systemPrompt: employee.systemPrompt,
-      skills: employee.skills,
-      capabilityVersions: getActiveAgentEmployeeCapabilityVersions(employee.id, input.workspaceId),
-    })
+  const employeeInvocations = [...new Map(compatibleEmployees
+    .filter(employee => input.executionKind === 'controlled' && ['general', 'development'].includes(employee.executionProfile ?? 'general'))
+    .map(employee => [employee.id, { employeeId: employee.id, originalProfile: (employee.executionProfile ?? 'general') as 'general' | 'development', executionProfile: 'controlled' as const, permissionMode: 'safe' as const }])).values()]
+    .sort((a, b) => a.employeeId.localeCompare(b.employeeId))
   const ownerBindingProvenance = binding
     ? {
         state: 'bound' as const,
@@ -418,18 +404,22 @@ export function buildOwnerExecutionSource(
     ...(roleAssignments === undefined ? {} : {
       roleAssignments: roleEmployees.map(({ roleKey, employee }) => ({
         roleKey,
-        employee: { id: employee!.id, name: employee!.name, ...(employee!.roleTemplateId ? { roleTemplateId: employee!.roleTemplateId } : {}), configurationHash: configurationHash(employee!) },
+        employee: { id: employee!.id, name: employee!.name, ...(employee!.roleTemplateId ? { roleTemplateId: employee!.roleTemplateId } : {}), configurationHash: ownerEmployeeConfigurationHash(employee!, input.workspaceId) },
       })),
     }),
+    ...(input.textDeliveryVersion === 1 ? { textDeliveryVersion: 1 as const } : {}),
+    ...(input.qualityManagementVersion === 1 ? { qualityManagementVersion: 1 as const } : {}),
+    ...(employeeRuntimes ? { employeeRuntimes } : {}),
+    ...(employeeInvocations.length ? { employeeInvocations } : {}),
     executor: {
       id: executor.id,
       name: executor.name,
-      configurationHash: configurationHash(executor),
+      configurationHash: ownerEmployeeConfigurationHash(executor, input.workspaceId),
     },
     reviewer: {
       id: reviewer.id,
       name: reviewer.name,
-      configurationHash: configurationHash(reviewer),
+      configurationHash: ownerEmployeeConfigurationHash(reviewer, input.workspaceId),
     },
     workspaceId: workspace.id,
     workspaceName: workspace.name,
@@ -446,10 +436,7 @@ export function buildOwnerExecutionSource(
     ...(developmentScope === undefined ? {} : { developmentScope }),
     knowledgeSources,
     blockers: [
-      '尚无权威业务任务与步骤关联，不能发行执行许可',
-      '执行侧资料与逐请求Owner来源门禁尚未接通',
-      '拟议预算不是已预留额度，不承诺金额硬封顶',
-      ...(!AGENT_RUNTIME_CAPABILITIES[executor.runtime].supportsBudgetStopThreshold
+      ...(!AGENT_RUNTIME_CAPABILITIES[executor.runtime].supportsBudgetStopThreshold && !employeeRuntimes
         ? ['当前Runtime不支持费用停止阈值']
         : []),
       ...(!getPilotReviewedPriceEvidenceForModel(
@@ -459,7 +446,29 @@ export function buildOwnerExecutionSource(
       )
         ? ['当前模型不匹配已审核价格证据，不能据此发行']
         : []),
-      ...(input.executionKind === 'controlled' ? ['非代码Pilot发行与资料适配器尚未接通'] : []),
     ],
   }
+}
+
+/** 冻结原员工配置，不把本次收紧调用方式写回档案；旧profile的摘要投影保持原形。 */
+export function ownerEmployeeConfigurationHash(employee: AgentEmployee, workspaceId: string): string {
+  return ownerExecutionHash({
+      id: employee.id,
+      enabled: employee.enabled,
+      name: employee.name,
+      role: employee.role,
+      ...((employee.executionProfile ?? 'general') === 'general' ? { description: employee.description } : {}),
+      roleTemplateId: employee.roleTemplateId,
+      executionProfile: employee.executionProfile,
+      runtime: employee.runtime,
+      permissionMode: employee.permissionMode,
+      workspaceId: employee.workspaceId,
+      workspaceIds: employee.workspaceIds,
+      channelId: employee.channelId,
+      modelId: employee.modelId,
+      workflowId: employee.workflowId,
+      systemPrompt: employee.systemPrompt,
+      skills: employee.skills,
+      capabilityVersions: getActiveAgentEmployeeCapabilityVersions(employee.id, workspaceId),
+    })
 }

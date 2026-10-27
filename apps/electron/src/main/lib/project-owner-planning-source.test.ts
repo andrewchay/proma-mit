@@ -19,6 +19,7 @@ const { saveProjectOwnerGoalDraft } = await import('./project-owner-goal-service
 const { getProjectOwnerPlanningContext } = await import('./project-owner-plan-service')
 const service = await import('./project-owner-runtime-binding')
 const source = await import('./project-owner-planning-source')
+const controlledTask = await import('./controlled-project-task-service')
 const { claimOwnerPlanningProviderRequest } = await import('./project-owner-planning-provider')
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
@@ -41,11 +42,19 @@ function running(f: ReturnType<typeof prepared>) {
   return { executionId, sessionId }
 }
 test('Given 无Owner证据的普通会话 When 解析 Then 不伪造规划用途', () => { expect(source.resolveOwnerPlanningSession('missing')).toBeNull() })
-test('Given 智谱GLM-5.3-FLASH绑定 When 准备Owner规划 Then 冻结v3和low推理强度', () => {
+test('Given DeepSeek Flash OpenAI兼容绑定 When新建准备 Then冻结v4 JSON输出且幂等回读', () => {
+  const f = fixture('openai', 'deepseek-flash')
+  service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding)
+  const input = request(f.project.id), link = service.prepareOwnerPlanning(f.project.id, input)
+  expect(link).toMatchObject({ protocolVersion: '4', maxRequests: 1, maxOutputTokens: 8192 })
+  expect(source.resolveOwnerPlanningTask(link.planningTaskId)?.link).toEqual(link)
+  expect(service.prepareOwnerPlanning(f.project.id, input)).toEqual(link)
+})
+test('Given 智谱GLM-5.3-FLASH绑定 When 准备Owner规划 Then 冻结v6、low推理强度与32768输出上限', () => {
   const f = fixture('zhipu', 'glm-5.3-flash')
   service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding)
   const link = service.prepareOwnerPlanning(f.project.id, request(f.project.id))
-  expect(link).toMatchObject({ protocolVersion: '3', reasoningEffort: 'low', maxOutputTokens: 8192 })
+  expect(link).toMatchObject({ protocolVersion: '6', reasoningEffort: 'low', maxOutputTokens: 32768 })
   expect(source.readOwnerPlanningSnapshot(link.planningTaskId)?.link).toEqual(link)
   expect(source.resolveOwnerPlanningTask(link.planningTaskId)?.binding.modelId).toBe('glm-5.3-flash')
 })
@@ -69,6 +78,26 @@ test('Given 关联/目的任一证据丢失或篡改 When 解析 Then 拒绝而�
 })
 test('Given 当前Goal/Plan来源变化 When 发送解析 Then 拒绝；冻结资料仍供晚到回执核查', () => {
   const f = prepared(); const run = running(f); saveProjectOwnerGoalDraft(f.project.id, 1, { objective: '后来目标' }); expect(() => source.resolveOwnerPlanningSession(run.sessionId)).toThrow('更新'); expect(source.readOwnerPlanningSnapshot(f.link.planningTaskId)?.context.goal.goal.objective).toContain('定位建议')
+})
+test('Given Owner规划已有Run执行 When 用户再次预检规划占位任务 Then 提示回到项目主页审阅计划且零新增执行或请求', () => {
+  const f = prepared()
+  running(f)
+  const executionsBefore = (store.getProjectDb().prepare('SELECT COUNT(*) AS c FROM agent_executions').get() as { c: number }).c
+  expect(() => controlledTask.getControlledTaskStartPreview(f.link.planningTaskId)).toThrow('这次Owner规划已完成或已有发送记录')
+  expect(() => controlledTask.getControlledTaskStartPreview(f.link.planningTaskId)).toThrow('这次Owner规划已完成或已有发送记录')
+  expect((store.getProjectDb().prepare('SELECT COUNT(*) AS c FROM agent_executions').get() as { c: number }).c).toBe(executionsBefore)
+  expect((store.getProjectDb().prepare('SELECT COUNT(*) AS c FROM project_owner_planning_admissions').get() as { c: number }).c).toBe(0)
+})
+test('Given Owner规划仅有发送准入尚无执行登记 When 用户预检规划占位任务 Then 同样拒绝且不补造执行', () => {
+  const f = prepared()
+  const admissionsBefore = (store.getProjectDb().prepare('SELECT COUNT(*) AS c FROM project_owner_planning_admissions').get() as { c: number }).c
+  store.getProjectDb().prepare('INSERT INTO project_owner_planning_admissions (link_id, execution_id, session_id, request_hash, source_snapshot, admitted_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(f.link.id, randomUUID(), randomUUID(), 'hash', '{}', Date.now())
+  const executionsBefore = (store.getProjectDb().prepare('SELECT COUNT(*) AS c FROM agent_executions').get() as { c: number }).c
+  expect(() => controlledTask.getControlledTaskStartPreview(f.link.planningTaskId)).toThrow('这次Owner规划已完成或已有发送记录')
+  expect((store.getProjectDb().prepare('SELECT COUNT(*) AS c FROM agent_executions').get() as { c: number }).c).toBe(executionsBefore)
+  store.getProjectDb().prepare('DELETE FROM project_owner_planning_admissions WHERE link_id = ?').run(f.link.id)
+  expect((store.getProjectDb().prepare('SELECT COUNT(*) AS c FROM project_owner_planning_admissions').get() as { c: number }).c).toBe(admissionsBefore)
 })
 test('Given 旧A无资料快照 When 明确重复准备且来源仍当前 Then 补快照但不补执行', () => {
   const f = prepared(); store.getProjectDb().prepare('UPDATE project_owner_planning_links SET source_snapshot = NULL WHERE id = ?').run(f.link.id)

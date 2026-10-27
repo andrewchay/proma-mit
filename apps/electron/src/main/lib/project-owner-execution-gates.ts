@@ -1,11 +1,16 @@
+import { assertOwnerReviewerTextDelivery } from './project-owner-text-delivery'
+import { ownerDevelopmentArtifactFromPrompt } from './project-owner-development-artifact'
+import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
+import { readOwnerCommandRuntime, assertOwnerCommandPrice } from './project-owner-employee-runtime'
 /** Owner业务执行侧休眠门禁：资料fence/逐请求核验/purpose。本片不发行、不派工，gate行无生产创建路径。 */
 import { createHash, randomUUID } from 'node:crypto'
-import { lstatSync, realpathSync } from 'node:fs'
+import { existsSync, lstatSync, realpathSync } from 'node:fs'
 import { resolveAgentRuntimeBaseUrl } from '@gravitas/shared'
 import type { OwnerExecutionRevalidationRecord } from '@gravitas/shared'
-import { dirname, resolve, sep } from 'node:path'
+import { dirname, relative, resolve, sep } from 'node:path'
 import { getAgentWorkspace, getAgentWorkspaceCwd } from './agent-workspace-manager'
 import { getChannelById } from './channel-manager'
+import { isProtectedDevelopmentPath, normalizeRepoRelativePath, pathWithinAllowed } from './development-task-service'
 import * as store from './project-sqlite-store'
 import { getAgentSessionMeta } from './agent-session-manager'
 import {
@@ -28,6 +33,7 @@ function pilotPolicy(): PolicyModule { return (policyModule ??= require('./proje
 import { getStoreHandle } from './knowledge-index-service'
 import { resolveRetrievableScope } from './knowledge-scope-service'
 import { hasApprovedOwnerAction } from './project-owner-action-approval'
+import { resolvePiBaseUrl } from './adapters/pi-runtime-base-url'
 
 /** 知识读取需经过资料fence；Owner文件写入仅在逐次审批后开放。 */
 export const OWNER_TOOL_ALLOWED = new Set(['SearchKnowledge', 'ReadKnowledgeSource'])
@@ -56,14 +62,44 @@ export function isOwnerWorkspaceFileActionCandidate(sessionId: string, toolName:
   const target = resolve(root, filePath)
   if (target === root || !target.startsWith(`${root}${sep}`)) return false
   try {
+    const scope = developmentScopeForExecution(context)
+    if (scope) {
+      const relativePath = normalizeRepoRelativePath(relative(root, target).split(sep).join('/'))
+      if (!pathWithinAllowed(relativePath, scope.allowedPaths) || isProtectedDevelopmentPath(relativePath)) return false
+    }
     const realRoot = realpathSync(root)
     const realParent = realpathSync(dirname(target))
     if (realParent !== realRoot && !realParent.startsWith(`${realRoot}${sep}`)) return false
-    try { if (lstatSync(target).isSymbolicLink()) return false } catch { /* 新文件尚不存在时由Write创建。 */ }
+    try {
+      const targetStat = lstatSync(target)
+      if (targetStat.isSymbolicLink() || (targetStat.isFile() && targetStat.nlink !== 1)) return false
+    } catch { /* 新文件尚不存在时由Write创建。 */ }
     return true
   } catch {
     return false
   }
+}
+
+/** 研发Owner会话只读已确认的工作区内允许范围；拒绝链接、硬链接和非普通文件。 */
+function assertOwnerDevelopmentRead(sessionId: string, args?: Record<string, unknown>): void {
+  const context = resolveOwnerExecutionGateSession(sessionId)
+  if (context.kind !== 'owner_business') throw new Error('Owner代码读取缺少已确认的研发范围')
+  const scope = developmentScopeForExecution(context)
+  if (!scope) throw new Error('Owner代码读取缺少已确认的研发范围')
+  const filePath = typeof args?.file_path === 'string' ? args.file_path.trim() : ''
+  if (!filePath) throw new Error('Owner代码读取需要仓库相对文件路径')
+  const relativePath = normalizeRepoRelativePath(filePath)
+  if (!pathWithinAllowed(relativePath, scope.allowedPaths) || isProtectedDevelopmentPath(relativePath)) throw new Error('目标文件不在Owner已确认的读取范围内')
+  const workspace = getAgentWorkspace(scope.workspaceId)
+  if (!workspace) throw new Error('Owner代码工作区已失效')
+  const root = resolve(getAgentWorkspaceCwd(workspace, sessionId))
+  const target = resolve(root, ...relativePath.split('/'))
+  if (target === root || !target.startsWith(`${root}${sep}`)) throw new Error('Owner代码读取路径越出工作区')
+  const realRoot = realpathSync(root)
+  const realTarget = realpathSync(target)
+  if (realTarget !== target || !realTarget.startsWith(`${realRoot}${sep}`)) throw new Error('Owner代码读取拒绝符号链接或工作区外路径')
+  const stat = lstatSync(target)
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.nlink !== 1 || stat.size > 2 * 1024 * 1024) throw new Error('Owner代码读取仅允许大小受限的普通文件')
 }
 export type OwnerSessionGateContext =
   | { kind: 'unrestricted' }
@@ -71,6 +107,10 @@ export type OwnerSessionGateContext =
   | { kind: 'owner_business'; subject: { projectId: string; taskId?: string }; record: OwnerExecutionRevalidationRecord; executionId: string; gate: OwnerGateSessionRow | null }
 
 type OwnerBusinessChain = { kind: 'owner_business'; subject: { projectId: string; taskId?: string }; record: OwnerExecutionRevalidationRecord; executionId: string; gate: OwnerGateSessionRow | null }
+function developmentScopeForExecution(context: OwnerBusinessChain) {
+  const execution = store.getAgentExecution(context.executionId)
+  return execution ? context.record.source.tasks.find(task => task.taskId === execution.entityId)?.developmentScope : undefined
+}
 function resolveOwnerBusinessChain(sessionId: string): { kind: 'restricted'; reason: string } | OwnerBusinessChain {
   try {
     const execution = (store.getProjectDb().prepare("SELECT id, entity_id, owner_command_id FROM agent_executions WHERE session_id = ? AND status = 'running' ORDER BY started_at DESC").all(sessionId) as Array<{ id: string; entity_id: string; owner_command_id: string | null }>)
@@ -105,7 +145,9 @@ export function resolveOwnerExecutionGateSession(sessionId: string): OwnerSessio
 export function getOwnerExecutionToolNames(sessionId: string): ReadonlySet<string> | null {
   const context = resolveOwnerExecutionGateSession(sessionId)
   if (context.kind === 'unrestricted') return null
-  return context.kind === 'owner_business' ? new Set([...OWNER_TOOL_ALLOWED, 'Write', 'Edit']) : new Set()
+  if (context.kind !== 'owner_business') return new Set()
+  const fileActions = context.record.source.textDeliveryVersion === 1 ? [] : ['Write', 'Edit']
+  return new Set([...OWNER_TOOL_ALLOWED, 'AskUserQuestion', ...(developmentScopeForExecution(context) ? ['Read'] : []), ...fileActions])
 }
 
 function frozenSourceIds(record: OwnerExecutionRevalidationRecord): string[] {
@@ -150,15 +192,67 @@ function recordKnowledgeReadPermission(context: Extract<OwnerSessionGateContext,
   store.getProjectDb().prepare('INSERT INTO project_owner_execution_knowledge_reads(id,session_id,execution_id,revalidation_id,source_id,knowledge_base_id,document_id,content_hash,char_start,char_end,read_at) VALUES(?,?,?,?,?,?,?,?,NULL,NULL,?)').run(randomUUID(), context.gate!.sessionId, context.gate!.executionId, context.record.id, sourceId, knowledgeBaseId, documentId, contentHash, Date.now())
 }
 /** purpose感知工具谓词：Owner知识读取走资料fence，工作区Write/Edit须先通过逐次审批。 */
+/** 覆盖已有文件、受保护路径、敏感文件名与研发范围外一律视为高危写入；其余为工作区内新建。 */
+const OWNER_HIGH_RISK_BASENAMES = new Set(['.env', '.env.local', '.env.production', '.npmrc', '.gitconfig', 'id_rsa', 'id_ed25519'])
+/** 这些入口可被后续安装、构建、提交或编辑器动作间接执行，不自动授权。 */
+export function isOwnerHighRiskWritePath(relativePath: string): boolean {
+  const segments = relativePath.toLowerCase().split('/')
+  const basename = segments.at(-1) ?? ''
+  return segments.some(segment => segment.startsWith('.'))
+    || OWNER_HIGH_RISK_BASENAMES.has(basename)
+    || /\.(sh|bash|zsh|ps1|bat|cmd|exe|dll|node)$/i.test(basename)
+    || /^(package\.json|bun\.lockb?|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|makefile|dockerfile|justfile|taskfile\.ya?ml)$/i.test(basename)
+    || /^(vite|webpack|rollup|next|electron-builder|eslint|prettier)\.config\./i.test(basename)
+}
+export type OwnerWorkspaceWriteRisk = 'normal' | 'high'
+export function classifyOwnerWorkspaceWrite(sessionId: string, toolName: string, args?: Record<string, unknown>): OwnerWorkspaceWriteRisk | null {
+  if (toolName !== 'Write' && toolName !== 'Edit' && toolName !== 'MultiEdit') return null
+  if (!isOwnerWorkspaceFileActionCandidate(sessionId, toolName, args)) return null
+  const context = resolveOwnerExecutionGateSession(sessionId)
+  if (context.kind !== 'owner_business') return null
+  const filePath = typeof args?.file_path === 'string' ? args.file_path.trim() : ''
+  if (!filePath) return 'high'
+  const workspace = getAgentWorkspace(context.record.source.workspaceId)
+  if (!workspace) return 'high'
+  const root = resolve(getAgentWorkspaceCwd(workspace, sessionId))
+  const target = resolve(root, filePath)
+  const relativePath = relative(root, target).split(sep).join('/')
+  const basename = relativePath.split('/').at(-1) ?? ''
+  if (basename.startsWith('.env') || OWNER_HIGH_RISK_BASENAMES.has(basename)) return 'high'
+  if (relativePath.split('/').includes('.git')) return 'high'
+  const scope = developmentScopeForExecution(context)
+  // 无研发范围不推导为整个工作区可写；审批不会自动扩大后续执行权限。
+  if (!scope) return 'high'
+  if (isOwnerHighRiskWritePath(relativePath)) return 'high'
+  if (scope && (isProtectedDevelopmentPath(normalizeRepoRelativePath(relativePath)) || !pathWithinAllowed(normalizeRepoRelativePath(relativePath), scope.allowedPaths))) return 'high'
+  if (toolName !== 'Write') return 'high'
+  // 新建普通文本文件可自动放行；覆盖已有文件需要用户确认。
+  return existsSync(target) ? 'high' : 'normal'
+}
+/** 权限层用：Owner 工作区内低风险新建可直接执行，高风险仍走逐次人工审批。 */
+export function isOwnerAutoAllowedWorkspaceWrite(sessionId: string, toolName: string, args?: Record<string, unknown>): boolean {
+  return classifyOwnerWorkspaceWrite(sessionId, toolName, args) === 'normal'
+}
+
 export function assertToolAllowedForSessionPurpose(sessionId: string, toolName: string, args?: Record<string, unknown>): void {
   const context = resolveOwnerExecutionGateSession(sessionId)
   if (context.kind === 'unrestricted') return
+  if (context.kind === 'owner_business' && toolName === 'AskUserQuestion') {
+    if (args?.interactionType === 'computer_use_takeover') throw new Error('Owner员工暂不支持系统接管请求')
+    return
+  }
+  if (context.kind === 'owner_business' && toolName === 'Read') {
+    assertOwnerDevelopmentRead(sessionId, args)
+    return
+  }
   if (!OWNER_TOOL_ALLOWED.has(toolName)) {
     if (context.kind === 'restricted') throw new Error(context.reason)
     if (context.kind === 'owner_business') {
-      if (isOwnerWorkspaceFileActionCandidate(sessionId, toolName, args)
-        && hasApprovedOwnerAction(sessionId, { toolName, toolInput: args ?? {} })) return
-      throw new Error('Owner业务会话仅允许工作区内Write/Edit经逐次人工审批后执行')
+      if (context.record.source.textDeliveryVersion !== 1 && isOwnerWorkspaceFileActionCandidate(sessionId, toolName, args)) {
+        if (classifyOwnerWorkspaceWrite(sessionId, toolName, args) === 'normal') return
+        if (hasApprovedOwnerAction(sessionId, { toolName, toolInput: args ?? {} })) return
+      }
+      throw new Error('Owner业务会话仅允许工作区内Write/Edit；覆盖、敏感路径或越界写入须经逐次人工审批')
     }
     assertNoOwnerBusinessSession(sessionId)
     return
@@ -196,24 +290,40 @@ export function assertOwnerExecutionRequestGate(input: { commandPurpose: string;
   if (context.kind !== 'owner_business' || !context.gate) throw new Error('Owner用途请求缺少有效门禁会话')
   const policy = pilotPolicy().getPilotPolicy(context.subject.projectId)
   const record = context.record, execution = store.getAgentExecution(context.executionId)
-  const command = execution?.ownerCommandId && store.getProjectDb().prepare('SELECT grant_id, project_id, execution_id, employee_id, state FROM project_owner_execution_commands WHERE id=?').get(execution.ownerCommandId) as { grant_id: string; project_id: string; execution_id: string; employee_id: string; state: string } | undefined
+  const command = execution?.ownerCommandId && store.getProjectDb().prepare('SELECT grant_id, project_id, execution_id, employee_id, state, role, source_task_id, source_step_link_id, rework_ordinal FROM project_owner_execution_commands WHERE id=?').get(execution.ownerCommandId) as { grant_id: string; project_id: string; execution_id: string; employee_id: string; state: string; role: string; source_task_id: string; source_step_link_id: string; rework_ordinal: number } | undefined
   const grant = command && store.getProjectDb().prepare('SELECT state, expires_at, channel_id, model_id, workspace_id, runtime FROM project_owner_execution_grants WHERE id=? AND project_id=?').get(command.grant_id, context.subject.projectId) as { state: string; expires_at: number; channel_id: string; model_id: string; workspace_id: string; runtime: string } | undefined
   const employee = command ? store.getAgentEmployee(command.employee_id) : undefined
-  const channel = grant ? getChannelById(grant.channel_id) : null
+  const runtime = execution?.ownerCommandId ? readOwnerCommandRuntime(execution.ownerCommandId) : null
+  if (command && command.role === 'reviewer' && execution?.ownerCommandId) {
+    const frozen = readOwnerCommandFrozenSource(execution.ownerCommandId).source
+    if (frozen.executionKind === 'development') {
+      const artifact = ownerDevelopmentArtifactFromPrompt(execution.prompt ?? '')
+      const executors = store.getProjectDb().prepare(`SELECT id, execution_id FROM project_owner_execution_commands
+        WHERE grant_id=? AND source_task_id=? AND source_step_link_id=? AND role='executor' AND rework_ordinal=?`).all(
+        command.grant_id, command.source_task_id, command.source_step_link_id, command.rework_ordinal,
+      ) as Array<{ id: string; execution_id: string | null }>
+      if (!artifact || executors.length !== 1 || artifact.executorCommandId !== executors[0]!.id
+        || artifact.executorExecutionId !== executors[0]!.execution_id) throw new Error('Owner代码Reviewer请求未绑定准确冻结快照')
+    } else {
+      assertOwnerReviewerTextDelivery(execution.ownerCommandId)
+    }
+  }
+  if (runtime) assertOwnerCommandPrice(runtime)
+  const channel = runtime ? getChannelById(runtime.channelId) : null
   const workspace = grant ? getAgentWorkspace(grant.workspace_id) : undefined
   if (!policy?.ownerExecutionRevalidation || policy.ownerExecutionRevalidation.id !== record.id
     || policy.ownerExecutionRevalidation.integrityHash !== record.integrityHash
     || !execution || execution.status !== 'running' || execution.sessionId !== input.sessionId
     || !command || command.project_id !== context.subject.projectId || command.execution_id !== execution.id || command.state !== 'running'
     || !grant || grant.state !== 'active' || grant.expires_at <= Date.now()
-    || grant.runtime !== 'ai-sdk' || input.runtime !== 'ai-sdk' || record.source.runtime !== 'ai-sdk'
-    || input.modelId !== record.source.modelId || input.modelId !== grant.model_id || input.permissionMode !== 'safe'
-    || !employee?.enabled || employee.runtime !== 'ai-sdk' || employee.channelId !== grant.channel_id || employee.modelId !== grant.model_id
+    || grant.runtime !== input.runtime || record.source.runtime !== input.runtime
+    || !runtime || input.modelId !== runtime.modelId || runtime.runtime !== input.runtime || input.permissionMode !== 'safe'
+    || !employee?.enabled || employee.runtime !== runtime.runtime || employee.channelId !== runtime.channelId || employee.modelId !== runtime.modelId
     || !channel?.enabled || !workspace || workspace.id !== record.source.workspaceId || grant.workspace_id !== record.source.workspaceId) {
     throw new Error('Owner逐请求核验失败：执行、授权、员工或冻结来源不匹配')
   }
   const expectedCwd = getAgentWorkspaceCwd(workspace, input.sessionId)
-  const expectedBaseUrl = resolveAgentRuntimeBaseUrl(channel.provider, 'ai-sdk', channel.baseUrl)
+  const expectedBaseUrl = runtime.runtime === 'pi' ? resolvePiBaseUrl(channel.provider, channel.baseUrl) : resolveAgentRuntimeBaseUrl(channel.provider, 'ai-sdk', channel.baseUrl)
   let expected: URL, actual: URL, base: URL
   try { expected = new URL(expectedBaseUrl); actual = new URL(input.requestUrl); base = new URL(input.baseUrl) } catch { throw new Error('Owner请求URL无效') }
   const basePath = expected.pathname.replace(/\/+$/, '')

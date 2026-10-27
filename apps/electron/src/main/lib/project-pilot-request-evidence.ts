@@ -68,6 +68,22 @@ const DEEPSEEK_FLASH: PilotReviewedPriceEvidence = {
 validatePilotPriceEvidence(DEEPSEEK_FLASH)
 PILOT_REVIEWED_PRICE_EVIDENCE.set(DEEPSEEK_FLASH.evidenceId, DEEPSEEK_FLASH)
 
+/** DeepSeek V4 Pro 官方峰时价作为保守上界；缓存命中与非高峰价格均更低。 */
+const DEEPSEEK_V4_PRO: PilotReviewedPriceEvidence = {
+  evidenceId: 'deepseek-v4-pro-0813-2026-10-22',
+  providerKind: 'openai',
+  model: 'deepseek-v4-pro',
+  inputMicrosPerMillion: 1_320_000,
+  outputMicrosPerMillion: 3_960_000,
+  extraCostCeilingMicros: 0,
+  maxModelInputTokens: 1_000_000,
+  maxModelOutputTokens: 384_000,
+  reviewedAt: '2026-10-22',
+  source: 'https://api-docs.deepseek.com/quick_start/pricing/',
+}
+validatePilotPriceEvidence(DEEPSEEK_V4_PRO)
+PILOT_REVIEWED_PRICE_EVIDENCE.set(DEEPSEEK_V4_PRO.evidenceId, DEEPSEEK_V4_PRO)
+
 function validatePilotPriceEvidence(evidence: PilotReviewedPriceEvidence): void {
   if (!evidence || typeof evidence.evidenceId !== 'string' || !evidence.evidenceId.trim()
     || !['openai', 'anthropic', 'google'].includes(evidence.providerKind)

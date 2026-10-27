@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useAtomValue } from 'jotai'
+import { toast } from 'sonner'
 import type { PilotInboxEntry, PilotIntent, PilotObservation } from '@gravitas/shared'
+import { notificationsEnabledAtom, sendDesktopNotification } from '../../atoms/notifications'
 import { ProjectPilotGrantControl } from './ProjectPilotGrantControl'
-import { ProjectOwnerHome } from './ProjectOwnerHome'
 import { buildNextStepItems, describeIntentKind, describeTaskState } from './project-user-language'
 
 export function ProjectPilotOverview({ projectId, refreshKey, onOpenSource, onCreateTask }: {
@@ -18,7 +20,9 @@ export function ProjectPilotOverview({ projectId, refreshKey, onOpenSource, onCr
   const [answering, setAnswering] = useState<string | null>(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const notificationsEnabled = useAtomValue(notificationsEnabledAtom)
   const refreshVersion = useRef(0)
+  const notifiedEvents = useRef(new Set<string>())
   const refresh = useCallback(async () => {
     const version = ++refreshVersion.current
     setLoading(true)
@@ -46,10 +50,27 @@ export function ProjectPilotOverview({ projectId, refreshKey, onOpenSource, onCr
     setInbox([])
     void refresh()
     const off = window.electronAPI.paa.project.onProjectActivityChanged((payload) => {
-      if (!payload.projectId || payload.projectId === projectId) void refresh()
+      if (!payload.projectId || payload.projectId === projectId) {
+        void refresh()
+        const action = payload.action ?? ''
+        const summary = payload.summary?.trim() ?? ''
+        const key = `${payload.projectId ?? projectId}:${action}:${summary}`
+        const needsAttention = ['agent_completed', 'agent_blocked', 'agent_failed', 'agent_stale', 'agent_timed_out', 'agent_budget_exceeded'].includes(action)
+        if (notificationsEnabled && needsAttention && summary && !notifiedEvents.current.has(key)) {
+          notifiedEvents.current.add(key)
+          if (notifiedEvents.current.size > 80) notifiedEvents.current.delete(notifiedEvents.current.values().next().value!)
+          const title = action === 'agent_completed' ? '项目有新成果待查看' : '项目进展需要你留意'
+          toast(title, {
+            description: summary,
+            action: { label: '查看进展', onClick: () => { void refresh() } },
+            duration: 10000,
+          })
+          sendDesktopNotification(title, summary, notificationsEnabled, { onNavigate: () => { void refresh() } })
+        }
+      }
     })
     return () => { refreshVersion.current++; off() }
-  }, [projectId, refresh])
+  }, [projectId, refresh, notificationsEnabled])
   useEffect(() => {
     if (refreshKey !== undefined && refreshKey !== null) void refresh()
   }, [refreshKey, refresh])
@@ -79,7 +100,6 @@ export function ProjectPilotOverview({ projectId, refreshKey, onOpenSource, onCr
   const nextSteps = observation ? buildNextStepItems(observation, intents) : []
   return (
     <section className="space-y-4" aria-label="项目进展" data-project-id={projectId}>
-      <ProjectOwnerHome projectId={projectId} />
       <div className="flex items-start justify-between gap-4 rounded-xl bg-card p-5 shadow-sm">
         <div>
           <h2 className="text-lg font-semibold">项目进展</h2>

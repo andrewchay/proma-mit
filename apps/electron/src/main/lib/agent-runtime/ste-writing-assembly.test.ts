@@ -28,7 +28,10 @@ const providerAdapter: ProviderAdapter = {
   buildTitleRequest: () => ({ url: '', headers: {}, body: '' }),
   parseTitleResponse: () => null,
 }
+// 用真实模块展开后覆盖被测依赖：局部替换会让其它间接 import 的导出凭空消失（假失败）。
+const actualCore = await import('@gravitas/core')
 mock.module('@gravitas/core', () => ({
+  ...actualCore,
   getAdapter: () => providerAdapter,
   streamSSE: async (): Promise<StreamSSEResult> => ({ content: '离线完成', reasoning: '', thinkingBlocks: [], toolCalls: [], stopReason: 'end_turn' }),
 }))

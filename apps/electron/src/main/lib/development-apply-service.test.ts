@@ -69,7 +69,7 @@ function fixture(): World {
 
   const session = sessionManager.createAgentSession('应用测试', channel.id, workspace.id)
   const sessionDirectory = getAgentSessionWorkspacePath(workspace.slug, session.id)
-  const executionId = `exec-${randomUUID()}`
+  const executionId = randomUUID()
   const worktree = createDevelopmentWorktree(repo, sessionDirectory, executionId)
   // 修改 + 新增 + 删除，覆盖三种变更类型
   writeFileSync(join(worktree.path, 'src', 'a.ts'), 'fixed\n')

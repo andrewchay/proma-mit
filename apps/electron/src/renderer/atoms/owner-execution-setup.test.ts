@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
-import type { OwnerExecutionPreparationView, ProjectOwnerPlanDraft } from '@gravitas/shared'
+import type { OwnerExecutionAssignmentProposal, OwnerExecutionPreparationView, ProjectOwnerPlanDraft } from '@gravitas/shared'
 import { getOwnerExecutionEditor } from './project-owner-execution-atoms'
-import { ownerDollarsToMicros, ownerExecutionPeopleReady, ownerExecutionSetupSuggestion, ownerMicrosToDollars } from './owner-execution-setup'
+import { ownerDollarsToMicros, ownerExecutionAssignmentEdit, ownerExecutionArrangementMatches, ownerExecutionSuggestedLimits, ownerExecutionPeopleReady, ownerExecutionSetupSuggestion, ownerMicrosToDollars } from './owner-execution-setup'
 
 const plan: ProjectOwnerPlanDraft = {
   projectId: 'p', schemaVersion: 1, revision: 1, planVersion: 1, goalRevision: 1, goalVersion: 1,
@@ -23,10 +23,15 @@ test('Given 美元文本 When 换算 Then 精确到微美元且拒绝指数、�
   }
   for (const text of ['15人民币', '1e6', '-1', '01', '1.0000001', '9007199254.740992', ' 1', '1.', '']) expect(ownerDollarsToMicros(text)).toBe('')
 })
-test('Given 本项目唯一有效岗位 When 准备 Then 复用而不推测Reviewer或预算', () => {
-  expect(ownerExecutionSetupSuggestion(view, plan, editor())).toEqual({ workspaceId: 'w', selectedStepKeys: ['s'], roleAssignments: { research: 'e' } })
-  expect(editor().reviewerEmployeeId).toBe('')
+test('Given 本项目唯一有效岗位与评审角色 When 准备 Then Owner 自动安排人员但不填预算', () => {
+  expect(ownerExecutionSetupSuggestion(view, plan, editor())).toEqual({ workspaceId: 'w', selectedStepKeys: ['s'], roleAssignments: { research: 'e' }, reviewerEmployeeId: 'r' })
   expect(editor().maxCostMicrosText).toBe('')
+})
+test('Given 评审角色缺失或不唯一 When Owner 安排 Then 保持阻塞而不猜人', () => {
+  const reviewer = view.choices.employees[1]!
+  for (const employees of [[], [reviewer, { ...reviewer, id: 'r2' }]]) {
+    expect(ownerExecutionSetupSuggestion({ ...view, choices: { ...view.choices, employees: [employee, ...employees] } }, plan, editor()).reviewerEmployeeId).toBeUndefined()
+  }
 })
 test('Given 模板歧义、Owner载体、其他模型或工作区 When 推荐 Then 不使用首项或全局回退', () => {
   for (const employees of [[employee, { ...employee, id: 'e2' }], [{ ...employee, isOwnerCarrier: true }], [{ ...employee, modelId: 'other' }], [{ ...employee, workspaceIds: ['other'] }]]) {
@@ -50,4 +55,32 @@ test('Given 覆盖Owner模型 When 未明确确认或员工间不一致 Then 阻
   expect(ownerExecutionPeopleReady(e, plan)).toBe(false)
   expect(ownerExecutionPeopleReady({ ...e, acknowledgeOwnerConfigurationOverride: true }, plan)).toBe(true)
   expect(ownerExecutionPeopleReady({ ...e, acknowledgeOwnerConfigurationOverride: true, view: { ...e.view, choices: { ...view.choices, employees: [employee, { ...employee, id: 'r', modelId: 'different' }] } } }, plan)).toBe(false)
+})
+
+test('Given 已核验Owner安排和未保存预算 When 重建界面 Then 只建议运行边界，保留预算且冲突选人可识别', () => {
+  const proposal: OwnerExecutionAssignmentProposal = { schemaVersion: 1, contextFingerprint: 'a'.repeat(64), selectedStepKeys: ['s'], scopeReason: '完整方案', workspaceId: 'w', workspaceReason: '已授权', executionKind: 'controlled', executionKindReason: '非代码', assignments: [{ roleKey: 'research', employeeId: 'e', reason: '适配' }], reviewerEmployeeId: 'r', reviewerReason: '独立' }
+  const selected = { ...editor(), ...ownerExecutionAssignmentEdit(proposal), maxCostMicrosText: '7000000', knowledgeSourceIds: ['user-selected'] }
+  expect(ownerExecutionArrangementMatches(selected, proposal)).toBe(true)
+  expect(ownerExecutionArrangementMatches({ ...selected, roleAssignments: { research: 'other' } }, proposal)).toBe(false)
+  const now = new Date('2026-10-19T08:30:00Z').getTime(), limits = ownerExecutionSuggestedLimits(1, now)
+  expect(limits).toMatchObject({ maxRunsText: '12', maxReworkText: '1' })
+  expect(limits).not.toHaveProperty('maxCostMicrosText')
+  expect(limits).not.toHaveProperty('knowledgeSourceIds')
+  expect(new Date(limits.expiresAtText!).getTime()).toBe(now + 86400000)
+})
+
+
+test('GivenOwner已选择适配的普通员工且无岗位模板 When投影同一对话执行边界 Then无需用户改profile或重新选人', () => {
+  const generalView = { ...view, choices: { ...view.choices, employees: view.choices.employees.map(item => ({ ...item, executionProfile: 'general', roleTemplateId: undefined, ownerControlledCompatible: true as const })) } }
+  const selected = { ...editor(), view: generalView, selectedStepKeys: ['s'], workspaceId: 'w', roleAssignments: { research: 'e' }, reviewerEmployeeId: 'r' }
+  expect(ownerExecutionPeopleReady(selected, plan)).toBe(true)
+  expect(ownerExecutionPeopleReady({ ...selected, view: { ...generalView, choices: { ...generalView.choices, employees: generalView.choices.employees.map(item => ({ ...item, ownerControlledCompatible: undefined })) } } }, plan)).toBe(false)
+})
+
+
+test('GivenOwner已选不同模型且后端都确认兼容 When进入执行边界 Then不要求用户统一模型或核对内部覆盖项', () => {
+  const choices = { ...view.choices, employees: view.choices.employees.map(item => ({ ...item, ownerMixedRuntimeCompatible: true as const, ...(item.id === 'r' ? { channelId: 'other', modelId: 'review-model' } : {}) })) }
+  const selected = { ...editor(), view: { ...view, choices }, selectedStepKeys: ['s'], workspaceId: 'w', roleAssignments: { research: 'e' }, reviewerEmployeeId: 'r' }
+  expect(ownerExecutionPeopleReady(selected, plan)).toBe(true)
+  expect(ownerExecutionPeopleReady({ ...selected, view: { ...view, choices: { ...choices, employees: choices.employees.map(item => ({ ...item, ownerMixedRuntimeCompatible: undefined })) } } }, plan)).toBe(false)
 })

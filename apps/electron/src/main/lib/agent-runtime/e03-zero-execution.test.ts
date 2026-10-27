@@ -32,6 +32,7 @@ function mockStreamText(): void {
   streamTextCalls = 0
   executedToolNames = []
   mock.module('ai', () => ({
+    Output: { json: () => ({ type: 'json' }) },
     isStepCount: () => ({ continue: () => true }),
     jsonSchema: (schema: unknown) => schema,
     tool: (def: { execute?: (input: Record<string, unknown>, options: { toolCallId?: string }) => Promise<unknown> }) => ({

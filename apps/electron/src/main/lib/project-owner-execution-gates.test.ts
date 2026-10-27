@@ -23,13 +23,14 @@ const policy = await import('./project-pilot-policy')
 const gates = await import('./project-owner-execution-gates')
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
-function fixture(single = false) {
+function fixture(single = false, textDelivery = false) {
   const project = store.createProject({ title: 'Owner门禁fixture', description: '' })
   const target = single ? store.createTask(project.id, { title: '单任务', description: '' }) : null
   const workspace = createAgentWorkspace(`owner-gates-${randomUUID()}`)
   bindWorkspaceToProject(project.id, workspace.id)
-  const channel = createChannel({ name: 'fake', provider: 'openai', baseUrl: 'https://example.invalid', apiKey: 'fake', enabled: true, models: [{ id: 'model', name: 'model', enabled: true }] })
-  const employee = (name: string) => employees.createAgentEmployee({ name, role: '研究', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId: 'model', workspaceIds: [workspace.id] })
+  const modelId = textDelivery ? 'glm-5.3-flash' : 'model'
+  const channel = createChannel({ name: 'fake', provider: 'openai', baseUrl: 'https://example.invalid', apiKey: 'fake', enabled: true, models: [{ id: modelId, name: modelId, enabled: true }] })
+  const employee = (name: string) => employees.createAgentEmployee({ name, role: '研究', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId, workspaceIds: [workspace.id] })
   const executor = employee('执行者'), reviewer = employee('技术评审')
   saveProjectOwnerGoalDraft(project.id, 0, { objective: '形成方案' }, target?.id)
   const context = plans.getProjectOwnerPlanningContext(project.id, target?.id)
@@ -37,7 +38,7 @@ function fixture(single = false) {
   plans.saveProjectOwnerPlanDraft(project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '形成方案', assumptions: [], risks: [], steps, changeReason: '建立计划' }, target?.id)
   plans.confirmProjectOwnerPlanDraft(project.id, 1, 1, target?.id)
   const subject = { projectId: project.id, ...(target ? { taskId: target.id } : {}) }
-  const preparationInput = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: steps.map(step => step.key), executionKind: 'controlled' as const, executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id, roleAssignments: [...new Set(steps.map(step => step.roleKey))].map(roleKey => ({ roleKey, employeeId: executor.id })), workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1000000, maxRuns: 2, maxRework: 0, expiresAt: Date.now() + 3600000, changeReason: '暂停准备' }
+  const preparationInput = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: steps.map(step => step.key), executionKind: 'controlled' as const, ...(textDelivery ? { employeeRuntimeVersion: 2 as const, textDeliveryVersion: 1 as const, qualityManagementVersion: 1 as const } : {}), executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id, roleAssignments: [...new Set(steps.map(step => step.roleKey))].map(roleKey => ({ roleKey, employeeId: executor.id })), workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1000000, maxRuns: 2, maxRework: 0, expiresAt: Date.now() + 3600000, changeReason: '暂停准备' }
   const pv = prep.previewOwnerExecutionPreparation(subject, preparationInput), preparation = prep.saveOwnerExecutionPreparation(subject, preparationInput, pv.previewFingerprint)
   const materialInput = { requestId: randomUUID(), expectedMaterializationRevision: 0, expectedPreparationId: preparation.id, expectedPreparationRevision: preparation.revision, expectedPreparationHash: preparation.integrityHash, expectedPolicyRevision: preparation.policyRevision }
   const mpv = materialization.previewOwnerTaskMaterialization(subject, materialInput), batch = materialization.materializeOwnerTasks(subject, materialInput, mpv.previewFingerprint)
@@ -74,6 +75,12 @@ test('Given gate准入+冻结空资料集合 When 知识工具 Then 交集为空
   expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'SearchKnowledge', {})).toThrow('交集')
   expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'ReadMcpResourceTool', {})).toThrow('Owner')
 })
+test('Given 完整文本交付 Owner执行 When 构建工具白名单 Then 不暴露工作区写入工具', () => {
+  const f = fixture(false, true), sessionId = syntheticRunningExecution(f)
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  expect([...gates.getOwnerExecutionToolNames(sessionId)!].sort()).toEqual(['AskUserQuestion', 'ReadKnowledgeSource', 'SearchKnowledge'])
+})
 test('Given合法Owner gate When文件写入 Then仅工作区内Write/Edit可进入逐次审批且审批前不执行', () => {
   const f = fixture(), sessionId = syntheticRunningExecution(f)
   const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
@@ -82,7 +89,8 @@ test('Given合法Owner gate When文件写入 Then仅工作区内Write/Edit可进
   expect(gates.isOwnerWorkspaceFileActionCandidate(sessionId, 'Edit', { file_path: 'edit.md' })).toBe(true)
   expect(gates.isOwnerWorkspaceFileActionCandidate(sessionId, 'Write', { file_path: '../outside.txt' })).toBe(false)
   expect(gates.isOwnerWorkspaceFileActionCandidate(sessionId, 'Bash', { command: 'touch denied.txt' })).toBe(false)
-  expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'Write', { file_path: 'denied.txt', content: 'test' })).toThrow('逐次人工审批')
+  // 无研发范围时不自动授予文件写入权限。
+  expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'Write', { file_path: 'new-file.txt', content: 'test' })).toThrow('人工审批')
   expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'Bash', { command: 'touch denied.txt' })).toThrow('仅允许工作区内Write/Edit')
 })
 test('Given 空集合白名单 When ReadKnowledgeSource任意documentId Then 拒且无审计行', () => {
@@ -153,5 +161,36 @@ test('Given Owner用途工具目录 When 尚未准入或已准入 Then 不向模
   expect([...gates.getOwnerExecutionToolNames(sessionId)!]).toEqual([])
   const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
   gates.admitOwnerExecutionGateSession(executionId, sessionId)
-  expect([...gates.getOwnerExecutionToolNames(sessionId)!].sort()).toEqual(['Edit', 'ReadKnowledgeSource', 'SearchKnowledge', 'Write'])
+  expect([...gates.getOwnerExecutionToolNames(sessionId)!].sort()).toEqual(['AskUserQuestion', 'Edit', 'ReadKnowledgeSource', 'SearchKnowledge', 'Write'])
+})
+
+test('Given无研发范围的Owner执行 When写入风险分级 Then新建和覆盖均须审批', () => {
+  const f = fixture(), sessionId = syntheticRunningExecution(f)
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  // 没有显式研发范围，新建普通文件也不能自动获得写权限。
+  // 父目录必须已存在（既有候选语义），因此在工作区根下新建。
+  expect(gates.classifyOwnerWorkspaceWrite(sessionId, 'Write', { file_path: 'game.html', content: 'x' })).toBe('high')
+  expect(gates.isOwnerAutoAllowedWorkspaceWrite(sessionId, 'Write', { file_path: 'game.html', content: 'x' })).toBe(false)
+  // 覆盖已有文件：高风险，必须人工审批（写入夹具冻结的那个工作区根）。
+  const { mkdirSync, writeFileSync } = require('node:fs') as typeof import('node:fs')
+  const { getAgentWorkspace } = require('./agent-workspace-manager') as typeof import('./agent-workspace-manager')
+  const { getAgentWorkspaceCwd } = require('./agent-workspace-manager') as typeof import('./agent-workspace-manager')
+  const frozenWorkspace = getAgentWorkspace(f.record.source.workspaceId)!
+  const frozenRoot = getAgentWorkspaceCwd(frozenWorkspace, sessionId)
+  mkdirSync(frozenRoot, { recursive: true })
+  writeFileSync(join(frozenRoot, 'existing.md'), 'old')
+  expect(gates.classifyOwnerWorkspaceWrite(sessionId, 'Write', { file_path: 'existing.md', content: 'new' })).toBe('high')
+  // 敏感文件与 Edit 一律高风险。
+  expect(gates.classifyOwnerWorkspaceWrite(sessionId, 'Write', { file_path: '.env', content: 'KEY=1' })).toBe('high')
+  expect(gates.classifyOwnerWorkspaceWrite(sessionId, 'Edit', { file_path: 'game.html', old_string: 'a', new_string: 'b' })).toBe('high')
+  // 工作区外路径不构成候选写入。
+  expect(gates.classifyOwnerWorkspaceWrite(sessionId, 'Write', { file_path: '../escape.txt', content: 'x' })).toBeNull()
+  expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'Edit', { file_path: 'game.html', old_string: 'a', new_string: 'b' })).toThrow('人工审批')
+})
+
+
+test('Given间接执行入口 When分类 Then配置/hooks/脚本不能自动放行而普通页面不受误分类', () => {
+  for (const path of ['.github/workflows/ci.yml', 'package.json', '.husky/pre-commit', '.vscode/tasks.json', 'Dockerfile', 'vite.config.ts', 'scripts/install.sh', '.npmrc', 'src/.env.test']) expect(gates.isOwnerHighRiskWritePath(path)).toBe(true)
+  for (const path of ['index.html', 'src/game.ts', 'styles.css', 'notes.md']) expect(gates.isOwnerHighRiskWritePath(path)).toBe(false)
 })

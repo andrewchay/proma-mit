@@ -1,3 +1,4 @@
+import { ownerExecutionModelSummary } from '@gravitas/shared'
 /** 材料化后重新验证面板：唯一动作是"重新验证为v2"；不是执行许可，历史只读。 */
 import { useEffect, useMemo } from 'react'
 import { atom, useAtomValue, useSetAtom } from 'jotai'
@@ -73,7 +74,7 @@ function RevalidationFacts({
       <p className="text-xs">
         人员：执行 {source.executor.name}（{source.executor.id}）；评审 {source.reviewer.name}（
         {source.reviewer.id}）。工作区 {source.workspaceName}（{source.workspaceId}）；渠道{' '}
-        {source.channelId}；模型 {source.modelId}；Runtime {source.runtime}。资料{' '}
+        {source.channelId}；模型 {ownerExecutionModelSummary(source)}；Runtime {source.runtime}。资料{' '}
         {source.knowledgeSources.length
           ? source.knowledgeSources.map((k) => `${k.name}（${k.id}）`).join('、')
           : 'none'}

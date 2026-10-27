@@ -1,3 +1,10 @@
+import { ownerAssignmentFailureReason } from './project-owner-failure-reason'
+import { captureOwnerTextDelivery } from './project-owner-text-delivery'
+import { requestOwnerManagementWake } from './project-owner-management-events'
+import { appendOwnerManagementMessage, recordOwnerManagementTeamChanged } from './project-owner-management-store'
+import { readOwnerCommandFrozenSource, readOwnerCommandRuntime } from './project-owner-employee-runtime'
+import { resolveOwnerEmployeeInvocation } from './project-owner-employee-invocation'
+import { awaitOwnerRequestSettlements } from './project-owner-execution-request-exit'
 import {
   assertNoOwnerBusinessTask,
   assertNoOwnerBusinessExecution,
@@ -61,7 +68,10 @@ import { cancelQueuedOwnerCommand, recordOwnerCommandStopEscalation, recoverInte
 import { getOwnerExecutionRevalidation } from './project-owner-execution-revalidation'
 import { admitOwnerGateForClaim, claimOwnerCommandStart, recordOwnerCommandHandoffIntent, recordOwnerRuntimeStarted } from './project-owner-execution-start'
 import { settleOwnerCommandUsage } from './project-owner-execution-settlement'
+import { requestOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
 import { recordOwnerTechnicalReviewEvidence } from './project-owner-technical-review'
+import { ownerExecutionHash } from './project-owner-execution-hash'
+import { hydrateOwnerDevelopmentReviewerPrompt, ownerDevelopmentArtifactReferenceFromPrompt, readOwnerDevelopmentArtifactForReview, seedOwnerDevelopmentRework } from './project-owner-development-artifact'
 import type { PilotUsageEvidence } from './project-pilot-budget-ledger'
 import { updateTask, getTask, updateExecutionSubTask } from './project-service'
 import { getSettings } from './settings-service'
@@ -154,7 +164,14 @@ export function createAgentEmployee(input: CreateAgentEmployeeInput): AgentEmplo
     throw new Error('Claude / Gravitas Runtime 已停止新建员工；请选择 Pi 或 AI SDK')
   }
   validateEmployeeConfiguration({ ...input, runtime })
-  return store.createAgentEmployee({ ...input, runtime })
+  const changeId = `employee:${randomUUID()}`
+  let employee: AgentEmployee | null = null
+  store.getProjectDb().transaction(() => {
+    employee = store.createAgentEmployee({ ...input, runtime })
+    recordOwnerManagementTeamChanged(changeId)
+  })()
+  if (!employee) throw new Error('AI员工创建后无法重新读取')
+  return employee
 }
 
 export function updateAgentEmployee(id: string, patch: UpdateAgentEmployeeInput): AgentEmployee | null {
@@ -168,7 +185,13 @@ export function updateAgentEmployee(id: string, patch: UpdateAgentEmployeeInput)
     throw new Error('Claude / Gravitas Runtime 已停止切入；已有员工仍可运行和编辑')
   }
   validateEmployeeConfiguration({ ...current, ...normalizedPatch })
-  return store.updateAgentEmployee(id, normalizedPatch)
+  const changeId = `employee:${id}:${randomUUID()}`
+  let employee: AgentEmployee | null = null
+  store.getProjectDb().transaction(() => {
+    employee = store.updateAgentEmployee(id, normalizedPatch)
+    if (employee) recordOwnerManagementTeamChanged(changeId)
+  })()
+  return employee
 }
 
 function validateEmployeeConfiguration(input: CreateAgentEmployeeInput): void {
@@ -193,7 +216,12 @@ function validateEmployeeConfiguration(input: CreateAgentEmployeeInput): void {
 }
 
 export function deleteAgentEmployee(id: string): boolean {
-  return store.deleteAgentEmployee(id)
+  let deleted = false
+  store.getProjectDb().transaction(() => {
+    deleted = store.deleteAgentEmployee(id)
+    if (deleted) recordOwnerManagementTeamChanged(`employee:${id}:${randomUUID()}`)
+  })()
+  return deleted
 }
 
 // ============================================
@@ -821,10 +849,20 @@ export async function startOwnerCommandExecution(input: { executionId: string; c
   const frozenEmployeeId = input.role === 'executor' ? (frozenTask?.executor?.id ?? view.revalidation?.source.executor.id) : view.revalidation?.source.reviewer.id
   if (!command || command.role !== input.role || command.employee_id !== execution.agentId || command.project_id !== execution.projectId
     || command.source_task_id !== execution.entityId || view.status !== 'current' || frozenEmployeeId !== execution.agentId) return false
-  const employee = store.getAgentEmployee(execution.agentId)
-  if (!employee?.enabled || employee.runtime !== 'ai-sdk' || employee.workflowId
-    || !['controlled', 'development'].includes(employee.executionProfile ?? 'general')) return false
-  const runtimeBudgetLimitUsd = resolvePilotRuntimeBudgetLimitUsd(employee.runtime, input.reservedCostMicros)
+  const originalEmployee = store.getAgentEmployee(execution.agentId)
+  if (!originalEmployee?.enabled || !['ai-sdk', 'pi'].includes(originalEmployee.runtime) || originalEmployee.workflowId) return false
+  let employee: AgentEmployee
+  try { employee = resolveOwnerEmployeeInvocation(originalEmployee, view.revalidation!.source) } catch { return false }
+  // 重开应用时知识索引尚未被UI/工具打开；必须在claim前准备句柄，避免准备错误被误记为已启动后的未知用量。
+  if (view.revalidation!.source.knowledgeSources.length) {
+    try { await (await import('./knowledge-index-service')).openKnowledgeIndexStore() }
+    catch (error) {
+      store.updateAgentExecution(input.executionId, { error: `Owner知识索引准备失败，尚未调用Runtime：${error instanceof Error ? error.message : '索引无法打开'}` })
+      return false
+    }
+  }
+  // Owner逐请求HTTP账本已做硬预留/结算；Pi不支持Runtime软停止阈值，不能用其本地估价代替。
+  const runtimeBudgetLimitUsd = employee.runtime === 'ai-sdk' ? resolvePilotRuntimeBudgetLimitUsd(employee.runtime, input.reservedCostMicros) : undefined
   return startAgentHeadless(input.executionId, employee, runtimeBudgetLimitUsd, {
     commandId: input.commandId,
     role: input.role,
@@ -845,9 +883,9 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
   const task = execution.entityType === 'task' ? store.getTask(execution.entityId) : null
   const development = employee.executionProfile === 'development'
   const controlled = employee.executionProfile === 'controlled'
-  if (ownerExecution && (employee.runtime !== 'ai-sdk' || employee.workflowId
+  if (ownerExecution && (!['ai-sdk', 'pi'].includes(employee.runtime) || employee.workflowId
     || (!development && !controlled) || !Number.isSafeInteger(ownerExecution.reservedCostMicros) || ownerExecution.reservedCostMicros <= 0)) {
-    store.updateAgentExecution(executionId, { error: 'Owner dispatcher仅支持来源冻结的受控AI SDK headless执行配置' })
+    store.updateAgentExecution(executionId, { error: 'Owner dispatcher仅支持来源冻结的受控 headless 执行配置' })
     return false
   }
   let workspaceId = task?.workspaceId ?? employee.workspaceId ?? getSettings().agentWorkspaceId
@@ -883,6 +921,8 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
       return false
     }
   }
+  // Owner业务始终使用已冻结的逐动作审批边界，不能继承员工auto调用方式。
+  if (ownerExecution) permissionModeOverride = 'safe'
   console.log(`[Diag][agent-employee] 执行 ${execution.id} task=${execution.entityId} 工作区=${
     task?.workspaceId ? `任务指定:${task.workspaceId}` : (employee.workspaceId ? `员工:${employee.workspaceId}` : `全局:${workspaceId}`)
   } 最终=${workspaceId}`)
@@ -905,7 +945,7 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
   let sessionId: string
   try {
     const task = store.getTask(execution.entityId)
-    const previous = development ? store.listAgentExecutionsByEntity('task', execution.entityId)
+    const previous = development && !ownerExecution ? store.listAgentExecutionsByEntity('task', execution.entityId)
       .find((run) => run.id !== executionId && run.agentId === employee.id && run.outputFiles?.length && run.sessionId) : undefined
     assertLegacyExecutionPurpose(execution)
     if (previous) assertNoOwnerBusinessSession(previous.sessionId)
@@ -922,12 +962,17 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
       employee.runtime,
     )
     sessionId = session.id
+    const ownerKnowledgeBaseIds = ownerExecution
+      ? [...new Set(readOwnerCommandFrozenSource(ownerExecution.commandId).source.knowledgeSources.flatMap(source => source.knowledgeBaseIds))]
+      : undefined
     // PH2-③ 追根因：AI 员工是无人值守执行，强制 delegationDepth=1 使其不能自我委派（
     //   协作子会话工具会因 delegationDepth>0 拒绝创建），从根上杜绝"创建100字文件却爆60+子会话"。
     updateAgentSessionMeta(sessionId, {
       delegationDepth: 1,
       stoppedByUser: false,
-      ...(development || controlled ? { projectId: execution.projectId, knowledgeScopeMode: 'project' as const, permissionMode: permissionModeOverride, modelId } : {}),
+      ...(ownerExecution
+        ? { projectId: execution.projectId, knowledgeScopeMode: 'explicit' as const, explicitKnowledgeBaseIds: ownerKnowledgeBaseIds!, permissionMode: permissionModeOverride, modelId }
+        : development || controlled ? { projectId: execution.projectId, knowledgeScopeMode: 'project' as const, permissionMode: permissionModeOverride, modelId } : {}),
     })
     // 普通执行尽早保留会话定位；Pilot/Owner必须等到调用Runtime前与命令同事务认领。
     if (!execution.pilotCommandId && !ownerExecution) store.updateAgentExecution(executionId, { sessionId })
@@ -939,13 +984,25 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
       const previousPath = previous ? resolveDevelopmentWorktree(workspace.rootPath!, sessionDirectory) : undefined
       if (previous && !previousPath) throw new Error('上次研发 worktree 绑定缺失，不能在主仓库或新基线上静默返工')
       const worktree = previousPath ? { path: previousPath, continuedFromExecutionId: previous!.id } : createDevelopmentWorktree(workspace.rootPath!, sessionDirectory, executionId)
-      const prompt = `${buildAgentTaskPrompt(task!, employee)}\n\n本次执行基线：${JSON.stringify(worktree)}`
+      if (ownerExecution?.role === 'executor') {
+        const continuedFrom = await seedOwnerDevelopmentRework(ownerExecution.commandId, worktree.path)
+        if (continuedFrom) Object.assign(worktree, { continuedFromExecutionId: continuedFrom })
+      }
+      const taskPrompt = ownerExecution ? execution.prompt : buildAgentTaskPrompt(task!, employee)
+      const prompt = `${taskPrompt}\n\n本次执行基线：${JSON.stringify(worktree)}`
       store.updateAgentExecution(executionId, { prompt, outputFiles: [worktree.path] })
     }
   } catch (error) {
     console.error('[AgentEmployee] 创建会话失败:', error)
     const message = error instanceof Error ? error.message : '创建 Agent 会话失败'
-    if (execution.pilotCommandId) store.updateAgentExecution(executionId, { error: `Pilot 启动准备失败：${message}` })
+    if (ownerExecution) {
+      store.getProjectDb().transaction(() => {
+        store.updateAgentExecution(executionId, { error: `Owner认领前准备失败：${message}；准备成果已保留，暂停重复派发` })
+        store.getProjectDb().prepare("UPDATE project_owner_execution_commands SET state='needs_reconcile',updated_at=? WHERE id=? AND execution_id=? AND state='queued'").run(Date.now(),ownerExecution.commandId,executionId)
+        store.recordProjectActivity({projectId:execution.projectId,entityType:'task',entityId:execution.entityId,action:'owner_prestart_blocked',actor:'system:owner-runtime',summary:'Owner认领前准备失败，保留准备成果与费用预留，暂停重复派发。',payload:{commandId:ownerExecution.commandId,executionId,reason:message}})
+      })()
+    }
+    else if (execution.pilotCommandId) store.updateAgentExecution(executionId, { error: `Pilot 启动准备失败：${message}` })
     else handleExecutionError(executionId, message, execution.startedAt)
     return false
   }
@@ -972,7 +1029,10 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
     } catch (error) {
       const current = store.getAgentExecution(executionId)
       if (claimedByThisCall && current?.status === 'running' && current.ownerCommandId === ownerExecution.commandId) {
+        const detail = error instanceof Error ? error.message : '门禁准入失败'
+        console.warn(`[AgentEmployee] Owner认领后的启动准备失败，尚未调用Runtime：${detail}`)
         recoverInterruptedOwnerRuntimeExecutions(Date.now(), executionId)
+        store.updateAgentExecution(executionId, { error: `Owner启动门禁失败，尚未调用Runtime：${detail}；已保留占额等待核对` })
       } else if (current?.status === 'queued' && current.ownerCommandId === ownerExecution.commandId) {
         store.updateAgentExecution(executionId, { error: `Owner启动预检失败：${error instanceof Error ? error.message : '来源已变化'}` })
       }
@@ -992,6 +1052,23 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
     store.updateAgentExecution(executionId, { sessionId, status: 'running', lastHeartbeatAt: Date.now() })
   }
   const updated = store.getAgentExecution(executionId)!
+  let userMessage = ownerPlanning?.request.userPrompt ?? updated.prompt
+  if (ownerExecution?.role === 'reviewer') {
+    try {
+      const frozen = readOwnerCommandFrozenSource(ownerExecution.commandId).source
+      if (frozen.executionKind === 'development') {
+        const artifactReference = ownerDevelopmentArtifactReferenceFromPrompt(updated.prompt)
+        if (!artifactReference) throw new Error('Owner代码Reviewer缺少冻结快照引用')
+        const artifact = await readOwnerDevelopmentArtifactForReview(ownerExecution.commandId)
+        if (!artifact) throw new Error('Owner代码Reviewer未能读取研发快照')
+        userMessage = hydrateOwnerDevelopmentReviewerPrompt(updated.prompt, artifactReference.reference, artifact)
+        store.updateAgentExecution(executionId, { prompt: userMessage })
+      }
+    } catch (error) {
+      handleExecutionError(executionId, `独立Reviewer未能读取完整代码快照：${error instanceof Error ? error.message : 'Owner代码快照读取失败'}`, Date.now())
+      return false
+    }
+  }
 
   // 研发与受控员工不绕过审批；旧版普通员工保留原路径，不自动迁移。
   const startedAt = Date.now()
@@ -1003,7 +1080,7 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
   runRegisteredHeadlessAgent(
     {
       sessionId,
-      userMessage: ownerPlanning?.request.userPrompt ?? updated.prompt,
+      userMessage,
       channelId: employee.channelId,
       modelId,
       mentionedSkills: ownerPlanning || ownerExecution ? undefined : employee.skills,
@@ -1012,7 +1089,7 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
       workspaceId,
       permissionModeOverride,
       // 安全研发无监督会话：隔离 worktree 内放行 Write/Edit（safe 模式专属豁免）
-      worktreeScopedWrite: development && permissionModeOverride === 'safe',
+      worktreeScopedWrite: development && permissionModeOverride === 'safe' && ownerExecution?.role !== 'reviewer',
       triggeredBy: ownerExecution ? 'user' : 'automation',
       startedAt,
     },
@@ -1049,7 +1126,7 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
       ...(execution.pilotCommandId || ownerExecution ? { onRuntimeStarted: () => {
         assertLegacyExecutionPurpose(store.getAgentExecution(executionId)!)
         try {
-          if (ownerExecution) recordOwnerRuntimeStarted(executionId, ownerExecution.commandId, execution.projectId, sessionId, 'headless-ai-sdk-runner', Date.now(), process.pid)
+          if (ownerExecution) recordOwnerRuntimeStarted(executionId, ownerExecution.commandId, execution.projectId, sessionId, `headless-${employee.runtime}-runner`, Date.now(), process.pid)
           else recordPilotRuntimeStarted(executionId, execution.pilotCommandId!, sessionId, { runnerName: 'headless-runner', processId: process.pid })
         } catch (error) {
           console.warn(`[AgentEmployee] ${ownerExecution ? 'Owner' : 'Pilot'}执行 ${executionId} 开始回执写入失败:`, error)
@@ -1262,14 +1339,44 @@ function recordPilotTerminalUsage(
   }
 }
 
-/** Owner业务execution终态只结Owner请求账本；绝不走普通任务完成、DoD、交付或学习回写。 */
+const pendingOwnerCommandCallbacks = new Map<string, string>()
+const conflictingOwnerCommandCallbacks = new Set<string>()
+
+/** Owner终态回调串行化；重复Runtime事件共享同一次冻结和结算。 */
 function handleOwnerCommandRunCallback(execution: AgentExecution, messages: AgentMessage[] | undefined, stopped: boolean, error?: string): boolean {
+  const commandId = execution.ownerCommandId
+  if (!commandId) return false
+  const fingerprint = ownerExecutionHash({
+    stopped, error: error ?? null,
+    messages: messages?.filter(message => message.role === 'assistant').map(message => ({ id: message.id, content: message.content })) ?? null,
+  })
+  const pendingFingerprint = pendingOwnerCommandCallbacks.get(commandId)
+  if (pendingFingerprint) {
+    if (pendingFingerprint !== fingerprint) conflictingOwnerCommandCallbacks.add(commandId)
+    return true
+  }
+  const pending = finalizeOwnerCommandRunCallback(execution, messages, stopped, error)
+  pendingOwnerCommandCallbacks.set(commandId, fingerprint)
+  void pending.catch((cause: unknown) => {
+    const now = Date.now()
+    console.error(`[AgentEmployee] Owner命令 ${commandId} 终态处理异常，转待核对:`, cause instanceof Error ? cause.message : '未知错误')
+    try { recoverInterruptedOwnerRuntimeExecutions(now, execution.id) } catch { /* 保留未知账本供启动恢复 */ }
+  }).finally(() => {
+    pendingOwnerCommandCallbacks.delete(commandId)
+    conflictingOwnerCommandCallbacks.delete(commandId)
+  })
+  return true
+}
+
+/** Owner业务execution终态只结Owner请求账本；绝不走普通任务完成、DoD、交付或学习回写。 */
+async function finalizeOwnerCommandRunCallback(execution: AgentExecution, messages: AgentMessage[] | undefined, stopped: boolean, error?: string): Promise<boolean> {
   const commandId = execution.ownerCommandId
   if (!commandId) return false
   if (execution.status !== 'running') return true
   const database = store.getProjectDb()
-  const command = database.prepare('SELECT project_id, grant_id, execution_id, state, role FROM project_owner_execution_commands WHERE id=?').get(commandId) as { project_id: string; grant_id: string; execution_id: string; state: string; role: string } | undefined
-  const grant = command && database.prepare('SELECT channel_id, model_id FROM project_owner_execution_grants WHERE id=? AND project_id=?').get(command.grant_id, execution.projectId) as { channel_id: string; model_id: string } | undefined
+  const command = database.prepare('SELECT project_id, grant_id, source_task_id, execution_id, state, role FROM project_owner_execution_commands WHERE id=?').get(commandId) as { project_id: string; grant_id: string; source_task_id: string; execution_id: string; state: string; role: string } | undefined
+  let grant: { channel_id: string; model_id: string } | null = null
+  try { const runtime = readOwnerCommandRuntime(commandId); grant = { channel_id: runtime.channelId, model_id: runtime.modelId } } catch { /* 无准确来源时进入下方保守对账。 */ }
   if (!command || !grant || command.project_id !== execution.projectId || command.execution_id !== execution.id || command.state !== 'running'
     || execution.sessionId.length === 0 || store.hasOwnerBusinessExecutionEvidence(execution.id)) {
     const now = Date.now()
@@ -1281,34 +1388,85 @@ function handleOwnerCommandRunCallback(execution: AgentExecution, messages: Agen
     return true
   }
   const hasAssistantOutput = messages?.some(message => message.role === 'assistant' && typeof message.content === 'string' && message.content.trim()) ?? false
-  const nextStatus: AgentExecution['status'] = stopped ? 'cancelled' : error || !hasAssistantOutput ? 'failed' : 'completed'
+  let nextStatus: AgentExecution['status'] = stopped ? 'cancelled' : error || !hasAssistantOutput ? 'failed' : 'completed'
   const completedAt = Date.now()
   const summary = hasAssistantOutput ? extractExecutionSummary(messages!) : ''
+  let textDeliveryHash: string | undefined
+  if (nextStatus === 'completed' && command.role === 'executor') {
+    const final = messages!.findLast(message => message.role === 'assistant' && typeof message.content === 'string' && message.content.trim())!
+    try { textDeliveryHash = captureOwnerTextDelivery(commandId, execution.id, { id: final.id, content: final.content as string }, completedAt)?.contentSha256 }
+    catch (cause) {
+      const code = (cause as NodeJS.ErrnoException)?.code
+      nextStatus = 'failed'; error = `完整文本成果未能保存，不能评审：${code ? `本机文件操作失败（${code}）` : cause instanceof Error ? cause.message : '本机证据错误'}`
+    }
+  }
+  if (conflictingOwnerCommandCallbacks.has(commandId)) {
+    nextStatus = 'stale'
+    error = 'Owner运行时返回冲突的终态回调；执行与费用转待核对，不自动进入评审'
+  }
+  if (nextStatus === 'completed' && command.role === 'executor') {
+    try {
+      const { freezeOwnerDevelopmentArtifact } = require('./project-owner-development-artifact') as typeof import('./project-owner-development-artifact')
+      await freezeOwnerDevelopmentArtifact(commandId, execution.id)
+    } catch (cause) {
+      nextStatus = 'failed'
+      error = `研发代码成果未能冻结，不能进入评审：${cause instanceof Error ? cause.message : 'Owner研发快照错误'}`
+    }
+  }
+
+  // 流式透传后逐请求结算在后台完成：终态聚合前先等它落库，避免把已发送请求误记成用量未知。
+  try { await awaitOwnerRequestSettlements({ commandId }) }
+  catch (cause) { console.warn(`[AgentEmployee] Owner命令 ${commandId} 结算等待失败，按用量未知收敛:`, cause instanceof Error ? cause.message : '账本错误') }
   const rows = database.prepare('SELECT request_id, state, settled_cost_micros FROM project_owner_execution_request_reservations WHERE command_id=? ORDER BY request_id').all(commandId) as Array<{ request_id: string; state: string; settled_cost_micros: number | null }>
   const openStop = Boolean(database.prepare('SELECT 1 FROM project_owner_execution_stop_escalations WHERE command_id=? AND resolved_at IS NULL').get(commandId))
+  const conflictingTerminal = conflictingOwnerCommandCallbacks.has(commandId)
   const allSettled = rows.length > 0 && rows.every(row => row.state === 'settled' && Number.isSafeInteger(row.settled_cost_micros) && (row.settled_cost_micros ?? -1) >= 0)
-  const usage: PilotUsageEvidence = allSettled && !openStop
+  const usage: PilotUsageEvidence = allSettled && !openStop && !conflictingTerminal
     ? { source: 'request_settled', executionId: execution.id, sessionId: execution.sessionId, channelId: grant.channel_id, modelId: grant.model_id, capturedAt: completedAt, requestSettlementIds: rows.map(row => row.request_id), costMicros: rows.reduce((sum, row) => sum + (row.settled_cost_micros ?? 0), 0) }
-    : { source: 'unknown', executionId: execution.id, sessionId: execution.sessionId, channelId: grant.channel_id, modelId: grant.model_id, capturedAt: completedAt, reason: openStop ? '停止升级仍待人工对账' : 'Runtime终态缺少完整逐请求用量结算' }
+    : { source: 'unknown', executionId: execution.id, sessionId: execution.sessionId, channelId: grant.channel_id, modelId: grant.model_id, capturedAt: completedAt, reason: conflictingTerminal ? '运行时终态回调冲突' : openStop ? '停止升级仍待人工对账' : 'Runtime终态缺少完整逐请求用量结算' }
   try {
     database.transaction(() => {
       const updated = database.prepare("UPDATE agent_executions SET status=?, result_summary=?, error=?, last_heartbeat_at=?, completed_at=? WHERE id=? AND owner_command_id=? AND session_id=? AND status='running'").run(nextStatus, summary, error?.slice(0, 500) ?? '', completedAt, completedAt, execution.id, commandId, execution.sessionId)
       if (updated.changes !== 1) throw new Error('Owner执行终态已变化')
-      settleOwnerCommandUsage(commandId, usage, completedAt)
+      if (textDeliveryHash) {
+        const frozen = database.prepare('UPDATE project_owner_execution_commands SET text_delivery_hash=? WHERE id=? AND execution_id=? AND text_delivery_hash IS NULL').run(textDeliveryHash, commandId, execution.id)
+        if (frozen.changes !== 1) throw new Error('完整文本成果摘要已存在，拒绝改写')
+      }
+      settleOwnerCommandUsage(commandId, usage, completedAt, { deferSchedulerWake: true })
     })()
   } catch (cause) {
     console.warn(`[AgentEmployee] Owner命令 ${commandId} 终态结算失败，转未知恢复:`, cause instanceof Error ? cause.message : '账本错误')
     try { recoverInterruptedOwnerRuntimeExecutions(completedAt, execution.id) } catch { /* fail-closed，保留待核 */ }
   }
-  if (nextStatus === 'completed' && command.role === 'reviewer') {
+  if (command.role === 'reviewer') {
     const rawResponse = messages?.filter(message => message.role === 'assistant' && typeof message.content === 'string' && message.content.trim()).at(-1)?.content
-    if (typeof rawResponse === 'string') {
-      try { recordOwnerTechnicalReviewEvidence(commandId, execution.id, rawResponse, completedAt) }
-      catch (cause) {
-        console.warn(`[AgentEmployee] Owner Reviewer ${commandId} 回执不可用于自动续派:`, cause instanceof Error ? cause.message : '回执校验失败')
+    try {
+      if (nextStatus !== 'completed') throw new Error(error || '独立评审运行未成功结束')
+      if (typeof rawResponse !== 'string') throw new Error('独立评审没有返回可校验的原文')
+      recordOwnerTechnicalReviewEvidence(commandId, execution.id, rawResponse, completedAt)
+    } catch (cause) {
+      console.warn(`[AgentEmployee] Owner Reviewer ${commandId} 回执不可用于自动续派:`, cause instanceof Error ? cause.message : '回执校验失败')
+      appendOwnerManagementMessage({ projectId: execution.projectId, taskId: command.source_task_id,
+        eventId: `owner-review-evidence-rejected:${commandId}:${execution.id}`, role: 'assistant', kind: 'attention',
+        content: `独立评审未能形成通过正式校验的回执，当前没有可采信的评审结果。原因：${ownerAssignmentFailureReason(cause instanceof Error ? cause.message : '回执校验失败')}。项目尚未因此通过验收或交付；原运行与费用记录保留，未自动重试。` })
+    }
+  }
+  if (nextStatus === 'completed' && command.role === 'executor') {
+    const task = store.getTask(command.source_task_id)
+    if (task?.developmentScope) {
+      try {
+        const { runOwnerDevelopmentValidations } = await import('./development-validation-service')
+        await runOwnerDevelopmentValidations(commandId)
+      } catch (cause) {
+        console.warn(`[AgentEmployee] Owner研发验证未能形成完整终态 command=${commandId}，保留验证状态供对账:`, cause instanceof Error ? cause.message : '未知验证错误')
+        appendOwnerManagementMessage({ projectId: execution.projectId, taskId: command.source_task_id,
+          eventId: `owner-development-validation-rejected:${commandId}:${execution.id}`, role: 'assistant', kind: 'attention',
+          content: `员工运行已经结束，但正式研发验证未能形成完整回执。原因：${ownerAssignmentFailureReason(cause instanceof Error ? cause.message : '验证失败')}。当前成果尚未通过运行验证，不能据此批准或交付；成果与运行记录保留，未自动重试。` })
       }
     }
   }
+  requestOwnerAutonomousScheduleWake(execution.projectId)
+  requestOwnerManagementWake(execution.projectId)
   return true
 }
 
@@ -1333,7 +1491,8 @@ function handleExecutionComplete(
 ): void {
   const execution = store.getAgentExecution(executionId)
   if (!execution) return
-  if (execution.ownerCommandId && handleOwnerCommandRunCallback(execution, messages, stoppedByUser)) return
+  if (execution.ownerCommandId && handleOwnerCommandRunCallback(execution, messages, stoppedByUser,
+    runtimeResult && runtimeResult.subtype !== 'success' ? `Owner模型未完整结束（${runtimeResult.subtype}），过程说明不能作为成果` : undefined)) return
   if (quarantineOwnerBusinessExecution(execution)) return
   if (handleOwnerRunCallback(execution, runtimeSource, runtimeResult, stoppedByUser)) return
   if (execution.status !== 'running') return

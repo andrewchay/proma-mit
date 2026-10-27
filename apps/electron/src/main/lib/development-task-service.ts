@@ -16,6 +16,8 @@ import {
   assertNoOwnerBusinessExecution,
   assertNoOwnerBusinessSession,
 } from './project-owner-task-evidence'
+import { isProtectedDevelopmentPath, normalizeRepoRelativePath, pathWithinAllowed } from './development-path-policy'
+export { isProtectedDevelopmentPath, normalizeRepoRelativePath, pathWithinAllowed } from './development-path-policy'
 
 /** 返工或范围重写不能让既有受限execution/session重新获得普通研发身份。 */
 function assertLegacyDevelopmentTaskPurpose(taskId: string): void {
@@ -35,51 +37,6 @@ export type NormalizedDevelopmentScope = Readonly<{
   decisionIds?: string[]
   verificationCommands?: string[]
 }>
-
-/** 受保护路径：默认禁止纳入允许范围；确需修改走另一次显式范围确认（M2 入口） */
-const PROTECTED_PATH_PATTERNS: RegExp[] = [
-  /^\.git(\/|$)/,
-  /^\.env(\..*)?$|^\.env$/i,
-  /^AGENTS\.md$/,
-  /^\.context(\/|$)/,
-  /^(package-lock\.json|bun\.lock|bun\.lockb|yarn\.lock|pnpm-lock\.yaml)$/,
-  /\.(pem|key|p12|pfx)$/i,
-  /(^|\/)id_rsa[^/]*$/i,
-  /(^|\/)credentials?\.(json|txt)$/i,
-  /(^|\/)secrets?(\/|$)/i,
-]
-
-export function isProtectedDevelopmentPath(path: string): boolean {
-  return PROTECTED_PATH_PATTERNS.some((pattern) => pattern.test(path))
-}
-
-/**
- * 清洗单条仓库相对路径。拒绝：绝对路径、`..`、NUL、反斜杠、空段、首尾斜杠、
- * 点结尾段、Windows 盘符。不做文件系统访问（symlink 检查在快照／应用阶段做 realpath）。
- */
-export function normalizeRepoRelativePath(raw: string): string {
-  if (typeof raw !== 'string') throw new Error('路径必须是字符串')
-  const value = raw.trim()
-  if (!value) throw new Error('路径不能为空')
-  if (value.includes('\0')) throw new Error(`路径包含非法字符：${JSON.stringify(raw)}`)
-  if (value.includes('\\')) throw new Error(`路径必须使用 POSIX 分隔符，拒绝反斜杠：${raw}`)
-  if (value.startsWith('/') || /^[A-Za-z]:/.test(value)) throw new Error(`拒绝绝对路径：${raw}`)
-  const segments = value.split('/')
-  if (segments.some((segment) => !segment || segment === '.' || segment === '..')) {
-    throw new Error(`路径段不能为空、「.」或「..」：${raw}`)
-  }
-  return segments.join('/')
-}
-
-/** 判断路径是否落在某个允许前缀之内（按路径段匹配，不做字符串前缀误判） */
-export function pathWithinAllowed(path: string, allowedPaths: readonly string[]): boolean {
-  const segments = path.split('/')
-  return allowedPaths.some((allowed) => {
-    const allowedSegments = allowed.split('/')
-    if (allowedSegments.length > segments.length) return false
-    return allowedSegments.every((segment, index) => segment === segments[index])
-  })
-}
 
 /** 校验并归一化范围声明；不访问文件系统，只做结构级契约校验（T01/T03/T04 的范围部分）。 */
 export function validateDevelopmentScope(

@@ -19,6 +19,7 @@ const budget = { maxCostMicros: 1000001, maxRuns: 2, maxRework: 0, expiresAt: 40
 const grant: OwnerExecutionGrant = {
   ...subject,
   dispatchMode: 'manual',
+  executionKind: 'controlled',
   policyRevision: 2,
   revalidationId: 'rev-1',
   revalidationRevision: 1,
@@ -90,7 +91,7 @@ function render(seeds?: {
   grant?: Partial<ReturnType<typeof getOwnerGrantEditor>>
   revalidation?: { revision: number; status: string; revalidation: unknown } | null
   policyRevision?: number | null
-}) {
+}, conversational = false) {
   const store = createStore()
   if (seeds?.grant) seedGrant(store, seeds.grant)
   if (seeds?.revalidation !== undefined) seedRevalidation(store, seeds.revalidation)
@@ -99,7 +100,7 @@ function render(seeds?: {
     createElement(
       Provider,
       { store },
-      createElement(ProjectOwnerExecutionGrantPanel, subject),
+      createElement(ProjectOwnerExecutionGrantPanel, { ...subject, conversational }),
     ),
   )
 }
@@ -156,6 +157,31 @@ test('Given active grant When SSR Then 账本行事实完整、发行禁用、�
   ])
     expect(html).toContain(text)
   expect(html).toMatch(/<button[^>]*disabled=""[^>]*>[^<]*预览发行影响面/)
+})
+test('Given Owner对话中的活动授权 When SSR Then 只显示业务进度和预算，不暴露内部调度字段', () => {
+  const html = render({ grant: { grant, loaded: true } }, true)
+  expect(html).toContain('Owner 已开始按确认范围推进')
+  expect(html).toContain('Owner 会在本次确认的目标、资料权限和预算范围内自主组织团队')
+  expect(html).toContain('项目共享预算上限：1.000001 美元')
+  expect(html).not.toContain(grant.grantId)
+  expect(html).not.toContain('模型')
+  expect(html).not.toContain('最多 2 次运行')
+  expect(html).not.toContain('最大返工')
+  expect(html).not.toContain('执行人员')
+  expect(html).not.toContain('workspace-1')
+  expect(html).not.toContain('完整授权记录')
+  expect(html).not.toContain('Owner 业务命令')
+  expect(html).not.toContain('本次执行')
+})
+test('Given Owner对话中的有效发行预览 When继续授权 Then系统确认才是实际开始许可', () => {
+  const html = render({
+    grant: { preview: issuePreview },
+    revalidation: { revision: 1, status: 'current', revalidation: { id: 'rev-1' } },
+    policyRevision: 2,
+  }, true)
+  expect(html).toContain('只有在系统确认中选择开始，Owner 才会启动员工')
+  expect(html).toContain('继续到系统开始确认')
+  expect(html).not.toContain('确认范围并开始自主执行')
 })
 test('Given 发行预览在展示 When SSR Then 指纹/blockers/确认入口可核对且blockers非空时确认禁用', () => {
   const withBlockers = render({

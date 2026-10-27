@@ -1,3 +1,4 @@
+import { ownerEmployeeConfigurationHash } from './project-owner-execution-source'
 /** Owner命令启动链：claim单事务+handoff intent+启动回执；独立链不经tryStartExecution。 */
 import type { AgentExecution } from './project-types'
 import * as store from './project-sqlite-store'
@@ -6,7 +7,7 @@ import { getOwnerExecutionRevalidation } from './project-owner-execution-revalid
 import { getPilotPolicy } from './project-pilot-policy'
 import { ownerExecutionHash, parseOwnerExecutionSubject } from './project-owner-execution-source'
 import { ownerTaskSpecificationHash } from './project-owner-task-materialization'
-import { hashOwnerCommandSource } from './project-owner-execution-command'
+import { assertOwnerCommandUpstreamHandoffsCurrent, hashOwnerCommandSource } from './project-owner-execution-command'
 
 function assertOwnerCommandStartRecordLocked(executionId: string, commandId: string, expectedRevalidationRevision: number, sessionId: string, now: number): void {
   const database = store.getProjectDb()
@@ -56,9 +57,10 @@ function assertOwnerCommandStartRecordLocked(executionId: string, commandId: str
     : null
   const employee = store.getAgentEmployee(command.employee_id)
   if (!frozenEmployee || !employee?.enabled
-    || ownerExecutionHash({ id: employee.id, enabled: employee.enabled, name: employee.name, role: employee.role, roleTemplateId: employee.roleTemplateId, executionProfile: employee.executionProfile, runtime: employee.runtime, permissionMode: employee.permissionMode, workspaceId: employee.workspaceId, workspaceIds: employee.workspaceIds, channelId: employee.channelId, modelId: employee.modelId, workflowId: employee.workflowId, systemPrompt: employee.systemPrompt, skills: employee.skills, capabilityVersions: store.getActiveAgentEmployeeCapabilityVersions(employee.id, record.source.workspaceId) }) !== frozenEmployee.configurationHash) {
+    || ownerEmployeeConfigurationHash(employee, record.source.workspaceId) !== frozenEmployee.configurationHash) {
     throw new Error('Owner启动员工配置与已确认版本不一致，请重新验证')
   }
+  assertOwnerCommandUpstreamHandoffsCurrent(commandId)
 }
 export function assertOwnerCommandRuntimeContext(executionId: string, commandId: string, sessionId: string, requireHandoffIntent = false, now = Date.now()): void {
   const execution = store.getAgentExecution(executionId)

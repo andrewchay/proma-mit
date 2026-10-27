@@ -1,6 +1,6 @@
 # 通用 AI 项目交付团队
 
-版本 1.0.0。2026-10-07 创建。**20 份角色档案：13 核心＋7 专项。未绑定模型、未创建可执行员工实例、未启动任务。**
+版本 1.0.0。2026-10-07 创建，2026-10-22 新增客户支持与升级岗位。**21 份角色档案：14 核心＋7 专项。未绑定模型、未创建可执行员工实例、未启动任务。**
 
 协调者复用现有 Project Shepherd，不新增项目经理或 Chief of Staff。已有研发员工保留，本目录覆盖非研发职能。
 
@@ -30,6 +30,7 @@
 | 合同与合规审阅员 | 核心 | 进行合同初审、版本比较与风险整理，为人类和专业律师准备复核材料。 | [能力卡](cards/legal-reviewer.json) · [执行规则](roles/legal-reviewer.md) |
 | 业务运营专员 | 核心 | 整理重复业务流程、资源与供应商方案，不替代 Shepherd 调度。 | [能力卡](cards/operations-specialist.json) · [执行规则](roles/operations-specialist.md) |
 | 客户成功与服务专员 | 核心 | 准备使用支持并基于真实记录跟踪客户问题和承诺。 | [能力卡](cards/customer-success.json) · [执行规则](roles/customer-success.md) |
+| 客户支持与升级专员 | 核心 | 分级整理客户问题、排查记录与升级交接，不擅自承诺 SLA 或补偿。 | [能力卡](cards/support-escalation-specialist.json) · [执行规则](roles/support-escalation-specialist.md) |
 | 商业策略顾问 | 专项 | 比较商业模式、市场进入与定价，明确假设、取舍及验证路径。 | [能力卡](cards/business-strategist.json) · [执行规则](roles/business-strategist.md) |
 | 体验设计与用户研究员 | 专项 | 设计产品、服务与客户旅程，区分真实研究和模拟走查。 | [能力卡](cards/experience-designer.json) · [执行规则](roles/experience-designer.md) |
 | 用户反馈分析师 | 专项 | 归纳真实反馈的主题痛点，不把 AI 模拟意见当用户数据。 | [能力卡](cards/feedback-analyst.json) · [执行规则](roles/feedback-analyst.md) |
@@ -64,7 +65,7 @@ safe 是未来实例的建议默认，不是本轮运行配置。版本哈希只
 ## 来源与验证
 
 - [provenance.json](provenance.json)：参考 HEAD、实际文件哈希及工作树变更标记。
-- [上游 MIT 许可](licenses/agency-agents-MIT.txt)：完整保留。
+- [agency-agents MIT 许可](licenses/agency-agents-MIT.txt)与[useful-ai-prompts MIT 许可](licenses/useful-ai-prompts-MIT.txt)：完整保留。
 - [manifest.json](manifest.json)：能力卡、规则和用例版本及哈希。
 - `cases/*.json`：每岗位四类行为用例，未运行真实模型，不算行为评测通过。
 - [创建与验证记录](verification.md)：实际创建、静态检查、全仓门禁失败及未接通范围。

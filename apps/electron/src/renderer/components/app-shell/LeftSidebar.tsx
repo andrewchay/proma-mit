@@ -17,6 +17,7 @@ import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip
 import { ModeSwitcher } from './ModeSwitcher'
 import { SearchDialog } from './SearchDialog'
 import { UserAvatar } from '@/components/chat/UserAvatar'
+import { ownerConversationNavigationAtom, ownerConversationNoticesAtom } from '@/atoms/project-owner-management-atoms'
 import { activeViewAtom } from '@/atoms/active-view'
 import { visibleCoreWorkModulesAtom, visibleExtendedWorkModulesAtom } from '@/atoms/work-module-registry'
 import { CORE_WORK_MODULES } from '@/atoms/work-module-registry'
@@ -171,6 +172,9 @@ function SidebarWindowDragStrip({ height }: { height: number }): React.ReactElem
 
 export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): React.ReactElement {
   const [activeView, setActiveView] = useAtom(activeViewAtom)
+  const ownerNotices = useAtomValue(ownerConversationNoticesAtom)
+  const navigateToOwner = useSetAtom(ownerConversationNavigationAtom)
+  const latestOwnerNotice = [...ownerNotices].sort((a, b) => b[1].createdAt - a[1].createdAt)[0]
   // 订阅门控（领域包）与开发门禁（dev-gate）叠加：两者都放行才显示。
   const enabledDevModules = useAtomValue(enabledDevModulesAtom)
   const proactiveVisible = isViewVisible('proactive', enabledDevModules)
@@ -1438,7 +1442,10 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
               return (
                 <button
                   key={id}
-                  onClick={() => setActiveView(id)}
+                  onClick={() => {
+                    if (id === 'projects' && latestOwnerNotice) navigateToOwner({ projectId: latestOwnerNotice[0], taskId: latestOwnerNotice[1].taskId, at: Date.now() })
+                    setActiveView(id)
+                  }}
                   className={cn(
                     'w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] font-medium transition-colors titlebar-no-drag',
                     active
@@ -1448,6 +1455,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                 >
                   <Icon size={16} className={active ? 'text-primary-foreground' : 'text-foreground/40'} />
                   <span className="flex-1 text-left">{label}</span>
+                  {id === 'projects' && ownerNotices.size > 0 && <span aria-label="Owner 对话有更新，点击打开最近对话" className="h-2 w-2 shrink-0 rounded-full bg-current" />}
                 </button>
               )
             })}

@@ -1,3 +1,4 @@
+import { readOwnerQualityAction, readOwnerQualityArtifact } from './project-owner-quality-actions'
 import type { OwnerExecutionCommandRole, OwnerExecutionNextAction, OwnerTechnicalReviewVerdict, ProjectOwnerGoalSubject } from '@gravitas/shared'
 import { dispatchAutonomousOwnerCommandExecution } from './project-owner-execution-dispatcher'
 import { getOwnerExecutionRevalidation } from './project-owner-execution-revalidation'
@@ -70,6 +71,7 @@ function readTechnicalReview(projectId: string, grantId: string, taskId: string,
   const reviews = listOwnerTechnicalReviewEvidence(projectId, taskId).filter(review =>
     review.grantId === grantId && review.stepLinkId === stepLinkId && review.reworkOrdinal === reworkOrdinal)
   if (reviews.length > 1) throw new Error(`同一Owner Task/返工轮次存在多条技术评审证据（${taskId}/${reworkOrdinal}）`)
+  if (reviews[0]?.artifactVerified === false) throw new Error('独立评审对应完整文本成果已缺失或变化，停止自动续派')
   return reviews[0] ?? null
 }
 interface OwnerAutonomousSchedulerDriver {
@@ -78,6 +80,7 @@ interface OwnerAutonomousSchedulerDriver {
 }
 const defaultDriver: OwnerAutonomousSchedulerDriver = { queue: reserveAndQueueAutonomousOwnerCommand, dispatch: dispatchAutonomousOwnerCommandExecution }
 const inFlight = new Map<string, Promise<OwnerAutonomousScheduleStatus>>()
+const rerunRequested = new Set<string>()
 let lifecycleStarted = false
 
 function status(projectId: string, state: OwnerAutonomousScheduleState, reason: string, details: Partial<OwnerAutonomousScheduleStatus> = {}): OwnerAutonomousScheduleStatus {
@@ -155,6 +158,16 @@ function evaluate(projectId: string, now = Date.now()): Evaluation {
     const task = store.getTask(frozenTask.taskId)
     if (!task || task.projectId !== projectId || task.ownerStepLinkId !== frozenTask.linkId) return { status: status(projectId, 'stale', `冻结Task ${frozenTask.taskId} 缺失或步骤关联变化`, details) }
     if (isCompletedStatus(task.status, taskStatuses)) {
+      if (record.source.qualityManagementVersion === 1) {
+        const accepted = store.getProjectDb().prepare('SELECT reviewer_command_id FROM project_owner_quality_actions WHERE grant_id=? AND task_id=? ORDER BY created_at DESC LIMIT 1').get(grant.id, task.id) as { reviewer_command_id: string } | undefined
+        try {
+          const action = accepted ? readOwnerQualityAction(accepted.reviewer_command_id) : null
+          const artifact = action ? readOwnerQualityArtifact(action.reviewerCommandId) : null
+          if (action?.state !== 'accepted' || artifact?.contentHash !== action.artifactHash) throw new Error('完成任务缺少Owner准确质量验收依据，停止续派')
+        } catch (cause) { return { status: status(projectId, 'stale', cause instanceof Error ? cause.message : 'Owner验收依据无效', { ...details, taskId: task.id, nextAction: 'await_owner_quality' }) } }
+        continue
+      }
+
       const executor = getRoleCommand(projectId, grant.id, task.id, 'executor', 0)
       const reviewer = getRoleCommand(projectId, grant.id, task.id, 'reviewer', 0)
       if (!hasSuccessfulKnownSettlement(executor) || !hasSuccessfulKnownSettlement(reviewer)) {
@@ -195,6 +208,15 @@ function evaluate(projectId: string, now = Date.now()): Evaluation {
       try { review = readTechnicalReview(projectId, grant.id, task.id, frozenTask.linkId, reworkOrdinal) }
       catch (error) { return { status: status(projectId, 'stale', error instanceof Error ? error.message : '技术评审证据完整性错误；停止续派', { ...details, taskId: task.id, reworkOrdinal, nextAction: 'human_decision' }) } }
       if (!review) return { status: status(projectId, 'waiting', `Reviewer 第 ${reworkOrdinal} 轮已结束，但缺少可核验的结构化技术评审；停止自动续派`, { ...details, taskId: task.id, role: 'reviewer', reworkOrdinal, nextAction: 'human_decision' }) }
+      if (record.source.qualityManagementVersion === 1) {
+        let action
+        try { action = readOwnerQualityAction(review.reviewerCommandId) }
+        catch (cause) { return { status: status(projectId, 'stale', cause instanceof Error ? cause.message : 'Owner质量决定无效', { ...details, taskId: task.id, nextAction: 'await_owner_quality' }) } }
+        if (!action) return { status: status(projectId, 'waiting', '完整成果及独立检查已就绪，等待Owner质量判断；无需用户验收子任务', { ...details, taskId: task.id, role: 'reviewer', reworkOrdinal, nextAction: 'await_owner_quality' }) }
+        if (action.state !== 'rework_authorized') return { status: status(projectId, 'waiting', action.detail, { ...details, taskId: task.id, reworkOrdinal, nextAction: 'await_owner_quality' }) }
+        latestApproved = undefined
+        continue
+      }
       if (review.verdict === 'blocked') return { status: status(projectId, 'waiting', `Reviewer 报告卡点：${review.blockerReason ?? review.summary}；等待人工决策，未自动继续`, { ...details, taskId: task.id, role: 'reviewer', reworkOrdinal, reviewVerdict: 'blocked', reviewSummary: review.summary, nextAction: 'human_decision' }) }
       if (review.verdict === 'changes_requested') {
         if (reworkOrdinal >= record.source.budget.maxRework) return { status: status(projectId, 'waiting', `已达授权最大返工次数 ${record.source.budget.maxRework}；保留评审意见并等待人工决策`, { ...details, taskId: task.id, role: 'reviewer', reworkOrdinal, reviewVerdict: 'changes_requested', reviewSummary: review.summary, reviewFindings: review.findings.slice(0, 8).map(finding => `${finding.severity}: ${finding.description} → ${finding.requestedChange}`), nextAction: 'human_decision' }) }
@@ -207,6 +229,7 @@ function evaluate(projectId: string, now = Date.now()): Evaluation {
     }
     if (!approved) return { status: status(projectId, 'waiting', waitingReason, { ...details, taskId: task.id, nextAction: 'human_decision' }) }
   }
+  if (record.source.qualityManagementVersion === 1) return { status: status(projectId, 'waiting', '冻结子任务均已由Owner按标准验收；成果保留在项目对话，等待整体交付或约定的业务认可', { ...details, nextAction: 'none' }) }
   return { status: status(projectId, 'waiting', '技术评审通过；业务Task仍未验收或完成，等待人类业务验收', { ...details, ...(latestApproved ? { taskId: latestApproved.taskId, reworkOrdinal: latestApproved.reworkOrdinal, reviewVerdict: 'approved', reviewSummary: latestApproved.summary } : {}), nextAction: 'await_business_acceptance' }) }
 }
 function markDispatchUncertain(commandId: string, projectId: string): void {
@@ -225,7 +248,10 @@ export function getOwnerAutonomousScheduleStatus(projectId: string): OwnerAutono
 }
 export async function runOwnerAutonomousSchedule(projectId: string, driver: OwnerAutonomousSchedulerDriver = defaultDriver): Promise<OwnerAutonomousScheduleStatus> {
   const pending = inFlight.get(projectId)
-  if (pending) return pending
+  if (pending) {
+    rerunRequested.add(projectId)
+    return pending
+  }
   const task = (async () => {
     const evaluation = evaluate(projectId)
     if (!evaluation.action) return evaluation.status
@@ -257,7 +283,16 @@ export async function runOwnerAutonomousSchedule(projectId: string, driver: Owne
   })()
   inFlight.set(projectId, task)
   try { return await task }
-  finally { if (inFlight.get(projectId) === task) inFlight.delete(projectId) }
+  finally {
+    if (inFlight.get(projectId) === task) inFlight.delete(projectId)
+    if (rerunRequested.delete(projectId)) {
+      queueMicrotask(() => {
+        void runOwnerAutonomousSchedule(projectId, driver).catch(error => {
+          console.error('[Owner Scheduler] 合并唤醒调度失败:', error)
+        })
+      })
+    }
+  }
 }
 export function startOwnerAutonomousScheduler(): void {
   if (lifecycleStarted) return

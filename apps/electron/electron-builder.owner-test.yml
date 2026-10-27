@@ -1,0 +1,20 @@
+# Owner本地验收构建，独立于Dev/Stable身份及更新通道。
+extends: electron-builder.yml
+appId: com.gravitas.owner-test.a02
+productName: Gravitas Owner Test
+executableName: Gravitas Owner Test
+directories:
+  output: out-owner-test
+  buildResources: resources
+extraMetadata:
+  gravitasChannel: dev
+  gravitasTestBuild: true
+protocols:
+  - name: gravitas-owner-test
+    schemes:
+      - gravitas-owner-test
+publish: null
+mac:
+  fileAssociations: []
+win:
+  fileAssociations: []

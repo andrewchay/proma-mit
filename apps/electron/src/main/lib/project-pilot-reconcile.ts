@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import type { PilotAttention, PilotObservation, PilotTaskObservation } from '@gravitas/shared'
 import { getProject, listTasks, listTaskBlockers } from './project-service'
 import { getProjectChain } from './project-chain-service'
-import { getProjectDb, listAgentExecutionsByProject } from './project-sqlite-store'
+import { getProjectDb, hasOwnerPlanningTaskEvidence, listAgentExecutionsByProject } from './project-sqlite-store'
 import { listTaskStatuses } from './task-status-store-bridge'
 import { resolveStateGroup } from './task-status-logic'
 import { parsePilotHumanRequest } from './project-pilot-approval'
@@ -13,11 +13,13 @@ export async function observeProjectPilot(projectId: string): Promise<PilotObser
   if (typeof projectId !== 'string' || !projectId.trim()) throw new Error('缺少项目 ID')
   const project = await getProject(projectId)
   if (!project) throw new Error('项目不存在')
-  const [tasks, blockers, statuses] = await Promise.all([
+  const [projectTasks, blockers, statuses] = await Promise.all([
     listTasks(projectId, { includeSubTasks: true, includeDrafts: true }),
     listTaskBlockers(projectId),
     listTaskStatuses(projectId),
   ])
+  // Owner 规划承载任务是内部准备记录，不是项目业务任务，不能进入「需要你处理」或下一步投影。
+  const tasks = projectTasks.filter((task) => !hasOwnerPlanningTaskEvidence(task.id))
   const chain = getProjectChain(projectId)
   const taskById = new Map(tasks.map((task) => [task.id, task]))
   const blockerByTask = new Map<string, typeof blockers>()

@@ -1,9 +1,9 @@
 import { createDockIcon } from './lib/dock-icon'
 import { getMainWindow, setMainWindow } from './main-window'
 import { app, BrowserWindow, dialog, Menu, nativeTheme, protocol, screen, shell } from 'electron'
-import { join } from 'path'
-import { existsSync } from 'fs'
-import { AGENT_IPC_CHANNELS } from '@gravitas/shared'
+import { dirname, join } from 'path'
+import { existsSync, readFileSync } from 'fs'
+import { AGENT_IPC_CHANNELS, PROJECT_IPC_CHANNELS } from '@gravitas/shared'
 import {
   APP_DEEP_LINK_PROTOCOL,
   APP_DISPLAY_NAME,
@@ -15,13 +15,26 @@ import {
   APP_SERVICE_PORTS,
 } from './lib/app-identity'
 export { getMainWindow } from './main-window'
+import { getPackagedTestConfigDir } from './lib/test-build-identity'
 
 app.setName(APP_DISPLAY_NAME)
-if (
-  process.env.PROMA_TEST_CONFIG_DIR
-  && (process.env.GRAVITAS_PACKAGE_SMOKE === '1' || process.env.PROMA_ALLOW_MULTI_INSTANCE === '1')
-) {
-  // 隔离多实例测试必须同时隔离 Electron 自身 userData，避免触碰默认用户配置。
+const allowMultipleInstancesForTest = process.env.PROMA_ALLOW_MULTI_INSTANCE === '1'
+const packagedMetadata: unknown = app.isPackaged
+  ? JSON.parse(readFileSync(join(app.getAppPath(), 'package.json'), 'utf8'))
+  : undefined
+const packagedTestConfigDir = getPackagedTestConfigDir(
+  app.isPackaged,
+  packagedMetadata,
+  app.getPath('appData'),
+  process.env.PROMA_TEST_CONFIG_DIR,
+  allowMultipleInstancesForTest,
+)
+if (packagedTestConfigDir) {
+  process.env.PROMA_TEST_CONFIG_DIR = packagedTestConfigDir
+  app.setPath('userData', join(dirname(packagedTestConfigDir), 'electron'))
+} else if (process.env.PROMA_TEST_CONFIG_DIR
+  && (process.env.GRAVITAS_PACKAGE_SMOKE === '1' || allowMultipleInstancesForTest)) {
+  // 测试包与显式隔离目录优先于Dev默认目录，避免覆盖Owner独立profile。
   app.setPath('userData', join(process.env.PROMA_TEST_CONFIG_DIR, 'electron'))
 } else if (APP_IS_DEV) {
   // 必须在获取单实例锁之前设置，Stable 的原 userData 路径保持不变。
@@ -38,8 +51,6 @@ console.log(`[启动] ${APP_DISPLAY_NAME} userData=${app.getPath('userData')}`)
 // 卡在启动期，second-instance 也唤不起窗口，用户表现就是"双击应用没反应"。
 // 改为：留下 stderr 排查线索后正常退出，让 Electron 触发已存在实例的
 // second-instance 事件，由主实例负责显示窗口。
-const allowMultipleInstancesForTest = process.env.PROMA_ALLOW_MULTI_INSTANCE === '1'
-
 if (!allowMultipleInstancesForTest && !app.requestSingleInstanceLock()) {
   console.warn(
     `[启动] 已有 ${APP_DISPLAY_NAME} 进程持有单实例锁，本次启动将退出。\n` +
@@ -547,6 +558,18 @@ async function bootstrap(): Promise<void> {
     const { startOwnerAutonomousScheduler } = await import('./lib/project-owner-autonomous-scheduler')
     startOwnerAutonomousScheduler()
   })
+  await safeAwait('recoverPendingOwnerExecutionStartIntents', async () => {
+    const { recoverPendingOwnerExecutionStartIntents } = await import('./lib/project-owner-execution-start-intent')
+    await recoverPendingOwnerExecutionStartIntents()
+  })
+  await safeAwait('startOwnerManagementLoop', async () => {
+    const { startOwnerManagementLoop } = await import('./lib/project-owner-management-loop')
+    stopOwnerManagementLoop = startOwnerManagementLoop(change => {
+      for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed() && !window.webContents.isDestroyed()) window.webContents.send(PROJECT_IPC_CHANNELS.OWNER_MANAGEMENT_CHANGED, change)
+      }
+    })
+  })
   await safeAwait('startPilotBackgroundReconcile', async () => {
     const { startPilotBackgroundReconcile } = await import('./lib/project-pilot-background-reconcile')
     stopPilotBackgroundReconcile = startPilotBackgroundReconcile()
@@ -762,10 +785,12 @@ app.on('window-all-closed', () => {
 })
 
 let stopPilotBackgroundReconcile: (() => void) | null = null
+let stopOwnerManagementLoop: (() => void) | null = null
 
 app.on('before-quit', () => {
   // 标记正在退出，让 close 事件不再阻止关闭
   setQuitting()
+  stopOwnerManagementLoop?.()
   stopPilotBackgroundReconcile?.()
   // 释放应用自启的本地 HTTP 服务，避免退出后残留端口。
   try {

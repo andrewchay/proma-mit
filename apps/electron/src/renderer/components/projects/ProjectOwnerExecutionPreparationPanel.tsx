@@ -1,3 +1,5 @@
+import { ownerExecutionModelSummary } from '@gravitas/shared'
+import { supportsOwnerExecutionKind } from '@gravitas/shared'
 import { useEffect, useId, useMemo } from 'react'
 import { atom, useAtomValue, useSetAtom } from 'jotai'
 import type {
@@ -79,7 +81,7 @@ function PreparationFacts({
       </p>
       <p>
         模式：{input.executionKind}；工作区：{source.workspaceName}（{source.workspaceId}）<br />
-        渠道：{source.channelId}；模型：{source.modelId}；Runtime：{source.runtime}
+        渠道：{source.channelId}；模型：{ownerExecutionModelSummary(source)}；Runtime：{source.runtime}
       </p>
       <p>
         知识资料：
@@ -213,7 +215,7 @@ export function ProjectOwnerExecutionPreparationPanel({
     JSON.stringify([employee.channelId, employee.modelId ?? '', employee.runtime]),
   )).size
   const hasConfigurationConflict = configuredEmployees.length > 1 && distinctConfigurationCount > 1
-  const roleCandidates = () => choices?.employees.filter((employee) => employee.executionProfile === e.executionKind
+  const roleCandidates = () => choices?.employees.filter((employee) => supportsOwnerExecutionKind(employee, e.executionKind)
     && employee.workspaceIds.includes(recommendedWorkspaceId)
     && (!e.reviewerEmployeeId || employee.id !== e.reviewerEmployeeId)) ?? []
   const recommendedEmployee = (roleKey: string) => {
@@ -388,7 +390,7 @@ export function ProjectOwnerExecutionPreparationPanel({
               onChange={(event) => patch({ reviewerEmployeeId: event.target.value })}
             >
               <option value="">先选择评审员工</option>
-              {choices?.employees.filter((employee) => employee.executionProfile === e.executionKind
+              {choices?.employees.filter((employee) => supportsOwnerExecutionKind(employee, e.executionKind)
                 && employee.workspaceIds.includes(recommendedWorkspaceId)
                 && !Object.values(e.roleAssignments).includes(employee.id)).map((employee) => (
                   <option key={employee.id} value={employee.id}>
@@ -398,7 +400,7 @@ export function ProjectOwnerExecutionPreparationPanel({
             </select>
           </label>
           <p className="text-xs text-muted-foreground">
-            来源规则：Owner绑定的有效工作区优先作为显式核对建议；否则仅当当前项目唯一绑定时才推荐。岗位仅按唯一 roleTemplateId 预填，缺失或冲突需你选择。Owner规划载体只作规划来源，不会自动推荐为执行员工；若你显式选择它，仍按其员工配置重新核验。全局默认与最近使用值不参与回退。渠道、模型和 Runtime 来自你选定的员工现有配置；与Owner绑定默认值冲突时必须确认覆盖，员工间不一致仍由服务端阻止。此处预填不修改员工配置，也不构成授权。
+            来源规则：Owner绑定的有效工作区优先作为显式核对建议；否则仅当当前项目唯一绑定时才推荐。手工编辑仅按唯一 roleTemplateId 预填；Owner自动安排会结合员工岗位、描述和技能提出分工。普通员工只有通过受控适配检查才会出现，本次调用收紧权限，不修改员工档案。Owner规划载体只作规划来源，不会自动推荐为执行员工；若你显式选择它，仍按其员工配置重新核验。全局默认与最近使用值不参与回退。渠道、模型和 Runtime 来自你选定的员工现有配置；与Owner绑定默认值冲突时必须确认覆盖，员工间不一致仍由服务端阻止。此处预填不修改员工配置，也不构成授权。
           </p>
           <label className="block text-sm" htmlFor={`${id}-workspace`}>
             明确工作区
@@ -447,24 +449,17 @@ export function ProjectOwnerExecutionPreparationPanel({
             </label> : null
           })()}
           {e.executionKind === 'development' &&
-            (['targetPathsText', 'allowedPathsText', 'verificationCommandsText'] as const).map(
-              (k) => (
-                <label className="block text-sm" key={k} htmlFor={`${id}-${k}`}>
-                  {k === 'targetPathsText'
-                    ? '目标路径（每行一条，仓库相对路径）'
-                    : k === 'allowedPathsText'
-                      ? '允许路径（每行一条，须覆盖目标）'
-                      : '验证命令（每行一条，仅候选，不执行）'}
-                  <textarea
-                    id={`${id}-${k}`}
-                    className={field}
-                    value={e[k]}
-                    rows={2}
-                    onChange={(v) => patch({ [k]: v.target.value })}
-                  />
-                </label>
-              ),
-            )}
+            <details className="rounded-lg bg-muted/50 p-3">
+              <summary className="cursor-pointer text-sm font-medium">代码范围与验证建议（Owner 已填写，可调整）</summary>
+              <div className="mt-2 space-y-2">
+                {([['targetPathsText', '本次目标路径（每行一条）'], ['allowedPathsText', '允许修改的路径（每行一条）'], ['verificationCommandsText', '建议验证命令（每行一条；尚未执行）']] as const).map(([k, label]) => (
+                  <label className="block text-sm" key={k} htmlFor={`${id}-${k}`}>
+                    {label}
+                    <textarea id={`${id}-${k}`} className={field} value={e[k]} rows={2} onChange={(v) => patch({ [k]: v.target.value })} />
+                  </label>
+                ))}
+              </div>
+            </details>}
           <fieldset className="space-y-1">
             <legend className="text-sm font-medium">显式知识来源（可全部不选）</legend>
             <p className="text-xs">

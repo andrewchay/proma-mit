@@ -466,6 +466,9 @@ export function updateAgentSessionMeta(
  * 删除会话
  */
 export function deleteAgentSession(id: string): void {
+  // Owner 会话目录还承载成果、快照与验证证据；普通聊天删除不能销毁项目引用。
+  const { assertOwnerSessionDeletionAllowed } = require('./project-owner-task-evidence') as typeof import('./project-owner-task-evidence')
+  assertOwnerSessionDeletionAllowed(id)
   const index = readIndex()
   const idx = index.sessions.findIndex((s) => s.id === id)
 

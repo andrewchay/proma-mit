@@ -1,3 +1,10 @@
+import { decideOwnerConversationChange } from './project-owner-management-changes'
+import { sendOwnerManagementMessage } from './project-owner-management-conversation'
+function managementDelegation(): typeof import('./project-owner-management-delegation') { return require('./project-owner-management-delegation') as typeof import('./project-owner-management-delegation') }
+import { setOwnerManagerStatus } from './project-owner-management-store'
+import { requestOwnerManagementWake } from './project-owner-management-events'
+import { getOwnerManagementConversation, answerOwnerManagementQuestion } from './project-owner-management-questions'
+import { assertLocalActorEnabled } from './project-owner-plan-service'
 import { PROJECT_IPC_CHANNELS, type ProjectOwnerGoalResult } from '@gravitas/shared'
 import { getProjectOwnerGoalDraft, ProjectOwnerGoalConflictError, saveProjectOwnerGoalDraft } from './project-owner-goal-service'
 
@@ -31,6 +38,42 @@ function result<T>(operation: () => T): ProjectOwnerGoalResult<T> {
 
 /** 仅供应用 IPC；无运行工具注册，不调用模型、任务/派发或授权服务。 */
 export function registerProjectOwnerGoalIpcHandlers(ipc: GoalIpcRegistrar): void {
+  ipc.handle(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_MANAGEMENT_DELEGATION, (_, request) => result(() => managementDelegation().previewOwnerManagementDelegation(request)))
+  ipc.handle(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_MANAGEMENT_DELEGATION, (_, request) => result(() => managementDelegation().confirmOwnerManagementDelegation(request)))
+  ipc.handle(PROJECT_IPC_CHANNELS.GET_OWNER_MANAGEMENT_DELEGATION, (_, request) => result(() => {
+    const value = requestFields(request, ['projectId', 'taskId'])
+    const delegation = managementDelegation().getOwnerManagementDelegation(value.projectId as string, value.taskId as string | undefined)
+    // 用户打开Owner对话时立即对账；例如资料指纹刚变更，不能等到后台轮询才说明已暂停。
+    if (delegation.state === 'stale') requestOwnerManagementWake(value.projectId as string)
+    return delegation
+  }))
+  ipc.handle(PROJECT_IPC_CHANNELS.REVOKE_OWNER_MANAGEMENT_DELEGATION, (_, request) => result(() => {
+    const value = requestFields(request, ['projectId', 'delegationId'])
+    if (typeof value.delegationId !== 'string' || !value.delegationId.trim()) throw new Error('管理委托身份无效')
+    return managementDelegation().revokeOwnerManagementDelegation(value.projectId as string, value.delegationId)
+  }))
+  ipc.handle(PROJECT_IPC_CHANNELS.GET_OWNER_MANAGEMENT, (_, request) => result(() => {
+    const value = requestFields(request, ['projectId'])
+    return getOwnerManagementConversation(value.projectId as string)
+  }))
+  ipc.handle(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_TEAM_WORKSPACE_ACCESS, (_, request) => result(() => {
+    const access = require('./project-owner-team-workspace-access') as typeof import('./project-owner-team-workspace-access')
+    return access.confirmOwnerTeamWorkspaceAccess(request)
+  }))
+  ipc.handle(PROJECT_IPC_CHANNELS.DECIDE_OWNER_CONVERSATION_CHANGE, (_, request) => result(() => decideOwnerConversationChange(request)))
+  ipc.handle(PROJECT_IPC_CHANNELS.RETAKE_OWNER_ASSIGNMENT, (_, request) => result(() => {
+    const retake = require('./project-owner-manual-retake') as typeof import('./project-owner-manual-retake')
+    return retake.retakeOwnerManagementAssignment(request)
+  }))
+  ipc.handle(PROJECT_IPC_CHANNELS.SEND_OWNER_MANAGEMENT_MESSAGE, (_, request) => result(() => sendOwnerManagementMessage(request)))
+  ipc.handle(PROJECT_IPC_CHANNELS.ANSWER_OWNER_MANAGEMENT_QUESTION, (_, request) => result(() => answerOwnerManagementQuestion(request)))
+  ipc.handle(PROJECT_IPC_CHANNELS.SET_OWNER_MANAGEMENT_STATUS, (_, request) => result(() => {
+    const value = requestFields(request, ['projectId', 'expectedRevision', 'status'])
+    assertLocalActorEnabled()
+    if (typeof value.expectedRevision !== 'number' || (value.status !== 'active' && value.status !== 'paused')) throw new Error('Owner管理状态请求无效')
+    return setOwnerManagerStatus(value.projectId as string, value.expectedRevision, value.status)
+  }))
+
   ipc.handle(PROJECT_IPC_CHANNELS.GET_OWNER_GOAL_DRAFT, (_, request) => result(() => {
     const value = requestFields(request, ['projectId', 'taskId'])
     return getProjectOwnerGoalDraft(value.projectId as string, value.taskId as string | undefined)

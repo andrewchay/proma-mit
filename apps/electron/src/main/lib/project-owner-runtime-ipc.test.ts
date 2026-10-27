@@ -39,9 +39,10 @@ const handlers = new Map<string, (event: unknown, request: unknown) => unknown>(
 registerProjectOwnerRuntimeIpcHandlers({ handle: (channel, handler) => handlers.set(channel, handler) })
 const { PROJECT_IPC_CHANNELS } = await import('@gravitas/shared')
 function invoke(channel: string, request: unknown) { return handlers.get(channel)!({}, request) }
-test('Given 四个配置/准备/只读IPC When 获取绑定或暂停准备 Then 无start/receipt写入入口，无执行或凭据返回', () => {
-  const f = prepared(); expect(handlers.size).toBe(4)
+test('Given 配置/准备/只读IPC When 自动绑定、获取绑定或暂停准备 Then 无start/receipt写入入口，无执行或凭据返回', () => {
+  const f = prepared(); expect(handlers.size).toBe(5)
   expect(invoke(PROJECT_IPC_CHANNELS.GET_OWNER_RUNTIME_BINDING, { projectId: f.project.id })).toMatchObject({ ok: true, value: { carrierId: f.employee.id, revision: 1 } })
+  expect(invoke(PROJECT_IPC_CHANNELS.ENSURE_OWNER_RUNTIME_BINDING, { projectId: f.project.id })).toMatchObject({ ok: true, value: { carrierId: f.employee.id, revision: 1 } })
   expect(invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_PLANNING_RUNS, { projectId: f.project.id })).toMatchObject({ ok: true, value: [{ link: { id: f.link.id }, executions: [], receipts: [], outcomes: [] }] }); expect(JSON.stringify(invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_PLANNING_RUNS, { projectId: f.project.id }))).not.toContain('fake-key')
   expect(invoke(PROJECT_IPC_CHANNELS.PREPARE_OWNER_PLANNING, { projectId: f.project.id, input: { requestId: f.link.requestId, expectedBindingRevision: 1, expectedGoalRevision: 1, expectedPlanRevision: 0, expectedContextFingerprint: f.link.contextFingerprint } })).toMatchObject({ ok: true, value: { planningTaskId: f.link.planningTaskId } }); expect(store.listAgentExecutionsByEntity('task', f.link.planningTaskId)).toHaveLength(0)
 })

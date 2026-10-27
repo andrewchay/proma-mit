@@ -25,6 +25,7 @@ const budget = { maxCostMicros: 1000001, maxRuns: 2, maxRework: 0, expiresAt: 40
 const preview: OwnerExecutionGrantIssuePreview = {
   ...subject,
   dispatchMode: 'manual',
+  executionKind: 'controlled',
   policyRevision: 2,
   revalidationId: 'rev-1',
   revalidationRevision: 1,

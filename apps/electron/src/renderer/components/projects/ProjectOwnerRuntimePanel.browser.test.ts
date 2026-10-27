@@ -54,7 +54,7 @@ createRoot(document.getElementById('root')).render(<Provider store={store}><Proj
     await page.waitForFunction('window.fixture?.facts().reads===1')
     expect(await page.evaluate<number>('window.fixture.facts().prepares')).toBe(0)
     await page.evaluate('window.fixture.release()')
-    await page.getByRole('button', { name: '预检并开始', exact: true }).waitFor()
+    await page.getByRole('button', { name: '预检并开始', exact: true }).waitFor({ timeout: 5000 }).catch(async error => { console.error('after-prepare', await page.locator('body').innerText(), errors); throw error })
     expect(await page.evaluate<number>('window.fixture.facts().prepares')).toBe(1)
     await page.evaluate('window.fixture.finishRun()')
     await page.getByText('等待当前规划Run', { exact: true }).waitFor()

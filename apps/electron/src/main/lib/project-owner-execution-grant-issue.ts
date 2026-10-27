@@ -1,3 +1,4 @@
+import { assertOwnerEmployeePrice } from './project-owner-employee-runtime'
 /** Owner执行授权账本：发行/撤权；发行是"允许按账本消费"的静态许可，无任何消费路径。 */
 import { randomUUID } from 'node:crypto'
 import { getAgentProviderProtocol, type OwnerExecutionGrant, type OwnerExecutionGrantBudget, type OwnerExecutionGrantIssuePreview, type OwnerExecutionGrantRevokePreview, type OwnerExecutionRevalidationRecord, type OwnerExecutionRoleBudgetCap, type ProjectOwnerGoalSubject } from '@gravitas/shared'
@@ -33,6 +34,7 @@ export function hashOwnerGrantApproval(input: {
   modelId: string
   runtime: string
   budget: OwnerExecutionGrantBudget
+  ownerManagementDelegationId?: string
   dispatchMode?: OwnerExecutionGrantIssuePreview['dispatchMode']
 }): string {
   return ownerExecutionHash({ ...input, dispatchMode: input.dispatchMode ?? 'manual' })
@@ -89,6 +91,8 @@ function rowToGrant(row: Record<string, unknown>): OwnerExecutionGrant {
     materializationRevision: row.materialization_revision as number,
     materializationIntegrityHash: row.materialization_integrity_hash as string,
     sourceHash: row.source_hash as string,
+    ...(record.source.textDeliveryVersion === 1 ? { textDeliveryVersion: 1 as const } : {}), ...(record.source.qualityManagementVersion === 1 ? { qualityManagementVersion: 1 as const } : {}), ...(record.source.employeeRuntimes ? { employeeRuntimes: record.source.employeeRuntimes } : {}),
+    executionKind: record.source.executionKind,
     ...(roleAssignments ? { roleAssignments } : {}),
     executorEmployeeId: row.executor_employee_id as string,
     reviewerEmployeeId: row.reviewer_employee_id as string,
@@ -97,6 +101,7 @@ function rowToGrant(row: Record<string, unknown>): OwnerExecutionGrant {
     modelId: row.model_id as string,
     runtime: row.runtime as string,
     dispatchMode: (row.dispatch_mode as OwnerExecutionGrantIssuePreview['dispatchMode'] | undefined) ?? 'manual',
+    ...(typeof row.owner_management_delegation_id === 'string' ? { ownerManagementDelegationId: row.owner_management_delegation_id } : {}),
     budget: { maxCostMicros: row.max_cost_micros as number, maxRuns: row.max_runs as number, maxRework: row.max_rework as number, expiresAt: row.expires_at as number, ...(roleBudgetCaps.length ? { roleBudgetCaps } : {}) },
     blockers: [],
     approvalFingerprint: row.approval_fingerprint as string,
@@ -120,10 +125,22 @@ function resolveCurrentChain(subject: ProjectOwnerGoalSubject, input: { expected
   const sourceHash = ownerExecutionHash(record.source)
   const budget = record.source.budget
   if (budget.expiresAt <= Date.now()) fail('预算期限已过期，不能发行；不顺延')
+  let ownerManagementDelegationId: string | undefined
+  if (input.dispatchMode === 'autonomous') {
+    const management = require('./project-owner-management-delegation') as typeof import('./project-owner-management-delegation')
+    const envelope = management.getOwnerManagementDelegation(subject.projectId, subject.taskId)
+    if (!['active', 'exhausted'].includes(envelope.state) || !envelope.delegation) fail('自主执行需要当前有效的项目总预算授权')
+    const remaining = envelope.delegation.maxCostMicros - envelope.reservedCostMicros
+    if (budget.maxCostMicros > remaining) fail('员工执行预算超过项目总预算余额，请按剩余额度准备或确认增量预算')
+    if (budget.expiresAt > envelope.delegation.expiresAt) fail('员工执行授权期限不能超过项目总预算授权期限')
+    ownerManagementDelegationId = envelope.delegation.id
+  }
   const executor = getAgentEmployee(record.source.executor.id), reviewer = getAgentEmployee(record.source.reviewer.id)
   const roleEmployeeIds = [...new Set(record.source.tasks.map((task) => task.executor?.id).filter((id): id is string => Boolean(id))) ]
   if (!roleEmployeeIds.length) roleEmployeeIds.push(record.source.executor.id)
   if (!executor?.enabled || !reviewer?.enabled || roleEmployeeIds.some((employeeId) => !getAgentEmployee(employeeId)?.enabled)) fail('发行前置失败：冻结员工已停用')
+  record.source.employeeRuntimes?.forEach(assertOwnerEmployeePrice)
+  if (record.source.employeeRuntimes?.some(runtime => runtime.runtime !== record.source.runtime)) fail('发行前置失败：执行与Reviewer Runtime不一致')
   const channel = getChannelById(record.source.channelId)
   if (!channel) fail('发行前置失败：冻结渠道不可用')
   const protocol = getAgentProviderProtocol(channel.provider, 'ai-sdk')
@@ -135,8 +152,8 @@ function resolveCurrentChain(subject: ProjectOwnerGoalSubject, input: { expected
   const roleAssignments = record.source.tasks.flatMap((task) => task.executor ? [{ roleKey: task.executor.roleKey, employeeId: task.executor.id, employeeName: task.executor.name }] : [])
     .filter((item, index, all) => all.findIndex((other) => other.roleKey === item.roleKey) === index)
     .sort((a, b) => a.roleKey.localeCompare(b.roleKey))
-  const body = { ...subject, policyRevision: input.expectedPolicyRevision, revalidationId: record.id, revalidationRevision: record.revision, revalidationIntegrityHash: record.integrityHash, materializationId: record.source.materialization.id, materializationRevision: record.source.materialization.revision, materializationIntegrityHash: record.source.materialization.integrityHash, sourceHash, ...(roleAssignments.length ? { roleAssignments } : {}), executorEmployeeId: record.source.executor.id, reviewerEmployeeId: record.source.reviewer.id, workspaceId: record.source.workspaceId, channelId: record.source.channelId, modelId: record.source.modelId, runtime: record.source.runtime, dispatchMode: input.dispatchMode, budget: { ...budget }, blockers: [], approvalFingerprint: '' }
-  const approvalFingerprint = hashOwnerGrantApproval({ subject, revalidation: { id: record.id, revision: record.revision, integrityHash: record.integrityHash }, sourceHash, policyRevision: input.expectedPolicyRevision, executorEmployeeId: body.executorEmployeeId, reviewerEmployeeId: body.reviewerEmployeeId, roleAssignments: roleAssignments.map(({ roleKey, employeeId }) => ({ roleKey, employeeId })), workspaceId: body.workspaceId, channelId: body.channelId, modelId: body.modelId, runtime: body.runtime, budget: { ...budget }, dispatchMode: input.dispatchMode })
+  const body = { ...subject, policyRevision: input.expectedPolicyRevision, revalidationId: record.id, revalidationRevision: record.revision, revalidationIntegrityHash: record.integrityHash, materializationId: record.source.materialization.id, materializationRevision: record.source.materialization.revision, materializationIntegrityHash: record.source.materialization.integrityHash, sourceHash, ...(ownerManagementDelegationId ? { ownerManagementDelegationId } : {}), ...(record.source.textDeliveryVersion === 1 ? { textDeliveryVersion: 1 as const } : {}), ...(record.source.qualityManagementVersion === 1 ? { qualityManagementVersion: 1 as const } : {}), executionKind: record.source.executionKind, ...(record.source.employeeRuntimes ? { employeeRuntimes: record.source.employeeRuntimes } : {}), ...(roleAssignments.length ? { roleAssignments } : {}), executorEmployeeId: record.source.executor.id, reviewerEmployeeId: record.source.reviewer.id, workspaceId: record.source.workspaceId, channelId: record.source.channelId, modelId: record.source.modelId, runtime: record.source.runtime, dispatchMode: input.dispatchMode, budget: { ...budget }, blockers: [], approvalFingerprint: '' }
+  const approvalFingerprint = hashOwnerGrantApproval({ subject, revalidation: { id: record.id, revision: record.revision, integrityHash: record.integrityHash }, sourceHash, policyRevision: input.expectedPolicyRevision, executorEmployeeId: body.executorEmployeeId, reviewerEmployeeId: body.reviewerEmployeeId, roleAssignments: roleAssignments.map(({ roleKey, employeeId }) => ({ roleKey, employeeId })), workspaceId: body.workspaceId, channelId: body.channelId, modelId: body.modelId, runtime: body.runtime, budget: { ...budget }, ...(ownerManagementDelegationId ? { ownerManagementDelegationId } : {}), dispatchMode: input.dispatchMode })
   return { record, sourceHash, preview: { ...body, approvalFingerprint } }
 }
 export function previewOwnerExecutionGrantIssue(rawSubject: unknown, rawInput: unknown): OwnerExecutionGrantIssuePreview {
@@ -197,12 +214,12 @@ export function confirmOwnerExecutionGrantIssue(rawSubject: unknown, rawRequest:
         (id, project_id, task_id, purpose, state, revalidation_id, revalidation_revision, revalidation_integrity_hash,
          materialization_id, materialization_revision, materialization_integrity_hash, policy_revision,
          executor_employee_id, reviewer_employee_id, workspace_id, channel_id, model_id, runtime, dispatch_mode,
-         max_cost_micros, max_runs, max_rework, expires_at, role_budgets_json, approval_fingerprint, source_hash, request_id, input_hash, issued_at)
-        VALUES (?,?,?,'owner_business_execution','active',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+         owner_management_delegation_id, max_cost_micros, max_runs, max_rework, expires_at, role_budgets_json, approval_fingerprint, source_hash, request_id, input_hash, issued_at)
+        VALUES (?,?,?,'owner_business_execution','active',?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
         id, subject.projectId, subject.taskId ?? null, record.id, record.revision, record.integrityHash,
         record.source.materialization.id, record.source.materialization.revision, record.source.materialization.integrityHash,
         input.expectedPolicyRevision, rebuilt.executorEmployeeId, rebuilt.reviewerEmployeeId, rebuilt.workspaceId,
-        rebuilt.channelId, rebuilt.modelId, rebuilt.runtime, rebuilt.dispatchMode, rebuilt.budget.maxCostMicros, rebuilt.budget.maxRuns,
+        rebuilt.channelId, rebuilt.modelId, rebuilt.runtime, rebuilt.dispatchMode, rebuilt.ownerManagementDelegationId ?? null, rebuilt.budget.maxCostMicros, rebuilt.budget.maxRuns,
         rebuilt.budget.maxRework, rebuilt.budget.expiresAt, JSON.stringify(rebuilt.budget.roleBudgetCaps ?? []), rebuilt.approvalFingerprint, rebuilt.sourceHash, input.requestId, String(inputHash), Date.now(),
       )
       saved = rowToGrant(database.prepare('SELECT * FROM project_owner_execution_grants WHERE id=?').get(id) as Record<string, unknown>)

@@ -27,6 +27,20 @@ describe('研发验证记录：严格JSON解码不授予信任', () => {
     expect(parseDevelopmentValidationRecord(legacy, expected, now)?.binding).toBeUndefined()
   })
 
+  test('完整输出摘要与字节数必须成对且格式有效；旧记录允许缺省', () => {
+    const rawOutputSha256 = 'e'.repeat(64)
+    const withOutputEvidence = { ...record(), rawOutputSha256, rawOutputByteLength: 12_345 }
+    expect(parseDevelopmentValidationRecord(withOutputEvidence, expected, now)).toEqual(withOutputEvidence)
+    expect(parseDevelopmentValidationRecord(record(), expected, now)).toBeDefined()
+    for (const input of [
+      { ...record(), rawOutputSha256 },
+      { ...record(), rawOutputByteLength: 12_345 },
+      { ...withOutputEvidence, rawOutputSha256: 'bad' },
+      { ...withOutputEvidence, rawOutputByteLength: -1 },
+      { ...withOutputEvidence, rawOutputByteLength: Number.MAX_SAFE_INTEGER + 1 },
+    ]) expect(parseDevelopmentValidationRecord(input, expected, now)).toBeUndefined()
+  })
+
   test('身份错配、额外trusted声明和继承对象拒绝', () => {
     for (const input of [
       { ...record(), ...{ id: 'other' } }, { ...record(), taskId: 'other' },
@@ -61,5 +75,38 @@ describe('研发验证记录：严格JSON解码不授予信任', () => {
       { ...record().binding, trusted: true },
     ]) expect(parseDevelopmentValidationRecord({ ...record(), binding }, expected, now)).toBeUndefined()
     expect(parseDevelopmentValidationRecord({ ...record(), snapshotContentHash: 'bad' }, expected, now)).toBeUndefined()
+  })
+})
+
+describe('浏览器断言证据的记录层校验', () => {
+  const browserRecord = () => ({
+    ...record(), command: 'browser:html.loads+dom.board', method: 'browser_assertions' as const,
+    checks: [
+      { id: 'html.loads', title: '页面可加载', status: 'passed' as const, detail: '无脚本错误' },
+      { id: 'behavior.merge', title: '合并计分', status: 'skipped' as const, detail: '未找到键盘处理器' },
+    ],
+  })
+
+  test('Given 合法浏览器断言记录 When 解码 Then 原样保留 method 与 checks', () => {
+    expect(parseDevelopmentValidationRecord(browserRecord(), expected, now)).toEqual(browserRecord())
+  })
+
+  test('Given browser_assertions 缺 checks When 解码 Then 整条作废', () => {
+    const { checks: _checks, ...withoutChecks } = browserRecord()
+    expect(parseDevelopmentValidationRecord(withoutChecks, expected, now)).toBeUndefined()
+  })
+
+  test('Given 畸形断言项 When 解码 Then 整条作废（不静默丢弃单项）', () => {
+    for (const bad of [
+      { ...browserRecord(), checks: [{ id: 'html.loads', title: 't', status: 'unknown', detail: '' }] },
+      { ...browserRecord(), checks: [{ id: 'html.loads', title: 't', status: 'passed' }] },
+      { ...browserRecord(), checks: [{ id: '', title: 't', status: 'passed', detail: '' }] },
+      { ...browserRecord(), checks: [browserRecord().checks[0], browserRecord().checks[0]] },
+      { ...browserRecord(), checks: [{ ...browserRecord().checks[0], extra: 1 }] },
+    ]) expect(parseDevelopmentValidationRecord(bad, expected, now)).toBeUndefined()
+  })
+
+  test('Given command 方式却带 checks When 解码 Then 拒绝（避免混淆来源）', () => {
+    expect(parseDevelopmentValidationRecord({ ...record(), method: 'command', checks: browserRecord().checks }, expected, now)).toBeUndefined()
   })
 })

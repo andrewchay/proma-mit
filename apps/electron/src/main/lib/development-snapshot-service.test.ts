@@ -4,6 +4,7 @@
  */
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -37,7 +38,7 @@ function fixture(name: string) {
   writeFileSync(join(repo, 'src', 'b.ts'), 'original-b\n')
   git(repo, 'add', '.'); git(repo, 'commit', '-m', 'baseline')
   const session = join(directory, `${name}-session`); mkdirSync(session, { recursive: true })
-  const executionId = `exec${Math.random().toString(36).slice(2, 10)}`
+  const executionId = randomUUID()
   const worktree = createDevelopmentWorktree(repo, session, executionId)
   const scope = { workspaceId: 'ws', targetPaths: ['src/a.ts'], allowedPaths: ['src'], reviewerId: 'local-user' }
   return { repo, session, executionId, worktreePath: worktree.path, scope }

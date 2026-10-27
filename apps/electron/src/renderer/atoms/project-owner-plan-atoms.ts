@@ -24,8 +24,9 @@ export interface OwnerPlanEditor {
   requiresReview: boolean
   editVersion: number
   error: string
+  archiveWarning: string
 }
-const empty: OwnerPlanEditor = { snapshot: null, context: null, history: [], summary: '', assumptions: [], risks: [], steps: [], changeReason: '', loaded: false, loading: false, saving: false, historyLoading: false, historyLoaded: false, historyError: '', dirty: false, conflict: false, requiresReview: false, editVersion: 0, error: '' }
+const empty: OwnerPlanEditor = { snapshot: null, context: null, history: [], summary: '', assumptions: [], risks: [], steps: [], changeReason: '', loaded: false, loading: false, saving: false, historyLoading: false, historyLoaded: false, historyError: '', dirty: false, conflict: false, requiresReview: false, editVersion: 0, error: '', archiveWarning: '' }
 const key = (s: ProjectOwnerGoalSubject) => JSON.stringify([s.projectId, s.taskId ?? null])
 export const ownerPlanEditorsAtom = atom(new Map<string, OwnerPlanEditor>())
 /** 延迟到调用时才访问 window，兼容 SSR 和旧版目标 API 替身。 */
@@ -145,7 +146,7 @@ async function writePlan(get: Getter, set: Setter, subject: ProjectOwnerGoalSubj
   if (!(confirm ? canConfirmOwnerPlan(get, subject) : canSaveOwnerPlan(get, subject))) return
   const before = read(get, subject); const snapshot = before.snapshot; const context = before.context
   if (!snapshot || !context) return
-  update(get, set, subject, { saving: true, error: '' })
+  update(get, set, subject, { saving: true, error: '', archiveWarning: '' })
   try {
     const request = { ...subject, expectedGoalRevision: context.goal.revision, expectedRevision: snapshot.revision }
     const api = get(ownerPlanApiAtom)
@@ -153,7 +154,7 @@ async function writePlan(get: Getter, set: Setter, subject: ProjectOwnerGoalSubj
     if (!response.ok) { update(get, set, subject, { error: response.error.message, conflict: response.error.code === 'conflict' }); return }
     assertSubject(response.value, subject); assertSubject(response.value.proposal, subject)
     const edited = read(get, subject).editVersion !== before.editVersion
-    update(get, set, subject, { snapshot: response.value, dirty: edited, conflict: false, requiresReview: false, historyLoaded: false, ...(edited ? {} : fields(response.value)) })
+    update(get, set, subject, { snapshot: response.value, dirty: edited, conflict: false, requiresReview: false, historyLoaded: false, archiveWarning: response.archiveWarning ?? '', ...(edited ? {} : fields(response.value)) })
   } catch (cause) { update(get, set, subject, { error: errorText(cause) }) }
   finally { update(get, set, subject, { saving: false }) }
 }

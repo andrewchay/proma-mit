@@ -73,6 +73,10 @@ function buildRevalidationSource(subject: ProjectOwnerGoalSubject, input: OwnerE
     contextFingerprint: v1.contextFingerprint,
     selectedStepKeys: v1.selectedStepKeys,
     tasks,
+    ...(v1.textDeliveryVersion === 1 ? { textDeliveryVersion: 1 as const } : {}),
+    ...(v1.qualityManagementVersion === 1 ? { qualityManagementVersion: 1 as const } : {}),
+    ...(v1.employeeRuntimes ? { employeeRuntimes: v1.employeeRuntimes } : {}),
+    ...(v1.employeeInvocations ? { employeeInvocations: v1.employeeInvocations } : {}),
     executor: v1.executor,
     reviewer: v1.reviewer,
     workspaceId: v1.workspaceId,
@@ -94,7 +98,7 @@ function buildRevalidationSource(subject: ProjectOwnerGoalSubject, input: OwnerE
       ...(frozenPreparation.input.roleBudgetCaps?.length ? { roleBudgetCaps: frozenPreparation.input.roleBudgetCaps } : {}),
     },
     executionKind: frozenPreparation.input.executionKind,
-    blockers: [...v1.blockers, 'v2冻结真实任务事实，不是执行授权；发行、派工、资料工具与预算purpose仍关闭'],
+    blockers: [...v1.blockers],
   }
 }
 function readHistory(projectId: string): OwnerExecutionRevalidationRecord[] {

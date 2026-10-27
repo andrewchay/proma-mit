@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import type { PermissionRequest } from '@gravitas/shared'
+import { requestOwnerManagementChanged } from './project-owner-management-events'
 import { getProjectDb } from './project-sqlite-store'
 
 export interface OwnerActionApprovalIdentity {
@@ -30,13 +31,24 @@ function readLiveOwnerAction(identity: OwnerActionApprovalIdentity, database = g
   `).get(identity.commandId, identity.executionId, identity.sessionId) as LiveOwnerActionRow | undefined
 }
 
-function assertLiveOwnerAction(identity: OwnerActionApprovalIdentity, database = getProjectDb()): LiveOwnerActionRow {
+export function assertLiveOwnerAction(identity: OwnerActionApprovalIdentity, database = getProjectDb()): LiveOwnerActionRow {
   const row = readLiveOwnerAction(identity, database)
   if (!row || row.command_state !== 'running' || row.execution_status !== 'running'
     || row.grant_state !== 'active' || row.expires_at <= Date.now()) {
     throw new Error('Owner动作审批来源已失效')
   }
   return row
+}
+
+/** 不返回工具参数，不恢复丢失的Promise；前端必须再与实时权限队列按请求身份相交。 */
+export function listOwnerPendingActionRequests(projectId: string): Array<{ requestId: string; sessionId: string; taskId: string }> {
+  return getProjectDb().prepare(`SELECT a.request_id AS requestId, a.session_id AS sessionId, e.entity_id AS taskId
+    FROM project_owner_action_approvals a
+    JOIN project_owner_execution_commands c ON c.id=a.command_id AND c.project_id=a.project_id AND c.execution_id=a.execution_id
+    JOIN agent_executions e ON e.id=a.execution_id AND e.project_id=a.project_id AND e.session_id=a.session_id AND e.owner_command_id=c.id
+    JOIN project_owner_execution_grants g ON g.id=c.grant_id AND g.project_id=c.project_id
+    WHERE a.project_id=? AND a.status='pending' AND c.state='running' AND e.status='running'
+      AND g.state='active' AND g.expires_at>? ORDER BY a.requested_at, a.request_id`).all(projectId, Date.now()) as Array<{ requestId: string; sessionId: string; taskId: string }>
 }
 
 function fingerprint(request: Pick<PermissionRequest, 'toolName' | 'toolInput'>): string {
@@ -48,6 +60,7 @@ function fingerprint(request: Pick<PermissionRequest, 'toolName' | 'toolInput'>)
 /** 持久化用户看到的精确Owner动作摘要指纹；动作参数正文不落库。 */
 export function recordOwnerActionApprovalRequest(identity: OwnerActionApprovalIdentity, request: PermissionRequest): void {
   const database = getProjectDb()
+  const projectId = assertLiveOwnerAction(identity, database).project_id
   database.transaction(() => {
     const live = assertLiveOwnerAction(identity, database)
     database.prepare(`INSERT INTO project_owner_action_approvals
@@ -56,6 +69,7 @@ export function recordOwnerActionApprovalRequest(identity: OwnerActionApprovalId
       .run(request.requestId, live.project_id, identity.commandId, identity.executionId, identity.sessionId,
         request.toolName, fingerprint(request), Date.now())
   })()
+  requestOwnerManagementChanged({ projectId }, () => listOwnerPendingActionRequests(projectId).some(item => item.requestId === request.requestId))
 }
 
 /** 裁决仅接受未决请求且仍有效的同一Owner执行；拒绝不调用工具。 */

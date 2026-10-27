@@ -11,11 +11,11 @@ const ownerPurposeStore = await import('./project-sqlite-store')
 beforeAll(async () => { await ownerPurposeStore.initProjectDb() })
 afterAll(() => { ownerPurposeStore.closeProjectDb(); rmSync(dir, { recursive: true, force: true }); delete process.env.PROMA_TEST_CONFIG_DIR })
 mock.module('electron', () => buildElectronMock())
-let broken = false, dynamic = 0, workspaceContext = 0, history = 0
+let broken = false, dynamic = 0, workspaceContext = 0, history = 0, credential = 'fake'
 const source = { binding: { channelId: 'channel', modelId: 'model', workspaceId: 'ws', runtime: 'ai-sdk' }, request: { systemPrompt: 'authority-system', userPrompt: 'authority-user' } }
 mock.module('./project-owner-planning-source', () => ({ resolveOwnerPlanningTask: () => { throw new Error('Owner orchestrator不应调用task resolver') }, readOwnerPlanningSnapshot: () => { throw new Error('Owner orchestrator不应调用回执resolver') }, resolveOwnerPlanningSession: () => { if (broken) throw new Error('Owner evidence corrupt'); return source } }))
 const channelModule = await import('./channel-manager')
-mock.module('./channel-manager', () => ({ ...channelModule, getChannelById: () => ({ provider: 'openai', baseUrl: 'https://offline.invalid/v1' }), decryptApiKey: () => 'fake' }))
+mock.module('./channel-manager', () => ({ ...channelModule, getChannelById: () => ({ provider: 'openai', baseUrl: 'https://offline.invalid/v1' }), decryptApiKey: () => credential }))
 const workspaceModule = await import('./agent-workspace-manager')
 mock.module('./agent-workspace-manager', () => ({ ...workspaceModule, getAgentWorkspace: () => ({}), getAgentWorkspaceCwd: () => dir }))
 const promptModule = await import('./agent-prompt-builder')
@@ -34,6 +34,15 @@ function harness() {
   return { orchestrator, queries, persisted, errors, completions, callbacks }
 }
 describe('Owner early orchestrator routing', () => {
+  test('given empty decrypted credential then fail before querying runtime without persisting a model request', async () => {
+    const h = harness()
+    credential = ''
+    try { await h.orchestrator.sendMessage(input, h.callbacks) } finally { credential = 'fake' }
+    expect(h.errors).toHaveLength(1)
+    expect(h.errors[0]).toContain('API Key')
+    expect(h.queries).toHaveLength(0)
+    expect(h.persisted).toHaveLength(0)
+  })
   test('given polluted input then authority query bypasses all generic context and title paths', async () => {
     const h = harness(); await h.orchestrator.sendMessage(input, h.callbacks)
     expect(h.errors).toEqual([]); expect(h.queries).toHaveLength(1)

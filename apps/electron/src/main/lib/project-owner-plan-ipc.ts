@@ -1,9 +1,10 @@
 /** 无费用Owner计划IPC。不是模型运行/派发工具，操作人固定由主进程确定。 */
-import { PROJECT_IPC_CHANNELS, type ProjectOwnerGoalResult } from '@gravitas/shared'
+import { PROJECT_IPC_CHANNELS, type ProjectOwnerGoalResult, type ProjectOwnerPlanDraft } from '@gravitas/shared'
 import {
   confirmProjectOwnerPlanDraft, getProjectOwnerPlanDraft, getProjectOwnerPlanningContext,
   listProjectOwnerPlanHistory, ProjectOwnerPlanConflictError, saveProjectOwnerPlanDraft,
 } from './project-owner-plan-service'
+import { archiveProjectOwnerPlanHistory } from './project-owner-planning-doc-service'
 
 interface PlanIpcRegistrar {
   handle: (channel: string, handler: (event: unknown, request: unknown) => unknown) => void
@@ -24,6 +25,12 @@ function result<T>(operation: () => T): ProjectOwnerGoalResult<T> {
     message: cause instanceof Error ? cause.message : 'Owner 计划操作失败',
   } } }
 }
+function archiveWarning(response: ProjectOwnerGoalResult<ProjectOwnerPlanDraft>): ProjectOwnerGoalResult<ProjectOwnerPlanDraft> {
+  if (!response.ok) return response
+  const value = response.value
+  const warning = archiveProjectOwnerPlanHistory(value.projectId, listProjectOwnerPlanHistory(value.projectId, value.taskId))
+  return warning ? { ...response, archiveWarning: warning } : response
+}
 export function registerProjectOwnerPlanIpcHandlers(ipc: PlanIpcRegistrar): void {
   const readOperations = [
     [PROJECT_IPC_CHANNELS.GET_OWNER_PLANNING_CONTEXT, getProjectOwnerPlanningContext],
@@ -36,14 +43,14 @@ export function registerProjectOwnerPlanIpcHandlers(ipc: PlanIpcRegistrar): void
       return operation(value.projectId as string, value.taskId as string | undefined)
     }))
   }
-  ipc.handle(PROJECT_IPC_CHANNELS.SAVE_OWNER_PLAN_DRAFT, (_, request) => result(() => {
+  ipc.handle(PROJECT_IPC_CHANNELS.SAVE_OWNER_PLAN_DRAFT, (_, request) => archiveWarning(result(() => {
     const value = requestFields(request, ['projectId', 'taskId', 'expectedGoalRevision', 'expectedRevision', 'input'])
     if (typeof value.expectedGoalRevision !== 'number' || typeof value.expectedRevision !== 'number') throw new Error('Owner 计划修订参数无效')
     return saveProjectOwnerPlanDraft(value.projectId as string, value.expectedGoalRevision, value.expectedRevision, value.input, value.taskId as string | undefined)
-  }))
-  ipc.handle(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_PLAN_DRAFT, (_, request) => result(() => {
+  })))
+  ipc.handle(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_PLAN_DRAFT, (_, request) => archiveWarning(result(() => {
     const value = requestFields(request, ['projectId', 'taskId', 'expectedGoalRevision', 'expectedRevision'])
     if (typeof value.expectedGoalRevision !== 'number' || typeof value.expectedRevision !== 'number') throw new Error('Owner 计划修订参数无效')
     return confirmProjectOwnerPlanDraft(value.projectId as string, value.expectedGoalRevision, value.expectedRevision, value.taskId as string | undefined)
-  }))
+  })))
 }

@@ -15,6 +15,9 @@ import {
   parseOwnerExecutionSubject,
 } from './project-owner-execution-source'
 import { requestOwnerAutonomousGrantApproval } from './project-owner-autonomous-approval'
+import { buildOwnerAutonomousApprovalSummary } from './project-owner-autonomous-approval-summary'
+import { getOwnerExecutionRevalidation } from './project-owner-execution-revalidation'
+import { getProjectOwnerPlanDraft, getProjectOwnerPlanningContext } from './project-owner-plan-service'
 import { runOwnerAutonomousSchedule } from './project-owner-autonomous-scheduler'
 interface Registrar {
   handle: (channel: string, handler: (event: unknown, request: unknown) => unknown) => void
@@ -71,7 +74,14 @@ export function registerProjectOwnerExecutionGrantIpcHandlers(ipc: Registrar): v
           || value.confirmedFingerprint !== current.approvalFingerprint) {
           throw new Error('自主调度授权摘要已变化，请重新预览')
         }
-        await requestOwnerAutonomousGrantApproval(subject, current)
+        const summary = buildOwnerAutonomousApprovalSummary(
+          subject,
+          current,
+          getOwnerExecutionRevalidation(subject),
+          getProjectOwnerPlanDraft(subject.projectId, subject.taskId),
+          getProjectOwnerPlanningContext(subject.projectId, subject.taskId),
+        )
+        await requestOwnerAutonomousGrantApproval(subject, current, undefined, summary)
         const grant = confirmOwnerExecutionGrantIssue(subject, {
           input,
           preview: current,

@@ -18,6 +18,8 @@ let block = false
 const source = { binding: { modelId: 'bound-model', runtime: 'ai-sdk', workspaceId: 'ws', channelId: 'channel' }, request: { systemPrompt: 'authority-system', userPrompt: 'authority-user' }, link: { maxOutputTokens: 8192 }, sessionId: 'owner' }
 mock.module('electron', () => buildElectronMock())
 mock.module('../project-owner-planning-source', () => ({ resolveOwnerPlanningSession: (id: string) => id === 'owner' ? source : null }))
+// 本文件只验证Owner管理回合，不加载员工Reviewer的完整业务依赖。
+mock.module('../project-owner-reviewer-protocol-repair', () => ({ isOwnerReviewerProtocolRepairSession: () => false, ownerReviewerProtocolCorrection: () => null }))
 mock.module('../controlled-provider-boundary', () => ({ isControlledProviderSession: () => true, createControlledProviderFetch: () => globalThis.fetch, assertControlledPermissionChange: () => {} }))
 mock.module('../channel-manager', () => ({ getChannelById: () => ({ provider: 'openai', baseUrl: 'https://example.invalid/v1' }), decryptApiKey: () => 'fake' }))
 mock.module('../agent-workspace-manager', () => ({ getAgentWorkspace: () => ({}), getAgentWorkspaceCwd: () => dir, getWorkspaceSkills: () => { enriched++; return [] } }))
@@ -30,7 +32,8 @@ mock.module('../agent-runtime/tool-registry', () => ({
 mock.module('../agent-runtime/context-compaction', () => ({ COMPACT_CONTEXT_TOOL_NAME: 'CompactContext', compactSessionNow: async () => { compact++; throw new Error('compact forbidden') }, maybeAutoCompact: async () => { compact++; throw new Error('compact forbidden') } }))
 mock.module('../agent-runtime/attachment-enrichment', () => ({ enrichHistoryWithDocuments: async () => { enriched++; return [] }, enrichMessageWithDocuments: async () => { enriched++; return 'polluted' }, getImageAttachmentData: () => { enriched++; return [] } }))
 mock.module('@gravitas/core/providers/ai-sdk-bridge', () => ({ createAgentAISDKModel: () => ({}), AISDKStreamStepAccumulator: class { consume(part: { type: string }) { return part.type === 'finish-step' ? [{ text: 'raw-answer', toolCalls: [], toolResults: [], finishReason: 'stop' }] : [] } } }))
-mock.module('ai', () => ({ isStepCount: (count: number) => ({ count }), jsonSchema: (v: unknown) => v, tool: (v: unknown) => v,
+mock.module('ai', () => ({
+    Output: { json: () => ({ type: 'json' }) }, isStepCount: (count: number) => ({ count }), jsonSchema: (v: unknown) => v, tool: (v: unknown) => v,
   streamText: (input: Record<string, unknown>) => { captured.push(input); return {
     stream: (async function* () { if (block) await new Promise<void>(r => { release = r }); if (fail) throw new Error('context length exceeded'); yield { type: 'text-delta', text: 'raw-answer' }; yield { type: 'finish-step', finishReason: 'stop', usage: { inputTokens: 10, outputTokens: 3, inputTokenDetails: { cacheReadTokens: 0, cacheWriteTokens: 0 } } } })(),
     usage: Promise.resolve({ inputTokens: 10, outputTokens: 3, inputTokenDetails: { cacheReadTokens: 0, cacheWriteTokens: 0 } }), steps: Promise.resolve([]), text: Promise.resolve('raw-answer'), finishReason: Promise.resolve('stop'), response: Promise.resolve({ id: 'response-123', headers: { 'x-request-id': 'request-123' } }),

@@ -1,9 +1,12 @@
+import { hasOwnerMixedRuntime } from './project-owner-employee-runtime'
+import { canUseOwnerControlledEmployee } from './project-owner-employee-invocation'
 import { getWorkspaceCapabilities, listAgentWorkspaces } from './agent-workspace-manager'
 import { hasProjectWorkspaceBinding } from './project-workspace-bindings'
 import { validateControlledTarget } from './agent-controlled-context'
+import { freezeOwnerEmployeeRuntime } from './project-owner-employee-runtime'
 import { validateDevelopmentTarget } from './agent-development-context'
 import { getChannelById } from './channel-manager'
-import { getOwnerCarrierFacts, getOwnerRuntimeBinding, ownerCarrierBindingMatches } from './project-owner-runtime-binding'
+import { getOwnerCarrierFacts, getOwnerRuntimeBinding, getOwnerRuntimeCarrierIds, ownerCarrierBindingMatches } from './project-owner-runtime-binding'
 import { readCatalog } from './knowledge-catalog-service'
 /** 追加式来源准备，不是授权账本；保存永远不调用Runner/Provider或创建业务Task。 */
 import { randomUUID } from 'node:crypto'
@@ -82,6 +85,10 @@ function history(projectId: string): OwnerExecutionPreparationRecord[] {
         'selectedStepKeys',
         'toolRecommendations',
         'roleAssignments',
+        'employeeInvocations',
+        'employeeRuntimes',
+        'textDeliveryVersion',
+        'qualityManagementVersion',
         'executor',
         'reviewer',
         'workspaceId',
@@ -185,35 +192,53 @@ export function getOwnerExecutionPreparation(rawSubject: unknown): OwnerExecutio
   })
   const projectWorkspaceIds = new Set(workspaces.map((workspace) => workspace.id))
   const targetFacts = { getChannel: getChannelById, getWorkspace: (id: string) => workspaceById.get(id) }
+  const ownerCarrierIds = getOwnerRuntimeCarrierIds()
   const employees = listAgentEmployees()
     .filter(
       (employee) =>
         employee.enabled &&
-        ['controlled', 'development'].includes(employee.executionProfile ?? 'general') &&
+        // 候选员工先经受控调用器核验Runtime协议和精确审核价格；不兼容员工不进入安排上下文。
+        !employee.workflowId &&
+        ['general', 'controlled', 'development'].includes(employee.executionProfile ?? 'general') &&
         (employee.workspaceIds ?? (employee.workspaceId ? [employee.workspaceId] : [])).some((id) => {
           if (!projectWorkspaceIds.has(id)) return false
           try {
-            if ((employee.executionProfile ?? 'general') === 'development') validateDevelopmentTarget(employee, id, targetFacts)
-            else validateControlledTarget(employee, id, targetFacts)
+            freezeOwnerEmployeeRuntime(employee)
+            if ((employee.executionProfile ?? 'general') === 'general') return canUseOwnerControlledEmployee(employee, id)
+            if ((employee.executionProfile ?? 'general') === 'development') {
+              if (canUseOwnerControlledEmployee(employee, id)) return true
+              validateDevelopmentTarget(employee, id, targetFacts)
+            } else validateControlledTarget(employee, id, targetFacts)
             return true
           } catch {
             return false
           }
         }),
     )
-    .map((employee) => ({
-      id: employee.id,
-      name: employee.name,
-      ...(employee.roleTemplateId ? { roleTemplateId: employee.roleTemplateId } : {}),
-      executionProfile: employee.executionProfile ?? 'general',
-      workspaceIds: (employee.workspaceIds ?? (employee.workspaceId ? [employee.workspaceId] : [])).filter((id) =>
-        projectWorkspaceIds.has(id),
-      ),
-      channelId: employee.channelId,
-      modelId: employee.modelId,
-      runtime: employee.runtime,
-      ...(employee.id === ownerBinding?.carrierId ? { isOwnerCarrier: true } : {}),
-    }))
+    .map((employee) => {
+      const workspaceIds = (employee.workspaceIds ?? (employee.workspaceId ? [employee.workspaceId] : [])).filter(id => projectWorkspaceIds.has(id))
+      return {
+        id: employee.id,
+        name: employee.name,
+        role: employee.role,
+        ...(employee.roleTemplateId ? { roleTemplateId: employee.roleTemplateId } : {}),
+        description: employee.description,
+        skills: [...(employee.skills ?? [])],
+        totalTasks: employee.totalTasks,
+        completedTasks: employee.completedTasks,
+        failureCount: employee.failureCount,
+        ...(employee.avgDurationMs === undefined ? {} : { avgDurationMs: employee.avgDurationMs }),
+        executionProfile: employee.executionProfile ?? 'general',
+        ...(hasOwnerMixedRuntime(employee) ? { ownerMixedRuntimeCompatible: true as const } : {}),
+        ...(workspaceIds.some(id => canUseOwnerControlledEmployee(employee, id)) ? { ownerControlledCompatible: true as const } : {}),
+        workspaceIds,
+        channelId: employee.channelId,
+        modelId: employee.modelId,
+        runtime: employee.runtime,
+        permissionMode: (employee.permissionMode === 'auto' ? 'auto' : 'safe') as 'safe' | 'auto',
+        ...(ownerCarrierIds.has(employee.id) ? { isOwnerCarrier: true } : {}),
+      }
+    })
   const catalog = readCatalog(),
     baseIds = catalog.bindings
       .filter((binding) => binding.projectId === subject.projectId)
@@ -261,6 +286,7 @@ export function getOwnerExecutionPreparation(rawSubject: unknown): OwnerExecutio
     executionConfigurationRecommendationState,
     revision: preparation?.revision ?? 0,
     policyRevision: policy?.revision ?? null,
+    ...(ownerBinding ? { ownerBindingRevision: ownerBinding.revision } : {}),
     preparation,
     status: preparation ? 'current' : 'none',
     blockers: [],
@@ -308,6 +334,9 @@ export function previewOwnerExecutionPreparation(
     input = parseOwnerExecutionInput(rawInput),
     records = history(subject.projectId)
   if (!input.roleAssignments) throw new Error('新Owner准备必须显式绑定每个稳定roleKey的执行员工')
+  if (input.executionKind === 'development' && !input.developmentScope?.verificationCommands?.length) {
+    throw new Error('Owner研发执行必须先声明白名单验证命令，不能在缺少正式验证安排时派工')
+  }
   if (
     (records.at(-1)?.revision ?? 0) !== input.expectedPreparationRevision ||
     (getPilotPolicy(subject.projectId)?.revision ?? null) !== input.expectedPolicyRevision

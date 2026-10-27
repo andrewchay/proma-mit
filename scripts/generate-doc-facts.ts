@@ -11,6 +11,8 @@ interface PackageManifest {
 const repositoryRoot = join(import.meta.dir, '..')
 const outputPath = join(repositoryRoot, 'docs/generated/repository-facts.md')
 const checkOnly = process.argv.includes('--check')
+// 本地验收包可带版本后缀；构建副本和诊断夹具不属于仓库源码统计。
+const generatedBuildPath = /^(?:\.context(?:\/|$)|apps\/electron\/(?:dist|out(?:-[^/]+)?)(?:\/|$))/
 
 async function readPackageVersion(relativePath: string): Promise<PackageManifest> {
   const raw = await readFile(join(repositoryRoot, relativePath, 'package.json'), 'utf8')
@@ -30,7 +32,7 @@ async function countFiles(relativeRoot: string, patterns: string[]): Promise<num
   const files = new Set<string>()
   for (const pattern of patterns) {
     for await (const file of new Bun.Glob(pattern).scan({ cwd: root })) {
-      if (!file.split('/').includes('node_modules')) files.add(file)
+      if (!file.split('/').includes('node_modules') && !generatedBuildPath.test(file)) files.add(file)
     }
   }
   return files.size

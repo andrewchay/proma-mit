@@ -184,7 +184,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
         const messages = await this.runtimeCore.runAgentTurn({
           sessionId, prompt: owner.request.userPrompt, modelId: model, provider, protocol, apiKey, baseUrl, cwd,
           runtimeTools: [], activeSession: activeSession.state, maxTurns: 1, maxRetries: 0,
-          ownerPlanningRequest: { systemPrompt: owner.request.systemPrompt, userPrompt: owner.request.userPrompt, maxOutputTokens: owner.link.maxOutputTokens, ...(owner.link.reasoningEffort ? { reasoningEffort: owner.link.reasoningEffort } : {}) },
+          ownerPlanningRequest: { systemPrompt: owner.request.systemPrompt, userPrompt: owner.request.userPrompt, maxOutputTokens: owner.link.maxOutputTokens, ...((['4', '5', '6'] as const).includes(owner.link.protocolVersion as '4' | '5' | '6') ? { jsonOutput: true as const } : {}), ...(owner.link.reasoningEffort ? { reasoningEffort: owner.link.reasoningEffort } : {}) },
           fetchFn: controlledFetch, onAgentEvent: input.onAgentEvent,
         })
         for (const message of messages) yield message
@@ -248,7 +248,10 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       }
       assertNoOwnerBusinessSession(sessionId)
       let currentPrompt = buildAISDKSkillRequestedPrompt(prompt, skillMentions)
-      if (ownerToolNames !== null) currentPrompt = `当前Owner用途只提供知识读取及逐次审批的Write/Edit；没有Shell、普通Read、Grep、Glob、MCP或子代理。缺少必要资料或验证能力时直接说明未验证项并停止，不尝试替代工具，不把未运行的检查写成通过。\n\n${currentPrompt}`
+      if (ownerToolNames !== null) {
+        const fileActionGuidance = ownerToolNames.has('Write') || ownerToolNames.has('Edit') ? '及逐次审批的Write/Edit' : ''
+        currentPrompt = `当前Owner用途只提供知识读取${fileActionGuidance}；没有Shell、普通Read、Grep、Glob、MCP或子代理。缺少必要资料或验证能力时直接说明未验证项并停止，不尝试替代工具，不把未运行的检查写成通过。\n\n${currentPrompt}`
+      }
       let currentAttachments = attachments
       let historyMessages = input.historyMessages ?? []
 

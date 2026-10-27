@@ -17,6 +17,7 @@ async function main(): Promise<void> {
     const task = createTask(project.id, { title: '等待敏感动作审批', description: '' })
     const grantId = randomUUID(), commandId = randomUUID(), executionId = randomUUID()
     const sessionId = randomUUID(), requestId = randomUUID(), employeeId = randomUUID()
+    // 故意缺少历史重验证来源：验证WAL恢复仍失效审批并保留占额，不从主模型补造用量身份。
     database.prepare(`INSERT INTO project_owner_execution_grants
       (id,project_id,task_id,purpose,state,revalidation_id,revalidation_revision,revalidation_integrity_hash,
        materialization_id,materialization_revision,materialization_integrity_hash,policy_revision,executor_employee_id,

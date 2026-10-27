@@ -2,8 +2,8 @@
   "schemaVersion": 1,
   "version": "1.0.0",
   "status": "draft-unbound",
-  "roleCount": 20,
-  "coreRoleCount": 13,
+  "roleCount": 21,
+  "coreRoleCount": 14,
   "specialistRoleCount": 7,
   "files": [
     {
@@ -185,6 +185,15 @@
       "contractSha256": "492e97d226041acb7a9bfbdfe3e56b2fcb65b184c70233935490fa54cf214b5c",
       "cardSha256": "c239b54827fb9cbde307509f40d54c94ba182f053ba84e0810bb12930d7dfe21",
       "casesSha256": "1a46309b4d9111a040645834c0d5e3982c9eb14bb92bc1f92df887a96d08b204"
+    },
+    {
+      "roleSlug": "support-escalation-specialist",
+      "cardPath": "cards/support-escalation-specialist.json",
+      "contractPath": "roles/support-escalation-specialist.md",
+      "casesPath": "cases/support-escalation-specialist.json",
+      "contractSha256": "b5eab0a32759145276d0589e67257c3fc5554d9759b2cb8a5defd788794026b4",
+      "cardSha256": "f39098d6af5272b3a3b5fd5cc555cd62c044ee867437053ad59c841c48aeabe9",
+      "casesSha256": "06f17b24164f11d56588c724793f8ed5bb3a0965e4e2a52a857c79084d7de5a3"
     }
   ]
 }

@@ -32,6 +32,7 @@ const ownerPlanning: NonNullable<ControlledTaskStartPreview['ownerPlanning']> = 
   systemPrompt: '冻结的系统指令',
   userPrompt: '冻结的用户资料',
   context,
+  managementSupported: false,
   costs: 'unknown_no_hard_cap',
 }
 
@@ -45,23 +46,34 @@ test('Given 待启动任务 When 首次渲染 Then 仅出现预检入口而不�
   expect(html).toContain('controlled-task-start')
   expect(changed).toBe(0)
 })
+test('Given v4冻结规划 When费用预检展示 Then明确JSON格式不代表内容已通过', () => {
+  const html = renderToStaticMarkup(<OwnerPlanningPreflightSummary ownerPlanning={{ ...ownerPlanning, protocolVersion: '4', maxOutputTokens: 8192 }} />)
+  expect(html).toContain('JSON 格式输出，内容仍需校验')
+  expect(html).toContain('不会自动重试')
+  expect(renderToStaticMarkup(<OwnerPlanningPreflightSummary ownerPlanning={ownerPlanning} />)).not.toContain('JSON 格式输出')
+})
 
-test('Given Owner规划确认预检 When 查看默认摘要 Then 范围和费用风险简洁明确，指纹与完整Prompt折叠', () => {
+test('Given Owner规划确认预检 When 查看默认摘要 Then 只展示目标范围和费用风险，技术细节与完整Prompt折叠', () => {
   const html = renderToStaticMarkup(React.createElement(OwnerPlanningPreflightSummary, { ownerPlanning }))
   for (const text of [
-    '本次请求范围',
-    '只生成规划提案或必要澄清，不会派工或执行目标业务任务',
-    '最多 1 次请求',
+    '这次只为整理项目方案',
+    '形成用户研究规划',
+    '你提供的约束：不派工',
+    '最多发送 1 次请求',
+    '这次请求可能收费，目前无法提供硬性金额上限',
+    '无法按可核验预算自动安排员工',
+    '请求状态或费用未知时会暂停核对，不会自动重试',
+    '查看模型和发送资料细节',
+    '查看完整发送资料和固定指令',
     '输出上限 4096 token',
-    '不读取历史或记忆，不使用工具、MCP、Skills',
-    'safe权限本身不是沙箱',
-    '当前没有硬性金额上限',
-    '费用或终态未知时不按零元',
-    '此确认只授权本次规划请求',
-    '查看版本与技术细节',
-    '查看完整冻结发送资料和固定指令',
-    '资料指纹 context-fingerprint',
     '冻结的系统指令',
   ]) expect(html).toContain(text)
+  expect(html).not.toContain('实际规划载体')
+  expect(html).not.toContain('safe权限本身不是沙箱')
   expect(html).not.toMatch(/<details[^>]*\sopen(?:="")?[^>]*>/)
+})
+
+test('Given 模型已有审核价格证据 When 展示规划预检 Then 不显示无法自动推进提示', () => {
+  const html = renderToStaticMarkup(<OwnerPlanningPreflightSummary ownerPlanning={{ ...ownerPlanning, managementSupported: true }} />)
+  expect(html).not.toContain('无法按可核验预算自动安排员工')
 })

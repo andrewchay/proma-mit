@@ -1,0 +1,8 @@
+extends: electron-builder.owner-test.yml
+
+appId: com.gravitas.owner-test.basic-e2e
+productName: Gravitas Owner E2E
+
+extraMetadata:
+  gravitasTestBuild: true
+  gravitasTestProfileName: Gravitas Owner E2E
