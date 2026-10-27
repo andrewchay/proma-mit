@@ -199,10 +199,19 @@ const defaultBrowserRunner: OwnerRuntimeBrowserRunner = async ({ filePath, templ
         break
       }
       try {
-        const raw = await withinDeadline(
+        let raw = await withinDeadline(
           () => window.webContents.executeJavaScript(template.script, true),
           `断言 ${template.id}`,
-        ) as { passed?: boolean; skipped?: boolean; detail?: string } | null
+        ) as { passed?: boolean; skipped?: boolean; detail?: string; bestScore?: string } | null
+        if (template.id === 'storage.best-score' && raw?.passed === true) {
+          const before = raw.bestScore
+          await withinDeadline(() => window.loadFile(filePath), '最高分刷新检查')
+          if (window.webContents.getURL() !== allowedTarget) throw new Error('刷新后已离开目标页面')
+          const after = await withinDeadline(() => window.webContents.executeJavaScript(template.script, true), '刷新后最高分检查') as typeof raw
+          raw = after?.passed === true && before && after.bestScore === before
+            ? { ...after, detail: `${after.detail}；刷新后保持一致` }
+            : { passed: false, detail: '刷新后最高分未恢复，或持久值发生变化' }
+        }
         const status = raw?.passed === true ? 'passed' : raw?.skipped === true ? 'skipped' : 'failed'
         checks.push({ id: template.id, title: template.title, status, detail: String(raw?.detail ?? '').slice(0, 500) })
       } catch (error) {

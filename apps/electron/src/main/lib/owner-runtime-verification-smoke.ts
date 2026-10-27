@@ -23,6 +23,8 @@ const GAME_FIXTURE = `<!doctype html>
 </head><body>
 <h1>冒烟棋盘</h1>
 <div id="board"></div>
+<p>分数 <span id="score">0</span></p>
+<p>最高分 <span id="best">0</span></p>
 <button id="restart" type="button">重新开始</button>
 <script>
   const cells = []
@@ -36,9 +38,10 @@ const GAME_FIXTURE = `<!doctype html>
   // 竖排两块：按左键只是并到同一列不会合并，按上键才合并。
   // 用来验证"随机开局左键不保证发生合并"时断言仍能通过。
   const state = new Array(16).fill(0)
+  let score = 0
   state[0] = 2
   state[4] = 2
-  const render = () => cells.forEach((cell, index) => { cell.textContent = state[index] ? String(state[index]) : '' })
+  const render = () => { cells.forEach((cell, index) => { cell.textContent = state[index] ? String(state[index]) : '' }); document.getElementById('score').textContent = String(score); const best = Math.max(score, Number(localStorage.getItem('best') || 0)); localStorage.setItem('best', String(best)); document.getElementById('best').textContent = String(best) }
   const linesFor = (direction) => {
     const groups = []
     for (let line = 0; line < 4; line += 1) {
@@ -58,7 +61,7 @@ const GAME_FIXTURE = `<!doctype html>
       const values = indices.map(index => state[index]).filter(value => value > 0)
       const merged = []
       for (let index = 0; index < values.length; index += 1) {
-        if (values[index] === values[index + 1]) { merged.push(values[index] * 2); index += 1 }
+        if (values[index] === values[index + 1]) { merged.push(values[index] * 2); score += values[index] * 2; index += 1 }
         else merged.push(values[index])
       }
       while (merged.length < 4) merged.push(0)
@@ -69,9 +72,9 @@ const GAME_FIXTURE = `<!doctype html>
   const keys = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
   document.addEventListener('keydown', event => { const direction = keys[event.key]; if (direction) move(direction) })
   document.getElementById('restart').addEventListener('click', () => {
-    state.fill(0); state[0] = 2; state[4] = 2; render(); localStorage.setItem('best', '4')
+    state.fill(0); state[0] = 2; state[4] = 2; score = 0; render(); localStorage.setItem('best', '4')
   })
-  localStorage.setItem('best', '2')
+  if (localStorage.getItem('best') === null) localStorage.setItem('best', '2')
   render()
 </script>
 </body></html>`
@@ -177,6 +180,8 @@ export interface OwnerRuntimeVerificationSmokeResult {
   deceptiveRejected: boolean
   navigationRejected: boolean
   spawnMergePassed: boolean
+  gameOverChecked: boolean
+  inertRestartRejected: boolean
   loadTimeoutMs: number
 }
 
@@ -259,6 +264,35 @@ export async function runOwnerRuntimeVerificationSmoke(configRoot: string): Prom
   const spawnMerge = spawnRun.checks.find(check => check.id === 'behavior.merge')
   assert.equal(spawnMerge?.status, 'passed', `合并后生成新块的棋盘被误判：${spawnMerge?.detail}`)
 
+  // 正反例在真实浏览器里验证：死局必须有可见提示，只有重开按钮但没有行为不能通过。
+  const deadBoard = [2, 4, 2, 4, 4, 2, 4, 2, 2, 4, 2, 4, 4, 2, 4, 2]
+  const endFixture = (hidden: boolean) => `<!doctype html><style>#board{display:grid;grid-template-columns:repeat(4,1fr)}</style><div id="board">${deadBoard.map(value => `<div>${value}</div>`).join('')}</div><p${hidden ? ' style="display:none"' : ''}>游戏结束</p>`
+  writeFileSync(join(workspaceRoot, 'end-visible.html'), endFixture(false))
+  writeFileSync(join(workspaceRoot, 'end-hidden.html'), endFixture(true))
+  const gameOver = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['end-visible.html'], command: 'browser:behavior.game-over', timeoutMs: 20_000 })
+  const hiddenGameOver = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['end-hidden.html'], command: 'browser:behavior.game-over', timeoutMs: 20_000 })
+  assert.equal(gameOver.exitCode, 0, '实际死局和可见结束提示应通过')
+  assert.equal(hiddenGameOver.exitCode, 1, '隐藏结束文字不得通过')
+  // 结束遮罩不属于棋盘格；同时保留17个真实格子的拒绝反例。
+  const playableOverlay = GAME_FIXTURE.replace('</body>', '<script>const overlay=document.createElement("div");overlay.style.cssText="position:absolute;display:none";overlay.textContent="游戏结束";document.getElementById("board").appendChild(overlay)</script></body>')
+  writeFileSync(join(workspaceRoot, 'playable-overlay.html'), playableOverlay)
+  const playableOverlayRun = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['playable-overlay.html'], command: 'browser:html.loads+dom.board+dom.initial-tiles+behavior.merge+storage.best-score+dom.restart', timeoutMs: 20_000 })
+  assert.equal(playableOverlayRun.exitCode, 0, '隐藏绝对定位遮罩不应影响开局、合并、存储和重开检查')
+  const overlayFixture = endFixture(false).replace('</div><p', '<div style="position:absolute;inset:0;display:none">遮罩</div></div><p')
+  writeFileSync(join(workspaceRoot, 'board-overlay.html'), overlayFixture)
+  const overlayBoard = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['board-overlay.html'], command: 'browser:dom.board+behavior.game-over', timeoutMs: 20_000 })
+  assert.equal(overlayBoard.exitCode, 0, '16格附带隐藏绝对定位遮罩不应误判为17格')
+  writeFileSync(join(workspaceRoot, 'board-seventeen.html'), endFixture(false).replace('</div><p', '<div>2</div></div><p'))
+  const seventeenBoard = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['board-seventeen.html'], command: 'browser:dom.board', timeoutMs: 20_000 })
+  assert.equal(seventeenBoard.exitCode, 1, '17个实际网格子项不得通过16格检查')
+  const hiddenCellsEnd = GAME_FIXTURE.replace('</body>', '<p>游戏结束</p><script>document.addEventListener("keydown",()=>{for(const cell of document.getElementById("board").children)cell.style.display="none"})</script></body>')
+  writeFileSync(join(workspaceRoot, 'end-hidden-cells.html'), hiddenCellsEnd)
+  const hiddenCellsRun = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['end-hidden-cells.html'], command: 'browser:behavior.game-over', timeoutMs: 20_000 })
+  assert.equal(hiddenCellsRun.exitCode, 1, '按键后隐藏格子再显示结束文字，不代表已观察到16格真实死局')
+  writeFileSync(join(workspaceRoot, 'inert-restart.html'), endFixture(false) + '<p>分数 100</p><button>重新开始</button>')
+  const inertRestart = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['inert-restart.html'], command: 'browser:dom.restart', timeoutMs: 20_000 })
+  assert.equal(inertRestart.exitCode, 1, '重开按钮没有重置状态时不得通过')
+
   // 3.9) 导航越权：成果尝试跳到本机其他文件时必须被拦住（页面仍是本次成果）
   writeFileSync(join(workspaceRoot, 'nav-escape.html'), `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>导航越权</title>
 <style>#board{display:grid;grid-template-columns:repeat(4,1fr)}.cell{min-height:20px;background:#eee}</style></head>
@@ -295,6 +329,8 @@ export async function runOwnerRuntimeVerificationSmoke(configRoot: string): Prom
     deceptiveRejected: deceptive.exitCode === 1,
     navigationRejected: navEscape.checks.length > 0 && navEscape.checks.every(check => check.status === 'failed'),
     spawnMergePassed: spawnMerge?.status === 'passed',
+    gameOverChecked: gameOver.exitCode === 0 && hiddenGameOver.exitCode === 1,
+    inertRestartRejected: inertRestart.exitCode === 1,
     loadTimeoutMs: hangElapsed,
   }
 }

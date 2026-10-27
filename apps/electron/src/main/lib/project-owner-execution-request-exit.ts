@@ -154,6 +154,8 @@ function reserveOwnerRequest(input: { requestId: string; commandId: string; exec
   const database = store.getProjectDb()
   let reserved = 0
   database.transaction(() => {
+    const { assertOwnerSmokeRequestLimit } = require('./owner-real-chain-smoke-budget') as typeof import('./owner-real-chain-smoke-budget')
+    assertOwnerSmokeRequestLimit()
     const command = database.prepare("SELECT project_id, grant_id, state, reserved_cost_micros FROM project_owner_execution_commands WHERE id=? AND execution_id=?").get(input.commandId, input.executionId) as { project_id: string; grant_id: string; state: string; reserved_cost_micros: number } | undefined
     const execution = store.getAgentExecution(input.executionId)
     const grant = command && database.prepare("SELECT state, expires_at FROM project_owner_execution_grants WHERE id=? AND project_id=?").get(command.grant_id, command.project_id) as { state: string; expires_at: number } | undefined

@@ -153,11 +153,51 @@ function fixture(team: 'complete' | 'missing-reviewer' | 'missing-role' | 'gener
   return { project, workspace, teamWorkspace, owner, executor, reviewer, taskId, subject, plan }
 }
 function confirm(f: ReturnType<typeof fixture>) { return plans.confirmProjectOwnerPlanDraft(f.project.id, 1, 1, f.taskId) }
-function authorize(f: ReturnType<typeof fixture>, autonomousExecution = false) {
-  const input = { ...f.subject, requestId: randomUUID(), maxRequests: 3, maxCostMicros: 2_000_000, expiresAt: Date.now() + 3600000, ...(autonomousExecution ? { autonomousExecution: true as const } : {}) }
+function authorize(f: ReturnType<typeof fixture>, autonomousExecution = false, maxRequests = 3) {
+  const input = { ...f.subject, requestId: randomUUID(), maxRequests, maxCostMicros: 10_000_000, expiresAt: Date.now() + 3600000, ...(autonomousExecution ? { autonomousExecution: true as const } : {}) }
   const preview = delegation.previewOwnerManagementDelegation(input)
   return delegation.confirmOwnerManagementDelegation({ input, previewHash: preview.previewHash })
 }
+
+test('Given旧目标已有执行批次 When用户修订目标并确认新自主额度 Then新Owner方案追加批次且旧批次暂停保留', async () => {
+  const f = fixture('complete', false, false), first = authorize(f, true, 6)
+  const scheduler = await import('./project-owner-autonomous-scheduler')
+  const { onOwnerAutonomousScheduleWake } = await import('./project-owner-autonomous-scheduler-events')
+  const stopSchedule = onOwnerAutonomousScheduleWake(id => { if (id === f.project.id) void scheduler.runOwnerAutonomousSchedule(id) })
+  const stop = startOwnerManagementLoop()
+  try {
+    await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'delivery'))
+    const before = store.getProjectDb().prepare('SELECT id,state FROM project_owner_execution_grants WHERE project_id=? ORDER BY rowid').all(f.project.id) as Array<{ id: string; state: string }>
+    saveProjectOwnerGoalDraft(f.project.id, 1, { objective: '收敛为一份新的定位建议', constraints: ['只保留一个实现交付步骤，独立Reviewer由系统负责'] })
+    const next = authorize(f, true, 6)
+    expect(next.maxCostMicros).toBe(first.maxCostMicros)
+    await until(() => (store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id) as { count: number }).count > before.length)
+    const after = store.getProjectDb().prepare('SELECT id,state FROM project_owner_execution_grants WHERE project_id=? ORDER BY rowid').all(f.project.id) as Array<{ id: string; state: string }>
+    expect(after.find(item => item.id === before[0]!.id)?.state).toBe('paused')
+    expect(after.at(-1)?.id).not.toBe(before[0]!.id)
+    expect(store.listTasks(f.project.id).filter(item => item.ownerStepLinkId).length).toBeGreaterThan(1)
+    await until(() => getOwnerManagementConversation(f.project.id).messages.filter(item => item.kind === 'delivery').length === 2)
+  } finally { stop(); stopSchedule() }
+}, 15000)
+test('Given旧批次请求费用转待核对 When新目标已授权 Then保留旧占额且不发行新执行批次', async () => {
+  const f = fixture('complete', false, false)
+  authorize(f, true, 6)
+  const scheduler = await import('./project-owner-autonomous-scheduler')
+  const { onOwnerAutonomousScheduleWake } = await import('./project-owner-autonomous-scheduler-events')
+  const stopSchedule = onOwnerAutonomousScheduleWake(id => { if (id === f.project.id) void scheduler.runOwnerAutonomousSchedule(id) })
+  const stop = startOwnerManagementLoop()
+  try {
+    await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'delivery'))
+    const db = store.getProjectDb()
+    const old = db.prepare('SELECT id FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id) as { id: string }
+    db.prepare("UPDATE project_owner_execution_request_reservations SET state='needs_reconcile' WHERE command_id IN (SELECT id FROM project_owner_execution_commands WHERE grant_id=?)").run(old.id)
+    saveProjectOwnerGoalDraft(f.project.id, 1, { objective: '更新交付目标但不清除未知费用' })
+    authorize(f, true, 6)
+    await until(() => Boolean(db.prepare("SELECT 1 FROM project_owner_execution_start_intents WHERE project_id=? AND json_extract(payload,'$.expectedGoalRevision')=2 AND recovery_status='needs_attention'").get(f.project.id)))
+    expect(db.prepare('SELECT COUNT(*) AS count FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id)).toEqual({ count: 1 })
+    expect((db.prepare("SELECT COUNT(*) AS count FROM project_owner_execution_request_reservations WHERE state='needs_reconcile'").get() as { count: number }).count).toBeGreaterThan(0)
+  } finally { stop(); stopSchedule() }
+}, 15000)
 test('Given 新项目只有Owner载体 When按方案准备团队 Then 自动在项目工作区创建所需员工和独立核验员且重复调用幂等', () => {
   const project = store.createProject({ title: '默认团队注入', description: '' }), workspace = createAgentWorkspace(`默认团队-${randomUUID()}`)
   bindWorkspaceToProject(project.id, workspace.id)
@@ -644,7 +684,7 @@ test('Given 用户在项目对话提交新目标及总预算 When Owner规划并
       const delivery = getOwnerManagementConversation(f.project.id).messages.find(item => item.kind === 'delivery')
       expect(delivery?.conversationId).toBe(getOwnerManager(f.project.id)?.conversationId)
       expect(delivery?.delivery?.items[0]?.content).toContain('已整理目标范围、证据和取舍')
-      expect(calls.filter(item => item.projectId === f.project.id).map(item => item.purpose)).toEqual(['owner_planning', 'owner_execution_assignment', 'owner_followup', 'owner_quality'])
+      expect(calls.filter(item => item.projectId === f.project.id).map(item => item.purpose)).toEqual(['owner_planning', 'owner_execution_assignment', 'owner_quality'])
     } finally { stopWake() }
   } finally {
     stop()

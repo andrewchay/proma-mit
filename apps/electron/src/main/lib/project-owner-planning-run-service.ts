@@ -145,7 +145,7 @@ function readStoredOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRu
  */
 export function recoverLegacyOwnerConversationReply(executionId: string): OwnerPlanningRunOutcome | null {
   const original = readStoredOwnerPlanningRunOutcome(executionId)
-  if (!original || original.state !== 'failed' || !['Owner规划响应包含未知字段', 'Owner执行跟进只允许分析回应或必要协商', 'Owner质量决定与准确评审/成果不匹配'].includes(original.detail)) return null
+  if (!original || original.state !== 'failed' || !['Owner规划响应包含未知字段', 'Owner执行跟进只允许分析回应或必要协商', 'Owner质量决定与准确评审/成果不匹配', 'Owner质量决定未按准确标准逐项判断或引用不符'].includes(original.detail)) return null
   const receipt = getOwnerPlanningRunReceipt(original.receiptId)
   if (!receipt || receipt.executionId !== executionId || receipt.purpose !== 'owner_planning' || !receipt.validTerminal || receipt.stopped || receipt.error !== null
     || receipt.runtimeResult?.subtype !== 'success' || receipt.runtimeResult.finish_reason !== 'stop'
@@ -231,7 +231,8 @@ export function getOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRu
       return recovered.recoveredOutcome
     }
     if (recovered.recoveredOutcome.detail !== 'Owner旧格式回应已从本地原始回执重新校验；未重发请求，费用仍按原预留记录。') throw new Error('旧回应恢复说明不符')
-    const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context)
+    // 已追加的历史恢复按可信回执时间重验；当前质量动作仍独立检查实时证据有效期。
+    const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, receipt.capturedAt)
     if ((response.kind !== 'conversation_reply' && response.kind !== 'quality_decision') || recovered.recoveredOutcome.reply !== response.message || JSON.stringify(recovered.recoveredOutcome.qualityDecision) !== JSON.stringify(response.kind === 'quality_decision' ? response.decision : undefined)) throw new Error('旧回应恢复记录与原文不一致')
     return recovered.recoveredOutcome
   } catch { throw new Error('Owner旧回应恢复记录无效，请保留原始回执核查') }

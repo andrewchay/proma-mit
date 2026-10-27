@@ -8,6 +8,9 @@ process.env.PROMA_TEST_CONFIG_DIR = directory
 mock.module('electron', () => buildElectronMock())
 const exit = await import('../project-owner-execution-request-exit')
 mock.module('../project-owner-execution-request-exit', () => ({ ...exit, resolveOwnerExecutionMaxOutputTokens: () => 8192 }))
+let needsCorrection = false
+mock.module('../project-owner-reviewer-protocol-repair', () => ({ isOwnerReviewerProtocolRepairSession: () => needsCorrection,
+  ownerReviewerProtocolCorrection: () => needsCorrection ? '主进程校验反馈：引用应为连续原文，请补正本轮JSON' : null }))
 const { AISDKRuntimeCore } = await import('./ai-sdk-runtime-core')
 afterAll(() => { delete process.env.PROMA_TEST_CONFIG_DIR; rmSync(directory, { recursive: true, force: true }) })
 async function run(finishReason: 'stop' | 'length', planning = false) {
@@ -30,6 +33,51 @@ test('Given Owner员工GLM请求 When真实AI SDK序列化 Then低推理强度�
   expect(body).toMatchObject({ model: 'glm-5.3-flash', max_tokens: 8192, reasoning_effort: 'low' })
   expect(body).not.toHaveProperty('thinking')
   expect(result).toMatchObject({ subtype: 'success', finish_reason: 'stop' })
+})
+
+test('GivenReviewer首答格式错误 When主进程要求补正 Then同一命令最多再请求一次并保留两份输出和合计用量', async () => {
+  needsCorrection = true
+  let calls = 0
+  const bodies: Array<{ messages: Array<{ content: string }> }> = []
+  const fetchFn = Object.assign(async (_url: unknown, init?: RequestInit) => {
+    calls += 1
+    bodies.push(JSON.parse(String(init?.body)))
+    return new Response([
+      'data: ' + JSON.stringify({ id: `review-${calls}`, choices: [{ index: 0, delta: { content: calls === 1 ? '错误的原始评审' : '补正仍可能不合规，必须再经正式校验' }, finish_reason: null }] }),
+      'data: ' + JSON.stringify({ id: `review-${calls}`, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 20, completion_tokens: 10 } }),
+      'data: [DONE]', '',
+    ].join('\n\n'), { headers: { 'content-type': 'text/event-stream' } })
+  }, { preconnect() {} }) as typeof globalThis.fetch
+  try {
+    const messages = await new AISDKRuntimeCore().runAgentTurn({ sessionId: 'reviewer', prompt: '只评审同一冻结成果', modelId: 'glm-5.3-flash', provider: 'zhipu', protocol: 'openai-chat', apiKey: 'fake', baseUrl: 'https://offline.invalid/v1', cwd: directory,
+      runtimeTools: [], activeSession: { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false }, maxTurns: 2, maxRetries: 0, fetchFn })
+    expect(calls).toBe(2)
+    expect(JSON.stringify(bodies[1])).toContain('错误的原始评审')
+    expect(JSON.stringify(bodies[1])).toContain('主进程校验反馈')
+    expect(JSON.stringify(messages)).toContain('错误的原始评审')
+    expect(JSON.stringify(messages)).toContain('补正仍可能不合规')
+    expect(messages.at(-1)).toMatchObject({ usage: { input_tokens: 40, output_tokens: 20 } })
+  } finally { needsCorrection = false }
+})
+
+test('GivenReviewer原答复已返回 When补正请求被额度门禁拒绝 Then保留首答且失败终止不重试', async () => {
+  needsCorrection = true
+  let calls = 0
+  const fetchFn = Object.assign(async () => {
+    if (++calls > 1) throw new Error('真实冒烟已达到请求上限，拒绝补正')
+    return new Response([
+      'data: ' + JSON.stringify({ id: 'review-first', choices: [{ index: 0, delta: { content: '必须保留的首份原答复' }, finish_reason: null }] }),
+      'data: ' + JSON.stringify({ id: 'review-first', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 20, completion_tokens: 10 } }),
+      'data: [DONE]', '',
+    ].join('\n\n'), { headers: { 'content-type': 'text/event-stream' } })
+  }, { preconnect() {} }) as typeof globalThis.fetch
+  try {
+    const messages = await new AISDKRuntimeCore().runAgentTurn({ sessionId: 'reviewer', prompt: '评审同一成果', modelId: 'glm-5.3-flash', provider: 'zhipu', protocol: 'openai-chat', apiKey: 'fake', baseUrl: 'https://offline.invalid/v1', cwd: directory,
+      runtimeTools: [], activeSession: { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false }, maxTurns: 2, maxRetries: 0, fetchFn })
+    expect(calls).toBe(2)
+    expect(JSON.stringify(messages)).toContain('必须保留的首份原答复')
+    expect(messages.at(-1)).toMatchObject({ subtype: 'error_during_execution', finish_reason: 'error', usage: { input_tokens: 20, output_tokens: 10 } })
+  } finally { needsCorrection = false }
 })
 test('Given Owner员工输出被截断 When仍有过程文字 Then保留用量并返回失败终态', async () => {
   const { result } = await run('length')

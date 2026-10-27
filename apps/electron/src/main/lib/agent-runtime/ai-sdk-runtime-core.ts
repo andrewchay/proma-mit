@@ -52,6 +52,7 @@ import { runGuardedToolCall } from './tool-scheduler-service'
 import { buildPilotRequestRuntime, type PilotBudgetContext } from '../project-pilot-request-exit'
 import { resolveOwnerExecutionMaxOutputTokens, awaitOwnerExecutionRequestsSettled } from '../project-owner-execution-request-exit'
 import { isOwnerAutoAllowedWorkspaceWrite } from '../project-owner-execution-gates'
+import { ownerReviewerProtocolCorrection, isOwnerReviewerProtocolRepairSession } from '../project-owner-reviewer-protocol-repair'
 
 export interface AISDKRuntimeSessionState {
   controller: AbortController
@@ -283,7 +284,7 @@ export class AISDKRuntimeCore {
       ...(loadingPlan ? { loadingPlan } : {}),
     })
 
-    const streamRun = await this.runStreamTextWithRetry({
+    const streamInput: AISDKRuntimeStreamInput = {
       model: modelInstance,
       system: effectiveSystemPrompt,
       messages,
@@ -308,7 +309,36 @@ export class AISDKRuntimeCore {
       ...(owner?.reasoningEffort ? { reasoningEffort: owner.reasoningEffort }
         : ownerExecutionMaxOutputTokens !== undefined && input.provider === 'zhipu' && /^glm-5\.3(?:-flash)?$/i.test(input.modelId) ? { reasoningEffort: 'low' as const } : {}),
       ...(owner?.jsonOutput ? { jsonOutput: true as const } : {}),
-    })
+    }
+    let streamRun = await this.runStreamTextWithRetry(streamInput)
+    const earlierMessages: SDKMessage[] = []
+    let earlierUsage: NonNullable<SDKResultMessage['usage']> | undefined
+    const initialSteps = streamRun.streamedSteps.length ? streamRun.streamedSteps : await streamRun.result.steps
+    if (!owner && ownerExecutionMaxOutputTokens !== undefined && await streamRun.result.finishReason === 'stop'
+      && assessStepsToolCallBatchIntegrity(initialSteps).complete && isOwnerReviewerProtocolRepairSession(input.sessionId)) {
+      const originalMessages = buildAISDKMessagesFromSteps(initialSteps, input.sessionId, input.modelId)
+      const originalUsage = toAISDKResultUsage(await streamRun.result.usage)
+      try {
+        await awaitOwnerExecutionRequestsSettled(input.sessionId)
+        const correction = ownerReviewerProtocolCorrection(input.sessionId, input.prompt, await streamRun.result.text)
+        if (correction) {
+          earlierMessages.push(...originalMessages)
+          const feedback: SDKUserMessage = { type: 'user', message: { content: [{ type: 'text', text: correction }] }, parent_tool_use_id: null, session_id: input.sessionId }
+          earlierMessages.push(feedback as unknown as SDKMessage)
+          earlierUsage = originalUsage
+          const response = await streamRun.result.response
+          // 第二笔仍走相同受控fetch，重新核验当前许可、剩余预算、用量与全局请求上限。
+          streamRun = await this.runStreamTextWithRetry({ ...streamInput, maxTurns: 1,
+            messages: [...messages, ...response.messages, { role: 'user', content: correction }] })
+          await Promise.all([streamRun.result.steps, streamRun.result.finishReason, streamRun.result.usage, streamRun.result.response, streamRun.result.text])
+        }
+      } catch (cause) {
+        // 补正被门禁拒绝或网络失败时也交回首答供持久化，终态必须失败，不能丢证据或冒充通过。
+        const failed: SDKResultMessage = { type: 'result', subtype: 'error_during_execution', session_id: input.sessionId,
+          finish_reason: 'error', errors: [`Reviewer补正未完成：${safeRuntimeErrorDetail(cause)}`], usage: originalUsage }
+        return [...(earlierMessages.length ? earlierMessages : originalMessages), failed as unknown as SDKMessage]
+      }
+    }
 
     const steps = streamRun.streamedSteps.length > 0
       ? streamRun.streamedSteps
@@ -327,7 +357,9 @@ export class AISDKRuntimeCore {
     const resultMessage: SDKResultMessage = {
       type: 'result',
       subtype: (owner || ownerExecutionMaxOutputTokens !== undefined) && (ownerFinishReason !== 'stop' || !toolCallBatchIntegrity.complete) ? 'error_during_execution' : 'success',
-      usage: toAISDKResultUsage(usage),
+      usage: { ...toAISDKResultUsage(usage),
+        input_tokens: (usage.inputTokens ?? 0) + (earlierUsage?.input_tokens ?? 0),
+        output_tokens: (usage.outputTokens ?? 0) + (earlierUsage?.output_tokens ?? 0) },
       session_id: input.sessionId,
       toolCallBatchIntegrity,
       ...(ownerExecutionMaxOutputTokens !== undefined ? { finish_reason: ownerFinishReason,
@@ -343,7 +375,7 @@ export class AISDKRuntimeCore {
         cacheWriteTokens: usage.inputTokenDetails?.cacheWriteTokens ?? null,
       } } : {}),
     }
-    return [...sdkMessages, resultMessage as unknown as SDKMessage]
+    return [...earlierMessages, ...sdkMessages, resultMessage as unknown as SDKMessage]
     } catch (cause) {
       // 有些失败只在读取终态时才暴露成通用无输出错误；这里用受控出口记录的原始原因补全诊断。
       const diagnostic = isGenericNoOutputError(cause) && capturedFetchError.error

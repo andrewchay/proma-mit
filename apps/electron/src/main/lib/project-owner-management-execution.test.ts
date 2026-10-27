@@ -89,7 +89,7 @@ async function fixture(running = false, failed = false, unknownUsage = false, te
   goals.saveProjectOwnerGoalDraft(project.id, 0, { objective: '形成定位建议' })
   binding.saveOwnerRuntimeBinding(project.id, 0, { ownerName: 'Owner', carrierId: owner.id, workspaceId: workspace.id, changeReason: '测试' })
   reconcileOwnerManagement(project.id)
-  const budgetInput = { projectId: project.id, requestId: randomUUID(), maxRequests: 6, maxCostMicros: 4_000_000, expiresAt: Date.now() + 6 * 3600000 }
+  const budgetInput = { projectId: project.id, requestId: randomUUID(), maxRequests: 6, maxCostMicros: 20_000_000, expiresAt: Date.now() + 6 * 3600000 }
   const budgetPreview = delegation.previewOwnerManagementDelegation(budgetInput)
   const projectBudget = delegation.confirmOwnerManagementDelegation({ input: budgetInput, previewHash: budgetPreview.previewHash })
   const context = plans.getProjectOwnerPlanningContext(project.id), roleKey = context.sources.roles[0]!.key
@@ -397,4 +397,27 @@ test('GivenOwner全文请求已冻结 When成果被替换 Then发送前重验拒
     expect((await import('./project-owner-management-delivery')).readOwnerManagementDelivery(f.project.id, current.observation)).toMatchObject({ state: 'unavailable' })
     expect(delegation.getOwnerManagementDelegation(f.project.id).usedRequests).toBe(1)
   } finally { if (path && original) fs.writeFileSync(path, original); stop() }
+})
+
+
+test('Given员工结果已落库但交接事件被消费且没有Owner请求 When重启对账 Then补齐一次交接且不重发员工或重复准备', async () => {
+  const f = await fixture()
+  await until(() => Boolean(store.getProjectDb().prepare("SELECT 1 FROM project_owner_execution_commands WHERE project_id=? AND role='executor' AND state='settled'").get(f.project.id)))
+  const current = observation.readOwnerExecutionObservation(f.project.id, f.execution.id, 'terminal')
+  management.recordOwnerManagementObservation(f.project.id, 1, current.observation, current.taskId, createHash('sha256').update(JSON.stringify(current.observation)).digest('hex'))
+  const message = store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id=? AND json_extract(payload,'$.kind')='execution_observation' ORDER BY rowid DESC LIMIT 1").get(f.project.id) as { id: string }
+  expect(message).toBeTruthy()
+  for (const event of management.listPendingOwnerManagementEvents(f.project.id)) management.consumeOwnerManagementEvent(event)
+  const conversation = await import('./project-owner-management-conversation')
+  expect(conversation.hasUnstartedOwnerConversation(f.project.id)).toBe(true)
+  const executionsBefore = store.listAgentExecutionsByProject(f.project.id).length
+  const usedBefore = delegation.getOwnerManagementDelegation(f.project.id).usedRequests
+  reconcileOwnerManagement(f.project.id)
+  const links = () => store.getProjectDb().prepare("SELECT COUNT(*) AS count FROM project_owner_planning_links WHERE project_id=? AND json_extract(payload,'$.conversationMessageId')=?").get(f.project.id, message.id)
+  expect(links()).toEqual({ count: 1 })
+  expect(conversation.hasUnstartedOwnerConversation(f.project.id)).toBe(false)
+  reconcileOwnerManagement(f.project.id)
+  expect(links()).toEqual({ count: 1 })
+  expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(executionsBefore)
+  expect(delegation.getOwnerManagementDelegation(f.project.id).usedRequests).toBe(usedBefore)
 })

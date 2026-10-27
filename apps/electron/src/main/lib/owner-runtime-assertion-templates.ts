@@ -21,14 +21,26 @@ export interface OwnerRuntimeAssertionTemplate {
   script: string
 }
 
-/** 键盘事件模拟用的通用片段：向 document 与 window 同时派发，兼容监听在任一处实现。 */
+/** 从 document 冒泡到 window，一次按键只派发一次，避免重复移动。 */
 const KEY_HELPER = `
   const press = (key) => {
-    for (const target of [document, window]) {
-      target.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true }))
-      target.dispatchEvent(new KeyboardEvent('keyup', { key, code: key, bubbles: true }))
-    }
+    document.dispatchEvent(new KeyboardEvent('keydown', { key, code: key, bubbles: true }))
+    document.dispatchEvent(new KeyboardEvent('keyup', { key, code: key, bubbles: true }))
   }
+`
+
+/** 只数参与网格布局的格子；隐藏元素及绝对定位遮罩不占棋盘格。 */
+const BOARD_HELPER = `
+  const gridCells = element => [...element.children].filter(cell => {
+    const style = getComputedStyle(cell)
+    return style.display !== 'none' && style.visibility !== 'hidden' && !['absolute', 'fixed'].includes(style.position)
+  })
+  const board = [...document.querySelectorAll('*')].find(element => {
+    const display = getComputedStyle(element).display
+    return (display === 'grid' || display === 'inline-grid') && gridCells(element).length === 16
+  })
+  const readBoard = () => board ? gridCells(board).map(cell => Number((cell.textContent || '').trim()) || 0) : []
+  const readTiles = () => readBoard().filter(value => value > 0)
 `
 
 export const OWNER_RUNTIME_ASSERTION_TEMPLATES: readonly OwnerRuntimeAssertionTemplate[] = [
@@ -48,13 +60,8 @@ export const OWNER_RUNTIME_ASSERTION_TEMPLATES: readonly OwnerRuntimeAssertionTe
     title: '存在 16 格棋盘容器',
     intentKeywords: ['棋盘', '网格', '格子', 'board'],
     script: `(() => {
-      const candidates = [...document.querySelectorAll('*')].filter((element) => {
-        const style = getComputedStyle(element)
-        return (style.display === 'grid' || style.display === 'inline-grid') && element.children.length >= 16
-      })
-      if (candidates.length === 0) return { passed: false, detail: '没有找到 16 格的网格容器' }
-      const cells = candidates[0].children.length
-      return { passed: cells === 16, detail: '网格子元素数量：' + cells }
+      ${BOARD_HELPER}
+      return { passed: Boolean(board), detail: board ? '参与网格布局的棋盘格数量：16' : '没有找到恰好16格的网格容器' }
     })()`,
   },
   {
@@ -62,11 +69,8 @@ export const OWNER_RUNTIME_ASSERTION_TEMPLATES: readonly OwnerRuntimeAssertionTe
     title: '开局至少两个数字块',
     intentKeywords: ['开局', '初始', '数字块', '方块'],
     script: `(() => {
-      const numbers = [...document.querySelectorAll('*')]
-        .filter((element) => element.children.length === 0)
-        .map((element) => (element.textContent || '').trim())
-        .filter((text) => /^[0-9]+$/.test(text))
-      const tiles = numbers.filter((text) => Number(text) > 0)
+      ${BOARD_HELPER}
+      const tiles = readTiles()
       return { passed: tiles.length >= 2, detail: '数字块数量：' + tiles.length }
     })()`,
   },
@@ -76,10 +80,7 @@ export const OWNER_RUNTIME_ASSERTION_TEMPLATES: readonly OwnerRuntimeAssertionTe
     intentKeywords: ['合并', '计分', '得分', '键盘', '方向键', '操作'],
     script: `(() => {
       // 必须转换成数字：后续按数值判断"翻倍合并"，字符串会让查表恒为 -1。
-      const readTiles = () => [...document.querySelectorAll('*')]
-        .filter((element) => element.children.length === 0)
-        .map((element) => Number((element.textContent || '').trim()))
-        .filter((value) => Number.isInteger(value) && value > 0)
+      ${BOARD_HELPER}
       const readScore = () => {
         const match = (document.body.innerText || '').match(/(?:分数|得分|score)[^0-9]{0,10}([0-9]+)/i)
         return match ? Number(match[1]) : null
@@ -97,10 +98,11 @@ export const OWNER_RUNTIME_ASSERTION_TEMPLATES: readonly OwnerRuntimeAssertionTe
       for (const key of ['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown']) {
         for (let attempt = 0; attempt < 2; attempt += 1) {
           const tilesBefore = readTiles()
+          const scoreBefore = readScore()
           press(key)
           const tilesAfter = readTiles()
           tried.push(key + '：' + tilesBefore.join(',') + ' → ' + tilesAfter.join(','))
-          if (mergedOnce(tilesBefore, tilesAfter)) { merged = true; break }
+          if (mergedOnce(tilesBefore, tilesAfter) && scoreBefore !== null && readScore() > scoreBefore) { merged = true; break }
         }
         if (merged) break
       }
@@ -122,23 +124,54 @@ export const OWNER_RUNTIME_ASSERTION_TEMPLATES: readonly OwnerRuntimeAssertionTe
       } catch (error) { return { passed: false, detail: 'localStorage 不可用' } }
       if (entries.length === 0) return { passed: false, detail: '没有写入任何 localStorage 键，最高分未持久化' }
       // 任意键存在不代表最高分被保存：必须找到分数类键且值为数字。
-      const scores = entries.filter(([key, value]) => /best|high|score|record|最高|纪录/i.test(String(key)) && /^[0-9]+$/.test(String(value ?? '').trim()))
+      const scores = entries.filter(([key, value]) => /best|high/i.test(String(key)) && /^[0-9]+$/.test(String(value ?? '').trim()))
       if (scores.length === 0) return { passed: false, detail: '没有最高分类键值；现有键：' + entries.slice(0, 5).map(([key]) => String(key)).join(', ') }
-      return { passed: true, detail: '最高分键：' + scores.map(([key, value]) => key + '=' + value).join(', ') }
+      const shown = (document.body.innerText || '').match(/(?:最高分|best(?:\\s*score)?|high(?:\\s*score)?)[^0-9]{0,10}([0-9]+)/i)
+      const score = (document.body.innerText || '').match(/(?:分数|得分|score)[^0-9]{0,10}([0-9]+)/i)
+      const matching = shown ? scores.filter(([, value]) => Number(value) === Number(shown[1])) : []
+      if (!matching.length || !score || Number(shown[1]) < Number(score[1])) return { passed: false, detail: '存储最高分与界面或本局得分不一致' }
+      return { passed: true, bestScore: JSON.stringify(matching), detail: '界面最高分与存储一致：' + shown[1] }
+    })()`,
+  },
+  {
+    id: 'behavior.game-over',
+    title: '无法移动时显示游戏结束',
+    intentKeywords: ['游戏结束', '结束判定', 'game over'],
+    script: `(() => {
+      ${BOARD_HELPER}
+      if (!board) return { passed: false, detail: '没有16格棋盘，无法检查结束条件' }
+      const read = readBoard
+      const isOver = values => values.length === 16 && values.every(value => value > 0) && values.every((value, index) =>
+        (index % 4 === 3 || value !== values[index + 1]) && (index >= 12 || value !== values[index + 4]))
+      ${KEY_HELPER}
+      // 固定按键序列只操作页面，不读取或修改游戏内部变量；达到真实死局后核对提示。
+      const keys = ['ArrowLeft', 'ArrowUp', 'ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowDown', 'ArrowRight']
+      for (let move = 0; move < 3000; move += 1) {
+        if (isOver(read())) {
+          const visible = [...document.querySelectorAll('*')].some(element =>
+            element.children.length === 0 && /游戏结束|game\\s*over|无路可走|无法移动/i.test(element.textContent || '')
+            && element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden')
+          return { passed: visible, detail: visible ? '实际棋盘无空格及可合并相邻块，已显示结束提示' : '已形成无法移动的棋盘，但没有可见结束提示' }
+        }
+        press(keys[move % keys.length])
+      }
+      return { passed: false, detail: '3000次按键内未形成可核验的结束状态，结束行为尚未证明' }
     })()`,
   },
   {
     id: 'dom.restart',
-    title: '存在重开入口',
+    title: '重新开始恢复开局与零分',
     intentKeywords: ['重开', '重置', '重新开始', '再来一局'],
     script: `(() => {
-      const text = (document.body.innerText || '').toLowerCase()
-      const keywords = ['重新开始', '重开', '再来一局', 'restart', 'reset', 'new game']
-      const hit = keywords.find((keyword) => text.includes(keyword))
-      if (hit) return { passed: true, detail: '界面包含重开入口：' + hit }
-      const button = [...document.querySelectorAll('button')]
-        .find((element) => /重|restart|reset|new/i.test(element.textContent || ''))
-      return button ? { passed: true, detail: '找到重开按钮' } : { passed: false, detail: '未找到重开入口' }
+      const button = [...document.querySelectorAll('button, [role="button"]')]
+        .find(element => /重新开始|重开|再来一局|restart|reset|new game/i.test(element.textContent || ''))
+      if (!button) return { passed: false, detail: '未找到明确的重开按钮' }
+      button.click()
+      ${BOARD_HELPER}
+      const tiles = readTiles().length
+      const score = (document.body.innerText || '').match(/(?:分数|得分|score)[^0-9]{0,10}([0-9]+)/i)
+      const passed = tiles === 2 && score !== null && Number(score[1]) === 0
+      return { passed, detail: '点击重开后数字块=' + tiles + '，分数=' + (score ? score[1] : '不可读') }
     })()`,
   },
 ]

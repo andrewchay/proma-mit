@@ -52,6 +52,12 @@ export async function runPackageSmoke(): Promise<void> {
   } finally { database.close() }
   const root = getConfigDir()
   assert(existsSync(join(root, '.package-smoke-empty')), '配置目录必须由烟测脚本创建')
+  if (process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RESUME_PROJECT_ID) {
+    // 新profile的平台正反例已独立通过；恢复只推进原项目，不重建免费夹具或业务事实。
+    await runOwnerRealChain()
+    console.log(JSON.stringify({ packageSmoke: 'resumed_owner_project', version: app.getVersion() }))
+    return
+  }
   // 使用打包后实际 SQLite 引擎验证 WAL 落盘与关闭重开，不以 Bun 测试替代生产存储证据。
   const walPath = join(root, 'package-smoke-wal.sqlite')
   let walDatabase = openNativeSqlite(walPath)
@@ -275,6 +281,7 @@ async function runOwnerRealChain(): Promise<void> {
   if (!process.env.GRAVITAS_OWNER_CHAIN_SMOKE_CHANNEL_ID) return
   const { runOwnerRealChainSmoke } = await import('./owner-real-chain-smoke')
   const report = await runOwnerRealChainSmoke()
+  writeFileSync(join(getConfigDir(), 'owner-real-chain-report.json'), JSON.stringify(report, null, 2), { flag: 'wx', mode: 0o600 })
   console.log(`[owner-real-chain] ${JSON.stringify(report)}`)
 }
 
