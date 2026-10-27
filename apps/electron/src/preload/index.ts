@@ -2003,6 +2003,7 @@ export interface ElectronAPI {
       onOwnerManagementChanged: import('@gravitas/shared').OwnerManagementApi['onOwnerManagementChanged']
       decideOwnerConversationChange: import('@gravitas/shared').OwnerManagementApi['decideOwnerConversationChange']
       sendOwnerManagementMessage: import('@gravitas/shared').OwnerManagementApi['sendOwnerManagementMessage']
+      retakeOwnerAssignment: import('@gravitas/shared').OwnerManagementApi['retakeOwnerAssignment']
       answerOwnerManagementQuestion: import('@gravitas/shared').OwnerManagementApi['answerOwnerManagementQuestion']
       previewOwnerManagementDelegation: import('@gravitas/shared').OwnerManagementApi['previewOwnerManagementDelegation']
       confirmOwnerManagementDelegation: import('@gravitas/shared').OwnerManagementApi['confirmOwnerManagementDelegation']
@@ -4808,6 +4809,7 @@ const electronAPI: ElectronAPI = {
       },
       decideOwnerConversationChange: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.DECIDE_OWNER_CONVERSATION_CHANGE, request),
       sendOwnerManagementMessage: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SEND_OWNER_MANAGEMENT_MESSAGE, request),
+      retakeOwnerAssignment: (request: { projectId: string; taskId?: string; requestId: string }) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.RETAKE_OWNER_ASSIGNMENT, request),
       answerOwnerManagementQuestion: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.ANSWER_OWNER_MANAGEMENT_QUESTION, request),
       previewOwnerManagementDelegation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_MANAGEMENT_DELEGATION, request),
       confirmOwnerManagementDelegation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_MANAGEMENT_DELEGATION, request),

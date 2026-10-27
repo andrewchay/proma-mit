@@ -6,14 +6,26 @@
  * RSA 密钥，把公钥经环境变量交给子进程，并用私钥签发一份仅存在于临时目录的
  * 权益快照。私钥不落盘、不进入版本库，测试结束后随临时目录一起删除。
  */
-import { copyFileSync, mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { copyFileSync, mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync, existsSync, realpathSync } from 'node:fs'
+import { join, basename, dirname, isAbsolute } from 'node:path'
 import { tmpdir } from 'node:os'
 import { generateKeyPairSync, createSign } from 'node:crypto'
+import { exportPackageSmokeEvidence, resolvePackageSmokeEvidenceDestination } from './package-smoke-evidence'
+import { assertOwnerSmokeResult } from './owner-smoke-result'
 
 const executable = process.argv[2]
 if (!executable) throw new Error('用法: bun scripts/package-smoke.ts <安装包可执行文件>')
-const directory = mkdtempSync(join(tmpdir(), 'gravitas-package-smoke-'))
+const evidenceDirectory = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_EXPORT_DIR
+if (process.env.GRAVITAS_OWNER_CHAIN_SMOKE_CHANNEL_ID && !evidenceDirectory) throw new Error('真实 Owner 冒烟必须指定 GRAVITAS_OWNER_CHAIN_SMOKE_EXPORT_DIR，先保存证据再清理')
+if (process.env.GRAVITAS_OWNER_CHAIN_SMOKE_CHANNEL_ID && (process.env.GRAVITAS_OWNER_PARAM_PROBE_CHANNEL_ID || process.env.GRAVITAS_PACKAGE_SMOKE_KIMI_CHANNEL_ID)) throw new Error('Owner真实冒烟不能与其他付费探针混跑')
+const resumeProfile = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RESUME_PROFILE
+if (resumeProfile && (!process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RESUME_PROJECT_ID || process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MODE !== 'project-2048'
+  || !isAbsolute(resumeProfile) || !existsSync(join(resumeProfile, '.package-smoke-empty'))
+  || !basename(realpathSync(resumeProfile)).startsWith('gravitas-package-smoke-') || dirname(realpathSync(resumeProfile)) !== realpathSync(tmpdir()))) {
+  throw new Error('只能恢复临时目录中由冒烟创建的明确2048 profile')
+}
+const directory = resumeProfile ? realpathSync(resumeProfile) : mkdtempSync(join(tmpdir(), 'gravitas-package-smoke-'))
+if (resumeProfile && existsSync(join(directory, 'owner-real-chain-report.json'))) throw new Error('恢复前须先保全并归档上一轮报告；本轮尚未启动，不覆盖原证据')
 
 /** 与被测应用 buildEntitlementSigningPayload 保持一致的待签名字段 */
 function buildSigningPayload(snapshot: {
@@ -41,6 +53,7 @@ function buildSigningPayload(snapshot: {
 }
 
 try {
+  if (evidenceDirectory) resolvePackageSmokeEvidenceDestination(directory, evidenceDirectory)
   writeFileSync(join(directory, '.package-smoke-empty'), '')
 
   // 生成烟测专用密钥对并签发权益快照（仅授予营销 influencer 域）
@@ -71,12 +84,18 @@ try {
     JSON.stringify({ snapshot: { ...snapshot, signature }, cachedAt: Date.now() }, null, 2),
   )
 
+  if (process.env.GRAVITAS_OWNER_CHAIN_SMOKE_CHANNELS_PATH) {
+    copyFileSync(process.env.GRAVITAS_OWNER_CHAIN_SMOKE_CHANNELS_PATH, join(directory, 'channels.json'))
+  }
+  if (process.env.GRAVITAS_OWNER_PARAM_PROBE_CHANNELS_PATH) {
+    copyFileSync(process.env.GRAVITAS_OWNER_PARAM_PROBE_CHANNELS_PATH, join(directory, 'channels.json'))
+  }
   if (process.env.GRAVITAS_PACKAGE_SMOKE_KIMI_CHANNEL_ID) {
     const channelsPath = process.env.GRAVITAS_PACKAGE_SMOKE_CHANNELS_PATH
     if (!channelsPath) throw new Error('真实 Kimi 烟测必须指定 GRAVITAS_PACKAGE_SMOKE_CHANNELS_PATH')
     copyFileSync(channelsPath, join(directory, 'channels.json'))
   }
-  const child = Bun.spawn([executable], {
+  const child = Bun.spawn([executable, ...process.argv.slice(3)], {
     env: {
       ...process.env,
       GRAVITAS_PACKAGE_SMOKE: '1',
@@ -87,7 +106,7 @@ try {
     },
     stdout: 'inherit', stderr: 'inherit',
   })
-  const timeoutMs = process.env.GRAVITAS_PACKAGE_SMOKE_KIMI_CHANNEL_ID ? 180_000 : 60_000
+  const timeoutMs = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_CHANNEL_ID ? (process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MODE === 'project-2048' ? 780_000 : 420_000) : process.env.GRAVITAS_PACKAGE_SMOKE_KIMI_CHANNEL_ID ? 180_000 : 60_000
   let timedOut = false
   const timer = setTimeout(() => {
     timedOut = true
@@ -97,6 +116,21 @@ try {
     const exitCode = await child.exited
     if (timedOut) throw new Error(`实际安装包烟测超时（${timeoutMs}ms）`)
     if (exitCode !== 0) throw new Error(`实际安装包烟测失败，exitCode=${exitCode}`)
+    if (process.env.GRAVITAS_OWNER_CHAIN_SMOKE_CHANNEL_ID) {
+      assertOwnerSmokeResult(JSON.parse(readFileSync(join(directory, 'owner-real-chain-report.json'), 'utf8')), process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MODE ?? 'segment')
+    }
     console.log(`[Package Smoke] 子进程正常结束: exitCode=${exitCode}`)
   } finally { clearTimeout(timer) }
-} finally { rmSync(directory, { recursive: true, force: true }) }
+} finally {
+  if (evidenceDirectory) {
+    try {
+      const files = exportPackageSmokeEvidence(directory, evidenceDirectory)
+      console.log(`[Package Smoke] 已导出 ${files.length} 个证据文件：${evidenceDirectory}`)
+    } catch (cause) {
+      console.error(`[Package Smoke] 证据导出失败，原隔离 profile 保留于：${directory}`)
+      throw cause
+    }
+  }
+  if (!resumeProfile && process.env.GRAVITAS_OWNER_CHAIN_SMOKE_KEEP_PROFILE !== '1') rmSync(directory, { recursive: true, force: true })
+  else console.log(`[Package Smoke] 完整隔离 profile 保留，便于同项目恢复：${directory}`)
+}

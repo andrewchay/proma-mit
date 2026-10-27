@@ -13,6 +13,7 @@ import { getPilotPolicy } from './project-pilot-policy'
 import { readOwnerGrantUsage } from './project-owner-execution-settlement'
 import { requestOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
 import { isCompletedStatus } from './task-status-logic'
+import { parseOwnerQualityDecision } from './project-owner-quality-protocol'
 
 export interface OwnerQualityAction {
   ownerExecutionId: string; ownerReceiptId: string; actor: string; projectId: string; grantId: string; taskId: string
@@ -127,6 +128,10 @@ function execute(value: OwnerQualityAction, planningTaskId: string): Pick<OwnerQ
     if (value.reworkOrdinal >= frozen.budget.maxRework || frozen.budget.maxRuns - usage.runReservations < 2 || usage.committedCostMicros >= frozen.budget.maxCostMicros) throw new Error('授权返工次数、执行/复验请求或费用额度不足，需协商边界')
     return { state: 'rework_authorized', detail: 'Owner已按具体缺陷安排授权内返工；调度器将复核许可后启动执行与复验。' }
   }
+  // 历史决定可读不代表现在可执行；首次验收必须重新核对当前时效与完整协议。
+  const planning = readOwnerPlanningSnapshot(planningTaskId)
+  if (!planning) throw new Error('Owner质量决定的冻结来源缺失')
+  parseOwnerQualityDecision(value.decision, planning.context)
   const completed = store.listTaskStatuses(value.projectId).find(item => item.stateGroup === 'completed')?.id
   if (!completed) throw new Error('项目没有明确完成状态，需核对配置')
   const updated = store.updateTask(value.taskId, { status: completed, completionNotes: `Owner依据准确成果与独立检查验收：${value.decision.reason}` })

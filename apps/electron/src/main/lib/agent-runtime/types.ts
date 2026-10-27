@@ -51,6 +51,8 @@ export interface AgentRuntime {
 
 /** 工具执行上下文 */
 export interface ToolContext {
+  /** Owner业务写入在工具执行入口重验；普通会话不设置。 */
+  ownerWorkspaceWrite?: boolean
   /** 当前工作目录 */
   cwd: string
   /** 会话 ID */

@@ -1,3 +1,4 @@
+import { OWNER_RUNTIME_ASSERTION_TEMPLATES } from './owner-runtime-assertion-templates'
 import { createHash } from 'node:crypto'
 import { supportsOwnerExecutionKind, supportsOwnerMixedTeam } from '@gravitas/shared'
 import type { OwnerExecutionAssignmentCandidate, OwnerExecutionAssignmentContext, OwnerExecutionAssignmentProposal } from '@gravitas/shared'
@@ -5,7 +6,7 @@ import { isProtectedDevelopmentPath, normalizeRepoRelativePath, pathWithinAllowe
 import { parseBrowserVerificationCheckIds } from './owner-runtime-verification-command'
 
 export interface OwnerExecutionAssignmentRequest { expectedGoalRevision: number; expectedContextFingerprint: string; systemPrompt: string; userPrompt: string }
-export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, requireRoleCoverage = true): OwnerExecutionAssignmentRequest {
+export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, requireRoleCoverage = true, currentBrowserRegistry = true): OwnerExecutionAssignmentRequest {
   return {
     expectedGoalRevision: context.goalRevision,
     expectedContextFingerprint: context.sourceContextFingerprint,
@@ -20,7 +21,7 @@ export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssi
         ? '本次为绿地研发：项目没有既有代码候选，executionKind应选development并在developmentScope中声明本次要新建的文件。targetPaths写工作区内的新文件相对路径（禁止绝对路径、..、反斜杠、受保护文件）；allowedPaths必须是targetPaths的子集；verificationCommands只能用browser:<断言标识>。controlled时不得输出developmentScope。'
         : 'executionKind为development时必须给developmentScope：目标路径必须来自所选步骤sourceReferences；允许修改路径必须来自冻结codeFiles，且只选本次真正需要的最小范围；至少提出一条验证命令供执行边界核对。代码依据不足时不得编造路径。controlled时不得输出developmentScope。',
       ...(context.executionKinds.includes('development')
-        ? ['本次提供development方式：验证命令只接受内置运行验证形式 browser:<断言标识>，多个用+连接，可选标识：html.loads（页面可加载）、dom.board（16格棋盘）、dom.initial-tiles（开局数字块）、behavior.merge（按键合并计分）、storage.best-score（最高分持久化）、dom.restart（重开入口）。禁止提出bun test、npm test、pytest等仓库自带测试或自写验证脚本：Owner员工不执行仓库代码。成果含HTML页面时必须至少声明一条browser断言；无法用内置断言覆盖时，在reason中如实说明验证缺口。']
+        ? [currentBrowserRegistry ? `本次提供development方式：验证命令只接受内置运行验证形式 browser:<断言标识>，多个用+连接，可选标识：${OWNER_RUNTIME_ASSERTION_TEMPLATES.map(item => `${item.id}（${item.title}）`).join('、')}。禁止提出bun test、npm test、pytest等仓库自带测试或自写验证脚本：Owner员工不执行仓库代码。成果含HTML页面时必须至少声明一条browser断言；无法用内置断言覆盖时，在reason中如实说明验证缺口。` : '本次提供development方式：验证命令只接受内置运行验证形式 browser:<断言标识>，多个用+连接，可选标识：html.loads（页面可加载）、dom.board（16格棋盘）、dom.initial-tiles（开局数字块）、behavior.merge（按键合并计分）、storage.best-score（最高分持久化）、dom.restart（重开入口）。禁止提出bun test、npm test、pytest等仓库自带测试或自写验证脚本：Owner员工不执行仓库代码。成果含HTML页面时必须至少声明一条browser断言；无法用内置断言覆盖时，在reason中如实说明验证缺口。']
         : ['本次只提供controlled方式：绝不能输出developmentScope，也不得声明browser断言或任何验证命令。执行员工只能交付文本，无法运行或打开成果；请在scopeReason中如实说明这一验证缺口，不要虚构代码范围、路径或运行证据。']),
       '仅输出一个符合此JSON schema的对象：{"schemaVersion":1,"contextFingerprint":"<输入中的指纹>","selectedStepKeys":["<已有步骤键>"],"scopeReason":"<范围理由>","workspaceId":"<项目工作区ID>","workspaceReason":"<工作区理由>","executionKind":"controlled或development","executionKindReason":"<执行方式理由>","assignments":[{"roleKey":"<所选岗位键>","employeeId":"<候选ID>","reason":"<匹配理由>"}],"reviewerEmployeeId":"<候选ID>","reviewerReason":"<评审理由>","developmentScope":{"targetPaths":["<所选计划源码引用路径>"],"allowedPaths":["<冻结代码候选路径>"],"verificationCommands":["<验证建议>"],"reason":"<范围理由>"}}。controlled时省略developmentScope。不要Markdown代码围栏或额外字段。',
     ].join('\n'),
@@ -30,8 +31,10 @@ export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssi
 /** 历史安排请求保留原提示，仅按完整hash识别已知格式。 */
 export function resolveOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, promptHash: string): OwnerExecutionAssignmentRequest {
   for (const requireRoleCoverage of [true, false]) {
-    const request = buildOwnerExecutionAssignmentRequest(context, requireRoleCoverage)
-    if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) return request
+    for (const currentBrowserRegistry of [true, false]) {
+      const request = buildOwnerExecutionAssignmentRequest(context, requireRoleCoverage, currentBrowserRegistry)
+      if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) return request
+    }
   }
   throw new Error('Owner冻结安排提示指纹不属于已知格式')
 }

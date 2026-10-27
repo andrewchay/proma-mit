@@ -1784,7 +1784,8 @@ export async function registerIpcHandlers(): Promise<void> {
           }
         }
       }
-      return sessions
+      const { hasOwnerBusinessSessionEvidence } = await import('./lib/project-owner-task-evidence')
+      return sessions.map(session => ({ ...session, ownerReadOnly: hasOwnerBusinessSessionEvidence(session.id) }))
     }
   )
 
@@ -1873,6 +1874,8 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(
     AGENT_IPC_CHANNELS.DELETE_SESSION,
     async (_, id: string): Promise<void> => {
+      const { assertOwnerSessionDeletionAllowed } = await import('./lib/project-owner-task-evidence')
+      assertOwnerSessionDeletionAllowed(id)
       // 清理权限服务中该会话的白名单
       permissionService.clearSessionWhitelist(id)
       permissionService.clearSessionPending(id)
@@ -2326,6 +2329,8 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(
     AGENT_IPC_CHANNELS.SEND_MESSAGE,
     async (event, input: AgentSendInput): Promise<void> => {
+      const { assertNoOwnerBusinessSession } = await import('./lib/project-owner-task-evidence')
+      assertNoOwnerBusinessSession(input.sessionId)
       const current = getAgentSessionMeta(input.sessionId)
       if (input.agentRuntime && isRetiredAgentRuntime(input.agentRuntime)
         && current?.agentRuntime !== input.agentRuntime) {

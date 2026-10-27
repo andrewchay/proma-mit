@@ -61,6 +61,10 @@ export function registerProjectOwnerGoalIpcHandlers(ipc: GoalIpcRegistrar): void
     return access.confirmOwnerTeamWorkspaceAccess(request)
   }))
   ipc.handle(PROJECT_IPC_CHANNELS.DECIDE_OWNER_CONVERSATION_CHANGE, (_, request) => result(() => decideOwnerConversationChange(request)))
+  ipc.handle(PROJECT_IPC_CHANNELS.RETAKE_OWNER_ASSIGNMENT, (_, request) => result(() => {
+    const retake = require('./project-owner-manual-retake') as typeof import('./project-owner-manual-retake')
+    return retake.retakeOwnerManagementAssignment(request)
+  }))
   ipc.handle(PROJECT_IPC_CHANNELS.SEND_OWNER_MANAGEMENT_MESSAGE, (_, request) => result(() => sendOwnerManagementMessage(request)))
   ipc.handle(PROJECT_IPC_CHANNELS.ANSWER_OWNER_MANAGEMENT_QUESTION, (_, request) => result(() => answerOwnerManagementQuestion(request)))
   ipc.handle(PROJECT_IPC_CHANNELS.SET_OWNER_MANAGEMENT_STATUS, (_, request) => result(() => {

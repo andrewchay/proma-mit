@@ -24,7 +24,12 @@ const templates = await Promise.all(manifest.files.map(async (entry) => {
 if (templates.length !== manifest.roleCount || new Set(templates.map((item) => item.id)).size !== templates.length) throw new Error('岗位模板数量或标识不匹配')
 const output = resolve(root, 'apps/electron/resources/employee-role-templates.json')
 const content = `${JSON.stringify(templates, null, 2)}\n`
-const license = await readFile(await sourcePath('licenses/agency-agents-MIT.txt'), 'utf8')
+const license = [
+  '===== agency-agents =====\n',
+  await readFile(await sourcePath('licenses/agency-agents-MIT.txt'), 'utf8'),
+  '\n===== useful-ai-prompts =====\n',
+  await readFile(await sourcePath('licenses/useful-ai-prompts-MIT.txt'), 'utf8'),
+].join('')
 const licenseOutput = resolve(root, 'apps/electron/resources/employee-role-templates-LICENSE.txt')
 if (process.argv.includes('--check')) {
   if (await readFile(output, 'utf8') !== content || await readFile(licenseOutput, 'utf8') !== license) throw new Error('员工预填模板或许可过期，请运行 bun scripts/generate-employee-role-templates.ts')

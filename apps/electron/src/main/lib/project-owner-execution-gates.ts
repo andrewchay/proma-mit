@@ -147,7 +147,7 @@ export function getOwnerExecutionToolNames(sessionId: string): ReadonlySet<strin
   if (context.kind === 'unrestricted') return null
   if (context.kind !== 'owner_business') return new Set()
   const fileActions = context.record.source.textDeliveryVersion === 1 ? [] : ['Write', 'Edit']
-  return new Set([...OWNER_TOOL_ALLOWED, ...(developmentScopeForExecution(context) ? ['Read'] : []), ...fileActions])
+  return new Set([...OWNER_TOOL_ALLOWED, 'AskUserQuestion', ...(developmentScopeForExecution(context) ? ['Read'] : []), ...fileActions])
 }
 
 function frozenSourceIds(record: OwnerExecutionRevalidationRecord): string[] {
@@ -194,6 +194,16 @@ function recordKnowledgeReadPermission(context: Extract<OwnerSessionGateContext,
 /** purpose感知工具谓词：Owner知识读取走资料fence，工作区Write/Edit须先通过逐次审批。 */
 /** 覆盖已有文件、受保护路径、敏感文件名与研发范围外一律视为高危写入；其余为工作区内新建。 */
 const OWNER_HIGH_RISK_BASENAMES = new Set(['.env', '.env.local', '.env.production', '.npmrc', '.gitconfig', 'id_rsa', 'id_ed25519'])
+/** 这些入口可被后续安装、构建、提交或编辑器动作间接执行，不自动授权。 */
+export function isOwnerHighRiskWritePath(relativePath: string): boolean {
+  const segments = relativePath.toLowerCase().split('/')
+  const basename = segments.at(-1) ?? ''
+  return segments.some(segment => segment.startsWith('.'))
+    || OWNER_HIGH_RISK_BASENAMES.has(basename)
+    || /\.(sh|bash|zsh|ps1|bat|cmd|exe|dll|node)$/i.test(basename)
+    || /^(package\.json|bun\.lockb?|package-lock\.json|yarn\.lock|pnpm-lock\.yaml|makefile|dockerfile|justfile|taskfile\.ya?ml)$/i.test(basename)
+    || /^(vite|webpack|rollup|next|electron-builder|eslint|prettier)\.config\./i.test(basename)
+}
 export type OwnerWorkspaceWriteRisk = 'normal' | 'high'
 export function classifyOwnerWorkspaceWrite(sessionId: string, toolName: string, args?: Record<string, unknown>): OwnerWorkspaceWriteRisk | null {
   if (toolName !== 'Write' && toolName !== 'Edit' && toolName !== 'MultiEdit') return null
@@ -211,6 +221,9 @@ export function classifyOwnerWorkspaceWrite(sessionId: string, toolName: string,
   if (basename.startsWith('.env') || OWNER_HIGH_RISK_BASENAMES.has(basename)) return 'high'
   if (relativePath.split('/').includes('.git')) return 'high'
   const scope = developmentScopeForExecution(context)
+  // 无研发范围不推导为整个工作区可写；审批不会自动扩大后续执行权限。
+  if (!scope) return 'high'
+  if (isOwnerHighRiskWritePath(relativePath)) return 'high'
   if (scope && (isProtectedDevelopmentPath(normalizeRepoRelativePath(relativePath)) || !pathWithinAllowed(normalizeRepoRelativePath(relativePath), scope.allowedPaths))) return 'high'
   if (toolName !== 'Write') return 'high'
   // 新建普通文本文件可自动放行；覆盖已有文件需要用户确认。
@@ -224,6 +237,10 @@ export function isOwnerAutoAllowedWorkspaceWrite(sessionId: string, toolName: st
 export function assertToolAllowedForSessionPurpose(sessionId: string, toolName: string, args?: Record<string, unknown>): void {
   const context = resolveOwnerExecutionGateSession(sessionId)
   if (context.kind === 'unrestricted') return
+  if (context.kind === 'owner_business' && toolName === 'AskUserQuestion') {
+    if (args?.interactionType === 'computer_use_takeover') throw new Error('Owner员工暂不支持系统接管请求')
+    return
+  }
   if (context.kind === 'owner_business' && toolName === 'Read') {
     assertOwnerDevelopmentRead(sessionId, args)
     return

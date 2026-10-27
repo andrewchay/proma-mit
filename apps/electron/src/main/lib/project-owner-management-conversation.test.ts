@@ -47,7 +47,7 @@ function fixture(taskScoped = false) {
   const subject = { projectId: project.id, ...(taskId ? { taskId } : {}) }
   const message = (content: string) => ({ ...subject, conversationId: getOwnerManager(project.id)!.conversationId, requestId: randomUUID(), expectedGoalRevision: 1, content })
   const issue = () => {
-    const input = { ...subject, requestId: randomUUID(), maxRequests: 6, maxCostMicros: 3_000_000, expiresAt: Date.now() + 3600000 }
+    const input = { ...subject, requestId: randomUUID(), maxRequests: 6, maxCostMicros: 20_000_000, expiresAt: Date.now() + 3600000 }
     const preview = delegation.previewOwnerManagementDelegation(input)
     return delegation.confirmOwnerManagementDelegation({ input, previewHash: preview.previewHash })
   }
@@ -55,11 +55,11 @@ function fixture(taskScoped = false) {
 }
 async function until(predicate: () => boolean) { for (let i = 0; i < 100; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)) } throw new Error('等待后台对话超时') }
 function active(f: ReturnType<typeof fixture>) { return store.listAgentExecutionsByProject(f.project.id).find(item => item.status === 'running' && callbacks.has(item.sessionId!)) }
-function finish(f: ReturnType<typeof fixture>, kind: 'reply' | 'plan' | 'clarify' = 'reply') {
+function finish(f: ReturnType<typeof fixture>, kind: 'reply' | 'plan' | 'clarify' = 'reply', replyMessage?: string) {
   const execution = active(f)!, source = resolveOwnerPlanningSession(execution.sessionId!)!
   const binding = { projectId: f.project.id, ...(f.taskId ? { taskId: f.taskId } : {}), goalVersion: source.context.goal.goal.goalVersion, contextFingerprint: source.context.fingerprint }
   const feedback = source.context.conversation?.deliveryFeedback
-  const result = kind === 'clarify' ? { schemaVersion: 1, kind: 'needs_clarification', binding, reason: '受众会改变定位', questions: [{ key: 'audience', reasonType: 'missing_information', question: '主要服务谁？', why: '确定定位', options: ['新用户', '现有用户'] }] } : kind === 'reply' ? { schemaVersion: 1, kind: 'conversation_reply', binding, messageId: source.context.conversation!.throughMessageId, message: '目前仍在方案讨论阶段，尚无真实成果证据。' } : { schemaVersion: 1, kind: 'plan_proposal', binding, proposal: { summary: '按反馈收敛方案', assumptions: [], risks: [], steps: [{ key: 'brief', title: '定位建议', outcome: '一页建议', acceptanceCriteria: ['说明取舍'], dependencies: [], roleKey: source.context.sources.roles[0]!.key }], ...(feedback ? { deliveryFeedbackAssessment: { messageId: feedback.messageId, artifactHash: feedback.artifactHash, ...(feedback.stepKey ? { stepKey: feedback.stepKey } : {}), summary: '在方案中增加目标用户分析', changes: feedback.acceptanceCriteria.map(criterion => ({ criterion, disposition: 'addressed', proposedChange: '增加对应分析' })), authorizationImpact: 'within_confirmed_boundary', authorizationRationale: '在当前确认范围内建议；旧执行许可不沿用' } } : {}) } }
+  const result = kind === 'clarify' ? { schemaVersion: 1, kind: 'needs_clarification', binding, reason: '受众会改变定位', questions: [{ key: 'audience', reasonType: 'missing_information', question: '主要服务谁？', why: '确定定位', options: ['新用户', '现有用户'] }] } : kind === 'reply' ? { schemaVersion: 1, kind: 'conversation_reply', binding, messageId: source.context.conversation!.throughMessageId, message: replyMessage ?? '目前仍在方案讨论阶段，尚无真实成果证据。' } : { schemaVersion: 1, kind: 'plan_proposal', binding, proposal: { summary: '按反馈收敛方案', assumptions: [], risks: [], steps: [{ key: 'brief', title: '定位建议', outcome: '一页建议', acceptanceCriteria: ['说明取舍'], dependencies: [], roleKey: source.context.sources.roles[0]!.key }], ...(feedback ? { deliveryFeedbackAssessment: { messageId: feedback.messageId, artifactHash: feedback.artifactHash, ...(feedback.stepKey ? { stepKey: feedback.stepKey } : {}), summary: '在方案中增加目标用户分析', changes: feedback.acceptanceCriteria.map(criterion => ({ criterion, disposition: 'addressed', proposedChange: '增加对应分析' })), authorizationImpact: 'within_confirmed_boundary', authorizationRationale: '在当前确认范围内建议；旧执行许可不沿用' } } : {}) } }
   callbacks.get(execution.sessionId!)!.onComplete([], { runtimeResult: { type: 'result', subtype: 'success', session_id: execution.sessionId!, finish_reason: 'stop', result: JSON.stringify(result), usage: { input_tokens: 10, output_tokens: 20 }, owner_planning_usage: { inputTokens: 10, outputTokens: 20, cacheReadTokens: null, cacheWriteTokens: null } } })
   return execution
 }
@@ -92,7 +92,7 @@ test('Given管理配置变化使委托失效 When用户继续发消息 Then先�
     expect(store.getProjectDb().prepare("SELECT COUNT(*) AS c FROM project_owner_planning_links WHERE project_id=? AND json_extract(payload,'$.conversationMessageId')=?").get(f.project.id, saved.id)).toEqual({ c: 0 })
     expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(0)
 
-    const input = { ...f.subject, requestId: randomUUID(), maxRequests: 6, maxCostMicros: 3_000_000, expiresAt: Date.now() + 3600000 }
+    const input = { ...f.subject, requestId: randomUUID(), maxRequests: 6, maxCostMicros: 20_000_000, expiresAt: Date.now() + 3600000 }
     const preview = delegation.previewOwnerManagementDelegation(input)
     renewedGrant = delegation.confirmOwnerManagementDelegation({ input, previewHash: preview.previewHash })
     await until(() => Boolean(active(f)))
@@ -369,4 +369,62 @@ test('Given对话内仍开放的旧澄清 When随后对话生成新方案 Then�
     expect(() => answerOwnerManagementQuestion({ projectId: f.project.id, questionId: question.id, requestId: randomUUID(), expectedGoalRevision: question.goalRevision, expectedContextFingerprint: question.contextFingerprint, answers: { audience: '现有用户' } })).toThrow()
     expect(goals.getProjectOwnerGoalDraft(f.project.id)?.revision).toBe(1)
   } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+})
+
+test('Given 用户消息与员工待决事项同时存在 When 选择下一轮来源 Then 按上一轮类型轮换且不饿死员工', async () => {
+  const choose = (await import('./project-owner-management-conversation')).chooseOwnerPendingSource
+  // 上一轮是用户对话：先处理员工事项。
+  expect(choose({ hasUser: true, userPrepared: false, hasObservation: true, previousKind: 'conversation' })).toBe('observation')
+  // 上一轮是员工事项：回到用户消息。
+  expect(choose({ hasUser: true, userPrepared: false, hasObservation: true, previousKind: 'employee_interaction' })).toBe('user')
+  // 没有待决员工事项时只处理用户消息。
+  expect(choose({ hasUser: true, userPrepared: false, hasObservation: false })).toBe('user')
+  // 用户消息已准备过：让员工事项继续。
+  expect(choose({ hasUser: true, userPrepared: true, hasObservation: true })).toBe('observation')
+  // 两者都没有：不准备任何来源。
+  expect(choose({ hasUser: false, userPrepared: false, hasObservation: false })).toBeNull()
+})
+
+test('Given模型回复声称后台复查 When本地没有排队事实 Then写入前剔除该说法并留痕', async () => {
+  const f = fixture(), grant = f.issue()
+  sendOwnerManagementMessage(f.message('现在进展怎么样？'))
+  const stop = startOwnerManagementLoop()
+  try {
+    await until(() => Boolean(active(f)))
+    expect(store.getProjectDb().prepare('SELECT COUNT(*) AS c FROM project_owner_execution_commands WHERE project_id=? AND state=\'running\'').get(f.project.id)).toEqual({ c: 0 })
+    finish(f, 'reply', '方案仍在讨论阶段。我正在内部复查原因，稍后会自动继续。')
+    await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'reply'))
+    const reply = getOwnerManagementConversation(f.project.id).messages.find(item => item.kind === 'reply')!
+    // 本地没有排队任务，也没有运行中的执行，因此这句话不能出现在给用户的消息里。
+    expect(reply.content).not.toContain('内部复查')
+    expect(reply.content).toContain('方案仍在讨论阶段')
+    const traces = store.getProjectDb().prepare("SELECT json_extract(payload,'$.detailCode') AS code FROM project_owner_management_traces WHERE project_id=?").all(f.project.id) as Array<{ code: string }>
+    expect(traces.map(item => item.code)).toContain('claim_without_fact')
+  } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+})
+
+test('Given交付包含源码和说明且追问绑定说明 When准备Owner上下文 Then仍能定位整轮成果且不读取之后的交付', () => {
+  const f = fixture()
+  const item = (stepKey: string, title: string, content: string) => ({ stepKey, title, content, artifactHash: createHash('sha256').update(content).digest('hex'), acceptanceCriteria: ['符合要求'], ownerDecision: '已验收', reviewerSummary: '静态检查' })
+  const code = item('code', '游戏源码', '```html\n<!DOCTYPE html><html></html>\n```'), guide = item('guide', '使用说明', '保存为HTML打开')
+  const delivery = appendOwnerManagementMessage({ projectId: f.project.id, eventId: randomUUID(), role: 'assistant', kind: 'delivery', content: '本轮交付', delivery: { schemaVersion: 1, planVersion: 1, items: [code, guide] } })
+  const message = sendOwnerManagementMessage({ ...f.message('产物在哪里'), deliveryReference: { messageId: delivery.id, artifactHash: guide.artifactHash, stepKey: 'guide' } })
+  appendOwnerManagementMessage({ projectId: f.project.id, eventId: randomUUID(), role: 'assistant', kind: 'delivery', content: '后来交付', delivery: { schemaVersion: 1, planVersion: 2, items: [item('later', '后来的成果', '不得混入')] } })
+  const context = withOwnerConversationContext(plans.getProjectOwnerPlanningContext(f.project.id), message.id, message.id)
+  const legacy = withOwnerConversationContext(plans.getProjectOwnerPlanningContext(f.project.id), message.id, message.id, 2, 0, 1, 0, undefined, false)
+  expect(legacy.conversation?.deliveredArtifacts).toBeUndefined()
+  expect(legacy.conversation?.deliveryFeedback?.title).toBe('使用说明')
+  expect(context.conversation?.deliveryFeedback?.title).toBe('使用说明')
+  expect(context.conversation?.deliveredArtifacts).toEqual({ version: 1, messageId: delivery.id, planVersion: 1, items: [code, guide].map(({ stepKey, title, artifactHash }) => ({ stepKey, title, artifactHash })) })
+})
+
+test('Given普通项目追问 When目录版本被篡改 Then请求构建拒绝且旧的无目录快照仍可读取', async () => {
+  const { buildProjectOwnerPlanningRequest, resolveProjectOwnerPlanningRequest } = await import('./project-owner-planning-protocol')
+  const f = fixture(), message = sendOwnerManagementMessage(f.message('在哪里查看成果'))
+  const legacy = withOwnerConversationContext(plans.getProjectOwnerPlanningContext(f.project.id), message.id)
+  const oldRequest = buildProjectOwnerPlanningRequest(legacy)
+  expect(resolveProjectOwnerPlanningRequest(legacy, createHash('sha256').update(JSON.stringify(oldRequest)).digest('hex'))).toEqual(oldRequest)
+  const withCatalog = { ...legacy, conversation: { ...legacy.conversation!, deliveredArtifacts: { version: 1 as const, messageId: 'a'.repeat(64), planVersion: 1, items: [{ stepKey: 'code', title: '游戏源码', artifactHash: 'b'.repeat(64) }] } } }
+  expect(buildProjectOwnerPlanningRequest(withCatalog).systemPrompt).toContain('不是文件列表或全文')
+  expect(() => buildProjectOwnerPlanningRequest({ ...withCatalog, conversation: { ...withCatalog.conversation, deliveredArtifacts: { ...withCatalog.conversation.deliveredArtifacts, items: [{ ...withCatalog.conversation.deliveredArtifacts.items[0]!, artifactHash: 'bad' }] } } })).toThrow('交付目录')
 })

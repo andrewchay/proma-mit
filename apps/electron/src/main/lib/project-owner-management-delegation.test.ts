@@ -45,16 +45,16 @@ beforeAll(async () => {
   })
 })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
-function fixture(modelId = 'deepseek-flash', provider: ProviderType = 'openai', apiKey = 'fake') {
+function fixture(modelId = 'deepseek-flash', provider: ProviderType = 'openai', apiKey = 'fake', goal: unknown = { objective: '形成产品定位建议', constraints: [] }) {
   const project = store.createProject({ title: '委托项目', description: '' })
   const workspace = createAgentWorkspace(`委托-${randomUUID()}`); bindWorkspaceToProject(project.id, workspace.id)
   const channel = createChannel({ name: 'fake', provider, baseUrl: 'https://example.invalid/v1', apiKey, enabled: true, models: [{ id: modelId, name: modelId, enabled: true }] })
   const employee = employees.createAgentEmployee({ name: 'Owner', role: '规划', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId, workspaceIds: [workspace.id] })
-  saveProjectOwnerGoalDraft(project.id, 0, { objective: '形成产品定位建议', constraints: [] })
+  saveProjectOwnerGoalDraft(project.id, 0, goal)
   saveOwnerRuntimeBinding(project.id, 0, { ownerName: 'Owner', carrierId: employee.id, workspaceId: workspace.id, changeReason: '隔离测试' })
   reconcileOwnerManagement(project.id)
   const taskId = getOwnerManagementConversation(project.id).messages.findLast(item => item.planningTaskId)?.planningTaskId!
-  const input = { projectId: project.id, requestId: randomUUID(), maxRequests: 3, maxCostMicros: 2_000_000, expiresAt: Date.now() + 3600000 }
+  const input = { projectId: project.id, requestId: randomUUID(), maxRequests: 3, maxCostMicros: 20_000_000, expiresAt: Date.now() + 3600000 }
   return { project, workspace, employee, taskId, input }
 }
 function issue(f: ReturnType<typeof fixture>) {
@@ -85,6 +85,30 @@ test('Given 配置了DeepSeek V4 Pro When 核对项目管理预算 Then按官方
   expect(preview.priceEvidenceId).toBe('deepseek-v4-pro-0813-2026-10-22')
   expect(preview.perRequestCeilingMicros).toBeGreaterThan(1_300_000)
   expect(preview.perRequestCeilingMicros).toBeLessThan(1_400_000)
+  expect(calls).toBe(before)
+})
+
+test('Given GLM项目总预算1.40美元 When采用64KiB发送硬包络 Then预留可覆盖多轮管理但不把估价称为结算', () => {
+  const f = fixture('glm-5.3-flash', 'zhipu')
+  f.input.maxCostMicros = 1_400_000
+  const preview = service.previewOwnerManagementDelegation(f.input)
+  expect(preview.perRequestCeilingMicros).toBe(26_368)
+  expect(preview.perRequestCeilingMicros * 7).toBeLessThan(service.ownerModelBudgetLimit(f.input.maxCostMicros))
+  expect(preview.maxOutputTokens).toBe(32768)
+})
+
+test('Given完整2048需求 When准备真实Owner规划上下文 Then七项标准与命令进入同一冻结请求且不超发送包络', async () => {
+  const { owner2048SmokeGoal, OWNER_2048_SMOKE_COMMAND } = await import('./owner-2048-smoke-contract')
+  const { readOwnerPlanningSnapshot } = await import('./project-owner-planning-source')
+  const { assertOwnerPlanningRequestEnvelope } = await import('./project-owner-planning-envelope')
+  const before = calls
+  const f = fixture('glm-5.3-flash', 'zhipu', 'fake', owner2048SmokeGoal())
+  const source = readOwnerPlanningSnapshot(f.taskId)!
+  const body = JSON.stringify({ model: 'glm-5.3-flash', max_tokens: source.link.maxOutputTokens,
+    messages: [{ role: 'system', content: source.request.systemPrompt }, { role: 'user', content: source.request.userPrompt }] })
+  expect(source.context.goal.goal.acceptanceCriteria).toHaveLength(7)
+  expect(body).toContain(OWNER_2048_SMOKE_COMMAND)
+  expect(() => assertOwnerPlanningRequestEnvelope(body, 'glm-5.3-flash', 'zhipu')).not.toThrow()
   expect(calls).toBe(before)
 })
 
@@ -291,7 +315,14 @@ test('Given 模型正常终止且用量完整但规划JSON未通过协议校验 
     state: 'active', usedRequests: 1, reservedCostMicros: grant.perRequestCeilingMicros,
     detail: expect.stringContaining('费用未知仍按保守预留占用项目额度'),
   })
+  // 隔离夹具模拟同样的完整终态被旧质量引用解析器拒绝；原回执与费用不变。
+  const row=store.getProjectDb().prepare('SELECT payload FROM project_owner_planning_run_outcomes WHERE execution_id=?').get(execution.id) as {payload:string}
+  const { integrityHash:_integrityHash,...outcome }=JSON.parse(row.payload) as Record<string,unknown>
+  const rejected={...outcome,detail:'Owner质量决定未按准确标准逐项判断或引用不符'}
+  store.getProjectDb().prepare('UPDATE project_owner_planning_run_outcomes SET payload=? WHERE execution_id=?').run(JSON.stringify({...rejected,integrityHash:createHash('sha256').update(JSON.stringify(rejected)).digest('hex')}),execution.id)
+  expect(service.getOwnerManagementDelegation(f.project.id)).toMatchObject({state:'active',reservedCostMicros:grant.perRequestCeilingMicros})
   service.revokeOwnerManagementDelegation(f.project.id, grant.id)
+  expect(service.getOwnerManagementDelegation(f.project.id)).toMatchObject({state:'revoked',reservedCostMicros:grant.perRequestCeilingMicros})
 })
 
 test('Given模型输出达到请求上限且委托资料已变化 When读取管理状态 Then显示截断原因与费用核对而不自动续跑', async () => {
@@ -403,7 +434,7 @@ test('Given 升级前已排队的高额度管理请求 When 到达发送门禁 T
 
 test('Given 预算只能覆盖一次但次数尚余 When 请求完成 Then 预算耗尽且未知费用不退款', async () => {
   const f = fixture()
-  f.input.maxCostMicros = service.previewOwnerManagementDelegation(f.input).perRequestCeilingMicros
+  f.input.maxCostMicros = service.previewOwnerManagementDelegation(f.input).perRequestCeilingMicros * 5
   const grant = issue(f)
   await Promise.all([startDelegatedOwnerPlanningTask(f.taskId), startDelegatedOwnerPlanningTask(f.taskId)])
   expect(store.listAgentExecutionsByEntity('task', f.taskId)).toHaveLength(1)
@@ -427,4 +458,101 @@ test('Given 有效委托 When 到期或项目资料变更 Then 发送前拒绝�
   expect(service.getOwnerManagementDelegation(f.project.id).state).toBe('stale')
   expect(() => assertControlledPreparedExecution(execution.id, 'provider')).toThrow()
   service.revokeOwnerManagementDelegation(f.project.id, grant.id)
+})
+
+test('Given 项目总预算 When 计算Owner模型占比上限 Then按20%向下取整且不接受无效输入', () => {
+  expect(service.ownerModelBudgetLimit(2_000_000)).toBe(400_000)
+  expect(service.ownerModelBudgetLimit(1)).toBe(0)
+  expect(service.ownerModelBudgetLimit(999_999)).toBe(199_999)
+  expect(() => service.ownerModelBudgetLimit(0)).toThrow('项目总预算无效')
+  expect(() => service.ownerModelBudgetLimit(1.5)).toThrow('项目总预算无效')
+})
+
+test('Given Owner模型已占额 When 达到20% Then明确拒绝并要求增量授权', () => {
+  expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: 399_999, nextReservedMicros: 2 })).toThrow('20%上限')
+  expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: 399_999, nextReservedMicros: 1 })).not.toThrow()
+  expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: 0, nextReservedMicros: 400_001 })).toThrow('20%上限')
+  expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: 0, nextReservedMicros: -1 })).toThrow('预留无效')
+  expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: 399_999, nextReservedMicros: 0 })).not.toThrow()
+  expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: 400_000, nextReservedMicros: 0 })).toThrow('20%上限')
+  expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: 900_000, nextReservedMicros: 0 })).toThrow('20%上限')
+  expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: -1, nextReservedMicros: 0 })).toThrow('占额记录无效')
+})
+
+test('Given 已预留Owner模型请求 When 读取占比用量 Then只累计管理占额且不混入员工执行', async () => {
+  const f = fixture(), grant = issue(f), hash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
+  let ordinal = 0
+  const claim = (executionId: string, reservedCostMicros: number) => {
+    const taskId = `claim-task-${++ordinal}`
+    const value = { taskId, executionId, delegationId: grant.id, reservedCostMicros }
+    store.getProjectDb().prepare('INSERT INTO project_owner_management_claims (task_id, delegation_id, execution_id, payload, integrity_hash) VALUES (?, ?, ?, ?, ?)').run(taskId, grant.id, executionId, JSON.stringify(value), hash(value))
+  }
+  const before = service.getOwnerModelBudgetUsage(f.project.id, 2_000_000)
+  expect(before).toMatchObject({ projectBudgetMicros: 2_000_000, ownerModelLimitMicros: 400_000, ownerModelMicros: 0, ownerModelSettledMicros: 0, ownerModelInFlightMicros: 0, executionMicros: 0, remainingOwnerModelMicros: 400_000 })
+  claim(randomUUID(), 150_000)
+  claim(randomUUID(), 150_000)
+  const after = service.getOwnerModelBudgetUsage(f.project.id, 2_000_000)
+  expect(after).toMatchObject({ ownerModelMicros: 300_000, ownerModelSettledMicros: 0, ownerModelInFlightMicros: 300_000, remainingOwnerModelMicros: 100_000 })
+  expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: after.ownerModelMicros, nextReservedMicros: 0 })).not.toThrow()
+  expect(service.getOwnerManagementDelegation(f.project.id).ownerModelBudget).toMatchObject({ limitMicros: 4_000_000, usedMicros: 300_000, settledMicros: 0, inFlightMicros: 300_000, ratio: 0.2 })
+  claim(randomUUID(), 100_000)
+  expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: service.getOwnerModelBudgetUsage(f.project.id, 2_000_000).ownerModelMicros, nextReservedMicros: 0 })).toThrow('20%上限')
+  service.revokeOwnerManagementDelegation(f.project.id, grant.id)
+})
+
+
+
+function budgetReceipt(cost: { source: 'unknown' | 'runtime_reported'; usd: number | null }) {
+  const f = fixture(), grant = issue(f), executionId = randomUUID(), taskId = randomUUID()
+  const digest = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex')
+  const claim = { taskId, executionId, delegationId: grant.id, reservedCostMicros: grant.perRequestCeilingMicros }
+  store.getProjectDb().prepare('INSERT INTO project_owner_management_claims(task_id,delegation_id,execution_id,payload,integrity_hash) VALUES(?,?,?,?,?)').run(taskId, grant.id, executionId, JSON.stringify(claim), digest(claim))
+  const body = { schemaVersion: 1, executionId, sessionId: randomUUID(), projectId: f.project.id, planningTaskId: taskId,
+    captureHash: 'a'.repeat(64), responseText: '', responseHash: digest(''), validTerminal: false, requestHash: null,
+    usage: { inputTokens: 10, outputTokens: 20 }, modelId: 'deepseek-flash', cost }
+  const receipt = { ...body, id: digest(body) }
+  store.getProjectDb().prepare('INSERT INTO project_owner_planning_run_receipts(id,execution_id,capture_hash,payload) VALUES(?,?,?,?)').run(receipt.id, executionId, receipt.captureHash, JSON.stringify(receipt))
+  return { f, grant, receipt }
+}
+
+test('Given回执只有token但费用未知 When统计Owner占比 Then完整保留预留且不标为已结算', () => {
+  const { f, grant } = budgetReceipt({ source: 'unknown', usd: null })
+  expect(service.getOwnerModelBudgetUsage(f.project.id, f.input.maxCostMicros)).toMatchObject({
+    ownerModelMicros: grant.perRequestCeilingMicros, ownerModelSettledMicros: 0,
+    ownerModelInFlightMicros: grant.perRequestCeilingMicros,
+  })
+})
+
+test('Given可信实际费用超出原预留 When统计 Then不截断报告金额也不保留重复占额', () => {
+  const { f, receipt } = budgetReceipt({ source: 'runtime_reported', usd: 2 })
+  expect(service.getOwnerModelBudgetUsage(f.project.id, f.input.maxCostMicros)).toMatchObject({
+    ownerModelMicros: 2_000_000, ownerModelSettledMicros: 2_000_000, ownerModelInFlightMicros: 0,
+  })
+  expect(receipt.cost.source).toBe('runtime_reported')
+})
+
+test('Given已保存回执被篡改为已知金额 When统计Owner占比 Then完整性校验阻止释放未知预留', () => {
+  const { f, grant, receipt } = budgetReceipt({ source: 'unknown', usd: null })
+  receipt.cost = { source: 'runtime_reported', usd: 0 }
+  store.getProjectDb().prepare('UPDATE project_owner_planning_run_receipts SET payload=? WHERE id=?').run(JSON.stringify(receipt), receipt.id)
+  expect(service.getOwnerModelBudgetUsage(f.project.id, f.input.maxCostMicros)).toMatchObject({ ownerModelMicros: grant.perRequestCeilingMicros, ownerModelSettledMicros: 0 })
+})
+
+
+test('Given下一笔预留无法装入Owner占比 When实际排队 Then事务回滚且无请求发送', async () => {
+  const { f, grant, receipt } = budgetReceipt({ source: 'unknown', usd: null })
+  const priorTask = store.createTask(f.project.id, { title: '在途旧请求', description: '' })
+  store.createAgentExecution({ id: receipt.executionId, projectId: f.project.id, entityType: 'task', entityId: priorTask.id, agentId: f.employee.id, sessionId: receipt.sessionId, prompt: '只保留在途占额', status: 'queued' })
+  // 冻结一笔占额，使剩余额度比下一笔保守预留少 1 micros。
+  const claimRow = store.getProjectDb().prepare('SELECT payload FROM project_owner_management_claims WHERE delegation_id=?').get(grant.id) as { payload: string }
+  const claim = JSON.parse(claimRow.payload) as { taskId: string; reservedCostMicros: number }
+  claim.reservedCostMicros = service.ownerModelBudgetLimit(f.input.maxCostMicros) - grant.perRequestCeilingMicros + 1
+  const payload = JSON.stringify(claim), digest = createHash('sha256').update(payload).digest('hex')
+  store.getProjectDb().prepare('UPDATE project_owner_management_claims SET payload=?,integrity_hash=? WHERE task_id=?').run(payload, digest, claim.taskId)
+  const beforeCalls = calls
+  await expect(startDelegatedOwnerPlanningTask(f.taskId)).rejects.toThrow('20%上限')
+  expect(store.listAgentExecutionsByEntity('task', f.taskId)).toHaveLength(0)
+  expect(service.getOwnerManagementClaim(f.taskId)).toBeNull()
+  expect(calls).toBe(beforeCalls)
+  expect(service.getOwnerManagementDelegation(f.project.id).state).toBe('exhausted')
 })

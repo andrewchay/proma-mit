@@ -1312,6 +1312,7 @@ function ErrorMessage({ message, onRetry, onRetryInNewSession, onCompact }: Erro
 // ===== MessageGroup 渲染器（统一入口，同时支持 turn 和单条消息） =====
 
 export interface MessageGroupRendererProps {
+  readOnly?: boolean
   group: MessageGroup
   /** 当前 Agent 会话 ID */
   sessionId?: string
@@ -1409,13 +1410,13 @@ export function getGroupPreview(group: MessageGroup): string {
   return texts.join(' ').slice(0, 200)
 }
 
-export function MessageGroupRenderer({ group, sessionId, allMessages, historicalTaskSubjects, basePath, onFork, onRewind, onRetry, onRetryInNewSession, onCompact, isStreaming, stoppedByUser, sessionModelId }: MessageGroupRendererProps): React.ReactElement | null {
+export function MessageGroupRenderer({ readOnly = false, group, sessionId, allMessages, historicalTaskSubjects, basePath, onFork, onRewind, onRetry, onRetryInNewSession, onCompact, isStreaming, stoppedByUser, sessionModelId }: MessageGroupRendererProps): React.ReactElement | null {
   const groupId = getGroupId(group)
 
   if (group.type === 'user') {
     return (
       <div data-message-id={groupId} data-message-role="user">
-        <UserInputMessage message={group.message} sessionId={sessionId} />
+        <UserInputMessage message={group.message} sessionId={readOnly ? undefined : sessionId} />
       </div>
     )
   }

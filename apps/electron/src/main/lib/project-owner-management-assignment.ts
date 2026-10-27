@@ -19,8 +19,12 @@ import { saveOwnerExecutionStartIntent } from './project-owner-execution-start-i
 import * as store from './project-sqlite-store'
 
 export function isRecoverableOwnerAssignmentRejection(detail: string): boolean {
-  return ['Owner安排必须由未承担执行岗位的独立评审员审核', 'Owner人员安排必须完整覆盖所选步骤的全部岗位'].includes(detail)
+  // 第三种是“结构/字段不合规”：方案本身有效，原预算内重排一次通常即可修复。
+  return ['Owner安排必须由未承担执行岗位的独立评审员审核', 'Owner人员安排必须完整覆盖所选步骤的全部岗位', 'Owner人员安排提案格式无效或夹带未授权字段'].includes(detail)
 }
+
+export { ownerAssignmentFailureReason } from './project-owner-failure-reason'
+import { ownerAssignmentFailureReason } from './project-owner-failure-reason'
 
 /** 仅完整、成功终态且仅被已知岗位覆盖或独立评审协议拒绝的安排，允许在原预算内续跑一次。 */
 export function queueOwnerAssignmentProtocolRetry(projectId: string, taskId: string | undefined, executionId: string): boolean {
@@ -63,7 +67,7 @@ export function prepareOwnerManagementAssignment(event: OwnerManagementEvent): v
   if (!plan || !['proposed', 'confirmed'].includes(plan.state)
     || event.kind === 'planning_result' && (plan.state !== 'proposed' || plan.sourceRun?.executionId !== event.sourceId || plan.goalRevision !== event.sourceRevision)
     || event.kind === 'plan_confirmed' && (plan.state !== 'confirmed' || plan.revision !== event.sourceRevision)
-    || event.kind === 'assignment_recheck' && (plan.revision !== event.sourceRevision || (plan.state !== 'proposed' && !(plan.state === 'confirmed' && event.sourceId?.startsWith('protocol-retry:'))))
+    || event.kind === 'assignment_recheck' && (plan.revision !== event.sourceRevision || (plan.state !== 'proposed' && !(plan.state === 'confirmed' && (event.sourceId?.startsWith('protocol-retry:') || event.sourceId?.startsWith('manual-retry:')))))
     || event.kind === 'team_changed' && plan.revision !== event.sourceRevision
     || event.kind === 'team_changed' && plan.state !== 'confirmed' && !(plan.state === 'proposed' && event.sourceId?.startsWith('team-access:') && getOwnerManagementDelegation(event.projectId, event.taskId).state === 'active')
     || !['planning_result', 'plan_confirmed', 'team_changed', 'delegation_confirmed', 'assignment_recheck'].includes(event.kind)) return
@@ -179,7 +183,9 @@ export function projectOwnerManagementAssignmentResult(event: OwnerManagementEve
   }
   if (outcome.state !== 'proposed' || !outcome.assignmentProposal) {
     appendOwnerManagementTrace({ eventId: `owner-trace:assignment-result:${event.id}:failed`, projectId: event.projectId, ...(event.taskId ? { taskId: event.taskId } : {}), phase: 'assignment_run', state: outcome.state === 'needs_clarification' ? 'waiting' : 'failed', createdAt: Date.now(), detailCode: outcome.state === 'needs_clarification' ? 'decision_required' : 'result_ready' })
-    appendOwnerManagementMessage({ projectId: event.projectId, eventId: event.id, role: 'assistant', kind: 'attention', content: '这次人员安排没有得到可继续使用的结果。我已保留原记录，需要核对后再决定下一步，不会自动重复调用。' })
+    // 把可核对的失败原因写进对话，Owner 才能如实回答“需要核对什么”，而不是含糊其辞。
+    const reason = ownerAssignmentFailureReason(outcome.detail)
+    appendOwnerManagementMessage({ projectId: event.projectId, eventId: event.id, role: 'assistant', kind: 'attention', content: `这次人员安排没有得到可继续使用的结果。${reason ? `原因：${reason}。` : ''}我已保留原记录；除非确认可以修复，否则不会自动重复调用。` })
     return
   }
   appendOwnerManagementTrace({ eventId: `owner-trace:assignment-result:${event.id}:completed`, projectId: event.projectId, ...(event.taskId ? { taskId: event.taskId } : {}), phase: 'assignment_run', state: 'completed', createdAt: Date.now(), detailCode: 'result_ready' })
@@ -231,15 +237,17 @@ export function projectOwnerManagementAssignmentResult(event: OwnerManagementEve
       expectedPolicyRevision: policy?.revision ?? null, expectedGoalRevision: plan.goalRevision, expectedPlanRevision: plan.revision,
       selectedStepKeys: [...outcome.assignmentProposal.selectedStepKeys], executionKind: outcome.assignmentProposal.executionKind,
       employeeRuntimeVersion: 2,
+      qualityManagementVersion: 1,
       // 代码任务按文件交付：带研发范围时不再强制完整文本交付，否则 Write/Edit 会被移出工具集，员工只能把代码写在回复里。
-      ...(outcome.assignmentProposal.executionKind === 'controlled' && !outcome.assignmentProposal.developmentScope ? { textDeliveryVersion: 1 as const, qualityManagementVersion: 1 as const } : {}),
+      ...(outcome.assignmentProposal.executionKind === 'controlled' && !outcome.assignmentProposal.developmentScope ? { textDeliveryVersion: 1 as const } : {}),
       // 自主管理额度仅覆盖当前项目已绑定工作区；该绑定来自项目预设或用户刚批准的团队范围。
       // 将其作为工作区覆盖确认，避免启动门禁再次要求用户批准同一资料/团队边界。
       ...(withinAutonomousProjectGrant ? { acknowledgeOwnerWorkspaceOverride: true } : {}),
       ...(outcome.assignmentProposal.developmentScope ? { developmentScope: { workspaceId: outcome.assignmentProposal.workspaceId, targetPaths: outcome.assignmentProposal.developmentScope.targetPaths, allowedPaths: outcome.assignmentProposal.developmentScope.allowedPaths, verificationCommands: outcome.assignmentProposal.developmentScope.verificationCommands } } : {}),
       executorEmployeeId: firstExecutor.employeeId, reviewerEmployeeId: outcome.assignmentProposal.reviewerEmployeeId, roleAssignments,
       workspaceId: outcome.assignmentProposal.workspaceId, knowledgeSourceIds: executionPreparation.choices.knowledgeSources.map(source => source.id), maxCostMicros: remainingCost,
-      maxRuns: Math.max(6, selectedSteps.length * 6), maxRework: 2, expiresAt: delegation.expiresAt,
+      // 研发每轮需为读取/写入/收尾与独立评审留额，覆盖首轮及两轮返工；费用仍由原总额约束。
+      maxRuns: Math.max(1, selectedSteps.length) * (outcome.assignmentProposal.executionKind === 'development' ? 12 : 6), maxRework: 2, expiresAt: delegation.expiresAt,
       changeReason: withinAutonomousProjectGrant ? '用户已确认项目目标、资料范围和总额度；Owner在授权内自主组织执行' : '用户已在项目对话确认结果方案与持续管理边界；Owner按确认方案自主组织执行',
     }
     const intent = saveOwnerExecutionStartIntent({ ...subject, intentId: input.requestId, expectedGoalRevision: plan.goalRevision,

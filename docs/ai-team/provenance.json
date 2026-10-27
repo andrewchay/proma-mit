@@ -102,5 +102,20 @@
       "sha256": "dfd01aa152324f2120b7c7b8d3c76e991065c0a38f03c0fb43d3d1db0f7bd529",
       "worktreeModified": false
     }
+  },
+  "additionalReferences": {
+    "useful-ai-prompts": {
+      "repository": "https://github.com/aj-geddes/useful-ai-prompts",
+      "referenceHead": "3f5182cfd739fc113f4af5244a1cf342ad7f7911",
+      "license": "MIT",
+      "copyright": "Copyright (c) 2025 AJ Geddes",
+      "derivation": "仅参考指定岗位提示词的方法，Gravitas 原创岗位职责、边界、交付和行为用例；未照搬示例数据、虚构资历或承诺。",
+      "sources": {
+        "customer-focused/support-escalation-process-expert.md": {
+          "sha256": "a434c12eb89582eff92ad0ab982c8d64f2919d5b1daddde9a1e0dad444cc997a",
+          "worktreeModified": false
+        }
+      }
+    }
   }
 }

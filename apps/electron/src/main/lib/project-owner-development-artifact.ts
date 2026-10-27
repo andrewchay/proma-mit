@@ -1,12 +1,13 @@
-import { lstat } from 'node:fs/promises'
-import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+import { lstat, mkdir, writeFile, unlink, readFile } from 'node:fs/promises'
+import { dirname, join, relative, resolve } from 'node:path'
 import type { DevelopmentSnapshot } from '@gravitas/shared'
 import { getAgentWorkspace } from './agent-workspace-manager'
 import { getAgentSessionMeta } from './agent-session-manager'
 import { getAgentSessionWorkspacePath } from './config-paths'
 import { resolveDevelopmentWorktree } from './agent-development-worktree'
 import { createDevelopmentSnapshotAsync, developmentWorktreeMatchesSnapshotAsync, loadDevelopmentSnapshotAsync, readDevelopmentSnapshotContentsAsync } from './development-snapshot-service'
-import { validateDevelopmentScope } from './development-task-service'
+import { validateDevelopmentScope, normalizeRepoRelativePath, pathWithinAllowed } from './development-task-service'
 import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { ownerExecutionHash } from './project-owner-execution-hash'
 import { ownerDevelopmentValidationId, readOwnerDevelopmentValidationAttempt } from './development-validation-attempt'
@@ -252,4 +253,52 @@ export async function readOwnerDevelopmentArtifactForReview(reviewerCommandId: s
   const artifact = { executorCommandId: executor.id, executorExecutionId: execution.id, contentHash: snapshot.contentHash, content, validationEvidence }
   if (Buffer.byteLength(JSON.stringify(artifact), 'utf8') > 512 * 1024) throw new Error('Owner代码快照及验证回执超过Reviewer完整输入上限；未截断或启动评审')
   return artifact
+}
+
+
+/** Owner返工创建新会话，只交接同授权上一轮的已冻结源码，不复用旧业务会话。 */
+export async function seedOwnerDevelopmentRework(commandId: string, worktreePath: string): Promise<string | undefined> {
+  const database = store.getProjectDb()
+  const current = database.prepare("SELECT grant_id,source_task_id,source_step_link_id,source_hash,rework_ordinal,role,state,execution_id FROM project_owner_execution_commands WHERE id=?").get(commandId) as { grant_id: string; source_task_id: string; source_step_link_id: string; source_hash: string; rework_ordinal: number; role: string; state: string; execution_id: string } | undefined
+  if (!current || current.state !== 'queued') throw new Error('Owner返工命令尚未处于可准备状态')
+  if (current.role !== 'executor' || current.rework_ordinal === 0) return undefined
+  const prior = database.prepare(`SELECT c.id,c.execution_id,c.state,c.actual_cost_micros,c.usage_evidence,e.status,e.session_id
+    FROM project_owner_execution_commands c JOIN agent_executions e ON e.id=c.execution_id AND e.owner_command_id=c.id
+    WHERE c.grant_id=? AND c.source_task_id=? AND c.source_step_link_id=? AND c.source_hash=? AND c.role='executor' AND c.rework_ordinal=?`).all(
+    current.grant_id,current.source_task_id,current.source_step_link_id,current.source_hash,current.rework_ordinal-1,
+  ) as Array<{ id: string; execution_id: string; state: string; actual_cost_micros: number | null; usage_evidence: string | null; status: string; session_id: string }>
+  const previous = prior[0]
+  const action = database.prepare("SELECT reviewer_command_id FROM project_owner_quality_actions WHERE grant_id=? AND task_id=? AND json_extract(payload,'$.reworkOrdinal')=? ORDER BY created_at DESC LIMIT 1").get(current.grant_id,current.source_task_id,current.rework_ordinal-1) as { reviewer_command_id: string } | undefined
+  const decision = action ? (require('./project-owner-quality-actions') as typeof import('./project-owner-quality-actions')).readOwnerQualityAction(action.reviewer_command_id) : null
+  if (prior.length !== 1 || !previous || previous.state !== 'settled' || previous.status !== 'completed' || previous.actual_cost_micros === null
+    || !previous.usage_evidence || JSON.parse(previous.usage_evidence).source === 'unknown' || decision?.state !== 'rework_authorized') throw new Error('Owner返工缺少上一轮准确成果、已知费用或质量授权')
+  const { source } = readOwnerCommandFrozenSource(commandId)
+  const task = source.tasks.find(item => item.taskId === current.source_task_id)
+  const workspace = source.workspaceId ? getAgentWorkspace(source.workspaceId) : undefined
+  if (!task?.developmentScope || !workspace?.rootPath) throw new Error('Owner返工缺少冻结研发范围')
+  const targetDirectory = dirname(worktreePath), targetBinding = JSON.parse(await readFile(join(targetDirectory,'development-worktree.json'),'utf8')) as { branch?: string }
+  const execution = store.getAgentExecution(current.execution_id)
+  if (execution?.ownerCommandId !== commandId || execution.status !== 'queued' || execution.sessionId !== '' || targetBinding.branch !== `employee/${current.execution_id}` || resolveDevelopmentWorktree(workspace.rootPath,targetDirectory) !== worktreePath) throw new Error('Owner返工目标不是本次未认领执行的独立worktree')
+  const previousDirectory = getAgentSessionWorkspacePath(workspace.slug, previous.session_id)
+  const previousPath = resolveDevelopmentWorktree(workspace.rootPath, previousDirectory)
+  const snapshot = await loadDevelopmentSnapshotAsync(previousDirectory, previous.execution_id)
+  const scope = validateDevelopmentScope(task.developmentScope, { getWorkspace: getAgentWorkspace })
+  if (!previousPath || snapshot.workspaceId !== workspace.id || !await developmentWorktreeMatchesSnapshotAsync(previousPath,snapshot,scope)) throw new Error('Owner返工上一轮worktree与冻结快照不一致')
+  const files = await readDevelopmentSnapshotContentsAsync(previousDirectory,previous.execution_id)
+  for (const { file, newContent } of files) {
+    const name = normalizeRepoRelativePath(file.path)
+    if (!pathWithinAllowed(name,scope.allowedPaths)) throw new Error('Owner返工文件不在冻结修改范围内')
+    if (newContent !== null && createHash('sha256').update(newContent,'utf8').digest('hex') !== file.newSha256) throw new Error('Owner返工快照不是可无损交接的UTF-8源码')
+    const target = resolve(worktreePath,name)
+    if (relative(worktreePath,target).startsWith('..')) throw new Error('Owner返工文件越界')
+    let cursor = worktreePath
+    for (const segment of name.split('/')) {
+      cursor = join(cursor,segment)
+      try { const stat = await lstat(cursor); if (stat.isSymbolicLink() || stat.isFile() && stat.nlink !== 1 || !stat.isFile() && !stat.isDirectory()) throw new Error('Owner返工目标不能是符号链接、硬链接或特殊文件') }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+    }
+    if (newContent === null) await unlink(target).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error })
+    else { await mkdir(dirname(target),{ recursive:true }); await writeFile(target,newContent,'utf8') }
+  }
+  return previous.execution_id
 }

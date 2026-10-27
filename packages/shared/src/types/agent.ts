@@ -999,6 +999,8 @@ export interface AgentContextUsageObservation {
  * 类似 ConversationMeta，独立存储。
  */
 export interface AgentSessionMeta {
+  /** IPC按Owner权威用途派生；不作为可写元数据或执行许可。 */
+  ownerReadOnly?: boolean
   /** 会话唯一标识 */
   id: string
   /** 会话标题 */
@@ -1874,6 +1876,8 @@ export interface AskUserQuestionOption {
 
 /** AskUserQuestion 工具的问题定义 */
 export interface AskUserQuestion {
+  /** Owner中介使用的稳定问题标识；缺失时回退到问题原文。 */
+  id?: string
   /** 问题内容 */
   question: string
   /** 短标签（chip 显示） */

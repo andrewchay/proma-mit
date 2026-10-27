@@ -1,12 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
-import { atom, useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
+import { atom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import type { OwnerExecutionCommandView, OwnerManagementDeliveryReference, OwnerManagementMessage, ProjectOwnerGoalSubject } from '@gravitas/shared'
 import { getOwnerCommandProgress, loadOwnerCommandProgressAtom, ownerCommandProgressAtom } from '../../atoms/owner-command-progress-atoms'
 import { editOwnerMessageAtom, getOwnerManagementEditor, getOwnerMessageComposer, ownerManagementEditorsAtom, ownerMessageComposersAtom } from '../../atoms/project-owner-management-atoms'
 import { isOwnerWaitingForUser } from './project-owner-progress-state'
-import { useOpenSession } from '@/hooks/useOpenSession'
-import { agentSessionsAtom, currentAgentWorkspaceIdAtom } from '@/atoms/agent-atoms'
-import { resolveOwnerCommandSession } from './owner-command-session'
+import { OwnerEmployeeMonitor } from './OwnerEmployeeMonitor'
 const button = 'rounded-xl bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50'
 type ContinueDeliveryResult = 'ready' | 'busy' | 'too_long' | 'unlinked'
 
@@ -77,9 +75,8 @@ export function ProjectOwnerConversationProgress({ subject }: { subject: Project
   const refresh = useSetAtom(loadOwnerCommandProgressAtom)
   const editMessage = useSetAtom(editOwnerMessageAtom)
   const store = useStore()
-  const { openSession } = useOpenSession()
-  const setSessions = useSetAtom(agentSessionsAtom), setWorkspace = useSetAtom(currentAgentWorkspaceIdAtom)
-  const [openingSession, setOpeningSession] = useState(''), [sessionError, setSessionError] = useState('')
+  const [monitoredCommandId, setMonitoredCommandId] = useState('')
+  const [feedbackStatus, setFeedbackStatus] = useState('')
   useEffect(() => {
     const reload = () => { void refresh(subject) }
     reload()
@@ -115,19 +112,15 @@ export function ProjectOwnerConversationProgress({ subject }: { subject: Project
   const completed = taskCommands.map(commands => commands.find(command => command.state === 'settled' && command.executionStatus === 'completed')).filter((command): command is OwnerExecutionCommandView => Boolean(command))
   const employeeCommands = useMemo(() => progress.commands.filter(command => command.executionId)
     .sort((left, right) => right.updatedAt - left.updatedAt).slice(0, 6), [progress.commands])
-  const openEmployeeSession = async (command: OwnerExecutionCommandView): Promise<void> => {
-    if (!command.executionId || openingSession) return
-    setOpeningSession(command.commandId); setSessionError('')
-    try {
-      const [executions, sessions] = await Promise.all([
-        window.electronAPI.paa.agentEmployees.listExecutionsByEntity('task', command.taskId), window.electronAPI.listAgentSessions(),
-      ])
-      const session = resolveOwnerCommandSession(subject.projectId, command, executions, sessions)
-      setSessions(sessions)
-      if (session.workspaceId) setWorkspace(session.workspaceId)
-      openSession('agent', session.id, session.title)
-    } catch (cause) { setSessionError(cause instanceof Error ? cause.message : '打开员工会话失败') }
-    finally { setOpeningSession('') }
+  const feedbackToOwner = (command: OwnerExecutionCommandView): void => {
+    const current = getOwnerMessageComposer(store.get(ownerMessageComposersAtom), subject)
+    if (current.sending || current.pending) { setFeedbackStatus('Owner消息正在发送或等待确认，请先处理原消息。'); return }
+    const context = `请核查《${command.taskTitle}》的${command.role === 'reviewer' ? '评审' : '执行'}工作（执行标识：${command.executionId}）。我在只读监控中发现以下问题：\n`
+    const text = `${current.text.trim() ? `${current.text}\n\n` : ''}${context}`
+    if (text.length > 4000) { setFeedbackStatus('Owner草稿字数不足，请精简后再加入工作背景。'); return }
+    editMessage({ subject, text, ...(current.deliveryReference ? { deliveryReference: current.deliveryReference } : {}) })
+    setFeedbackStatus('已将准确执行标识加入Owner草稿；请补充问题后发送，不会直接通知员工或自动暂停。')
+    focusReplyComposer()
   }
   const focusReplyComposer = (): void => {
     requestAnimationFrame(() => {
@@ -141,15 +134,17 @@ export function ProjectOwnerConversationProgress({ subject }: { subject: Project
     <p role="status" className="text-sm">{waitingForUser ? 'Owner 正在等你处理一项待确认内容。' : progress.loading && !progress.loaded ? '正在读取最新进展…' : progress.error && !progress.loaded ? '暂时无法读取最新进展。' : progressLabel(progress.schedule?.state, progress.schedule?.nextAction)}</p>
     {waitingForUser && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-500/10 p-3 text-sm"><p>请查看 Owner 的最新说明并直接回复；确认前，受影响的新工作不会启动，其他仍在已确认范围内的工作可以继续。</p><button type="button" className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground" onClick={focusReplyComposer}>回复 Owner</button></div>}
     {progress.error && <p role="alert" className="text-xs text-destructive">最新进展读取失败；已保留上次记录，不会据此重新启动工作。</p>}
+    {conversation?.stateProjection && <p className="text-xs text-muted-foreground" role="status">上次状态核对：{new Date(conversation.stateProjection.lastReconciledAt).toLocaleString('zh-CN')} · {conversation.stateProjection.dirtyDomains.length === 0 ? '没有待处理的状态变化' : `待核对：${conversation.stateProjection.dirtyDomains.map(domain => ({ goal: '目标', plan: '方案', authorization: '授权', execution: '执行', employee_interaction: '员工提问', conversation: '对话' } as Record<string, string>)[domain] ?? domain).join('、')}`}</p>}
     {hasCurrentRun && <p className="text-sm text-muted-foreground">团队成员正在处理已确认的工作。</p>}
     {employeeCommands.length > 0 && <section className="space-y-2" aria-label="员工会话进度">
-      <h5 className="text-sm font-medium">员工工作会话</h5>
-      <p className="text-xs text-muted-foreground">每位员工在项目工作区有独立会话；打开后可查看该员工的实时进度和执行记录。</p>
-      {employeeCommands.map(command => <article key={command.commandId} className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-card p-3 shadow-sm">
+      <h5 className="text-sm font-medium">员工工作监控</h5>
+      <p className="text-xs text-muted-foreground">可在这里只读查看员工的具体输出与工具记录；讨论、调整和问题反馈统一交给 Owner。</p>
+      {employeeCommands.map(command => <article key={command.commandId} className="space-y-3 rounded-xl bg-card p-3 shadow-sm">
         <div className="min-w-0"><p className="truncate text-sm font-medium">{command.taskTitle}</p><p className="text-xs text-muted-foreground">{command.role === 'reviewer' ? '独立评审' : command.role === 'executor' ? '执行员工' : '员工'} · {command.state === 'running' ? '正在工作' : command.state === 'queued' ? '等待启动' : command.state === 'settled' && command.executionStatus === 'completed' ? '已完成' : command.state === 'needs_reconcile' || command.state === 'unknown' ? '需要核对' : command.executionStatus ?? command.state}</p></div>
-        {command.state === 'queued' ? <span className="text-xs text-muted-foreground">会话将在员工启动时建立</span> : <button type="button" className={button} disabled={Boolean(openingSession)} onClick={() => void openEmployeeSession(command)}>{openingSession === command.commandId ? '正在打开…' : '打开员工会话'}</button>}
+        {command.state === 'queued' ? <span className="text-xs text-muted-foreground">会话将在员工启动时建立</span> : <button type="button" className={button} aria-expanded={monitoredCommandId === command.commandId} onClick={() => setMonitoredCommandId(value => value === command.commandId ? '' : command.commandId)}>{monitoredCommandId === command.commandId ? '收起工作记录' : '查看工作记录（只读）'}</button>}
+        {monitoredCommandId === command.commandId && <OwnerEmployeeMonitor key={command.commandId} projectId={subject.projectId} command={command} onFeedback={() => feedbackToOwner(command)} />}
       </article>)}
-      {sessionError && <p role="alert" className="text-xs text-destructive">{sessionError}</p>}
+      {feedbackStatus && <p role="status" className="text-xs text-muted-foreground">{feedbackStatus}</p>}
     </section>}
     {completed.map(command => <DeliveryResultCard key={command.commandId} command={command} deliveryReference={acceptedDeliveryReference(conversation?.messages ?? [], command, subject)} onContinue={onContinue} />)}
     {!waitingForUser && !completed.length && !hasCurrentRun && progress.loaded && progress.schedule?.state === 'manual' && <p className="text-sm text-muted-foreground">工作尚未开始；Owner 会在必要确认完成后继续。</p>}

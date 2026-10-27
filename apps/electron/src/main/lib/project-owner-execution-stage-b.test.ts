@@ -116,8 +116,12 @@ test('Given真实Owner命令进入运行态 When审批精确工具动作 Then仅
   const request = { requestId: randomUUID(), sessionId, toolName: 'Write', toolInput: { file_path: 'result.md', content: 'exact approved proposal' }, description: 'write result', dangerLevel: 'normal' as const, requiresPerActionApproval: true }
   actionApproval.recordOwnerActionApprovalRequest({ commandId, executionId, sessionId }, request)
   expect(actionApproval.hasApprovedOwnerAction(sessionId, request)).toBe(false)
+  expect(actionApproval.listOwnerPendingActionRequests(f.project.id)).toContainEqual({ requestId: request.requestId, sessionId, taskId: f.task.id })
+  expect(actionApproval.listOwnerPendingActionRequests(randomUUID())).toEqual([])
+  expect(JSON.stringify(actionApproval.listOwnerPendingActionRequests(f.project.id))).not.toContain('exact approved proposal')
   expect(() => actionApproval.decideOwnerActionApproval({ ...request, toolInput: { ...request.toolInput, content: 'changed after preview' } }, 'deny', { commandId, executionId, sessionId })).toThrow('记录不匹配')
   actionApproval.decideOwnerActionApproval(request, 'deny', { commandId, executionId, sessionId })
+  expect(actionApproval.listOwnerPendingActionRequests(f.project.id)).toEqual([])
   const row = store.getProjectDb().prepare('SELECT project_id,command_id,execution_id,session_id,tool_name,action_fingerprint,status,decided_by,decision_reason FROM project_owner_action_approvals WHERE request_id=?').get(request.requestId) as Record<string, unknown>
   expect(row).toMatchObject({ project_id: f.project.id, command_id: commandId, execution_id: executionId, session_id: sessionId, tool_name: 'Write', status: 'denied', decided_by: 'local-user', decision_reason: 'user_rejected' })
   expect(row.action_fingerprint).toMatch(/^[a-f0-9]{64}$/)
@@ -141,6 +145,7 @@ test('Given真实Owner命令进入运行态 When审批精确工具动作 Then仅
   const staleRequest = { ...request, requestId: randomUUID() }
   actionApproval.recordOwnerActionApprovalRequest({ commandId, executionId, sessionId }, staleRequest)
   store.getProjectDb().prepare("UPDATE project_owner_execution_grants SET state='paused' WHERE id=?").run(f.grant.grantId)
+  expect(actionApproval.listOwnerPendingActionRequests(f.project.id)).toEqual([])
   expect(actionApproval.hasApprovedOwnerAction(sessionId, allowedRequest)).toBe(false)
   expect(() => actionApproval.decideOwnerActionApproval(staleRequest, 'allow', { commandId, executionId, sessionId })).toThrow('来源已失效')
   expect(store.getProjectDb().prepare('SELECT status,decision_reason FROM project_owner_action_approvals WHERE request_id=?').get(staleRequest.requestId)).toEqual({ status: 'invalidated', decision_reason: 'source_changed' })
@@ -347,7 +352,7 @@ test('Given Owner命令由真实AI SDK发起 When经loopback OpenAI SSE Then收�
   expect(transportCalls).toBe(1)
   expect(requestBodies[0]).toMatchObject({ model: 'glm-5.3-flash', stream: true, stream_options: { include_usage: true } })
   const exposedTools = requestBodies[0]?.tools as Array<{ function: { name: string } }>
-  expect(exposedTools.map(tool => tool.function.name).sort()).toEqual(['Edit', 'ReadKnowledgeSource', 'SearchKnowledge', 'Write'])
+  expect(exposedTools.map(tool => tool.function.name).sort()).toEqual(['AskUserQuestion', 'Edit', 'ReadKnowledgeSource', 'SearchKnowledge', 'Write'])
 
   expect([requestBodies[0]?.max_tokens, requestBodies[0]?.max_completion_tokens].some(value => typeof value === 'number' && value > 0)).toBe(true)
   expect(messages.some(message => message.type === 'assistant' && JSON.stringify(message).includes('loopback fake result'))).toBe(true)
@@ -371,7 +376,7 @@ test('Given活动DeepSeek Flash Owner命令 When解析已审核输出上限 Then
   const commandId = randomUUID(), executionId = randomUUID(), sessionId = randomUUID()
   command.reserveAndQueueOwnerCommand(f.subject, { commandId, grantId: input.grantId, taskId: input.taskId, role: input.role, reworkOrdinal: 0, expectedRevalidationRevision: input.expectedRevalidationRevision, idempotencyKey: randomUUID() }, ack, { executionId })
   startModule.claimOwnerCommandStart(executionId, commandId, f.record.revision, sessionId)
-  expect(requestExit.resolveOwnerExecutionMaxOutputTokens(sessionId, 'deepseek-flash', 'openai')).toBe(384_000)
+  expect(requestExit.resolveOwnerExecutionMaxOutputTokens(sessionId, 'deepseek-flash', 'openai')).toBe(131_072)
   expect(store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_request_reservations WHERE command_id=?').get(commandId)).toEqual({ count: 0 })
   const now = Date.now()
   store.updateAgentExecution(executionId, { status: 'completed', resultSummary: 'fake-only 执行结果', completedAt: now })
@@ -381,7 +386,7 @@ test('Given活动DeepSeek Flash Owner命令 When解析已审核输出上限 Then
   const reviewerCommandId = randomUUID(), reviewerExecutionId = randomUUID(), reviewerSessionId = randomUUID()
   command.reserveAndQueueOwnerCommand(f.subject, { commandId: reviewerCommandId, ...reviewInput, idempotencyKey: randomUUID() }, { input: reviewInput, preview, confirmedFingerprint: preview.ackFingerprint, acknowledgeModelCosts: true }, { executionId: reviewerExecutionId })
   startModule.claimOwnerCommandStart(reviewerExecutionId, reviewerCommandId, f.record.revision, reviewerSessionId)
-  expect(requestExit.resolveOwnerExecutionMaxOutputTokens(reviewerSessionId, 'deepseek-flash', 'openai')).toBe(384_000)
+  expect(requestExit.resolveOwnerExecutionMaxOutputTokens(reviewerSessionId, 'deepseek-flash', 'openai')).toBe(131_072)
   expect(store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_request_reservations WHERE command_id=?').get(reviewerCommandId)).toEqual({ count: 0 })
 
 })
@@ -924,7 +929,7 @@ test('Given旧Runtime回调仍滞留 When独立进程重启恢复后回调晚到
     const nativeRecoveryPath = join(directory, `native-recovery-${randomUUID()}.cjs`)
     buildSync({ entryPoints: [join(import.meta.dir, 'project-owner-native-recovery-child.ts')], outfile: nativeRecoveryPath,
       bundle: true, platform: 'node', format: 'cjs', target: 'node24', absWorkingDir: process.cwd(),
-      external: ['better-sqlite3', 'electron'] })
+      external: ['better-sqlite3', 'electron', 'fsevents', 'playwright-core'] })
     const nativeNodeBinary = execFileSync('node', ['-p', 'process.execPath'], { encoding: 'utf8' }).trim()
     const nodePath = [join(process.cwd(), 'node_modules'), join(process.cwd(), 'apps/electron/node_modules')].join(':')
     const childOutput = execFileSync(nativeNodeBinary, [nativeRecoveryPath, 'recover', executionId], {
@@ -1617,4 +1622,21 @@ test('Given Owner流式响应没有用量回执 When流结束 Then请求进入�
   await requestExit.awaitOwnerRequestSettlements({ commandId: s.commandId })
   expect(s.reservationState()).toEqual({ state: 'needs_reconcile' })
   await expect(requestExit.awaitOwnerExecutionRequestsSettled(s.sessionId)).rejects.toThrow('尚未确认')
+})
+
+
+test('Given认领前排队准备失败且无请求 When启动恢复 Then只恢复一次并保留原费用预留，未知用量与已有认领不得恢复', () => {
+  for (const proof of ['empty','unknown','claimed','missing_source'] as const) {
+    const f=fixture('glm-5.3-flash','autonomous')
+    const { commandId,executionId }=command.reserveAndQueueAutonomousOwnerCommand(f.subject,{grantId:f.grant.grantId,taskId:f.task.id,role:'executor',reworkOrdinal:0,expectedRevalidationRevision:f.record.revision})
+    const db=store.getProjectDb(), before=db.prepare('SELECT reserved_cost_micros FROM project_owner_execution_commands WHERE id=?').get(commandId)
+    db.prepare("UPDATE project_owner_execution_commands SET state='needs_reconcile' WHERE id=?").run(commandId)
+    if(proof==='unknown')db.prepare('UPDATE project_owner_execution_commands SET usage_evidence=? WHERE id=?').run(JSON.stringify({source:'unknown'}),commandId)
+    if(proof==='missing_source')db.prepare('UPDATE project_owner_execution_commands SET usage_evidence=? WHERE id=?').run('{}',commandId)
+    if(proof==='claimed')db.prepare('INSERT INTO project_owner_execution_start_attempts(execution_id,command_id,project_id,session_id,claimed_at) VALUES(?,?,?,?,?)').run(executionId,commandId,f.project.id,randomUUID(),Date.now())
+    expect(stopModule.recoverUnclaimedOwnerCommandPreparations(Date.now(),executionId)).toBe(proof==='empty'?1:0)
+    expect(db.prepare('SELECT reserved_cost_micros FROM project_owner_execution_commands WHERE id=?').get(commandId)).toEqual(before)
+    expect(stopModule.recoverUnclaimedOwnerCommandPreparations(Date.now(),executionId)).toBe(0)
+    expect(db.prepare('SELECT state FROM project_owner_execution_commands WHERE id=?').get(commandId)).toEqual({state:proof==='empty'?'queued':'needs_reconcile'})
+  }
 })

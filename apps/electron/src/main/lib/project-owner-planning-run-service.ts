@@ -45,6 +45,7 @@ export interface OwnerPlanningRunOutcome {
   detail: string
   reply?: string
   changeProposal?: import('@gravitas/shared').OwnerConversationChange
+  employeeDecision?: import('./project-owner-planning-protocol').OwnerEmployeeDecision
   qualityDecision?: import('@gravitas/shared').OwnerQualityDecision
   planRevision?: number
   clarification?: Extract<ReturnType<typeof parseProjectOwnerPlanningResponse>, { kind: 'needs_clarification' }>
@@ -113,7 +114,7 @@ function readStoredOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRu
   try {
     const parsed = JSON.parse(row.payload) as OwnerPlanningRunOutcome & { integrityHash: string }
     const { integrityHash, ...value } = parsed
-    const allowed = ['executionId', 'receiptId', 'state', 'detail', 'planRevision', 'clarification', 'assignmentProposal', 'reply', 'changeProposal', 'qualityDecision']
+    const allowed = ['executionId', 'receiptId', 'state', 'detail', 'planRevision', 'clarification', 'assignmentProposal', 'reply', 'changeProposal', 'qualityDecision', 'employeeDecision']
     const receipt = getOwnerPlanningRunReceipt(value.receiptId)
     if (Object.keys(value).some(key => !allowed.includes(key)) || hash(value) !== integrityHash || value.executionId !== executionId || value.receiptId !== row.receipt_id || !receipt || receipt.executionId !== executionId || !['proposed', 'needs_clarification', 'replied', 'stale', 'failed', 'unknown', 'stopped'].includes(value.state) || typeof value.detail !== 'string') throw new Error('结论完整性无效')
     if (value.state === 'proposed' || value.state === 'needs_clarification' || value.state === 'replied') {
@@ -130,10 +131,10 @@ function readStoredOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRu
         if (value.assignmentProposal !== undefined) throw new Error('Owner规划Run不能夹带人员安排结论')
         const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context)
         if (value.state === 'replied') {
-          if (!['conversation_reply', 'conversation_change', 'quality_decision'].includes(response.kind) || !('message' in response) || value.reply !== response.message || value.planRevision !== undefined || value.clarification !== undefined || JSON.stringify(value.changeProposal) !== JSON.stringify(response.kind === 'conversation_change' ? response.change : undefined) || JSON.stringify(value.qualityDecision) !== JSON.stringify(response.kind === 'quality_decision' ? response.decision : undefined)) throw new Error('对话回应与原始响应不一致')
-        } else if (value.qualityDecision !== undefined || value.reply !== undefined || value.changeProposal !== undefined || (value.state === 'proposed' ? response.kind !== 'plan_proposal' || !Number.isSafeInteger(value.planRevision) || value.planRevision !== frozen.link.planRevision + 1 || value.clarification !== undefined : response.kind !== 'needs_clarification' || JSON.stringify(response) !== JSON.stringify(value.clarification) || value.planRevision !== undefined)) throw new Error('结论与原始响应不一致')
+          if (!['conversation_reply', 'conversation_change', 'quality_decision', 'employee_decision'].includes(response.kind) || !('message' in response) || value.reply !== response.message || value.planRevision !== undefined || value.clarification !== undefined || JSON.stringify(value.changeProposal) !== JSON.stringify(response.kind === 'conversation_change' ? response.change : undefined) || JSON.stringify(value.qualityDecision) !== JSON.stringify(response.kind === 'quality_decision' ? response.decision : undefined) || JSON.stringify(value.employeeDecision) !== JSON.stringify(response.kind === 'employee_decision' ? response.decision : undefined)) throw new Error('对话回应与原始响应不一致')
+        } else if (value.employeeDecision !== undefined || value.qualityDecision !== undefined || value.reply !== undefined || value.changeProposal !== undefined || (value.state === 'proposed' ? response.kind !== 'plan_proposal' || !Number.isSafeInteger(value.planRevision) || value.planRevision !== frozen.link.planRevision + 1 || value.clarification !== undefined : response.kind !== 'needs_clarification' || JSON.stringify(response) !== JSON.stringify(value.clarification) || value.planRevision !== undefined)) throw new Error('结论与原始响应不一致')
       }
-    } else if (value.qualityDecision !== undefined || value.planRevision !== undefined || value.clarification !== undefined || value.assignmentProposal !== undefined || value.reply !== undefined || value.changeProposal !== undefined) throw new Error('失败结论夹带提案')
+    } else if (value.employeeDecision !== undefined || value.qualityDecision !== undefined || value.planRevision !== undefined || value.clarification !== undefined || value.assignmentProposal !== undefined || value.reply !== undefined || value.changeProposal !== undefined) throw new Error('失败结论夹带提案')
     return value
   } catch { throw new Error('Owner Run处理结论无效，请保留数据核查') }
 }
@@ -144,7 +145,7 @@ function readStoredOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRu
  */
 export function recoverLegacyOwnerConversationReply(executionId: string): OwnerPlanningRunOutcome | null {
   const original = readStoredOwnerPlanningRunOutcome(executionId)
-  if (!original || original.state !== 'failed' || !['Owner规划响应包含未知字段', 'Owner执行跟进只允许分析回应或必要协商', 'Owner质量决定与准确评审/成果不匹配'].includes(original.detail)) return null
+  if (!original || original.state !== 'failed' || !['Owner规划响应包含未知字段', 'Owner执行跟进只允许分析回应或必要协商', 'Owner质量决定与准确评审/成果不匹配', 'Owner质量决定未按准确标准逐项判断或引用不符'].includes(original.detail)) return null
   const receipt = getOwnerPlanningRunReceipt(original.receiptId)
   if (!receipt || receipt.executionId !== executionId || receipt.purpose !== 'owner_planning' || !receipt.validTerminal || receipt.stopped || receipt.error !== null
     || receipt.runtimeResult?.subtype !== 'success' || receipt.runtimeResult.finish_reason !== 'stop'
@@ -230,7 +231,8 @@ export function getOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRu
       return recovered.recoveredOutcome
     }
     if (recovered.recoveredOutcome.detail !== 'Owner旧格式回应已从本地原始回执重新校验；未重发请求，费用仍按原预留记录。') throw new Error('旧回应恢复说明不符')
-    const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context)
+    // 已追加的历史恢复按可信回执时间重验；当前质量动作仍独立检查实时证据有效期。
+    const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, receipt.capturedAt)
     if ((response.kind !== 'conversation_reply' && response.kind !== 'quality_decision') || recovered.recoveredOutcome.reply !== response.message || JSON.stringify(recovered.recoveredOutcome.qualityDecision) !== JSON.stringify(response.kind === 'quality_decision' ? response.decision : undefined)) throw new Error('旧回应恢复记录与原文不一致')
     return recovered.recoveredOutcome
   } catch { throw new Error('Owner旧回应恢复记录无效，请保留原始回执核查') }
@@ -312,7 +314,8 @@ export function recordOwnerPlanningRun(executionId: string, runtimeSource: strin
           outcome = { executionId, receiptId: receipt!.id, state: 'proposed', detail: 'Owner已提出执行安排，等待用户审核；不代表准备已保存或获得执行授权', assignmentProposal }
         } else {
           const response = parseProjectOwnerPlanningResponse(responseText, frozen.context)
-          if (response.kind === 'quality_decision') outcome = { executionId, receiptId: receipt!.id, state: 'replied', detail: 'Owner已提出质量决定，等待权威服务核验执行', reply: response.message, qualityDecision: response.decision }
+          if (response.kind === 'employee_decision') outcome = { executionId, receiptId: receipt!.id, state: 'replied', detail: 'Owner已形成员工问题决定，待权威回流核验', reply: response.message, employeeDecision: response.decision }
+          else if (response.kind === 'quality_decision') outcome = { executionId, receiptId: receipt!.id, state: 'replied', detail: 'Owner已提出质量决定，等待权威服务核验执行', reply: response.message, qualityDecision: response.decision }
           else if (response.kind === 'conversation_reply' || response.kind === 'conversation_change') outcome = { executionId, receiptId: receipt!.id, state: 'replied', detail: response.kind === 'conversation_change' ? 'Owner已整理理解，等待用户确认后更新内容' : 'Owner已回应当前消息，未修改计划或执行许可', reply: response.message, ...(response.kind === 'conversation_change' ? { changeProposal: response.change } : {}) }
           else if (response.kind === 'needs_clarification') outcome = { executionId, receiptId: receipt!.id, state: 'needs_clarification', detail: response.reason, clarification: response }
           else {

@@ -27,7 +27,8 @@ function capPiOwnerOutput(body: string, runtime: ReturnType<typeof readOwnerComm
   for (const key of ['max_tokens', 'max_completion_tokens']) {
     const value = parsed[key]
     if (typeof value !== 'number' || !Number.isSafeInteger(value) || value <= 0) continue
-    parsed[key] = price.maxModelOutputTokens
+    const ownerLimit = runtime.modelId === 'deepseek-flash' ? 131_072 : price.maxModelOutputTokens
+    parsed[key] = Math.min(value, price.maxModelOutputTokens, ownerLimit)
     capped = true
   }
   if (!capped) throw new Error('Owner Pi 请求缺少可核验的输出上限')
@@ -54,6 +55,7 @@ interface OwnerPreflightCommandRow {
   channel_id: string
   model_id: string
   runtime: string
+  reserved_cost_micros: number
 }
 
 /** 在价格协议拒绝时固化发送前证据；只有零逐请求账本行且身份仍为running才记录。 */
@@ -102,7 +104,7 @@ export function resolveOwnerExecutionMaxOutputTokens(sessionId: string, modelId:
   const execution = store.getAgentExecutionBySessionId(sessionId)
   if (!execution?.ownerCommandId) return undefined
   const stored = store.getProjectDb().prepare(`SELECT c.id AS command_id, c.state AS command_state, c.role AS command_role, c.execution_id,
-      c.project_id, c.grant_id, g.state AS grant_state, g.channel_id, g.model_id, g.runtime
+      c.project_id, c.grant_id, c.reserved_cost_micros, g.state AS grant_state, g.channel_id, g.model_id, g.runtime
     FROM project_owner_execution_commands c
     JOIN project_owner_execution_grants g ON g.id=c.grant_id AND g.project_id=c.project_id
     WHERE c.id=? AND c.project_id=?`).get(execution.ownerCommandId, execution.projectId) as OwnerPreflightCommandRow | undefined
@@ -123,8 +125,15 @@ export function resolveOwnerExecutionMaxOutputTokens(sessionId: string, modelId:
       priceEvidenceId: attemptedPriceEvidenceId, errorMessage: OWNER_PREFLIGHT_PRICE_REJECTION })
     throw new Error(OWNER_PREFLIGHT_PRICE_REJECTION)
   }
-  // 直接采用该模型已审核的最大输出上限；逐请求费用预留会在发送前校验项目预算。
-  return price.maxModelOutputTokens
+  // 价格证据不是每轮输出目标。Owner采用更保守的调用策略上限；不据此断言Provider的真实协议上限或旧失败原因。
+  const protocolSafeMax = row.model_id === 'deepseek-flash' && providerKind === 'openai' ? 131_072 : price.maxModelOutputTokens
+  // 输出上限还要受命令额度约束：单请求按最大输出预留若接近命令额度，实际请求必然被拒。
+  // 只用一半额度估算输出，其余留给输入与后续请求；这是保守调用策略，不代表Provider上限。
+  const outputMicrosPerToken = price.outputMicrosPerMillion / 1_000_000
+  const budgetBoundedMax = outputMicrosPerToken > 0 && row.reserved_cost_micros > 0
+    ? Math.floor(row.reserved_cost_micros * 0.5 / outputMicrosPerToken)
+    : protocolSafeMax
+  return Math.max(1024, Math.min(price.maxModelOutputTokens, protocolSafeMax, budgetBoundedMax))
 }
 function reserveOwnerRequest(input: { requestId: string; commandId: string; executionId: string; sessionId: string; envelope: ReturnType<typeof derivePilotRequestEnvelope> }) {
   if ([input.requestId, input.commandId, input.executionId, input.sessionId].some(id => typeof id !== 'string' || !id.trim())
@@ -145,6 +154,8 @@ function reserveOwnerRequest(input: { requestId: string; commandId: string; exec
   const database = store.getProjectDb()
   let reserved = 0
   database.transaction(() => {
+    const { assertOwnerSmokeRequestLimit } = require('./owner-real-chain-smoke-budget') as typeof import('./owner-real-chain-smoke-budget')
+    assertOwnerSmokeRequestLimit()
     const command = database.prepare("SELECT project_id, grant_id, state, reserved_cost_micros FROM project_owner_execution_commands WHERE id=? AND execution_id=?").get(input.commandId, input.executionId) as { project_id: string; grant_id: string; state: string; reserved_cost_micros: number } | undefined
     const execution = store.getAgentExecution(input.executionId)
     const grant = command && database.prepare("SELECT state, expires_at FROM project_owner_execution_grants WHERE id=? AND project_id=?").get(command.grant_id, command.project_id) as { state: string; expires_at: number } | undefined

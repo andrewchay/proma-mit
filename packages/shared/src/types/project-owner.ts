@@ -179,6 +179,13 @@ export interface ProjectOwnerPlanSources {
 
 /** 本次请求冻结的管理对话，与计划/授权来源指纹分离；仅是分析资料。 */
 export interface OwnerPlanningConversationContext {
+  /** 截至本次消息的最近一轮交付目录；目录不代表模型已读取各项正文或本地文件。 */
+  deliveredArtifacts?: {
+    version: 1
+    messageId: string
+    planVersion: number
+    items: Array<{ stepKey: string; title: string; artifactHash: string }>
+  }
   /** 用户明确反馈所对应的已验收成果；正文仍是不可信资料，不构成执行许可。 */
   deliveryFeedback?: {
     version: 1
@@ -197,6 +204,9 @@ export interface OwnerPlanningConversationContext {
   observationMessageBindingVersion?: 1
   /** 系统主动观察来源，不能伪装用户消息或授权。 */
   executionObservation?: import('./project-owner-management').OwnerExecutionObservation
+  /** v1员工待决事项快照；缺省保持旧冻结提示不变。 */
+  employeeInteractionVersion?: 1
+  employeeInteractions?: import('./project-owner-employee-interaction').OwnerEmployeeInteraction[]
   /** v2新增可确认的自然语言答复/目标修订；缺省保留历史提示原文。 */
   interactionVersion?: 2
   openQuestions?: Array<Pick<import('./project-owner-management').OwnerManagementQuestion, 'id' | 'goalRevision' | 'contextFingerprint' | 'reason' | 'questions'>>
@@ -352,7 +362,7 @@ export interface OwnerPlanningLink {
   contextFingerprint: string
   carrierFingerprint: string
   /** v4固定DeepSeek JSON输出；v5固定GLM低推理强度与JSON输出，旧版本不补加参数。 */
-  protocolVersion: '1' | '2' | '3' | '4' | '5'
+  protocolVersion: '1' | '2' | '3' | '4' | '5' | '6'
   /** 新版人员安排输出额度契约；缺省表示历史安排协议（4096 token）。 */
   assignmentProtocolVersion?: '2'
   /** GLM-5.3 family Owner规划固定低推理强度，释放输出预算给可审阅正文。 */
@@ -361,7 +371,7 @@ export interface OwnerPlanningLink {
   purpose: 'owner_planning' | 'owner_execution_assignment'
   assignmentContextFingerprint?: string
   maxRequests: 1
-  maxOutputTokens: 4096 | 8192
+  maxOutputTokens: 4096 | 8192 | 32768
   createdAt: number
 }
 

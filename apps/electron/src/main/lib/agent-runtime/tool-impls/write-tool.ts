@@ -4,7 +4,7 @@
  * 将内容写入指定文件，若文件所在目录不存在则自动创建。
  */
 
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs'
+import { writeFileSync, mkdirSync, existsSync, openSync, closeSync, fstatSync, ftruncateSync, constants } from 'node:fs'
 import { dirname } from 'node:path'
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
@@ -46,11 +46,34 @@ export async function executeWriteTool(input: unknown, ctx: ToolContext): Promis
   }
 
   try {
+    let exclusiveCreate = false
+    if (ctx.ownerWorkspaceWrite) {
+      const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+      gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Write', { file_path: params.file_path, content: params.content })
+      exclusiveCreate = gates.isOwnerAutoAllowedWorkspaceWrite(ctx.sessionId, 'Write', { file_path: params.file_path, content: params.content })
+    }
     const dir = dirname(path)
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true })
     }
-    writeFileSync(path, params.content, 'utf-8')
+    // 新建必须独占；已存在文件先打开再核验，不能在核验前截断链接目标。
+    let descriptor: number
+    try {
+      descriptor = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+    } catch (error) {
+      if (exclusiveCreate) throw error
+      if (!(error instanceof Error) || !('code' in error) || error.code !== 'EEXIST') throw error
+      descriptor = openSync(path, constants.O_WRONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    }
+    try {
+      const stat = fstatSync(descriptor)
+      if (!stat.isFile() || stat.nlink !== 1) throw new Error('Write拒绝符号链接、硬链接和非普通文件')
+      // 打开后再次检查父路径，缩小检查与使用窗口；这不是跨进程文件系统沙箱。
+      const recheck = resolveToolPath(params.file_path, ctx.cwd)
+      if (recheck.error) throw new Error(recheck.error)
+      ftruncateSync(descriptor, 0)
+      writeFileSync(descriptor, params.content, 'utf-8')
+    } finally { closeSync(descriptor) }
     // PH2-A：文件共享事件流（谁改了什么，团队成员可见）
     try {
       const { recordFileEvent } = await import('../../workspace-file-event-service')

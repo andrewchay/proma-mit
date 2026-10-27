@@ -185,12 +185,12 @@ test.each(['controlled', 'controlled-auto', 'general', 'mixed', 'pi'] as const)(
       }, { preconnect: () => {} }) as typeof globalThis.fetch
       const fetch = boundary.createControlledProviderFetch(input.sessionId, () => ({ runtime, cwd: getAgentWorkspaceCwd(f.workspace, input.sessionId), modelId: input.modelId ?? '', permissionMode: 'safe' }), transport)
       const requestExit = await import('./project-owner-execution-request-exit')
-      const expectedOutputLimit = input.modelId === 'deepseek-flash' ? 384_000 : 131_072
+      const expectedOutputLimit = 131_072
       expect(requestExit.resolveOwnerExecutionMaxOutputTokens(input.sessionId, input.modelId!, input.channelId === f.channel.id && runtime === 'pi' ? 'zhipu' : 'openai')).toBe(expectedOutputLimit)
       const target = getChannelById(input.channelId)!
       if (kind === 'mixed' && input.userMessage.includes('角色=reviewer')) await expect(fetch(`${target.baseUrl!}/chat/completions`, { method: 'POST', body: JSON.stringify({ model: 'glm-5.3-flash', max_tokens: 32, messages: [{ role: 'user', content: 'wrong model' }] }) })).rejects.toThrow('与价格证据不一致')
       await fetch(`${target.baseUrl!.replace(/\/+$/, '')}/chat/completions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ model: input.modelId, max_tokens: runtime === 'pi' ? 8192 : 100, messages: [{ role: 'user', content: 'fake-only' }] }) })
-      if (runtime === 'pi') expect(JSON.parse(sentRequestBodies.at(-1)!).max_tokens).toBe(expectedOutputLimit)
+      if (runtime === 'pi') expect(JSON.parse(sentRequestBodies.at(-1)!).max_tokens).toBe(8192)
       const content = input.userMessage.includes('角色=reviewer') ? JSON.stringify({ schemaVersion: 1, verdict: 'approved', summary: '合成评审', criteria: [{ criterion: '范围', status: 'met', evidence: '合成产物' }], findings: [], blockerReason: null }) : '合成材料'
       callbacks.onComplete([{ id: randomUUID(), role: 'assistant', content, createdAt: Date.now() }])
     } catch (cause) { callbacks.onError(String(cause)) }
@@ -347,7 +347,7 @@ test('Given不同模型的Reviewer运行时应用重开 When恢复与旧回调�
 })
 
 /** 完整真实服务链，模型和传输为替身；正文故意长于旧回报/评审摘要上限。 */
-async function textDeliveryRun(options: { rework?: boolean; oversized?: boolean; truncated?: boolean; holdReviewer?: boolean; profile?: 'general' | 'development'; runtime?: 'ai-sdk' | 'pi' } = {}) {
+async function textDeliveryRun(options: { rework?: boolean; oversized?: boolean; truncated?: boolean; holdReviewer?: boolean; profile?: 'general' | 'development'; runtime?: 'ai-sdk' | 'pi'; employeeQuestion?: (sessionId: string, projectId: string) => Promise<void> } = {}) {
   const profile = options.profile ?? 'general', runtime = options.runtime ?? 'ai-sdk'
   const f = fixture(profile, 'auto', runtime === 'ai-sdk', true, runtime), a = adapters()
   const scheduler = await import('./project-owner-autonomous-scheduler'), registry = await import('./agent-headless-runner-registry')
@@ -385,6 +385,7 @@ async function textDeliveryRun(options: { rework?: boolean; oversized?: boolean;
       const fetcher = boundary.createControlledProviderFetch(input.sessionId, () => ({ runtime, cwd: getAgentWorkspaceCwd(f.workspace, input.sessionId), modelId: input.modelId!, permissionMode: 'safe' }), transport)
       const channel = getChannelById(input.channelId)!
       await fetcher(`${channel.baseUrl!.replace(/\/+$/, '')}/chat/completions`, { method: 'POST', body: JSON.stringify({ model: input.modelId, max_tokens: runtime === 'pi' ? 4096 : 100, messages: [{ role: 'user', content: input.userMessage }] }) })
+      if (command.role === 'executor' && options.employeeQuestion) await options.employeeQuestion(input.sessionId, f.project.id)
       const changes = options.rework && command.rework_ordinal === 0
       const content = command.role === 'executor' ? `${'A'.repeat(options.oversized ? artifacts.OWNER_TEXT_DELIVERY_MAX_BYTES : 24000)}\n超出摘要位置的明确范围依据：${command.rework_ordinal ? '修订版' : '首版'}。`
         : JSON.stringify({ schemaVersion: 2, artifactHash: artifact!.contentSha256, verdict: changes ? 'changes_requested' : 'approved', summary: changes ? '需补齐范围依据' : '全文检查的合成评审', criteria: [{ criterion: '范围', status: changes ? 'not_met' : 'met', evidence: changes ? '范围依据不充分' : '引用正文范围依据', quote: changes ? null : '超出摘要位置的明确范围依据' }], findings: changes ? [{ severity: 'medium', description: '范围论据不够', requestedChange: '补齐范围依据并交付完整修订正文' }] : [], blockerReason: null })
@@ -573,4 +574,111 @@ test('Given项目资料已索引但应用重开句柄为空 When自主启动员�
   await scheduler.runOwnerAutonomousSchedule(f.project.id)
   expect(invoked).toBe(1)
   await index.closeKnowledgeIndexStore()
+})
+
+
+test('Given运行中员工问题无人答复 When超过等待期限 Then原Promise被拒绝且只登记一次失联', async () => {
+  let outcome = ''
+  await textDeliveryRun({ employeeQuestion: async (sessionId, projectId) => {
+    const { askUserService } = await import('./agent-ask-user-service')
+    const interactions = await import('./project-owner-employee-interactions')
+    const messages = await import('./project-owner-management-store')
+    const management = await import('./project-owner-management-loop')
+    const signal = new AbortController()
+    const result = askUserService.handleAskUserQuestion(sessionId, { questions: [{ question: '材料采用何种标题？', options: [{ label: '研究材料' }] }] }, signal.signal, () => {})
+    try {
+      const interaction = interactions.listOwnerEmployeeInteractions(projectId)[0]!
+      expect(interaction.state).toBe('pending_owner')
+      expect(askUserService.hasOwnerPendingRequest(interaction.requestId, sessionId)).toBe(true)
+      expect(interactions.expireOwnerEmployeeInteractions(projectId, interaction.expiresAt! - 1)).toBe(0)
+      management.reconcileOwnerManagement(projectId)
+      expect(interactions.getOwnerEmployeeInteraction(projectId, interaction.id)?.state).toBe('pending_owner')
+      expect(interactions.expireOwnerEmployeeInteractions(projectId, interaction.expiresAt!)).toBe(1)
+      management.reconcileOwnerManagement(projectId)
+      management.reconcileOwnerManagement(projectId)
+      expect(interactions.getOwnerEmployeeInteraction(projectId, interaction.id)?.state).toBe('stale')
+      expect(askUserService.hasOwnerPendingRequest(interaction.requestId, sessionId)).toBe(false)
+      expect(messages.getOwnerManagementView(projectId).messages.filter(item => item.content.includes('原提问已失效'))).toHaveLength(1)
+      const delivered = await result
+      outcome = delivered.behavior
+      expect(delivered.behavior).toBe('deny')
+      expect(() => interactions.deliverOwnerEmployeeDecision({ projectId, sourceMessageId: 'late', decision: { interactionId: interaction.id, interactionRevision: interaction.revision, action: 'answer', answers: { '材料采用何种标题？': '研究材料' }, reason: '迟到决定' } })).toThrow()
+    } finally { signal.abort() }
+  } })
+  expect(outcome).toBe('deny')
+})
+
+test('Given运行中员工问题 WhenOwner在同一对话定案 Then仅原Promise恢复且冻结来源不漂移', async () => {
+  let answered = false
+  await textDeliveryRun({ employeeQuestion: async (sessionId, projectId) => {
+    const { askUserService } = await import('./agent-ask-user-service')
+    const interactions = await import('./project-owner-employee-interactions')
+    const messages = await import('./project-owner-management-store')
+    const { withOwnerConversationContext } = await import('./project-owner-management-conversation')
+    const signal = new AbortController()
+    let rendererRequests = 0
+    const result = askUserService.handleAskUserQuestion(sessionId, { questions: [{ question: '材料采用何种标题？', options: [{ label: '研究材料' }] }] }, signal.signal, () => { rendererRequests++ })
+    try {
+      const interaction = interactions.listOwnerEmployeeInteractions(projectId)[0]!
+      expect(interaction.state).toBe('pending_owner')
+      expect(rendererRequests).toBe(0)
+      expect(askUserService.getPendingRequests().some(item => item.sessionId === sessionId)).toBe(false)
+      expect(askUserService.respondToAskUser(interaction.requestId, { '材料采用何种标题？': '错误旁路' })).toBeNull()
+      const message = messages.getOwnerManagementView(projectId).messages.find(item => item.employeeInteraction?.id === interaction.id)!
+      expect(message.role).toBe('assistant')
+      const context = plans.getProjectOwnerPlanningContext(projectId)
+      const frozen = withOwnerConversationContext(context, message.id, undefined, 2, 0, 1, 1)
+      expect(frozen.conversation!.employeeInteractions).toHaveLength(1)
+      expect(() => interactions.deliverOwnerEmployeeDecision({ projectId: 'other', sourceMessageId: 'receipt', decision: { interactionId: interaction.id, interactionRevision: 1, action: 'answer', answers: { '材料采用何种标题？': '研究材料' }, reason: '沿用已确认研究主题' } })).toThrow()
+      let decision = { interactionId: interaction.id, interactionRevision: 1, action: 'answer' as const, answers: { '材料采用何种标题？': '研究材料' }, reason: '沿用已确认研究主题' }
+      expect(() => interactions.deliverOwnerEmployeeDecision({ projectId, sourceMessageId: 'receipt', decision: { ...decision, answers: { wrong: '研究材料' } } })).toThrow('全部问题')
+      store.getProjectDb().transaction(() => {
+        expect(() => interactions.deliverOwnerEmployeeDecision({ projectId, sourceMessageId: 'receipt', decision })).toThrow('外层事务')
+      })()
+      // 经过真实Run回执、管理结果事件和管理循环，而不直接调用投递入口。
+      const runtimeBinding = await import('./project-owner-runtime-binding')
+      const sources = await import('./project-owner-planning-source')
+      const runs = await import('./project-owner-planning-run-service')
+      const providers = await import('./project-owner-planning-provider')
+      const binding = runtimeBinding.getOwnerRuntimeBinding(projectId)!
+      // 先经Owner普通回复讨论；不解决员工Promise，也不修改正式目标。
+      const discussionLink = runtimeBinding.prepareOwnerPlanning(projectId, { requestId: randomUUID(), conversationMessageId: message.id, expectedBindingRevision: binding.revision, expectedGoalRevision: context.goal.revision, expectedPlanRevision: plans.getProjectOwnerPlanDraft(projectId)!.revision, expectedContextFingerprint: context.fingerprint })
+      const discussionSnapshot = sources.readOwnerPlanningSnapshot(discussionLink.planningTaskId)!
+      const discussionExecution = randomUUID(), discussionSession = randomUUID()
+      store.createAgentExecution({ id: discussionExecution, projectId, entityType: 'task', entityId: discussionLink.planningTaskId, agentId: binding.carrierId, sessionId: discussionSession, status: 'running', prompt: '隔离讨论回执夹具' })
+      store.getProjectDb().prepare('UPDATE controlled_task_preparations SET execution_id=? WHERE task_id=?').run(discussionExecution, discussionLink.planningTaskId)
+      store.getProjectDb().prepare('INSERT INTO project_owner_planning_admissions(link_id,execution_id,session_id,request_hash,source_snapshot,admitted_at) VALUES(?,?,?,?,?,?)').run(discussionLink.id, discussionExecution, discussionSession, 'b'.repeat(64), JSON.stringify(discussionSnapshot.context), Date.now())
+      const discussionAdmission = store.getProjectDb().prepare('SELECT * FROM project_owner_planning_admissions WHERE execution_id=?').get(discussionExecution) as import('./project-owner-planning-provider').OwnerPlanningAdmission
+      store.getProjectDb().prepare('UPDATE project_owner_planning_admissions SET integrity_hash=? WHERE execution_id=?').run(providers.ownerPlanningAdmissionHash(discussionAdmission), discussionExecution)
+      const discussionOutcome = runs.recordOwnerPlanningRun(discussionExecution, 'ai-sdk', { type: 'result', subtype: 'success', session_id: discussionSession, finish_reason: 'stop', result: JSON.stringify({ schemaVersion: 1, kind: 'conversation_reply', projectId, goalVersion: discussionSnapshot.context.goal.goal.goalVersion, contextFingerprint: discussionSnapshot.context.fingerprint, messageId: message.id, message: '建议沿用研究主题，请补充标题侧重点。' }), usage: { input_tokens: 2, output_tokens: 3 } })!
+      expect(discussionOutcome.state).toBe('replied')
+      management.reconcileOwnerManagement(projectId)
+      const discussed = interactions.getOwnerEmployeeInteraction(projectId, interaction.id)!
+      expect(discussed.state).toBe('discussing_user')
+      expect(askUserService.hasOwnerPendingRequest(interaction.requestId, sessionId)).toBe(true)
+      expect(plans.getProjectOwnerPlanningContext(projectId).goal.revision).toBe(context.goal.revision)
+      expect(() => interactions.deliverOwnerEmployeeDecision({ projectId, sourceMessageId: 'old-decision', decision })).toThrow('已变化')
+      decision = { ...decision, interactionRevision: discussed.revision }
+      const link = runtimeBinding.prepareOwnerPlanning(projectId, { requestId: randomUUID(), conversationMessageId: message.id, expectedBindingRevision: binding.revision, expectedGoalRevision: context.goal.revision, expectedPlanRevision: plans.getProjectOwnerPlanDraft(projectId)!.revision, expectedContextFingerprint: context.fingerprint })
+      const snapshot = sources.readOwnerPlanningSnapshot(link.planningTaskId)!
+      const ownerSession = randomUUID(), ownerExecution = randomUUID()
+      store.createAgentExecution({ id: ownerExecution, projectId, entityType: 'task', entityId: link.planningTaskId, agentId: binding.carrierId, sessionId: ownerSession, status: 'running', prompt: '隔离Owner回执夹具，未调用Provider' })
+      store.getProjectDb().prepare('UPDATE controlled_task_preparations SET execution_id=? WHERE task_id=?').run(ownerExecution, link.planningTaskId)
+      store.getProjectDb().prepare('INSERT INTO project_owner_planning_admissions(link_id,execution_id,session_id,request_hash,source_snapshot,admitted_at) VALUES(?,?,?,?,?,?)').run(link.id, ownerExecution, ownerSession, 'a'.repeat(64), JSON.stringify(snapshot.context), Date.now())
+      const admission = store.getProjectDb().prepare('SELECT * FROM project_owner_planning_admissions WHERE execution_id=?').get(ownerExecution) as import('./project-owner-planning-provider').OwnerPlanningAdmission
+      store.getProjectDb().prepare('UPDATE project_owner_planning_admissions SET integrity_hash=? WHERE execution_id=?').run(providers.ownerPlanningAdmissionHash(admission), ownerExecution)
+      const outcome = runs.recordOwnerPlanningRun(ownerExecution, 'ai-sdk', { type: 'result', subtype: 'success', session_id: ownerSession, finish_reason: 'stop', result: JSON.stringify({ schemaVersion: 1, kind: 'employee_decision', projectId, goalVersion: snapshot.context.goal.goal.goalVersion, contextFingerprint: snapshot.context.fingerprint, messageId: message.id, message: '采用原研究材料标题。', decision }), usage: { input_tokens: 2, output_tokens: 3 } })!
+      expect(outcome.state).toBe('replied')
+      management.reconcileOwnerManagement(projectId)
+      expect(interactions.getOwnerEmployeeInteraction(projectId, interaction.id)?.state).toBe('resolved')
+      expect(messages.getOwnerManagementView(projectId).messages.some(item => item.content.includes('决定已回传原员工请求'))).toBe(true)
+      management.reconcileOwnerManagement(projectId)
+      expect(messages.getOwnerManagementView(projectId).messages.filter(item => item.content.includes('决定已回传原员工请求'))).toHaveLength(1)
+      expect(await result).toMatchObject({ behavior: 'allow', updatedInput: { answers: decision.answers } })
+      expect(() => interactions.deliverOwnerEmployeeDecision({ projectId, sourceMessageId: 'receipt', decision })).toThrow('已变化')
+      expect(withOwnerConversationContext(context, message.id, frozen.conversation!.historyThroughMessageId, 2, 0, 1, 1, frozen.conversation!.employeeInteractions)).toEqual(frozen)
+      answered = true
+    } finally { signal.abort() }
+  } })
+  expect(answered).toBe(true)
 })

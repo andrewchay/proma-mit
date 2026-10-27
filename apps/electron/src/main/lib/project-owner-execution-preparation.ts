@@ -334,6 +334,9 @@ export function previewOwnerExecutionPreparation(
     input = parseOwnerExecutionInput(rawInput),
     records = history(subject.projectId)
   if (!input.roleAssignments) throw new Error('新Owner准备必须显式绑定每个稳定roleKey的执行员工')
+  if (input.executionKind === 'development' && !input.developmentScope?.verificationCommands?.length) {
+    throw new Error('Owner研发执行必须先声明白名单验证命令，不能在缺少正式验证安排时派工')
+  }
   if (
     (records.at(-1)?.revision ?? 0) !== input.expectedPreparationRevision ||
     (getPilotPolicy(subject.projectId)?.revision ?? null) !== input.expectedPolicyRevision

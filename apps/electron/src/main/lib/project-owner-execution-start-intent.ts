@@ -1,4 +1,4 @@
-import type { MaterializeOwnerTasksRequest, OwnerExecutionGrant, OwnerExecutionPreparationInput, OwnerExecutionStartIntent, OwnerExecutionStartIntentRequest, OwnerManagementMessage, ProjectOwnerGoalSubject, ProjectOwnerPlanDraft } from '@gravitas/shared'
+import type { MaterializeOwnerTasksRequest, OwnerExecutionGrant, OwnerExecutionPreparationInput, OwnerExecutionStartIntent, OwnerExecutionStartIntentRequest, OwnerManagementMessage, OwnerTaskMaterializationRecord, ProjectOwnerGoalSubject, ProjectOwnerPlanDraft } from '@gravitas/shared'
 import { getProjectOwnerGoalDraft } from './project-owner-goal-service'
 import { confirmProjectOwnerPlanDraft, getProjectOwnerPlanDraft, getProjectOwnerPlanningContext } from './project-owner-plan-service'
 import { assertLocalActorEnabled } from './project-owner-plan-service'
@@ -140,6 +140,23 @@ function supersedeDeliveredFeedbackBatch(subject: ProjectOwnerGoalSubject, plan:
   return true
 }
 
+/** 新目标已获自主授权时追加新批次；旧任务、成果和账本保留，活动或未知费用仍禁止替换。 */
+function supersedePreviousGoalBatch(subject: ProjectOwnerGoalSubject, plan: ProjectOwnerPlanDraft, previous: OwnerTaskMaterializationRecord): boolean {
+  const permission = getOwnerManagementDelegation(subject.projectId, subject.taskId)
+  if (plan.origin !== 'generated' || !plan.sourceRun || plan.actor !== 'system:owner-manager'
+    || plan.goalRevision <= previous.preview.preparation.source.goalRevision
+    || permission.state !== 'active' || permission.delegation?.autonomousExecution !== true
+    || permission.delegation.goalRevision !== plan.goalRevision) return false
+  const grant = getOwnerExecutionGrant(subject)
+  if (!grant || grant.materializationId !== previous.id || grant.taskId !== subject.taskId) return false
+  if (grant.state === 'active') {
+    const preview = previewOwnerExecutionGrantRevoke(subject, { grantId: grant.grantId })
+    if (preview.blockers.length) throw new Error(`旧目标的执行或费用尚未收敛，不能追加新批次：${preview.blockers.join('；')}`)
+    return confirmOwnerExecutionGrantRevoke(subject, { grantId: grant.grantId, confirmedFingerprint: preview.fingerprint }).state === 'paused'
+  }
+  return grant.state === 'paused' || grant.state === 'archived'
+}
+
 function getConfirmedPreparationInput(intent: OwnerExecutionStartIntent, plan: ProjectOwnerPlanDraft): OwnerExecutionPreparationInput {
   const subject = { projectId: intent.projectId, ...(intent.taskId ? { taskId: intent.taskId } : {}) }
   const planRevision = plan.revision
@@ -277,7 +294,7 @@ export function resumeOwnerExecutionStartIntent(intentId: string, expectedSubjec
     const materializationView = getOwnerTaskMaterialization(subject)
     const previousMaterialization = materializationView.materialization
     const replacingPreviousBatch = Boolean(previousMaterialization && previousMaterialization.input.requestId !== `owner-start:${intent.intentId}`
-      && supersedeDeliveredFeedbackBatch(subject, plan, previousMaterialization.id))
+      && (supersedeDeliveredFeedbackBatch(subject, plan, previousMaterialization.id) || supersedePreviousGoalBatch(subject, plan, previousMaterialization)))
     const input = getConfirmedPreparationInput(intent, plan)
     const preparationView = getOwnerExecutionPreparation(subject)
     let preparation = preparationView.preparation
