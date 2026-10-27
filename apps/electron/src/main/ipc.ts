@@ -272,6 +272,7 @@ import {
   createAgentSession,
   getAgentSessionMeta,
   getAgentSessionSDKMessages,
+  getAgentSessionTranscriptSDKMessages,
   updateAgentSessionMeta,
   deleteAgentSession,
   migrateChatToAgentSession,
@@ -1814,6 +1815,12 @@ export async function registerIpcHandlers(): Promise<void> {
     async (_, id: string): Promise<SDKMessage[]> => {
       return getAgentSessionSDKMessages(id)
     }
+  )
+
+  // 展示完整会话原文；运行时仍使用压缩后的 SDKMessage 历史。
+  ipcMain.handle(
+    AGENT_IPC_CHANNELS.GET_SESSION_TRANSCRIPT,
+    async (_, id: string): Promise<SDKMessage[]> => getAgentSessionTranscriptSDKMessages(id),
   )
 
   // 更新 Agent 会话标题
