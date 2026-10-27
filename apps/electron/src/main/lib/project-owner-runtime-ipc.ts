@@ -22,12 +22,12 @@ export function listOwnerPlanningRuns(projectId: string, taskId?: string, purpos
   const archiveWarning = purpose === 'owner_planning' ? archiveProjectOwnerPlanHistory(projectId, listProjectOwnerPlanHistory(projectId, taskId)) : undefined
   const rows = store.getProjectDb().prepare("SELECT planning_task_id FROM project_owner_planning_links WHERE project_id = ? AND json_extract(payload, '$.targetTaskId') IS ? AND json_extract(payload, '$.purpose') = ? ORDER BY rowid DESC LIMIT 50").all(projectId, taskId ?? null, purpose) as { planning_task_id: string }[]
   return rows.flatMap(row => {
-    const snapshot = readOwnerPlanningSnapshot(row.planning_task_id)
+    const snapshot = readOwnerPlanningSnapshot(row.planning_task_id, { allowUnknownPromptForHistory: true })
     if (!snapshot || snapshot.link.projectId !== projectId) throw new Error('Owner规划读取来源损坏')
     if (snapshot.link.targetTaskId !== taskId) return []
     const executions = store.listAgentExecutionsByEntity('task', row.planning_task_id)
-    const receipts = executions.flatMap(execution => {
-      if (execution.projectId !== projectId) throw new Error('Owner Run身份越界')
+    if (executions.some(execution => execution.projectId !== projectId)) throw new Error('Owner Run身份越界')
+    const receipts = snapshot.request ? executions.flatMap(execution => {
       const records = store.getProjectDb().prepare('SELECT id FROM project_owner_planning_run_receipts WHERE execution_id = ? ORDER BY rowid').all(execution.id) as { id: string }[]
       return records.map(record => {
         const receipt = getOwnerPlanningRunReceipt(record.id)
@@ -36,8 +36,8 @@ export function listOwnerPlanningRuns(projectId: string, taskId?: string, purpos
         const { id, executionId, capturedAt, responseText, responseHash, validTerminal, stopped, error, usage, cost, runtimeResult } = receipt
         return { id, executionId, capturedAt, responseText, responseHash, validTerminal, stopped, error, ...(runtimeResult?.provider_request_id ? { providerRequestId: runtimeResult.provider_request_id } : {}), ...(runtimeResult?.provider_response_id ? { providerResponseId: runtimeResult.provider_response_id } : {}), usage, cost }
       })
-    })
-    return [{ ...(archiveWarning ? { archiveWarning } : {}), link: snapshot.link, executions: executions.map(item => ({ id: item.id, sessionId: item.sessionId, status: item.status, summary: item.resultSummary ?? null })), receipts, outcomes: executions.flatMap(item => { const outcome = getOwnerPlanningRunOutcome(item.id); return outcome ? [outcome] : [] }) }]
+    }) : []
+    return [{ ...(archiveWarning ? { archiveWarning } : {}), ...(snapshot.sourceWarning ? { sourceWarning: snapshot.sourceWarning } : {}), link: snapshot.link, executions: executions.map(item => ({ id: item.id, sessionId: item.sessionId, status: item.status, summary: item.resultSummary ?? null })), receipts, outcomes: snapshot.request ? executions.flatMap(item => { const outcome = getOwnerPlanningRunOutcome(item.id); return outcome ? [outcome] : [] }) : [] }]
   })
 }
 export function registerProjectOwnerRuntimeIpcHandlers(ipc: Registrar): void {

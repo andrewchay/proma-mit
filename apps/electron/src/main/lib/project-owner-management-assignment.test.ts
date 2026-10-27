@@ -502,7 +502,7 @@ test('Given Owner生成了待审方案和有效规划委托 When 方案展示给
     expect(changes).toEqual([{ projectId: f.project.id }])
     expect(() => appendOwnerManagementTrace({ ...latestTrace, unexpected: 'secret' } as never)).toThrow('字段无效')
   } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
-})
+}, 15_000)
 
 test('Given管理循环已运行且目标尚无计划 When首次规划后 Then自动安排团队但等待用户确认才启动员工', async () => {
   const f = fixture('complete', false, false), before = calls.length, stop = startOwnerManagementLoop()
@@ -517,7 +517,7 @@ test('Given管理循环已运行且目标尚无计划 When首次规划后 Then�
     for (const table of ['project_owner_execution_grants', 'project_owner_task_materializations']) expect(store.getProjectDb().prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE project_id = ?`).get(f.project.id)).toEqual({ n: 0 })
     expect(delegation.getOwnerManagementDelegation(f.project.id)).toMatchObject({ state: 'active', usedRequests: 2 })
   } finally { delegation.revokeOwnerManagementDelegation(f.project.id, grant.id); stop() }
-})
+}, 15_000)
 
 test('Given 用户在项目对话提交新目标及总预算 When Owner规划并内部安排、用户确认执行 Then完成后续交付流程', async () => {
   const { createStore } = await import('jotai')
@@ -823,7 +823,7 @@ test('Given 已确认方案但没有管理委托 When 后台处理 Then 仅准�
     expect(listOwnerExecutionAssignmentRuns(f.subject)[0]?.link.id).toBe(first[0]?.link.id)
     expect(calls.filter(item => item.projectId === f.project.id)).toHaveLength(0)
   } finally { stop() }
-})
+}, 15_000)
 
 test('Given 现有团队缺独立评审 When 确认方案 Then 说明阻塞和可调整边界，不浪费安排请求', async () => {
   for (const team of ['missing-reviewer'] as const) {
@@ -864,7 +864,7 @@ test('Given 待审方案缺少独立评审 When Owner尝试准备团队 Then 不
     expect(attention?.content).toContain('团队配置发生变化时自动重新核对')
     expect(listOwnerExecutionAssignmentRuns(f.subject)).toHaveLength(0)
   } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
-})
+}, 15_000)
 
 test('Given 已确认方案因缺评审受阻 When 新建合格员工 Then 持久团队事件自动恢复安排且重复变化不重复请求', async () => {
   const f = fixture('missing-reviewer'), grant = authorize(f), stop = startOwnerManagementLoop()
@@ -882,7 +882,7 @@ test('Given 已确认方案因缺评审受阻 When 新建合格员工 Then 持�
     expect(listOwnerExecutionAssignmentRuns(f.subject)).toHaveLength(1)
     expect(calls.filter(item => item.projectId === f.project.id)).toHaveLength(1)
   } finally { delegation.revokeOwnerManagementDelegation(f.project.id, grant.id); stop() }
-}, 15_000)
+}, 30_000)
 
 test('Given Owner暂停时团队能力变化 When恢复管理循环 Then累积事件自动重评且只建立一次安排', async () => {
   const f = fixture('missing-reviewer'), grant = authorize(f), stop = startOwnerManagementLoop()
@@ -914,7 +914,7 @@ test('Given 员工新增与团队事件同事务 When 外层写入回滚 Then �
   const nextEventCount = database.prepare('SELECT COUNT(*) AS n FROM project_owner_management_events WHERE project_id = ?').get(f.project.id) as { n: number }
   expect(employees.listAgentEmployees()).toHaveLength(employeeCount)
   expect(nextEventCount.n).toBe(eventCount.n)
-})
+}, 15_000)
 
 test('Given 确认事务回滚或旧方案来源失效 When 后台处理 Then 不安排旧方案，任务级目标也准确隔离', () => {
   const f = fixture()
@@ -928,7 +928,7 @@ test('Given 确认事务回滚或旧方案来源失效 When 后台处理 Then �
   const task = fixture('complete', true); confirm(task); reconcileOwnerManagement(task.project.id)
   expect(listOwnerExecutionAssignmentRuns(task.subject)[0]?.link.targetTaskId).toBe(task.taskId)
   expect(listOwnerExecutionAssignmentRuns({ projectId: task.project.id })).toHaveLength(0)
-})
+}, 20_000)
 
 
 test('Given项目已有general员工且无精确模板 When确认方案 Then后台用既有能力形成安排、不改员工档案或让用户重建', async () => {

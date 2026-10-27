@@ -9,9 +9,13 @@
  * - 动态 per-message 上下文（buildDynamicContext）：注入到用户消息前，每次实时读取磁盘
  */
 
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { PromaPermissionMode, AgentDefinition } from '@gravitas/shared'
 import { getUserProfile } from './user-profile-service'
 import { getWorkspaceMcpConfig, getWorkspaceSkills } from './agent-workspace-manager'
+import { getWorkspaceSkillsDir, getDefaultSkillsDir } from './config-paths'
+import { composeOdDesignContext, parseOdRequirements, resolveDesignCraftDir } from './design-context'
 import { readBuiltinOverrides } from './agent-runtime/eval/builtin-agent-overrides'
 import { getBuiltinAgentDefinition } from './agent-definition-store'
 
@@ -432,6 +436,14 @@ Gravitas 提供内置 \`collaboration\` 工具，用来创建真实可见、可�
 - 新会话开始时，**两个目录都要检查**以恢复完整上下文`)
   }
 
+  if (ctx.workspaceSlug) {
+    // OpenDesign 语义：设计上下文属于会话级静态内容，只在系统提示词构建时扫描一次。
+    try {
+      const odBlock = buildOdContextForActiveSkills(getWorkspaceSkills(ctx.workspaceSlug), ctx.workspaceSlug, ctx.agentCwd)
+      if (odBlock) sections.push(odBlock)
+    } catch { /* 设计上下文组装失败静默降级 */ }
+  }
+
   // 不确定性处理策略
   sections.push(`## 不确定性处理
 
@@ -601,6 +613,50 @@ interface DynamicContext {
 }
 
 /**
+ * 为 Claude SDK runtime 组装启用中 Skills 的 od: 设计上下文（会话级静态注入）。
+ *
+ * craft 节跨 Skill 去重（union）；design-system 仅需任一 Skill 声明即可，
+ * 且以 cwd 根的 DESIGN.md 为激活约定。无声明、无内容时返回空字符串。
+ */
+export function buildOdContextForActiveSkills(
+  skills: { slug: string }[],
+  workspaceSlug: string,
+  agentCwd?: string,
+): string {
+  if (!skills || skills.length === 0) return ''
+
+  const skillsDir = getWorkspaceSkillsDir(workspaceSlug)
+  const craftRequires = new Set<string>()
+  let designSystemRequired = false
+  let hasOdDeclaration = false
+
+  for (const skill of skills) {
+    try {
+      const mdPath = join(skillsDir, skill.slug, 'SKILL.md')
+      if (!existsSync(mdPath)) continue
+      const requirements = parseOdRequirements(readFileSync(mdPath, 'utf-8'))
+      if (requirements.craftRequires.length === 0 && !requirements.designSystemRequires) continue
+      hasOdDeclaration = true
+      for (const section of requirements.craftRequires) craftRequires.add(section)
+      if (requirements.designSystemRequires) designSystemRequired = true
+    } catch { /* 单个 Skill 解析失败不影响其余 */ }
+  }
+
+  if (!hasOdDeclaration) return ''
+
+  const odContext = composeOdDesignContext({
+    requirements: {
+      craftRequires: [...craftRequires],
+      designSystemRequires: designSystemRequired,
+    },
+    craftDir: resolveDesignCraftDir({ workspaceSlug, getWorkspaceSkillsDir, getDefaultSkillsDir }),
+    cwd: agentCwd,
+  })
+
+  return odContext
+}
+
+/**
  * 构建每条消息的动态上下文
  *
  * 包含当前时间、工作区实时状态（MCP 服务器 + Skills）和工作目录。
@@ -652,6 +708,7 @@ export function buildDynamicContext(ctx: DynamicContext): string {
     // Skills 列表已通过 SDK plugin 机制自动发现并注册，无需手动注入
     // 仅检查 skill-creator 是否启用，注入持续改进提示
     const skills = getWorkspaceSkills(ctx.workspaceSlug)
+
     const hasSkillCreator = skills.some((s) => s.slug === 'skill-creator')
     if (hasSkillCreator) {
       wsLines.push([

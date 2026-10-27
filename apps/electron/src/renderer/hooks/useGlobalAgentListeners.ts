@@ -45,6 +45,7 @@ import {
   workingDoneSessionIdsAtom,
   agentSessionPathMapAtom,
   agentDiffRefreshVersionAtom,
+  revealRightWorkspacePreviewAtom,
 } from '@/atoms/agent-atoms'
 import {
   notificationsEnabledAtom,
@@ -476,6 +477,11 @@ export function useGlobalAgentListeners(): void {
             return m
           })
           if (openPanel) {
+            // 自动预览必须能展开收起的右侧面板：agentSidePanelOpen 持久化为 false 时，
+            // 只写 previewPanelOpenMap 用户什么都看不到。revealRightWorkspacePreview
+            // 统一处理「展开面板 + 面板宽度 + 激活 preview tab」；git 仓库场景随后由
+            // tool_result 分支切到 changes tab（面板已展开，该分支此时才能生效）。
+            if (previewFile) store.set(revealRightWorkspacePreviewAtom, sid)
             store.set(previewPanelOpenMapAtom, (prev) => {
               if (prev.get(sid)) return prev
               const m = new Map(prev); m.set(sid, true); return m

@@ -32,6 +32,7 @@ import { getAgentWorkspace } from './agent-workspace-manager'
 import { getAgentSessionWorkspacePath } from './config-paths'
 import { getChannelById } from './channel-manager'
 import { buildDevelopmentInstructions, validateDevelopmentTarget } from './agent-development-context'
+import { getDevelopmentEmployeeStandard, type DevelopmentEmployeeStandardSnapshot } from './agent-development-standard'
 import { validateControlledConfiguration, validateControlledTarget } from './agent-controlled-context'
 import { assertControlledPreparedExecution, claimControlledPreparedExecution, requiresControlledStart } from './controlled-project-task-service'
 import { createDevelopmentWorktree, resolveDevelopmentWorktree, captureDevelopmentEvidence } from './agent-development-worktree'
@@ -480,7 +481,7 @@ export function parseAgentId(assigneeUserId: string | undefined): string | null 
 }
 
 /** 构建 AI 员工执行 prompt（角色 + 任务上下文 + 权限 + 输出要求） */
-export function buildAgentTaskPrompt(task: Task, employee: AgentEmployee): string {
+export function buildAgentTaskPrompt(task: Task, employee: AgentEmployee, standard?: DevelopmentEmployeeStandardSnapshot): string {
   const deadline = task.dueDate ? new Date(task.dueDate).toLocaleString('zh-CN') : '未设置'
   const rolePrompt = employee.systemPrompt?.trim()
     ? employee.systemPrompt.trim()
@@ -505,9 +506,11 @@ export function buildAgentTaskPrompt(task: Task, employee: AgentEmployee): strin
       ]
 
   const chain = development ? getProjectChain(task.projectId) : undefined
+  const developmentStandard = development ? standard ?? getDevelopmentEmployeeStandard() : undefined
   return [
     rolePrompt,
     '',
+    developmentStandard?.promptSection ?? '',
     '## 本次任务',
     `- 任务：${task.title}`,
     `- 描述：${task.description || '（无）'}`,
@@ -693,7 +696,8 @@ function enqueueAgentTask(task: Task, employee: AgentEmployee): string {
   const capabilityVersions = store.getActiveAgentEmployeeCapabilityVersions(employee.id, task.workspaceId)
   const capabilityContent = capabilityVersions.map((version) => version.content).filter(Boolean).join('\n\n')
   const capabilityHash = createHash('sha256').update(capabilityContent).digest('hex')
-  const prompt = `${buildAgentTaskPrompt(task, employee)}${capabilityContent ? `\n\n## 已冻结员工能力版本\n${capabilityContent}` : ''}`
+  const developmentStandard = employee.executionProfile === 'development' ? getDevelopmentEmployeeStandard() : undefined
+  const prompt = `${buildAgentTaskPrompt(task, employee, developmentStandard)}${capabilityContent ? `\n\n## 已冻结员工能力版本\n${capabilityContent}` : ''}`
   const usesWorkflow = Boolean(employee.workflowId)
 
   // 1. 记录执行（queued，等并发调度；executor 标记 headless / workflow）
@@ -710,6 +714,11 @@ function enqueueAgentTask(task: Task, employee: AgentEmployee): string {
     requestedPermissions: task.permissionRequests ?? [],
     capabilityVersionIds: capabilityVersions.map((version) => version.id),
     capabilityContentHash: capabilityHash,
+    ...(developmentStandard ? {
+      developmentStandardId: developmentStandard.id,
+      developmentStandardVersion: developmentStandard.version,
+      developmentStandardHash: developmentStandard.contentHash,
+    } : {}),
     startedAt: Date.now(),
   })
   const execution = store.getAgentExecution(executionId)
@@ -988,7 +997,7 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
         const continuedFrom = await seedOwnerDevelopmentRework(ownerExecution.commandId, worktree.path)
         if (continuedFrom) Object.assign(worktree, { continuedFromExecutionId: continuedFrom })
       }
-      const taskPrompt = ownerExecution ? execution.prompt : buildAgentTaskPrompt(task!, employee)
+      const taskPrompt = ownerExecution || execution.developmentStandardId ? execution.prompt : buildAgentTaskPrompt(task!, employee)
       const prompt = `${taskPrompt}\n\n本次执行基线：${JSON.stringify(worktree)}`
       store.updateAgentExecution(executionId, { prompt, outputFiles: [worktree.path] })
     }

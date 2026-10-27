@@ -19,6 +19,7 @@ const { bindWorkspaceToProject } = await import('./project-workspace-bindings')
 const { saveProjectOwnerGoalDraft } = await import('./project-owner-goal-service')
 const { getProjectOwnerPlanningContext } = await import('./project-owner-plan-service')
 const service = await import('./project-owner-runtime-binding')
+const planningSource = await import('./project-owner-planning-source')
 
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
@@ -45,6 +46,18 @@ test('Given 配置/准备/只读IPC When 自动绑定、获取绑定或暂停准
   expect(invoke(PROJECT_IPC_CHANNELS.ENSURE_OWNER_RUNTIME_BINDING, { projectId: f.project.id })).toMatchObject({ ok: true, value: { carrierId: f.employee.id, revision: 1 } })
   expect(invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_PLANNING_RUNS, { projectId: f.project.id })).toMatchObject({ ok: true, value: [{ link: { id: f.link.id }, executions: [], receipts: [], outcomes: [] }] }); expect(JSON.stringify(invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_PLANNING_RUNS, { projectId: f.project.id }))).not.toContain('fake-key')
   expect(invoke(PROJECT_IPC_CHANNELS.PREPARE_OWNER_PLANNING, { projectId: f.project.id, input: { requestId: f.link.requestId, expectedBindingRevision: 1, expectedGoalRevision: 1, expectedPlanRevision: 0, expectedContextFingerprint: f.link.contextFingerprint } })).toMatchObject({ ok: true, value: { planningTaskId: f.link.planningTaskId } }); expect(store.listAgentExecutionsByEntity('task', f.link.planningTaskId)).toHaveLength(0)
+})
+test('Given 历史Run冻结提示指纹不属于已知格式 When 读取运行记录 Then 保留只读记录并提示核查，不提供继续发送请求', () => {
+  const f = prepared()
+  const row = store.getProjectDb().prepare('SELECT payload FROM project_owner_planning_links WHERE id = ?').get(f.link.id) as { payload: string }
+  const payload = JSON.parse(row.payload) as Record<string, unknown>
+  payload.promptHash = 'f'.repeat(64)
+  store.getProjectDb().prepare('UPDATE project_owner_planning_links SET payload = ? WHERE id = ?').run(JSON.stringify(payload), f.link.id)
+  expect(invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_PLANNING_RUNS, { projectId: f.project.id })).toMatchObject({
+    ok: true,
+    value: [{ link: { id: f.link.id }, sourceWarning: expect.stringContaining('历史规划提示指纹'), receipts: [], outcomes: [] }],
+  })
+  expect(() => planningSource.resolveOwnerPlanningTask(f.link.planningTaskId)).toThrow('Owner规划来源记录无效')
 })
 test('Given 客户端夹带费用/actor/Run/跨项目主体 When 配置与读取 Then 拒绝且绑定不可重写', () => {
   const f = prepared(); const other = store.createProject({ title: '其他项目', description: '' }); const task = store.createTask(other.id, { title: '其他任务', description: '', assignee: { userId: 'local-user', displayName: '用户' } })

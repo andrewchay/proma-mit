@@ -14,6 +14,8 @@
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
 import { readSkillFile } from '../../agent-workspace-manager'
+import { getWorkspaceSkillsDir, getDefaultSkillsDir } from '../../config-paths'
+import { composeOdDesignContext, parseOdRequirements, resolveDesignCraftDir } from '../../design-context.ts'
 import { formatToolError, truncateOutput } from './tool-utils.ts'
 
 export interface ReadSkillToolInput {
@@ -74,9 +76,34 @@ export async function executeSkillTool(input: unknown, ctx: ToolContext): Promis
         isError: true,
       }
     }
+
+    let content = result.content ?? ''
+
+    // OpenDesign 语义：激活 Skill（读取 SKILL.md）时注入 od: 声明的
+    // craft / design-system 上下文；读取子文件时不重复注入。
+    if (filePath === 'SKILL.md' && ctx.workspaceSlug) {
+      try {
+        const requirements = parseOdRequirements(content)
+        const odContext = composeOdDesignContext({
+          requirements,
+          craftDir: resolveDesignCraftDir({
+            workspaceSlug: ctx.workspaceSlug,
+            getWorkspaceSkillsDir,
+            getDefaultSkillsDir,
+          }),
+          cwd: ctx.cwd,
+        })
+        if (odContext) {
+          content = `${content}\n\n---\n\n${odContext}`
+        }
+      } catch {
+        // od: 上下文组装失败不阻塞 Skill 正文返回
+      }
+    }
+
     return {
       toolCallId: '',
-      content: truncateOutput(result.content ?? ''),
+      content: truncateOutput(content),
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)

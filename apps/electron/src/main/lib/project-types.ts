@@ -13,10 +13,10 @@ export interface Project {
   title: string
   description: string
   status: ProjectStatus
-  /** 软归档时间；归档不删除项目或任务。 */
-  archivedAt?: number
   createdAt: number
   updatedAt: number
+  /** 本地软归档时间；归档项目及其任务/Owner证据仍保留。 */
+  archivedAt?: number | null
   /** 列表手动排序权重（REAL，升序在前；未手动排序时为 -createdAt） */
   sortOrder: number
 }
@@ -484,6 +484,10 @@ export interface AgentExecution {
   /** 派发时冻结的角色/工作区能力版本，后续编辑不会改写历史执行。 */
   capabilityVersionIds?: string[]
   capabilityContentHash?: string
+  /** 研发员工执行时冻结的共享标准版本；旧记录为空表示当时未记录。 */
+  developmentStandardId?: string
+  developmentStandardVersion?: string
+  developmentStandardHash?: string
   startedAt: number
   completedAt?: number
 }
@@ -605,6 +609,9 @@ export interface CreateAgentExecutionInput {
   requestedPermissions?: string[]
   capabilityVersionIds?: string[]
   capabilityContentHash?: string
+  developmentStandardId?: string
+  developmentStandardVersion?: string
+  developmentStandardHash?: string
   startedAt?: number
 }
 

@@ -73,6 +73,19 @@ test('Given 历史v1规划关联 When 读取冻结资料 Then 保留旧4096输�
   expect(source.readOwnerPlanningSnapshot(f.link.planningTaskId)?.link).toMatchObject({ protocolVersion: '1', maxOutputTokens: 4096 })
   expect(service.prepareOwnerPlanning(f.project.id, { ...request(f.project.id), requestId: f.link.requestId })).toMatchObject({ protocolVersion: '1', maxOutputTokens: 4096 })
 })
+test('Given 历史Run提示指纹不属于当前已知格式 When 读取来源 Then 仅历史视图可保留并标为待核查', () => {
+  const f = prepared()
+  const row = store.getProjectDb().prepare('SELECT payload FROM project_owner_planning_links WHERE id = ?').get(f.link.id) as { payload: string }
+  const payload = JSON.parse(row.payload) as Record<string, unknown>
+  payload.promptHash = 'f'.repeat(64)
+  store.getProjectDb().prepare('UPDATE project_owner_planning_links SET payload = ? WHERE id = ?').run(JSON.stringify(payload), f.link.id)
+  expect(() => source.readOwnerPlanningSnapshot(f.link.planningTaskId)).toThrow('Owner规划来源记录无效')
+  const history = source.readOwnerPlanningSnapshot(f.link.planningTaskId, { allowUnknownPromptForHistory: true })
+  expect(history?.link.id).toBe(f.link.id)
+  expect(history?.request).toBeUndefined()
+  expect(history?.sourceWarning).toContain('历史规划提示指纹')
+  expect(() => source.resolveOwnerPlanningTask(f.link.planningTaskId)).toThrow('Owner规划来源记录无效')
+})
 test('Given 关联/目的任一证据丢失或篡改 When 解析 Then 拒绝而非null', () => {
   for (const sql of ['DELETE FROM project_owner_planning_links WHERE planning_task_id = ?', 'UPDATE controlled_task_preparations SET owner_planning_link_id = NULL WHERE task_id = ?', "UPDATE project_owner_planning_links SET source_snapshot = '{}' WHERE planning_task_id = ?", "UPDATE project_owner_planning_links SET input_hash = 'bad' WHERE planning_task_id = ?"]) { const f = prepared(); store.getProjectDb().prepare(sql).run(f.link.planningTaskId); expect(() => source.resolveOwnerPlanningTask(f.link.planningTaskId)).toThrow() }
 })

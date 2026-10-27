@@ -120,8 +120,8 @@ export async function createProject(input: CreateProjectInput): Promise<Project>
   return store.createProject(input)
 }
 
-export async function listProjects(): Promise<Project[]> {
-  return store.listProjects()
+export async function listProjects(includeArchived = false): Promise<Project[]> {
+  return store.listProjects(includeArchived)
 }
 
 export async function getProject(id: string): Promise<Project | null> {

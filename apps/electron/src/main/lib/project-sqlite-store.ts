@@ -994,6 +994,9 @@ function migrate(database: SqliteCompat): void {
       last_heartbeat_at INTEGER,
       capability_version_ids TEXT NOT NULL DEFAULT '[]',
       capability_content_hash TEXT,
+      development_standard_id TEXT,
+      development_standard_version TEXT,
+      development_standard_hash TEXT,
       started_at INTEGER NOT NULL,
       completed_at INTEGER
     );
@@ -1452,6 +1455,9 @@ function migrate(database: SqliteCompat): void {
   }
   if (!execColumns.includes('capability_version_ids')) database.exec("ALTER TABLE agent_executions ADD COLUMN capability_version_ids TEXT NOT NULL DEFAULT '[]'")
   if (!execColumns.includes('capability_content_hash')) database.exec('ALTER TABLE agent_executions ADD COLUMN capability_content_hash TEXT')
+  if (!execColumns.includes('development_standard_id')) database.exec('ALTER TABLE agent_executions ADD COLUMN development_standard_id TEXT')
+  if (!execColumns.includes('development_standard_version')) database.exec('ALTER TABLE agent_executions ADD COLUMN development_standard_version TEXT')
+  if (!execColumns.includes('development_standard_hash')) database.exec('ALTER TABLE agent_executions ADD COLUMN development_standard_hash TEXT')
   if (!execColumns.includes('pilot_command_id')) database.exec('ALTER TABLE agent_executions ADD COLUMN pilot_command_id TEXT')
   // 活动 Pilot grant 必须保存用户确认的冻结指纹；旧测试/历史行保持 NULL，不能用于新受控命令。
   const pilotGrantColumns = readColumnNames(database, 'pilot_runtime_grants')
@@ -1620,6 +1626,9 @@ function migrate(database: SqliteCompat): void {
     database.exec(`ALTER TABLE projects ADD COLUMN sort_order REAL NOT NULL DEFAULT 0`)
     database.exec(`UPDATE projects SET sort_order = -created_at WHERE sort_order = 0`)
   }
+  if (!projectColumns.includes('archived_at')) {
+    database.exec(`ALTER TABLE projects ADD COLUMN archived_at INTEGER`)
+  }
   // AI 员工执行 token 配额（可选，NULL = 不限）
   if (!columns.includes('token_budget')) {
     database.exec(`ALTER TABLE tasks ADD COLUMN token_budget INTEGER`)
@@ -1757,7 +1766,8 @@ function seedTaskStatusesForProject(database: SqliteCompat, projectId: string): 
 
 type ProjectRow = {
   id: string; title: string; description: string; status: string;
-  archived_at: number | null; created_at: number; updated_at: number;
+  archived_at: number | null;
+  created_at: number; updated_at: number;
   /** 项目卡片手动排序（REAL，升序即展示顺序；未排序时为 -created_at，最新在前） */
   sort_order: number;
 }
@@ -1812,6 +1822,7 @@ function rowToProject(row: ProjectRow): Project {
     archivedAt: row.archived_at ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    ...(row.archived_at === null || row.archived_at === undefined ? {} : { archivedAt: row.archived_at }),
     sortOrder: row.sort_order,
   }
 }
@@ -1884,9 +1895,9 @@ export function createProject(input: CreateProjectInput): Project {
   return rowToProject(row)
 }
 
-export function listProjects(): Project[] {
+export function listProjects(includeArchived = true): Project[] {
   const database = getProjectDb()
-  const rows = database.prepare(`SELECT * FROM projects ORDER BY sort_order ASC, created_at DESC`).all() as ProjectRow[]
+  const rows = database.prepare(`SELECT * FROM projects ${includeArchived ? '' : 'WHERE archived_at IS NULL'} ORDER BY sort_order ASC, created_at DESC`).all() as ProjectRow[]
   return rows.map(rowToProject)
 }
 
@@ -1900,16 +1911,19 @@ export function updateProject(id: string, updates: Partial<Omit<Project, 'id' | 
   const database = getProjectDb()
   const existing = database.prepare(`SELECT * FROM projects WHERE id = ?`).get(id) as ProjectRow | undefined
   if (!existing) return null
+  if (updates.archivedAt !== undefined && updates.archivedAt !== null
+    && (!Number.isSafeInteger(updates.archivedAt) || updates.archivedAt <= 0)) throw new Error('项目归档时间必须是有效时间戳或null')
   const next: ProjectRow = {
     ...existing,
     title: updates.title ?? existing.title,
     description: updates.description ?? existing.description,
     status: updates.status ?? existing.status,
+    archived_at: updates.archivedAt === undefined ? existing.archived_at : updates.archivedAt,
     updated_at: now(),
   }
   database.prepare(
-    `UPDATE projects SET title = ?, description = ?, status = ?, updated_at = ? WHERE id = ?`
-  ).run(next.title, next.description, next.status, next.updated_at, id)
+    `UPDATE projects SET title = ?, description = ?, status = ?, archived_at = ?, updated_at = ? WHERE id = ?`
+  ).run(next.title, next.description, next.status, next.archived_at, next.updated_at, id)
   return rowToProject(next)
 }
 
@@ -1950,7 +1964,7 @@ export function restoreProject(id: string): Project | null {
 export function reorderProjects(orderedIds: string[]): boolean {
   const database = getProjectDb()
   const existing = new Set(
-    (database.prepare(`SELECT id FROM projects`).all() as Array<{ id: string }>).map((r) => r.id),
+    (database.prepare(`SELECT id FROM projects WHERE archived_at IS NULL`).all() as Array<{ id: string }>).map((r) => r.id),
   )
   // 入参必须与库内项目一一对应，否则视为过期顺序，整体拒绝
   if (orderedIds.length !== existing.size || orderedIds.some((id) => !existing.has(id))) {
@@ -3524,6 +3538,7 @@ type AgentExecutionRow = {
   output_files: string | null; risk_level: string | null; error: string | null;
   requested_permissions: string | null; last_heartbeat_at: number | null;
   capability_version_ids: string | null; capability_content_hash: string | null;
+  development_standard_id: string | null; development_standard_version: string | null; development_standard_hash: string | null;
   started_at: number; completed_at: number | null;
 }
 
@@ -3578,6 +3593,9 @@ function rowToAgentExecution(row: AgentExecutionRow): AgentExecution {
     lastHeartbeatAt: row.last_heartbeat_at ?? undefined,
     capabilityVersionIds: parseJsonArray(row.capability_version_ids),
     capabilityContentHash: row.capability_content_hash ?? undefined,
+    developmentStandardId: row.development_standard_id ?? undefined,
+    developmentStandardVersion: row.development_standard_version ?? undefined,
+    developmentStandardHash: row.development_standard_hash ?? undefined,
     startedAt: row.started_at,
     completedAt: row.completed_at ?? undefined,
   }
@@ -3712,8 +3730,8 @@ export function createAgentExecution(input: CreateAgentExecutionInput): AgentExe
   const now = input.startedAt ?? Date.now()
   database.prepare(
     `INSERT INTO agent_executions
-     (id, project_id, entity_type, entity_id, agent_id, session_id, executor, pilot_command_id, owner_command_id, status, prompt, result_summary, output_files, risk_level, error, requested_permissions, last_heartbeat_at, capability_version_ids, capability_content_hash, started_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', NULL, NULL, ?, NULL, ?, ?, ?, NULL)`
+     (id, project_id, entity_type, entity_id, agent_id, session_id, executor, pilot_command_id, owner_command_id, status, prompt, result_summary, output_files, risk_level, error, requested_permissions, last_heartbeat_at, capability_version_ids, capability_content_hash, development_standard_id, development_standard_version, development_standard_hash, started_at, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', NULL, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, NULL)`
   ).run(
     input.id,
     input.projectId,
@@ -3729,6 +3747,9 @@ export function createAgentExecution(input: CreateAgentExecutionInput): AgentExe
     JSON.stringify(input.requestedPermissions ?? []),
     JSON.stringify(input.capabilityVersionIds ?? []),
     input.capabilityContentHash ?? null,
+    input.developmentStandardId ?? null,
+    input.developmentStandardVersion ?? null,
+    input.developmentStandardHash ?? null,
     now,
   )
   return getAgentExecution(input.id)!
@@ -3759,7 +3780,8 @@ export function updateAgentExecution(id: string, patch: Partial<Omit<AgentExecut
   database.prepare(
     `UPDATE agent_executions SET
        session_id = ?, status = ?, result_summary = ?, output_files = ?, risk_level = ?, error = ?,
-       requested_permissions = ?, last_heartbeat_at = ?, completed_at = ?, prompt = ?, capability_version_ids = ?, capability_content_hash = ?
+       requested_permissions = ?, last_heartbeat_at = ?, completed_at = ?, prompt = ?, capability_version_ids = ?, capability_content_hash = ?,
+       development_standard_id = ?, development_standard_version = ?, development_standard_hash = ?
      WHERE id = ?`
   ).run(
     merged.sessionId,
@@ -3774,6 +3796,9 @@ export function updateAgentExecution(id: string, patch: Partial<Omit<AgentExecut
     merged.prompt,
     JSON.stringify(merged.capabilityVersionIds ?? []),
     merged.capabilityContentHash ?? null,
+    merged.developmentStandardId ?? null,
+    merged.developmentStandardVersion ?? null,
+    merged.developmentStandardHash ?? null,
     id,
   )
   return getAgentExecution(id)

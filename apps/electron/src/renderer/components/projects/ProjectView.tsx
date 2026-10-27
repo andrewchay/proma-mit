@@ -517,7 +517,7 @@ export function ProjectView(): React.ReactElement {
 
   const loadProjects = useCallback(async () => {
     try {
-      const data = await callProjectAPI<Project[]>('listProjects')
+      const data = await callProjectAPI<Project[]>('listProjects', true)
       setProjects(data)
     } catch (err) {
       console.error('加载项目失败:', err)
@@ -543,7 +543,7 @@ export function ProjectView(): React.ReactElement {
               navigateToOwner({ projectId, taskId, at: Date.now() })
             }}
           />
-          <OwnerConversationUpdates projects={projects} onOpen={(projectId, taskId) => navigateToOwner({ projectId, ...(taskId ? { taskId } : {}), at: Date.now() })} />
+          <OwnerConversationUpdates projects={projects.filter((project) => !project.archivedAt)} onOpen={(projectId, taskId) => navigateToOwner({ projectId, ...(taskId ? { taskId } : {}), at: Date.now() })} />
           <ProjectList
             projects={projects}
             isLoading={isLoading}
