@@ -247,7 +247,7 @@ export function saveOwnerRevalidationPolicy(
 /** 仅供Owner准备service使用；先持久证据再原子替换JSON，不能声称跨存储事务。 */
 export function saveOwnerPreparationPolicy(
   projectId: string, expectedRevision: number | null,
-  build: (nextRevision: number) => { input: PilotPolicyDraftInput; reference: OwnerExecutionPreparationReference },
+  build: (nextRevision: number, validateReplacementPlanFingerprint: (fingerprint: string) => void) => { input: PilotPolicyDraftInput; reference: OwnerExecutionPreparationReference },
 ): PilotPolicy {
   if (getProjectDb().isTransactionActive()) throw new Error('Owner暂停策略保存拒绝未提交外层事务')
   if (!getProject(projectId)) throw new Error('Owner项目不存在')
@@ -255,10 +255,19 @@ export function saveOwnerPreparationPolicy(
     assertOwnerExecutionBoundaryIdle(projectId)
     const index = readIndex(), previous = index.policies.find(item => item.projectId === projectId)
     if ((previous?.revision ?? null) !== expectedRevision) throw new Error('Owner策略已更新，请重新预览')
-    // v2存在时v1引用不可被重存覆盖；重新验证链只能经saveOwnerRevalidationPolicy前进。
-    if (previous?.ownerExecutionRevalidation) throw new Error('Owner策略已由v2重新验证接管，不能重存v1准备；请保留证据核查')
     const revision = (previous?.revision ?? 0) + 1
-    const { input, reference } = build(revision)
+    const oldRevalidation = previous?.ownerExecutionRevalidation
+    const validateReplacementPlanFingerprint = (replacementPlanFingerprint: string): void => {
+      if (!oldRevalidation) return
+      const old = oldRevalidation
+      if (!replacementPlanFingerprint || !/^[a-f0-9]{64}$/.test(replacementPlanFingerprint)) throw new Error('v2准备替换必须绑定已确认的新计划')
+      const row = getProjectDb().prepare('SELECT payload, integrity_hash FROM project_owner_execution_revalidations WHERE id=? AND project_id=?').get(old.id, projectId) as { payload: string; integrity_hash: string } | undefined
+      let record: { id?: string; projectId?: string; revision?: number; integrityHash?: string; source?: { planFingerprint?: string } } | undefined
+      try { record = row ? JSON.parse(row.payload) as typeof record : undefined } catch { throw new Error('旧v2证据损坏，不能替换准备引用') }
+      if (!row || row.integrity_hash !== old.integrityHash || record?.id !== old.id || record.projectId !== projectId || record.revision !== old.revision || record.integrityHash !== old.integrityHash || !record.source?.planFingerprint) throw new Error('旧v2证据引用不一致，不能替换准备引用')
+      if (record.source.planFingerprint === replacementPlanFingerprint) throw new Error('相同计划不能覆盖v2准备；请使用经确认的新计划')
+    }
+    const { input, reference } = build(revision, validateReplacementPlanFingerprint)
     const policy: PilotPolicy = { ...input, version: 1, projectId, revision, state: 'paused', ownerExecutionPreparation: reference, updatedAt: Date.now() }
     if (!validPolicy(policy)) throw new Error('Owner暂停准备策略无效')
     writeIndex({ version: 1, policies: [...index.policies.filter(item => item.projectId !== projectId), policy] })

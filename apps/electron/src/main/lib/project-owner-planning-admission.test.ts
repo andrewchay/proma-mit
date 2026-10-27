@@ -53,7 +53,7 @@ function outlet() {
   const f = prepared(); const run = running(f); const scope = source.resolveOwnerPlanningSession(run.sessionId)!
   const cwd = join(getConfigDir(), 'agent-workspaces', f.workspace.slug, run.sessionId); mkdirSync(cwd, { recursive: true })
   const actual = { runtime: 'ai-sdk' as const, cwd, modelId: 'model', permissionMode: 'safe' }
-  const body = JSON.stringify({ model: 'model', stream: true, max_tokens: 4096, messages: [{ role: 'system', content: scope.request.systemPrompt }, { role: 'user', content: scope.request.userPrompt }] })
+  const body = JSON.stringify({ model: 'model', stream: true, max_tokens: scope.link.maxOutputTokens, messages: [{ role: 'system', content: scope.request.systemPrompt }, { role: 'user', content: scope.request.userPrompt }] })
   let sends = 0
   const fake: typeof fetch = Object.assign(async () => { sends++; return new Response('fake') }, { preconnect: () => {} })
   const guarded = createControlledProviderFetch(run.sessionId, () => actual, fake)!
@@ -99,7 +99,7 @@ test('Given 真实AI SDK序列化+mock费用准入 When 三协议经过真实fin
       return new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''), { headers: { 'content-type': 'text/event-stream' } })
     }, { preconnect: () => {} })
     const fetchFn = createControlledProviderFetch(run.sessionId, () => ({ runtime: 'ai-sdk', cwd, modelId: 'model', permissionMode: 'safe' }), fake)!
-    const messages = await new AISDKRuntimeCore().runAgentTurn({ sessionId: run.sessionId, prompt: 'never sent', systemPrompt: 'never sent', modelId: 'model', provider, protocol: getAgentProviderProtocol(provider, 'ai-sdk'), apiKey: 'fake', baseUrl: f.channel.baseUrl, cwd, runtimeTools: [], activeSession: { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false }, maxTurns: 9, maxRetries: 9, ownerPlanningRequest: scope.request, fetchFn })
+    const messages = await new AISDKRuntimeCore().runAgentTurn({ sessionId: run.sessionId, prompt: 'never sent', systemPrompt: 'never sent', modelId: 'model', provider, protocol: getAgentProviderProtocol(provider, 'ai-sdk'), apiKey: 'fake', baseUrl: f.channel.baseUrl, cwd, runtimeTools: [], activeSession: { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false }, maxTurns: 9, maxRetries: 9, ownerPlanningRequest: { ...scope.request, maxOutputTokens: scope.link.maxOutputTokens }, fetchFn })
     expect(calls).toBe(1); expect(messages.at(-1)).toMatchObject({ result: 'ok', finish_reason: 'stop', usage: { input_tokens: 12, output_tokens: 4 } }); expect(admitted(run.executionId)).toBeDefined()
   }
 })
@@ -129,7 +129,7 @@ test('Given 真实本地transport返回307/308 When Owner发送 Then 只有原�
       const baseUrl = `http://127.0.0.1:${server.port}/v1`; const f = prepared('openai', baseUrl); const run = running(f); const scope = source.resolveOwnerPlanningSession(run.sessionId)!
       const cwd = join(getConfigDir(), 'agent-workspaces', f.workspace.slug, run.sessionId); mkdirSync(cwd, { recursive: true })
       const guarded = createControlledProviderFetch(run.sessionId, () => ({ runtime: 'ai-sdk', cwd, modelId: 'model', permissionMode: 'safe' }), globalThis.fetch)!
-      const init = { method: 'POST', headers: { authorization: 'Bearer fake' }, body: JSON.stringify({ model: 'model', stream: true, max_tokens: 4096, messages: [{ role: 'system', content: scope.request.systemPrompt }, { role: 'user', content: scope.request.userPrompt }] }) }
+      const init = { method: 'POST', headers: { authorization: 'Bearer fake' }, body: JSON.stringify({ model: 'model', stream: true, max_tokens: scope.link.maxOutputTokens, messages: [{ role: 'system', content: scope.request.systemPrompt }, { role: 'user', content: scope.request.userPrompt }] }) }
       await expect(guarded(`${baseUrl}/chat/completions`, init)).rejects.toThrow(); expect(first).toBe(1); expect(followed).toBe(0); expect(admitted(run.executionId)).toBeDefined()
       await expect(guarded(`${baseUrl}/chat/completions`, init)).rejects.toThrow('可能发送'); expect(first).toBe(1)
     } finally { server.stop(true) }

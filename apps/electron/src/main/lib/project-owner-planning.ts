@@ -2,7 +2,7 @@
  * AI Owner 规划输入边界：只产生简报/计划建议，不创建权威任务或执行授权。
  * 本模块无持久化与 Runtime 依赖；角色可用性须由调用方从权威目录提供。
  */
-import type { ProjectOwnerGoalBrief, ProjectOwnerPlanProposal, ProjectOwnerPlanStep } from '@gravitas/shared'
+import type { ProjectOwnerCodeFileMatch, ProjectOwnerDeliveryContext, ProjectOwnerDeliveryChangeAssessment, ProjectOwnerGoalBrief, ProjectOwnerPlanProposal, ProjectOwnerPlanStep } from '@gravitas/shared'
 export type { ProjectOwnerGoalBrief, ProjectOwnerPlanProposal, ProjectOwnerPlanStep } from '@gravitas/shared'
 
 function record(input: unknown, fields: readonly string[], label: string): Record<string, unknown> {
@@ -41,7 +41,10 @@ function texts(input: unknown, label: string, minItems = 0, maxItems = 32): stri
 
 /** 目标可以缺少标准/约束，留给 Owner 澄清或建议；不要求仓库和文件。 */
 export function prepareProjectOwnerGoalBrief(input: unknown): ProjectOwnerGoalBrief {
-  const value = record(input, ['projectId', 'taskId', 'goalVersion', 'objective', 'constraints', 'acceptanceCriteria'], '目标简报')
+  const value = record(input, ['projectId', 'taskId', 'goalVersion', 'objective', 'constraints', 'acceptanceCriteria', 'codeSourceAccess'], '目标简报')
+  const codeSourceAccess = value.codeSourceAccess === undefined ? 'none' : value.codeSourceAccess
+  if (codeSourceAccess !== 'none' && codeSourceAccess !== 'bound_workspace') throw new Error('代码资料授权选项无效')
+  if (value.taskId === undefined && codeSourceAccess !== 'none') throw new Error('项目目标不能启用任务仓库源码读取')
   return {
     projectId: text(value.projectId, 'projectId', 200),
     ...(value.taskId === undefined ? {} : { taskId: text(value.taskId, 'taskId', 200) }),
@@ -49,13 +52,26 @@ export function prepareProjectOwnerGoalBrief(input: unknown): ProjectOwnerGoalBr
     objective: text(value.objective, 'objective', 12000),
     constraints: texts(value.constraints === undefined ? [] : value.constraints, 'constraints'),
     acceptanceCriteria: texts(value.acceptanceCriteria === undefined ? [] : value.acceptanceCriteria, 'acceptanceCriteria'),
+    codeSourceAccess,
   }
 }
 
-function parseStep(input: unknown, roles: ReadonlySet<string>): ProjectOwnerPlanStep {
-  const value = record(input, ['key', 'title', 'outcome', 'acceptanceCriteria', 'dependencies', 'roleKey'], '计划步骤')
+function parseStep(input: unknown, roles: ReadonlySet<string>, codeFiles: readonly ProjectOwnerCodeFileMatch[]): ProjectOwnerPlanStep {
+  const value = record(input, ['key', 'title', 'outcome', 'acceptanceCriteria', 'dependencies', 'roleKey', 'sourceReferences'], '计划步骤')
   const roleKey = text(value.roleKey, 'roleKey', 200)
   if (!roles.has(roleKey)) throw new Error(`计划使用了不可用角色：${roleKey}`)
+  let sourceReferences: ProjectOwnerPlanStep['sourceReferences']
+  if (value.sourceReferences !== undefined) {
+    if (!Array.isArray(value.sourceReferences) || value.sourceReferences.length > 8) throw new Error('计划源码引用无效')
+    sourceReferences = value.sourceReferences.map(inputReference => {
+      const reference = record(inputReference, ['path', 'line', 'sha256'], '计划源码引用')
+      const path = text(reference.path, '源码路径', 1000), line = reference.line
+      const sha256 = text(reference.sha256, '源码摘要', 64)
+      const file = codeFiles.find(item => item.path === path && item.sha256 === sha256)
+      if (!file || !Number.isSafeInteger(line) || !file.excerpts.some(item => item.line === line)) throw new Error('计划源码引用不属于本次冻结检索结果')
+      return { path, line: line as number, sha256 }
+    })
+  }
   return {
     key: text(value.key, 'key', 200),
     title: text(value.title, 'title', 300),
@@ -63,6 +79,7 @@ function parseStep(input: unknown, roles: ReadonlySet<string>): ProjectOwnerPlan
     acceptanceCriteria: texts(value.acceptanceCriteria, 'acceptanceCriteria', 1),
     dependencies: texts(value.dependencies, 'dependencies'),
     roleKey,
+    ...(sourceReferences === undefined ? {} : { sourceReferences }),
   }
 }
 
@@ -96,8 +113,11 @@ export function parseProjectOwnerPlanProposal(
   input: unknown,
   goal: ProjectOwnerGoalBrief,
   availableRoleKeys: readonly string[],
+  codeFiles: readonly ProjectOwnerCodeFileMatch[] = [],
+  requireCodeReferences = false,
+  deliverySources: readonly ProjectOwnerDeliveryContext[] = [],
 ): ProjectOwnerPlanProposal {
-  const value = record(input, ['projectId', 'taskId', 'goalVersion', 'summary', 'assumptions', 'risks', 'steps'], '计划提案')
+  const value = record(input, ['projectId', 'taskId', 'goalVersion', 'summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment'], '计划提案')
   const projectId = text(value.projectId, 'projectId', 200)
   const taskId = value.taskId === undefined ? undefined : text(value.taskId, 'taskId', 200)
   const goalVersion = version(value.goalVersion)
@@ -108,8 +128,35 @@ export function parseProjectOwnerPlanProposal(
     throw new Error('steps 必须包含 1～32 个步骤')
   }
   const roles = new Set(availableRoleKeys)
-  const steps = value.steps.map((step) => parseStep(step, roles))
+  if (requireCodeReferences && goal.codeSourceAccess === 'bound_workspace' && !codeFiles.length) throw new Error('未检索到代码候选，必须请求澄清，不能提交代码计划')
+  const steps = value.steps.map((step) => parseStep(step, roles, codeFiles))
+  if (requireCodeReferences && codeFiles.length && !steps.some(step => (step.sourceReferences?.length ?? 0) > 0)) throw new Error('代码规划提案必须引用本次检索到的文件和行号')
   validateDependencies(steps)
+  let deliveryChangeAssessment: ProjectOwnerDeliveryChangeAssessment | undefined
+  if (deliverySources.length) {
+    const assessment = record(value.deliveryChangeAssessment, ['summary', 'commands'], '交付差异评估')
+    if (!Array.isArray(assessment.commands) || assessment.commands.length !== deliverySources.length) throw new Error('交付差异评估必须逐条覆盖反馈命令')
+    const expected = new Map(deliverySources.map(source => [source.commandId, source]))
+    const commands = assessment.commands.map((raw) => {
+      const command = record(raw, ['commandId', 'changes', 'authorizationImpact', 'authorizationRationale'], '命令差异')
+      const commandId = text(command.commandId, '差异命令ID', 128)
+      const source = expected.get(commandId)
+      if (!source || !Array.isArray(command.changes) || command.changes.length !== source.acceptanceCriteria.length) throw new Error('交付差异命令或冻结标准覆盖不匹配')
+      const changes = command.changes.map((rawChange) => {
+        const change = record(rawChange, ['criterion', 'disposition', 'proposedChange'], '标准差异')
+        if (change.disposition !== 'addressed' && change.disposition !== 'still_open' && change.disposition !== 'not_applicable') throw new Error('交付标准差异状态无效')
+        return { criterion: text(change.criterion, '冻结标准', 2000), disposition: change.disposition as 'addressed' | 'still_open' | 'not_applicable', proposedChange: text(change.proposedChange, '拟议改动') }
+      })
+      if (changes.some((change, index) => change.criterion !== source.acceptanceCriteria[index])) throw new Error('交付差异必须逐字逐项复写冻结标准')
+      if (command.authorizationImpact !== 'unchanged' && command.authorizationImpact !== 'additional_confirmation'
+        && command.authorizationImpact !== 'new_grant_required' && command.authorizationImpact !== 'cannot_determine') throw new Error('授权影响类型无效')
+      return { commandId, changes, authorizationImpact: command.authorizationImpact as ProjectOwnerDeliveryChangeAssessment['commands'][number]['authorizationImpact'], authorizationRationale: text(command.authorizationRationale, '授权影响说明') }
+    })
+    if (new Set(commands.map(command => command.commandId)).size !== expected.size) throw new Error('交付差异命令重复或遗漏')
+    deliveryChangeAssessment = { summary: text(assessment.summary, '交付差异摘要'), commands }
+  } else if (value.deliveryChangeAssessment !== undefined) {
+    throw new Error('没有命令绑定交付反馈时不得夹带交付差异评估')
+  }
   return {
     projectId,
     ...(taskId === undefined ? {} : { taskId }),
@@ -119,5 +166,6 @@ export function parseProjectOwnerPlanProposal(
     assumptions: texts(value.assumptions, 'assumptions'),
     risks: texts(value.risks, 'risks'),
     steps,
+    ...(deliveryChangeAssessment ? { deliveryChangeAssessment } : {}),
   }
 }

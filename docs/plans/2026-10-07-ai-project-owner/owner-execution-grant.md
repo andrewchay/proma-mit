@@ -67,3 +67,7 @@ Stage A授权发行契约（2026-10-09 18:35 GMT+8，Electron0.12.124/shared0.2.
 ### 2026-10-12 00:02 GMT+8：用户完成fetch前拒绝对账确认
 
 用户在修复后的隔离UI点击确认。隔离run数据库回读为command `released`、grant `paused`、实际费用记录0；command的历史reserved字段仍为500000微美元，但有效授权占额/次数聚合为0。原Runtime unknown标记已清空，独立不可变对账审计保存其哈希，并标注`legacy_operator_attested`、reason `legacy_zhipu_protocol_mapping_before_fetch`、零请求预留、Provider控制台核对为用户声明。此记录不是Provider账单或独立零费用证明；没有新Provider请求/重试，旧grant不恢复。此数据库属于AO-06 run `b8cb14a3-4376-483f-89f9-c6062848ecec`的隔离config，不是`~/.gravitas`全局数据库。
+
+## 2026-10-17 当前分支归档实现核对
+
+`feat/ai-project-owner` 的独有提交 `39752929` 基于较旧分叉快照；逐文件比较确认当前分支已经包含 `archived` 状态、过期 `needs_reconcile` grant 归档服务、两阶段预览/确认、SQLite 迁移与 scheduler 终态处理，并保留岗位预算列和 AO-07 字段。整笔 cherry-pick 会带入大量旧版删除/回退，因此未合入。归档没有固定产品 UI 入口；unknown 命令及费用占额继续保留，归档不代表结算或费用对账。

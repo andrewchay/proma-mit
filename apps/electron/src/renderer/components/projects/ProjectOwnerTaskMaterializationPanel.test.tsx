@@ -97,6 +97,7 @@ test('Given singleTask历史 When 展示 Then 精确Task/step/edge/hash、before
       planFingerprint: 'planhash',
       contextFingerprint: 'ctxhash',
       selectedStepKeys: ['s1'],
+      toolRecommendations: [],
       executor: { id: 'e', name: 'Executor', configurationHash: 'eh' },
       reviewer: { id: 'r', name: 'Reviewer', configurationHash: 'rh' },
       workspaceId: 'w',

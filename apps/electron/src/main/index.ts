@@ -17,7 +17,11 @@ import {
 export { getMainWindow } from './main-window'
 
 app.setName(APP_DISPLAY_NAME)
-if (process.env.GRAVITAS_PACKAGE_SMOKE === '1' && process.env.PROMA_TEST_CONFIG_DIR) {
+if (
+  process.env.PROMA_TEST_CONFIG_DIR
+  && (process.env.GRAVITAS_PACKAGE_SMOKE === '1' || process.env.PROMA_ALLOW_MULTI_INSTANCE === '1')
+) {
+  // 隔离多实例测试必须同时隔离 Electron 自身 userData，避免触碰默认用户配置。
   app.setPath('userData', join(process.env.PROMA_TEST_CONFIG_DIR, 'electron'))
 } else if (APP_IS_DEV) {
   // 必须在获取单实例锁之前设置，Stable 的原 userData 路径保持不变。

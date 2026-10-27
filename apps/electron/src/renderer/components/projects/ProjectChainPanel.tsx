@@ -14,6 +14,7 @@ import { TaskExecutionEvidence } from './TaskExecutionEvidence'
 import { ProjectCollaborationTasks } from './ProjectCollaborationTasks'
 import { ProjectChainOverview } from './ProjectChainOverview'
 import { ProjectFlowHealth } from './ProjectFlowHealth'
+import { canGuideDeliverableDraft, canLocalUserDraftDeliverable } from './project-chain-draft-eligibility'
 import {
   emptySourceRef,
   formatSourceRef,
@@ -212,6 +213,9 @@ export function ProjectChainPanel({
   const stateAtom = useMemo(() => atom<ChainPanelState>({ busy: false, error: '' }), [])
   const [state, setState] = useAtom(stateAtom)
   const { chain, busy } = state
+  const localUserDraftTasks = tasks.filter((task) =>
+    canLocalUserDraftDeliverable(task.assignee?.userId),
+  )
   const api = window.electronAPI.paa.project
   useEffect(() => {
     let active = true
@@ -261,6 +265,8 @@ export function ProjectChainPanel({
   }
   const decision = chain?.decisions.find((item) => item.id === state.decisionId)
   const draft = chain?.drafts.find((item) => item.id === state.draftId)
+  const canEditDraft = !draft || localUserDraftTasks.some((task) => task.id === draft.taskId)
+  const deliverableDecisions = chain?.decisions.filter((item) => canGuideDeliverableDraft(item.status)) ?? []
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -752,6 +758,21 @@ export function ProjectChainPanel({
               {tasks.length === 0 && (
                 <p className="mb-3 text-sm text-muted-foreground">请先在任务页创建协作任务。</p>
               )}
+              {tasks.length > 0 && localUserDraftTasks.length === 0 && (
+                <p className="mb-3 text-sm text-muted-foreground">
+                  当前操作身份是 local-user，只能为自己负责的任务创建或修订交付草案。AI 员工负责的任务须由该员工完成执行并提交交付记录；本机用户可在此查看和验收。
+                </p>
+              )}
+              {!canEditDraft && (
+                <p className="mb-3 text-sm text-muted-foreground">
+                  该交付版本属于 AI 员工负责的任务，本机用户不能代替任务负责人保存新版本。
+                </p>
+              )}
+              {deliverableDecisions.length === 0 && (
+                <p className="mb-3 text-sm text-muted-foreground">
+                  请先记录至少一条已拍板的项目决策，再关联交付物。Owner 计划内容确认不会自动生成项目决策。
+                </p>
+              )}
               <form
                 key={`draft-${state.draftId}-${state.draftFormVersion ?? 0}`}
                 className="space-y-3"
@@ -794,7 +815,7 @@ export function ProjectChainPanel({
                   className={fieldClass}
                 >
                   <option value="">选择关联任务</option>
-                  {tasks.map((task) => (
+                  {localUserDraftTasks.map((task) => (
                     <option key={task.id} value={task.id}>
                       {task.title} · 负责人 {task.assignee?.userId ?? '未指定'}
                     </option>
@@ -802,7 +823,7 @@ export function ProjectChainPanel({
                 </select>
                 <fieldset className="space-y-1 text-sm">
                   <legend>指导本次交付的决策（保存时绑定当前版本）</legend>
-                  {chain.decisions.map((item) => (
+                  {deliverableDecisions.map((item) => (
                     <label key={item.id} className="block">
                       <input
                         type="checkbox"
@@ -878,7 +899,10 @@ export function ProjectChainPanel({
                     className={fieldClass}
                   />
                 )}
-                <button disabled={busy || !tasks.length || !chain.decisions.length} className={buttonClass}>
+                <button
+                  disabled={busy || !localUserDraftTasks.length || !deliverableDecisions.length || !canEditDraft}
+                  className={buttonClass}
+                >
                   {draft ? '确认已复核并保存新版本' : '保存交付物'}
                 </button>
                 {draft && (

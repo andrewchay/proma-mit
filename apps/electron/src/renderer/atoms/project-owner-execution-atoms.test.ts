@@ -95,6 +95,9 @@ const plan: ProjectOwnerPlanDraft = {
   },
 }
 const view: OwnerExecutionPreparationView = {
+  workspaceRecommendation: { workspaceId: 'w', source: 'unique_project_workspace' },
+  executionConfigurationRecommendation: null,
+  executionConfigurationRecommendationState: 'none',
   revision: 0,
   policyRevision: null,
   preparation: null,
@@ -107,6 +110,7 @@ const view: OwnerExecutionPreparationView = {
       { id: 'r', name: 'r', executionProfile: 'controlled', workspaceIds: ['w'], channelId: 'c', modelId: 'm', runtime: 'ai-sdk' },
     ],
     workspaces: [{ id: 'w', name: '托管非Git' }],
+    workspaceCapabilities: [],
     knowledgeSources: [{ id: 'k', name: '来源' }],
   },
 }
@@ -182,6 +186,7 @@ function setup() {
     contextFingerprint: 'ctx',
     plan,
     selectedStepKeys: input.selectedStepKeys,
+    toolRecommendations: [],
     executor: { id: 'e', name: '执行', configurationHash: 'eh' },
     reviewer: { id: 'r', name: '评审', configurationHash: 'rh' },
     workspaceId: 'w',
@@ -238,6 +243,53 @@ test('Given controlled托管工作区 When 准备 Then 不附研发scope且知�
   expect(input?.knowledgeSourceIds).toEqual([])
   expect(input?.maxCostMicros).toBe(1000001)
   expect(canPreviewOwnerExecution(store.get, subject)).toBe(true)
+})
+test('Given 与Owner默认来源冲突 When 预览 Then 工作区和岗位配置分别确认且相关输入变化会清除确认', () => {
+  const { store } = setup()
+  const conflictingView: OwnerExecutionPreparationView = {
+    ...view,
+    workspaceRecommendation: { workspaceId: 'w', source: 'owner_binding' },
+    executionConfigurationRecommendation: { channelId: 'owner-channel', modelId: 'owner-model', runtime: 'ai-sdk', source: 'owner_binding' },
+    executionConfigurationRecommendationState: 'current',
+    choices: {
+      ...view.choices,
+      workspaces: [...view.choices.workspaces, { id: 'w2', name: '手动工作区' }],
+      employees: view.choices.employees.map((employee) => ({ ...employee, workspaceIds: ['w', 'w2'] })),
+    },
+  }
+  const entries = new Map(store.get(ownerExecutionEditorsAtom))
+  entries.set('["a",null]', { ...editor(store), view: conflictingView })
+  store.set(ownerExecutionEditorsAtom, entries)
+  store.set(editOwnerExecutionAtom, { subject, patch: { workspaceId: 'w2' } })
+  expect(ownerExecutionInput(store.get, subject)).toBeNull()
+  store.set(editOwnerExecutionAtom, { subject, patch: { acknowledgeOwnerWorkspaceOverride: true } })
+  expect(ownerExecutionInput(store.get, subject)).toBeNull()
+  store.set(editOwnerExecutionAtom, { subject, patch: { acknowledgeOwnerConfigurationOverride: true } })
+  const input = ownerExecutionInput(store.get, subject)
+  expect(input?.workspaceId).toBe('w2')
+  expect(input?.acknowledgeOwnerWorkspaceOverride).toBe(true)
+  expect(input?.acknowledgeOwnerConfigurationOverride).toBe(true)
+  store.set(editOwnerExecutionAtom, { subject, patch: { reviewerEmployeeId: 'e2' } })
+  expect(editor(store).acknowledgeOwnerConfigurationOverride).toBe(false)
+  expect(editor(store).acknowledgeOwnerWorkspaceOverride).toBe(false)
+})
+test('Given 已确认覆盖 When Owner来源快照变化并重读 Then 旧确认清除', async () => {
+  const { store, api } = setup()
+  store.set(editOwnerExecutionAtom, {
+    subject,
+    patch: { acknowledgeOwnerConfigurationOverride: true, acknowledgeOwnerWorkspaceOverride: true },
+  })
+  const changedView = {
+    ...view,
+    workspaceRecommendation: { workspaceId: 'w', source: 'owner_binding' as const },
+  }
+  store.set(ownerExecutionApiAtom, {
+    ...api,
+    getOwnerExecutionPreparation: async () => ({ ok: true, value: changedView }),
+  })
+  await store.set(loadOwnerExecutionAtom, subject)
+  expect(editor(store).acknowledgeOwnerConfigurationOverride).toBe(false)
+  expect(editor(store).acknowledgeOwnerWorkspaceOverride).toBe(false)
 })
 test('Given岗位预算开关默认关闭 When打开并填写单岗位上限 Then只发送已填写且不超过共享额的cap', () => {
   const { store } = setup()
@@ -570,4 +622,29 @@ test('Given 逆序勾选与修订空白 When IPC返回规范输入 Then 不因�
   await store.set(previewOwnerExecutionAtom, subject)
   expect(canSaveOwnerExecution(store.get, subject)).toBe(true)
   expect(editor(store).error).toBe('')
+})
+
+test('Given 保存已落盘但回包丢失 When 重读同一请求完整快照 Then 恢复保存状态而不新增修订', async () => {
+  const { store, api, record } = setup()
+  store.set(ownerExecutionApiAtom, { ...api, saveOwnerExecutionPreparation: async () => { throw new Error('回包丢失') }, getOwnerExecutionPreparation: async () => ({ ok: true, value: { ...view, preparation: record, revision: record.revision, policyRevision: record.policyRevision, status: 'current' } }) })
+  await store.set(previewOwnerExecutionAtom, subject)
+  await store.set(saveOwnerExecutionAtom, subject)
+  expect(editor(store).pendingSaveInput).not.toBeNull()
+  expect(editor(store).dirty).toBe(true)
+  await store.set(loadOwnerExecutionAtom, subject)
+  expect(editor(store).dirty).toBe(false)
+  expect(editor(store).pendingSaveInput).toBeNull()
+  expect(editor(store).error).toBe('')
+  expect(editor(store).view?.preparation?.id).toBe(record.id)
+})
+test('Given 保存回包丢失后继续编辑 When 重读旧快照 Then 不把新输入误认保存成功', async () => {
+  const { store, api, record } = setup()
+  store.set(ownerExecutionApiAtom, { ...api, saveOwnerExecutionPreparation: async () => { throw new Error('回包丢失') }, getOwnerExecutionPreparation: async () => ({ ok: true, value: { ...view, preparation: record, revision: record.revision, policyRevision: record.policyRevision, status: 'current' } }) })
+  await store.set(previewOwnerExecutionAtom, subject)
+  await store.set(saveOwnerExecutionAtom, subject)
+  store.set(editOwnerExecutionAtom, { subject, patch: { maxRunsText: '3' } })
+  await store.set(loadOwnerExecutionAtom, subject)
+  expect(editor(store).dirty).toBe(true)
+  expect(editor(store).maxRunsText).toBe('3')
+  expect(editor(store).pendingSaveInput).toBeNull()
 })

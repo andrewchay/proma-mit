@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, mock, test } from 'bun:test'
+import { afterAll, beforeAll, expect, mock, spyOn, test } from 'bun:test'
 import { createHash, randomUUID } from 'node:crypto'
 import type { ProviderType } from '@gravitas/shared'
 import { execFileSync } from 'node:child_process'
@@ -6,6 +6,7 @@ import { createServer } from 'node:http'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { buildSync } from 'esbuild'
 import { buildElectronMock } from './testing/electron-mock'
 const directory = mkdtempSync(join(tmpdir(), 'owner-stage-b-')), previous = process.env.PROMA_TEST_CONFIG_DIR
 process.env.PROMA_TEST_CONFIG_DIR = directory
@@ -34,21 +35,25 @@ const preflightReconciliation = await import('./project-owner-execution-prefligh
 const requestEvidence = await import('./project-pilot-request-evidence')
 const stopModule = await import('./project-owner-execution-stop')
 const startModule = await import('./project-owner-execution-start')
+const actionApproval = await import('./project-owner-action-approval')
+const { handlePermissionResponse } = await import('./agent-permission-response')
+const { AgentPermissionService } = await import('./agent-permission-service')
 const runnerRegistry = await import('./agent-headless-runner-registry')
 const evidence = await import('./project-owner-execution-preparation-evidence')
 const scheduler = await import('./project-owner-autonomous-scheduler')
 let policy: typeof import('./project-pilot-policy')
 beforeAll(async () => { await store.initProjectDb(); policy = await import('./project-pilot-policy') })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
-function fixture(modelId = 'glm-5.3-flash', dispatchMode: 'manual' | 'autonomous' = 'manual', withDependentTask = false, baseUrl = 'https://example.invalid', splitRoleEmployee = false, provider: ProviderType = 'openai', maxRework = 0, maxRuns?: number, maxCostMicros = 1000000, roleBudgetCapMicros?: number, independentTasks = false) {
+function fixture(modelId = 'glm-5.3-flash', dispatchMode: 'manual' | 'autonomous' = 'manual', withDependentTask = false, baseUrl = 'https://example.invalid', splitRoleEmployee = false, provider: ProviderType = 'openai', maxRework = 0, maxRuns?: number, maxCostMicros = 1000000, roleBudgetCapMicros?: number, independentTasks = false, taskScopedGoal = false) {
   const project = store.createProject({ title: 'StageB fixture', description: '' })
+  const goalTask = taskScopedGoal ? store.createTask(project.id, { title: '单任务目标主体', description: '目标来源任务' }) : undefined
   const workspace = createAgentWorkspace(`owner-stageb-${randomUUID()}`)
   bindWorkspaceToProject(project.id, workspace.id)
   const channel = createChannel({ name: 'fake', provider, baseUrl, apiKey: 'fake', enabled: true, models: [{ id: modelId, name: modelId, enabled: true }] })
   const employee = (name: string) => employees.createAgentEmployee({ name, role: '研究', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId, workspaceIds: [workspace.id] })
   const executor = employee('执行者'), secondExecutor = splitRoleEmployee ? employee('第二岗位执行者') : executor, reviewer = employee('技术评审')
-  saveProjectOwnerGoalDraft(project.id, 0, { objective: '目标' })
-  const context = plans.getProjectOwnerPlanningContext(project.id)
+  saveProjectOwnerGoalDraft(project.id, 0, { objective: '目标' }, goalTask?.id)
+  const context = plans.getProjectOwnerPlanningContext(project.id, goalTask?.id)
   const orderedRoleKeys = context.sources.roles.map((role) => role.key).sort()
   const firstRoleKey = orderedRoleKeys[0]!
   const secondRoleKey = splitRoleEmployee ? orderedRoleKeys[1]! : firstRoleKey
@@ -56,9 +61,9 @@ function fixture(modelId = 'glm-5.3-flash', dispatchMode: 'manual' | 'autonomous
     { key: 'brief', title: '研究', outcome: '材料', acceptanceCriteria: ['范围'], dependencies: [] as string[], roleKey: firstRoleKey },
     ...(withDependentTask ? [{ key: 'delivery', title: '交付', outcome: '提交', acceptanceCriteria: ['完成'], dependencies: splitRoleEmployee || independentTasks ? [] : ['brief'], roleKey: secondRoleKey }] : []),
   ]
-  plans.saveProjectOwnerPlanDraft(project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '计划', assumptions: [], risks: [], steps, changeReason: '建立' })
-  plans.confirmProjectOwnerPlanDraft(project.id, 1, 1)
-  const subject = { projectId: project.id }
+  plans.saveProjectOwnerPlanDraft(project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '计划', assumptions: [], risks: [], steps, changeReason: '建立' }, goalTask?.id)
+  plans.confirmProjectOwnerPlanDraft(project.id, 1, 1, goalTask?.id)
+  const subject = { projectId: project.id, ...(goalTask ? { taskId: goalTask.id } : {}) }
   const preparationInput = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: steps.map(step => step.key), executionKind: 'controlled' as const, executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id, roleAssignments: [...new Set(steps.map(step => step.roleKey))].map(roleKey => ({ roleKey, employeeId: splitRoleEmployee && roleKey === secondRoleKey ? secondExecutor.id : executor.id })), ...(roleBudgetCapMicros === undefined ? {} : { roleBudgetCaps: [{ roleKey: firstRoleKey, maxCostMicros: roleBudgetCapMicros }] }), workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros, maxRuns: maxRuns ?? steps.length * (2 + maxRework * 2), maxRework, expiresAt: Date.now() + 3600000, changeReason: '准备' }
   const pv = prep.previewOwnerExecutionPreparation(subject, preparationInput), preparation = prep.saveOwnerExecutionPreparation(subject, preparationInput, pv.previewFingerprint)
   const materialInput = { requestId: randomUUID(), expectedMaterializationRevision: 0, expectedPreparationId: preparation.id, expectedPreparationRevision: preparation.revision, expectedPreparationHash: preparation.integrityHash, expectedPolicyRevision: preparation.policyRevision }
@@ -68,7 +73,7 @@ function fixture(modelId = 'glm-5.3-flash', dispatchMode: 'manual' | 'autonomous
   const issueInput = { requestId: randomUUID(), expectedRevalidationRevision: record.revision, expectedPolicyRevision: policy.getPilotPolicy(project.id)!.revision, dispatchMode }
   const ip = grantIssue.previewOwnerExecutionGrantIssue(subject, issueInput), grant = grantIssue.confirmOwnerExecutionGrantIssue(subject, { input: issueInput, preview: ip, confirmedFingerprint: ip.approvalFingerprint })
   const tasks = store.listTasks(project.id), task = tasks[0]!
-  return { project, subject, record, batch, grant, task, tasks, workspace, channel, executor, secondExecutor, reviewer }
+  return { project, subject, record, batch, grant, task, tasks, workspace, channel, executor, secondExecutor, reviewer, goalTask }
 }
 function ackFixture(f: ReturnType<typeof fixture>) {
   const input = { grantId: f.grant.grantId, taskId: f.task.id, role: 'executor' as const, reworkOrdinal: 0, expectedRevalidationRevision: f.record.revision }
@@ -76,6 +81,115 @@ function ackFixture(f: ReturnType<typeof fixture>) {
   const ack = { input, preview, confirmedFingerprint: preview.ackFingerprint, acknowledgeModelCosts: true }
   return { input, preview, ack }
 }
+
+test('Given真实Owner命令进入运行态 When审批精确工具动作 Then仅保存参数指纹且拒绝可审计', () => {
+  const f = fixture()
+  const { input, ack } = ackFixture(f)
+  const commandId = randomUUID(), executionId = randomUUID(), sessionId = randomUUID()
+  command.reserveAndQueueOwnerCommand(f.subject, { commandId, grantId: input.grantId, taskId: input.taskId, role: input.role, reworkOrdinal: 0, expectedRevalidationRevision: input.expectedRevalidationRevision, idempotencyKey: randomUUID() }, ack, { executionId })
+  store.getProjectDb().prepare("UPDATE project_owner_execution_commands SET state='running' WHERE id=?").run(commandId)
+  store.getProjectDb().prepare("UPDATE agent_executions SET status='running',session_id=? WHERE id=?").run(sessionId, executionId)
+  const request = { requestId: randomUUID(), sessionId, toolName: 'Write', toolInput: { file_path: 'result.md', content: 'exact approved proposal' }, description: 'write result', dangerLevel: 'normal' as const, requiresPerActionApproval: true }
+  actionApproval.recordOwnerActionApprovalRequest({ commandId, executionId, sessionId }, request)
+  expect(actionApproval.hasApprovedOwnerAction(sessionId, request)).toBe(false)
+  expect(() => actionApproval.decideOwnerActionApproval({ ...request, toolInput: { ...request.toolInput, content: 'changed after preview' } }, 'deny', { commandId, executionId, sessionId })).toThrow('记录不匹配')
+  actionApproval.decideOwnerActionApproval(request, 'deny', { commandId, executionId, sessionId })
+  const row = store.getProjectDb().prepare('SELECT project_id,command_id,execution_id,session_id,tool_name,action_fingerprint,status,decided_by,decision_reason FROM project_owner_action_approvals WHERE request_id=?').get(request.requestId) as Record<string, unknown>
+  expect(row).toMatchObject({ project_id: f.project.id, command_id: commandId, execution_id: executionId, session_id: sessionId, tool_name: 'Write', status: 'denied', decided_by: 'local-user', decision_reason: 'user_rejected' })
+  expect(row.action_fingerprint).toMatch(/^[a-f0-9]{64}$/)
+  expect(JSON.stringify(row)).not.toContain('exact approved proposal')
+  expect(() => actionApproval.decideOwnerActionApproval(request, 'allow', { commandId, executionId, sessionId })).toThrow('已处理')
+  expect(command.listOwnerExecutionCommands(f.subject).find(item => item.commandId === commandId)?.actionApprovals).toMatchObject([
+    { requestId: request.requestId, toolName: 'Write', status: 'denied', decidedBy: 'local-user', reason: 'user_rejected' },
+  ])
+  expect(JSON.stringify(command.listOwnerExecutionCommands(f.subject).find(item => item.commandId === commandId)?.actionApprovals)).not.toContain('exact approved proposal')
+
+  const allowedRequest = { ...request, requestId: randomUUID(), toolName: 'SendExternalMessage' }
+  actionApproval.recordOwnerActionApprovalRequest({ commandId, executionId, sessionId }, allowedRequest)
+  actionApproval.decideOwnerActionApproval(allowedRequest, 'allow', { commandId, executionId, sessionId })
+  expect(actionApproval.hasApprovedOwnerAction(sessionId, allowedRequest)).toBe(true)
+  expect(actionApproval.hasApprovedOwnerAction(sessionId, { ...allowedRequest, toolInput: { content: 'different action' } })).toBe(false)
+  expect(store.getProjectDb().prepare('SELECT status,decided_by,decision_reason FROM project_owner_action_approvals WHERE request_id=?').get(allowedRequest.requestId)).toEqual({ status: 'allowed', decided_by: 'local-user', decision_reason: null })
+  expect(command.listOwnerExecutionCommands(f.subject).find(item => item.commandId === commandId)?.actionApprovals).toMatchObject([
+    { requestId: request.requestId, status: 'denied' }, { requestId: allowedRequest.requestId, toolName: 'SendExternalMessage', status: 'allowed' },
+  ])
+
+  const staleRequest = { ...request, requestId: randomUUID() }
+  actionApproval.recordOwnerActionApprovalRequest({ commandId, executionId, sessionId }, staleRequest)
+  store.getProjectDb().prepare("UPDATE project_owner_execution_grants SET state='paused' WHERE id=?").run(f.grant.grantId)
+  expect(actionApproval.hasApprovedOwnerAction(sessionId, allowedRequest)).toBe(false)
+  expect(() => actionApproval.decideOwnerActionApproval(staleRequest, 'allow', { commandId, executionId, sessionId })).toThrow('来源已失效')
+  expect(store.getProjectDb().prepare('SELECT status,decision_reason FROM project_owner_action_approvals WHERE request_id=?').get(staleRequest.requestId)).toEqual({ status: 'invalidated', decision_reason: 'source_changed' })
+  expect(command.listOwnerExecutionCommands(f.subject).find(item => item.commandId === commandId)?.actionApprovals?.find(item => item.requestId === staleRequest.requestId))
+    .toMatchObject({ status: 'invalidated', reason: 'source_changed' })
+})
+
+test('Given真实Owner命令经权限服务请求敏感动作 WhenUI裁决 Then逐次响应进入同库审计且拒绝零执行', async () => {
+  const f = fixture()
+  const { input, ack } = ackFixture(f)
+  const commandId = randomUUID(), executionId = randomUUID(), sessionId = randomUUID()
+  command.reserveAndQueueOwnerCommand(f.subject, { commandId, grantId: input.grantId, taskId: input.taskId, role: input.role, reworkOrdinal: 0, expectedRevalidationRevision: input.expectedRevalidationRevision, idempotencyKey: randomUUID() }, ack, { executionId })
+  store.getProjectDb().prepare("UPDATE project_owner_execution_commands SET state='running' WHERE id=?").run(commandId)
+  store.getProjectDb().prepare("UPDATE agent_executions SET status='running',session_id=? WHERE id=?").run(sessionId, executionId)
+
+  const requests: import('@gravitas/shared').PermissionRequest[] = []
+  const permissionService = new AgentPermissionService()
+  const identity = { commandId, executionId, sessionId }
+  const canUseTool = permissionService.createCanUseTool(
+    sessionId,
+    request => requests.push(request),
+    undefined,
+    undefined,
+    'safe',
+    {
+      onRequest: request => actionApproval.recordOwnerActionApprovalRequest(identity, request),
+      onDecision: (request, behavior) => actionApproval.decideOwnerActionApproval(request, behavior, identity),
+      onCancel: request => actionApproval.invalidateOwnerActionApproval(request.requestId),
+    },
+  )
+  let toolExecutions = 0
+  const windowEvents: Array<{ sessionId: string; payload: import('@gravitas/shared').AgentStreamPayload }> = []
+  const sessionEvents: Array<{ sessionId: string; payload: import('@gravitas/shared').AgentStreamPayload }> = []
+  const responseDependencies = {
+    respondToPermission: (requestId: string, behavior: 'allow' | 'deny', alwaysAllow: boolean) => permissionService.respondToPermission(requestId, behavior, alwaysAllow),
+    sendResolvedEvent: (targetSessionId: string, payload: import('@gravitas/shared').AgentStreamPayload) => windowEvents.push({ sessionId: targetSessionId, payload }),
+    emitResolvedEvent: (targetSessionId: string, payload: import('@gravitas/shared').AgentStreamPayload) => sessionEvents.push({ sessionId: targetSessionId, payload }),
+  }
+  const expectedResolution = (requestId: string, behavior: 'allow' | 'deny') => ({
+    sessionId,
+    payload: { kind: 'proma_event' as const, event: { type: 'permission_resolved' as const, requestId, behavior } },
+  })
+  const invokeSyntheticTool = async (inputValue: Record<string, unknown>) => {
+    const result = await canUseTool('Write', inputValue, { signal: new AbortController().signal, toolUseID: randomUUID() })
+    if (result.behavior === 'allow') toolExecutions += 1
+    return result
+  }
+
+  const deniedInput = { file_path: '/tmp/owner-denied.md', content: 'synthetic denied content' }
+  const deniedResultPromise = invokeSyntheticTool(deniedInput)
+  const deniedRequest = requests[0]!
+  expect(deniedRequest).toMatchObject({ requiresPerActionApproval: true, sessionId, toolName: 'Write', toolInput: deniedInput })
+  expect(store.getProjectDb().prepare('SELECT status FROM project_owner_action_approvals WHERE request_id=?').get(deniedRequest.requestId)).toEqual({ status: 'pending' })
+  expect(() => handlePermissionResponse({ requestId: deniedRequest.requestId, behavior: 'allow', alwaysAllow: true }, responseDependencies)).toThrow('只能逐次确认')
+  expect(windowEvents).toHaveLength(0)
+  expect(sessionEvents).toHaveLength(0)
+  handlePermissionResponse({ requestId: deniedRequest.requestId, behavior: 'deny', alwaysAllow: false }, responseDependencies)
+  expect(await deniedResultPromise).toMatchObject({ behavior: 'deny' })
+  expect(store.getProjectDb().prepare('SELECT status,decided_by,decision_reason FROM project_owner_action_approvals WHERE request_id=?').get(deniedRequest.requestId)).toEqual({ status: 'denied', decided_by: 'local-user', decision_reason: 'user_rejected' })
+  expect(toolExecutions).toBe(0)
+  expect(windowEvents).toEqual([expectedResolution(deniedRequest.requestId, 'deny')])
+  expect(sessionEvents).toEqual([expectedResolution(deniedRequest.requestId, 'deny')])
+
+  const allowedInput = { file_path: '/tmp/owner-allowed.md', content: 'synthetic approved content' }
+  const allowedResultPromise = invokeSyntheticTool(allowedInput)
+  const allowedRequest = requests[1]!
+  handlePermissionResponse({ requestId: allowedRequest.requestId, behavior: 'allow', alwaysAllow: false }, responseDependencies)
+  expect(await allowedResultPromise).toMatchObject({ behavior: 'allow', updatedInput: allowedInput })
+  expect(store.getProjectDb().prepare('SELECT status,decided_by,decision_reason FROM project_owner_action_approvals WHERE request_id=?').get(allowedRequest.requestId)).toEqual({ status: 'allowed', decided_by: 'local-user', decision_reason: null })
+  expect(toolExecutions).toBe(1)
+  expect(windowEvents.at(-1)).toEqual(expectedResolution(allowedRequest.requestId, 'allow'))
+  expect(sessionEvents.at(-1)).toEqual(windowEvents.at(-1))
+})
 
 test('Given 两个稳定roleKey分别绑定不同员工 When材料化、重验证、发行并排队 Then命令及用户预览冻结同一岗位员工', () => {
   const f = fixture('glm-5.3-flash', 'manual', true, 'https://example.invalid', true)
@@ -97,6 +211,37 @@ test('Given 两个稳定roleKey分别绑定不同员工 When材料化、重验�
   employees.updateAgentEmployee(f.secondExecutor.id, { roleTemplateId: 'changed-template' })
   expect(revalidation.getOwnerExecutionRevalidation(f.subject).status).toBe('stale')
   expect(() => command.previewOwnerExecutionCommandAck(f.subject, input)).toThrow('非current')
+})
+
+test('Given Owner命令与已冻结步骤 When读取审阅材料 Then仅返回绑定execution回报和权威验收标准', () => {
+  const f = fixture()
+  const { input, ack } = ackFixture(f)
+  const commandId = randomUUID(), executionId = randomUUID()
+  command.reserveAndQueueOwnerCommand(f.subject, { commandId, grantId: input.grantId, taskId: input.taskId, role: input.role, reworkOrdinal: 0, expectedRevalidationRevision: input.expectedRevalidationRevision, idempotencyKey: randomUUID() }, ack, { executionId })
+  const expectedCriteria = f.batch.links.find(link => link.taskId === f.task.id)!.projection.acceptanceCriteria
+  store.getProjectDb().prepare('UPDATE agent_executions SET status=?, result_summary=? WHERE id=?').run('completed', '执行回报：已完成目标步骤', executionId)
+  const view = command.listOwnerExecutionCommands(f.subject).find(item => item.commandId === commandId)!
+  expect(view).toMatchObject({ acceptanceCriteria: expectedCriteria, executionId, executionStatus: 'completed', executionResultSummary: '执行回报：已完成目标步骤',
+    grantAuthorization: { grantState: 'active', dispatchMode: 'manual', maxCostMicros: 1_000_000, maxRuns: 2, maxRework: 0 } })
+  store.getProjectDb().prepare('UPDATE agent_executions SET owner_command_id=? WHERE id=?').run(randomUUID(), executionId)
+  const mismatched = command.listOwnerExecutionCommands(f.subject).find(item => item.commandId === commandId)!
+  expect(mismatched.acceptanceCriteria).toEqual(expectedCriteria)
+  expect(mismatched.executionResultSummary).toBeUndefined()
+  expect(mismatched.state).not.toBe('settled')
+  store.getProjectDb().prepare('UPDATE agent_executions SET owner_command_id=? WHERE id=?').run(commandId, executionId)
+  saveProjectOwnerGoalDraft(f.subject.projectId, 0, { objective: '补充交付验证', constraints: [`Owner交付修改意见（命令 ${commandId}）：补充边界验证`] }, f.task.id)
+  const context = plans.getProjectOwnerPlanningContext(f.subject.projectId, f.task.id)
+  expect(context.sources.delivery?.[0]).toMatchObject({ commandId, grantId: input.grantId, acceptanceCriteria: expectedCriteria,
+    priorAuthorization: { maxCostMicros: 1_000_000, maxRuns: 2, dispatchMode: 'manual' }, executionResultSummary: '执行回报：已完成目标步骤' })
+  const assessment = { summary: '为未覆盖边界补充验证', commands: [{ commandId,
+    changes: expectedCriteria.map(criterion => ({ criterion, disposition: 'addressed' as const, proposedChange: '新增边界验证步骤' })),
+    authorizationImpact: 'unchanged' as const, authorizationRationale: '只增加本地验证，不扩大原执行范围' }] }
+  const saved = plans.saveProjectOwnerPlanDraft(f.subject.projectId, context.goal.revision, 0, {
+    summary: '补充交付边界验证', assumptions: [], risks: [], changeReason: '回应具体交付修改意见',
+    steps: [{ key: 'verify', title: '补充边界验证', outcome: '覆盖反馈中的边界', acceptanceCriteria: ['验证记录可审阅'], dependencies: [], roleKey: context.sources.roles[0]!.key }],
+    expectedContextFingerprint: context.fingerprint, deliveryChangeAssessment: assessment,
+  }, f.task.id)
+  expect(saved.proposal.deliveryChangeAssessment).toEqual(assessment)
 })
 
 test('Given Owner命令由真实AI SDK发起 When经loopback OpenAI SSE Then收到文本并逐请求结算', async () => {
@@ -136,6 +281,8 @@ test('Given Owner命令由真实AI SDK发起 When经loopback OpenAI SSE Then收�
   startModule.admitOwnerGateForClaim(executionId, sessionId)
   startModule.recordOwnerCommandHandoffIntent(executionId, commandId, sessionId)
   const { AISDKAgentAdapter } = await import('./adapters/ai-sdk-agent-adapter')
+  const { AISDKRuntimeCore } = await import('./agent-runtime/ai-sdk-runtime-core')
+  const retrySpy = spyOn(AISDKRuntimeCore.prototype, 'runStreamTextWithRetry')
   const adapter = new AISDKAgentAdapter()
   const messages: import('@gravitas/shared').SDKMessage[] = []
   const runtimeEvents: import('@gravitas/shared').AgentEvent[] = []
@@ -143,15 +290,21 @@ test('Given Owner命令由真实AI SDK发起 When经loopback OpenAI SSE Then收�
     for await (const message of adapter.query({
       sessionId, prompt: '仅验证本机 fake 文本响应', provider: 'openai', apiKey: decryptApiKey(f.channel.id),
       baseUrl: f.channel.baseUrl, model: 'glm-5.3-flash', cwd: getAgentWorkspaceCwd(f.workspace, sessionId),
-      agentRuntime: 'ai-sdk', permissionMode: 'safe', maxTurns: 1, maxRetries: 0,
+      agentRuntime: 'ai-sdk', permissionMode: 'safe', maxTurns: 1, maxRetries: 3,
       onAgentEvent: event => runtimeEvents.push(event),
     })) messages.push(message)
+    expect(retrySpy.mock.calls[0]?.[0].maxRetries).toBe(0)
+    expect(retrySpy.mock.calls[0]?.[0].sdkMaxRetries).toBe(0)
   } finally {
+    retrySpy.mockRestore()
     adapter.dispose()
     await new Promise<void>(resolve => server.close(() => resolve()))
   }
   expect(transportCalls).toBe(1)
   expect(requestBodies[0]).toMatchObject({ model: 'glm-5.3-flash', stream: true, stream_options: { include_usage: true } })
+  const exposedTools = requestBodies[0]?.tools as Array<{ function: { name: string } }>
+  expect(exposedTools.map(tool => tool.function.name).sort()).toEqual(['Edit', 'ReadKnowledgeSource', 'SearchKnowledge', 'Write'])
+
   expect([requestBodies[0]?.max_tokens, requestBodies[0]?.max_completion_tokens].some(value => typeof value === 'number' && value > 0)).toBe(true)
   expect(messages.some(message => message.type === 'assistant' && JSON.stringify(message).includes('loopback fake result'))).toBe(true)
   expect(store.getProjectDb().prepare('SELECT state, settled_cost_micros FROM project_owner_execution_request_reservations WHERE command_id=?').get(commandId)).toMatchObject({ state: 'settled', settled_cost_micros: expect.any(Number) })
@@ -166,6 +319,27 @@ test('Given Zhipu OpenAI兼容渠道与活动Owner命令 When解析审核输出�
 
   expect(requestExit.resolveOwnerExecutionMaxOutputTokens(sessionId, 'glm-5.3-flash', 'zhipu')).toBe(4096)
   expect(store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_request_reservations WHERE command_id=?').get(commandId)).toEqual({ count: 0 })
+})
+
+test('Given活动DeepSeek Flash Owner命令 When解析已审核输出上限 Then接受峰时价格证据且尚未发送或预留', () => {
+  const f = fixture('deepseek-flash')
+  const { input, ack } = ackFixture(f)
+  const commandId = randomUUID(), executionId = randomUUID(), sessionId = randomUUID()
+  command.reserveAndQueueOwnerCommand(f.subject, { commandId, grantId: input.grantId, taskId: input.taskId, role: input.role, reworkOrdinal: 0, expectedRevalidationRevision: input.expectedRevalidationRevision, idempotencyKey: randomUUID() }, ack, { executionId })
+  startModule.claimOwnerCommandStart(executionId, commandId, f.record.revision, sessionId)
+  expect(requestExit.resolveOwnerExecutionMaxOutputTokens(sessionId, 'deepseek-flash', 'openai')).toBe(4096)
+  expect(store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_request_reservations WHERE command_id=?').get(commandId)).toEqual({ count: 0 })
+  const now = Date.now()
+  store.updateAgentExecution(executionId, { status: 'completed', resultSummary: 'fake-only 执行结果', completedAt: now })
+  settlement.settleOwnerCommandUsage(commandId, { source: 'traceable_estimate', priceSource: 'fixture', inputTokens: 1, outputTokens: 1, costMicros: 1, executionId, sessionId, channelId: f.channel.id, modelId: 'deepseek-flash', capturedAt: now })
+  const reviewInput = { ...input, role: 'reviewer' as const }
+  const preview = command.previewOwnerExecutionCommandAck(f.subject, reviewInput)
+  const reviewerCommandId = randomUUID(), reviewerExecutionId = randomUUID(), reviewerSessionId = randomUUID()
+  command.reserveAndQueueOwnerCommand(f.subject, { commandId: reviewerCommandId, ...reviewInput, idempotencyKey: randomUUID() }, { input: reviewInput, preview, confirmedFingerprint: preview.ackFingerprint, acknowledgeModelCosts: true }, { executionId: reviewerExecutionId })
+  startModule.claimOwnerCommandStart(reviewerExecutionId, reviewerCommandId, f.record.revision, reviewerSessionId)
+  expect(requestExit.resolveOwnerExecutionMaxOutputTokens(reviewerSessionId, 'deepseek-flash', 'openai')).toBe(8192)
+  expect(store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_request_reservations WHERE command_id=?').get(reviewerCommandId)).toEqual({ count: 0 })
+
 })
 
 test('Given活动Owner命令的审核价格协议证据不匹配 When解析输出上限在fetch前拒绝 Then只记录类型化拒绝证据且不创建请求预留', () => {
@@ -362,6 +536,10 @@ test('Given自主授权允许一次返工 When Reviewer请求修改 Then下一�
   expect(() => store.getProjectDb().prepare('UPDATE project_owner_technical_reviews SET verdict=? WHERE task_id=?').run('approved', f.task.id)).toThrow(/immutable/)
   expect(() => command.reserveAndQueueAutonomousOwnerCommand(f.subject, { grantId: f.grant.grantId, taskId: f.task.id, role: 'executor', reworkOrdinal: 2, expectedRevalidationRevision: f.record.revision })).toThrow(/返工次数超出授权/)
   expect(store.getTask(f.task.id)?.status).toBe('paused')
+  const reviewViews = command.listOwnerExecutionCommands(f.subject).filter(item => item.role === 'reviewer')
+  expect(reviewViews.map(item => item.technicalReview?.verdict).sort()).toEqual(['approved', 'changes_requested'])
+  expect(reviewViews.find(item => item.technicalReview?.verdict === 'approved')?.technicalReview).toMatchObject({ summary: '已满足冻结标准。', criteria: [{ criterion: '范围', status: 'met', evidence: 'fake-only复核' }] })
+  expect(command.listOwnerExecutionCommands(f.subject).filter(item => item.role === 'executor').every(item => !item.technicalReview)).toBe(true)
 })
 
 test('Given有效自主授权 When Reviewer要求一次返工 Then后台Scheduler按轮次串行执行且不代替业务验收', async () => {
@@ -620,6 +798,8 @@ test('Given 遗留running owner执行 When 恢复对称扫描 Then 撤权+stale+
   command.reserveAndQueueOwnerCommand(f.subject, { commandId, grantId: input.grantId, taskId: input.taskId, role: input.role, reworkOrdinal: 0, expectedRevalidationRevision: input.expectedRevalidationRevision, idempotencyKey: randomUUID() }, ack, { executionId })
   const sessionId = randomUUID()
   startModule.claimOwnerCommandStart(executionId, commandId, input.expectedRevalidationRevision, sessionId)
+  const pendingRequest = { requestId: randomUUID(), sessionId, toolName: 'Write', toolInput: { content: 'pending after process crash' }, description: 'write', dangerLevel: 'normal' as const, requiresPerActionApproval: true }
+  actionApproval.recordOwnerActionApprovalRequest({ commandId, executionId, sessionId }, pendingRequest)
   store.closeProjectDb()
   await store.initProjectDb()
   // 模拟重启：无启动回执，execution遗留running。
@@ -628,6 +808,10 @@ test('Given 遗留running owner执行 When 恢复对称扫描 Then 撤权+stale+
   const after = store.getAgentExecution(executionId)!
   expect(after.status).toBe('stale')
   expect(store.getProjectDb().prepare("SELECT state FROM project_owner_execution_commands WHERE id=?").get(commandId)).toEqual({ state: 'needs_reconcile' })
+  expect(store.getProjectDb().prepare('SELECT status, decided_at, decided_by, decision_reason FROM project_owner_action_approvals WHERE request_id=?').get(pendingRequest.requestId))
+    .toEqual({ status: 'invalidated', decided_at: expect.any(Number), decided_by: null, decision_reason: 'runtime_recovered' })
+  expect(command.listOwnerExecutionCommands(f.subject).find(item => item.commandId === commandId)?.actionApprovals?.[0])
+    .toMatchObject({ requestId: pendingRequest.requestId, status: 'invalidated', reason: 'runtime_recovered' })
 })
 test('Given旧Runtime回调仍滞留 When独立进程重启恢复后回调晚到 Then保留unknown且不重写或续派', async () => {
   const f = fixture('glm-5.3-flash'), { input, ack } = ackFixture(f)
@@ -653,64 +837,55 @@ test('Given旧Runtime回调仍滞留 When独立进程重启恢复后回调晚到
     await runtimeStarted
     expect((await dispatch).started).toBe(true)
     expect(lateCallbacks).not.toBeNull()
+    const sessionId = store.getAgentExecution(executionId)?.sessionId
+    expect(sessionId).toBeTruthy()
+    const pendingApproval = { requestId: randomUUID(), sessionId: sessionId!, toolName: 'Write', toolInput: { content: 'pending before process restart' }, description: 'write', dangerLevel: 'normal' as const, requiresPerActionApproval: true }
+    actionApproval.recordOwnerActionApprovalRequest({ commandId, executionId, sessionId: sessionId! }, pendingApproval)
+    const escalation = stopModule.recordOwnerCommandStopEscalation(executionId, '故障矩阵：重启前请求停止', Date.now())
+    expect(escalation.commandId).toBe(commandId)
+    expect(store.getProjectDb().prepare('SELECT state FROM project_owner_execution_grants WHERE id=?').get(input.grantId)).toEqual({ state: 'paused' })
 
     store.closeProjectDb()
     parentDbClosed = true
-    const childTestPath = join(directory, `restart-recovery-${randomUUID()}.test.ts`)
-    const childTest = `
-      import { expect, mock, test } from 'bun:test'
-      import { buildElectronMock } from ${JSON.stringify(join(process.cwd(), 'apps/electron/src/main/lib/testing/electron-mock.ts'))}
-      mock.module('electron', () => buildElectronMock())
-      test('startup recovery persists unknown before any old callback is delivered', async () => {
-        const store = await import(${JSON.stringify(join(process.cwd(), 'apps/electron/src/main/lib/project-sqlite-store.ts'))})
-        const stop = await import(${JSON.stringify(join(process.cwd(), 'apps/electron/src/main/lib/project-owner-execution-stop.ts'))})
-        await store.initProjectDb()
-        try {
-          const executionId = ${JSON.stringify(executionId)}
-          const result = stop.recoverInterruptedOwnerRuntimeExecutions(${Date.now()}, executionId)
-          const repeatedResult = stop.recoverInterruptedOwnerRuntimeExecutions(${Date.now()}, executionId)
-          const execution = store.getAgentExecution(executionId)
-          const command = store.getProjectDb().prepare('SELECT state, actual_cost_micros, reserved_cost_micros, usage_evidence FROM project_owner_execution_commands WHERE id=?').get(${JSON.stringify(commandId)})
-          const grant = store.getProjectDb().prepare('SELECT state FROM project_owner_execution_grants WHERE id=?').get(${JSON.stringify(input.grantId)})
-          expect(result).toContainEqual(expect.objectContaining({ executionId, state: 'unknown_recorded', startBoundary: 'started_proven' }))
-          expect(repeatedResult).toEqual([])
-          expect(execution?.status).toBe('stale')
-          expect(command).toMatchObject({ state: 'needs_reconcile', actual_cost_micros: null })
-          expect(grant).toEqual({ state: 'paused' })
-          console.log('OWNER_RECOVERY:' + JSON.stringify({ result, repeatedResult, executionStatus: execution?.status, command, grant }))
-        } finally {
-          store.closeProjectDb()
-        }
-      })
-    `
-    writeFileSync(childTestPath, childTest, 'utf8')
-    const childOutput = execFileSync(process.execPath, ['test', childTestPath], { cwd: process.cwd(), env: process.env, encoding: 'utf8', timeout: 30_000 })
-    const recoveryLine = childOutput.split('\n').find(line => line.startsWith('OWNER_RECOVERY:'))
+    const nativeRecoveryPath = join(directory, `native-recovery-${randomUUID()}.cjs`)
+    buildSync({ entryPoints: [join(import.meta.dir, 'project-owner-native-recovery-child.ts')], outfile: nativeRecoveryPath,
+      bundle: true, platform: 'node', format: 'cjs', target: 'node24', absWorkingDir: process.cwd(),
+      external: ['better-sqlite3', 'electron'] })
+    const nativeNodeBinary = execFileSync('node', ['-p', 'process.execPath'], { encoding: 'utf8' }).trim()
+    const nodePath = [join(process.cwd(), 'node_modules'), join(process.cwd(), 'apps/electron/node_modules')].join(':')
+    const childOutput = execFileSync(nativeNodeBinary, [nativeRecoveryPath, 'recover', executionId], {
+      cwd: process.cwd(), env: { ...process.env, NODE_PATH: nodePath }, encoding: 'utf8', timeout: 30_000,
+    })
+    const recoveryLine = childOutput.split('\n').find(line => line.startsWith('OWNER_RECOVERY '))
     expect(recoveryLine).toBeDefined()
-    const recovery = JSON.parse(recoveryLine!.slice('OWNER_RECOVERY:'.length)) as {
-      result: Array<{ executionId: string; state: string; startBoundary: string }>
-      repeatedResult: Array<unknown>
-      executionStatus: string | undefined
-      command: { state: string; actual_cost_micros: number | null; reserved_cost_micros: number; usage_evidence: string | null } | undefined
-      grant: { state: string } | undefined
+    const recovery = JSON.parse(recoveryLine!.slice('OWNER_RECOVERY '.length)) as {
+      results: Array<{ executionId: string; state: string; startBoundary: string }>
+      repeatedResults: Array<unknown>
+      rows: Array<{ status: string; decided_at: number | null; decision_reason: string | null; execution_status: string;
+        grant_state: string; command_state: string; actual_cost_micros: number | null; reserved_cost_micros: number;
+        usage_evidence: string | null; escalation_id: string | null; escalation_resolved_at: number | null; escalation_reason: string | null }>
     }
-    expect(recovery.result).toContainEqual(expect.objectContaining({ executionId, state: 'unknown_recorded', startBoundary: 'started_proven' }))
-    expect(recovery.repeatedResult).toEqual([])
-    expect(recovery.executionStatus).toBe('stale')
-    expect(recovery.command).toMatchObject({ state: 'needs_reconcile', actual_cost_micros: null })
-    expect(recovery.command?.reserved_cost_micros).toBeGreaterThan(0)
-    expect(JSON.parse(recovery.command?.usage_evidence ?? 'null')).toMatchObject({ source: 'unknown', executionId })
-    expect(recovery.grant).toEqual({ state: 'paused' })
+    expect(recovery.results).toContainEqual(expect.objectContaining({ executionId, state: 'unknown_recorded', startBoundary: 'started_proven' }))
+    expect(recovery.repeatedResults).toEqual([])
+    expect(recovery.rows).toMatchObject([{ status: 'invalidated', decided_at: expect.any(Number), decision_reason: 'runtime_recovered',
+      execution_status: 'stale', grant_state: 'paused', command_state: 'needs_reconcile', actual_cost_micros: null,
+      escalation_id: expect.any(String), escalation_resolved_at: null, escalation_reason: '故障矩阵：重启前请求停止' }])
+    expect(recovery.rows[0]?.reserved_cost_micros).toBeGreaterThan(0)
+    expect(JSON.parse(recovery.rows[0]?.usage_evidence ?? 'null')).toMatchObject({ source: 'unknown', executionId })
 
     await store.initProjectDb()
     parentDbClosed = false
+    expect(() => actionApproval.decideOwnerActionApproval(pendingApproval, 'allow', { commandId, executionId, sessionId: sessionId! })).toThrow('已处理')
     releaseRuntime()
     await dispatch
     await new Promise(resolve => setTimeout(resolve, 0))
     expect(store.getAgentExecution(executionId)).toMatchObject({ status: 'stale' })
     expect(store.getAgentExecution(executionId)?.resultSummary).toBeUndefined()
-    expect(store.getProjectDb().prepare('SELECT state, actual_cost_micros, reserved_cost_micros FROM project_owner_execution_commands WHERE id=?').get(commandId)).toMatchObject({ state: 'needs_reconcile', actual_cost_micros: null, reserved_cost_micros: recovery.command?.reserved_cost_micros })
+    expect(store.getProjectDb().prepare('SELECT state, actual_cost_micros, reserved_cost_micros FROM project_owner_execution_commands WHERE id=?').get(commandId)).toMatchObject({ state: 'needs_reconcile', actual_cost_micros: null, reserved_cost_micros: recovery.rows[0]?.reserved_cost_micros })
     expect(store.getProjectDb().prepare('SELECT state FROM project_owner_execution_grants WHERE id=?').get(input.grantId)).toEqual({ state: 'paused' })
+    const lateEscalation = store.getProjectDb().prepare('SELECT escalation_id, resolved_at, reason FROM project_owner_execution_stop_escalations WHERE command_id=?').get(commandId) as { escalation_id: string; resolved_at: number | null; reason: string } | undefined
+    expect(typeof lateEscalation?.escalation_id).toBe('string')
+    expect(lateEscalation).toMatchObject({ resolved_at: null, reason: '故障矩阵：重启前请求停止' })
     expect(technicalReview.listOwnerTechnicalReviewEvidence(f.project.id)).toEqual([])
     expect(store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE grant_id=?').get(input.grantId)).toEqual({ count: 1 })
   } finally {
@@ -1060,6 +1235,72 @@ test('Given返工意见已冻结 When员工来源指纹漂移 ThenScheduler停�
   expect(state.state).toBe('stale')
 })
 
+test('Given活动授权绑定旧目标版本 When目标前进并唤醒Scheduler Then旧v2失效且不新增命令', async () => {
+  const f = fixture('glm-5.3-flash', 'autonomous', false, 'https://example.invalid', false, 'openai', 1)
+  const beforeCount = (store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE grant_id=?').get(f.grant.grantId) as { count: number }).count
+
+  const revisedGoal = saveProjectOwnerGoalDraft(f.project.id, 1, { objective: '修订后的项目目标' })
+  expect(revisedGoal.revision).toBe(2)
+  expect(revalidation.getOwnerExecutionRevalidation(f.subject).status).toBe('stale')
+
+  const state = await assertNoAutonomousDispatch(f, beforeCount)
+  expect(state.state).toBe('stale')
+  expect(state.reason).toContain('冻结来源或策略不再current')
+  expect((store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE grant_id=?').get(f.grant.grantId) as { count: number }).count).toBe(beforeCount)
+})
+
+test('Given活动授权绑定旧计划版本 When保存新计划版本并唤醒Scheduler Then旧v2失效且不新增命令', async () => {
+  const f = fixture('glm-5.3-flash', 'autonomous', false, 'https://example.invalid', false, 'openai', 1)
+  const beforeCount = (store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE grant_id=?').get(f.grant.grantId) as { count: number }).count
+  const currentPlan = plans.getProjectOwnerPlanDraft(f.project.id)!
+  const context = plans.getProjectOwnerPlanningContext(f.project.id)
+  const revisedPlan = plans.saveProjectOwnerPlanDraft(f.project.id, context.goal.revision, currentPlan.revision, {
+    expectedContextFingerprint: context.fingerprint,
+    summary: '经人工修订的新计划版本',
+    assumptions: currentPlan.proposal.assumptions,
+    risks: currentPlan.proposal.risks,
+    steps: currentPlan.proposal.steps,
+    changeReason: '更新验收方案',
+  })
+
+  expect(revisedPlan.planVersion).toBe(currentPlan.planVersion + 1)
+  expect(revisedPlan.state).toBe('proposed')
+  expect(revalidation.getOwnerExecutionRevalidation(f.subject).status).toBe('stale')
+  expect(() => grantIssue.previewOwnerExecutionGrantIssue(f.subject, {
+    requestId: randomUUID(),
+    expectedRevalidationRevision: f.record.revision,
+    expectedPolicyRevision: policy.getPilotPolicy(f.project.id)!.revision,
+    dispatchMode: 'autonomous',
+  })).toThrow()
+  expect(() => command.previewOwnerExecutionCommandAck(f.subject, {
+    grantId: f.grant.grantId,
+    taskId: f.task.id,
+    role: 'executor',
+    reworkOrdinal: 0,
+    expectedRevalidationRevision: f.record.revision,
+  })).toThrow()
+
+  const state = await assertNoAutonomousDispatch(f, beforeCount)
+  expect(state.state).toBe('stale')
+  expect(state.reason).toContain('冻结来源或策略不再current')
+  expect((store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE grant_id=?').get(f.grant.grantId) as { count: number }).count).toBe(beforeCount)
+})
+
+test('Given活动授权绑定单任务旧目标版本 When单任务目标前进并唤醒Scheduler Then旧v2失效且不新增命令', async () => {
+  const f = fixture('glm-5.3-flash', 'autonomous', false, 'https://example.invalid', false, 'openai', 1, undefined, 1000000, undefined, false, true)
+  const goalTaskId = f.goalTask!.id
+  const beforeCount = (store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE grant_id=?').get(f.grant.grantId) as { count: number }).count
+
+  const revisedGoal = saveProjectOwnerGoalDraft(f.project.id, 1, { objective: '修订后的单任务目标' }, goalTaskId)
+  expect(revisedGoal.revision).toBe(2)
+  expect(revalidation.getOwnerExecutionRevalidation(f.subject).status).toBe('stale')
+
+  const state = await assertNoAutonomousDispatch(f, beforeCount)
+  expect(state.state).toBe('stale')
+  expect(state.reason).toContain('冻结来源或策略不再current')
+  expect((store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE grant_id=?').get(f.grant.grantId) as { count: number }).count).toBe(beforeCount)
+})
+
 test('Given返工Executor状态未知 WhenScheduler恢复 Then保留unknown占额且不排Reviewer或重试', async () => {
   const f = fixture('glm-5.3-flash', 'autonomous', false, 'https://example.invalid', false, 'openai', 1)
   settleReviewFixture(f, 'executor'); settleReviewFixture(f, 'reviewer', 0, 'changes_requested')
@@ -1139,4 +1380,100 @@ test('Given已知结算与不可变技术回执 When数据库关闭重开 Then�
   expect((await assertNoAutonomousDispatch(f, 2)).nextAction).toBe('await_business_acceptance')
   technicalReview.recordOwnerTechnicalReviewEvidence(reviewer.commandId, reviewer.executionId, reviewer.rawReview, reviewer.now)
   expect(technicalReview.listOwnerTechnicalReviewEvidence(f.project.id)).toEqual(before)
+})
+
+function verifyAppendNewPlanBatch(taskScopedGoal: boolean) {
+  const f = taskScopedGoal
+    ? fixture('glm-5.3-flash', 'manual', false, undefined, false, 'openai', 0, undefined, 1000000, undefined, false, true)
+    : fixture()
+  const oldTaskIds = f.batch.links.map(link => link.taskId)
+  const oldMaterialization = materialization.getOwnerTaskMaterializationRecord(f.project.id, f.batch.id)
+  const oldRevalidation = revalidation.listOwnerExecutionRevalidationHistory(f.subject).find(item => item.id === f.record.id)!
+  const revoke = grantIssue.previewOwnerExecutionGrantRevoke(f.subject, { grantId: f.grant.grantId })
+  expect(revoke.blockers).toEqual([])
+  expect(grantIssue.confirmOwnerExecutionGrantRevoke(f.subject, { grantId: f.grant.grantId, confirmedFingerprint: revoke.fingerprint }).state).toBe('paused')
+
+  const newGoal = saveProjectOwnerGoalDraft(f.project.id, 1, { objective: '按新目标继续交付' }, f.subject.taskId)
+  expect(newGoal.revision).toBe(2)
+  const context = plans.getProjectOwnerPlanningContext(f.project.id, f.subject.taskId)
+  const oldPlan = plans.getProjectOwnerPlanDraft(f.project.id, f.subject.taskId)!
+  const roleKey = f.batch.preview.preparation.source.plan.proposal.steps[0]!.roleKey
+  const proposed = plans.saveProjectOwnerPlanDraft(f.project.id, newGoal.revision, oldPlan.revision, {
+    expectedContextFingerprint: context.fingerprint,
+    summary: '第二批计划',
+    assumptions: [],
+    risks: [],
+    steps: [{ key: 'brief-v2', title: '第二批研究', outcome: '新批次材料', acceptanceCriteria: ['满足新目标'], dependencies: [], roleKey }],
+    changeReason: '目标版本推进，追加新任务批次',
+  }, f.subject.taskId)
+  const confirmed = plans.confirmProjectOwnerPlanDraft(f.project.id, newGoal.revision, proposed.revision, f.subject.taskId)
+  const nextPreparationInput = {
+    ...f.batch.preview.preparation.input,
+    requestId: randomUUID(),
+    expectedPreparationRevision: f.batch.preview.preparation.revision,
+    expectedPolicyRevision: policy.getPilotPolicy(f.project.id)!.revision,
+    expectedGoalRevision: 2,
+    expectedPlanRevision: confirmed.revision,
+    selectedStepKeys: ['brief-v2'],
+    changeReason: '新计划经用户确认，追加暂停任务批次',
+  }
+  const preparationPreview = prep.previewOwnerExecutionPreparation(f.subject, nextPreparationInput)
+  const nextPreparation = prep.saveOwnerExecutionPreparation(f.subject, nextPreparationInput, preparationPreview.previewFingerprint)
+
+  const nextMaterializationInput = {
+    requestId: randomUUID(),
+    expectedMaterializationRevision: f.batch.revision,
+    expectedPreparationId: nextPreparation.id,
+    expectedPreparationRevision: nextPreparation.revision,
+    expectedPreparationHash: nextPreparation.integrityHash,
+    expectedPolicyRevision: nextPreparation.policyRevision,
+  }
+  const nextMaterializationPreview = materialization.previewOwnerTaskMaterialization(f.subject, nextMaterializationInput)
+  const nextBatch = materialization.materializeOwnerTasks(f.subject, nextMaterializationInput, nextMaterializationPreview.previewFingerprint)
+  const allTaskIds = store.listTasks(f.project.id).map(task => task.id)
+  expect(nextBatch.links).toHaveLength(1)
+  expect(nextBatch.links[0]!.taskId).not.toBe(oldTaskIds[0])
+  expect(allTaskIds).toEqual(expect.arrayContaining([...oldTaskIds, nextBatch.links[0]!.taskId]))
+  expect(oldMaterialization).toEqual(materialization.getOwnerTaskMaterializationRecord(f.project.id, f.batch.id))
+  expect(oldRevalidation).toEqual(revalidation.listOwnerExecutionRevalidationHistory(f.subject).find(item => item.id === f.record.id)!)
+  expect(oldTaskIds.map(id => store.getTask(id)?.ownerStepLinkId)).toEqual(f.batch.links.map(link => link.id))
+  expect(materialization.getOwnerTaskMaterialization(f.subject)).toMatchObject({ revision: nextBatch.revision, status: 'needs_revalidation', materialization: { id: nextBatch.id } })
+
+  const nextRevalidationInput = {
+    requestId: randomUUID(),
+    expectedRevalidationRevision: f.record.revision,
+    expectedMaterializationId: nextBatch.id,
+    expectedMaterializationRevision: nextBatch.revision,
+    expectedMaterializationHash: nextBatch.integrityHash,
+    expectedPolicyRevision: nextPreparation.policyRevision,
+    changeReason: '重新核验新增任务批次',
+  }
+  const nextRevalidationPreview = revalidation.previewOwnerExecutionRevalidation(f.subject, nextRevalidationInput)
+  const nextRevalidation = revalidation.saveOwnerExecutionRevalidation(f.subject, nextRevalidationInput, nextRevalidationPreview.previewFingerprint)
+  const samePlanPreparationInput = {
+    ...nextPreparation.input,
+    requestId: randomUUID(),
+    expectedPreparationRevision: nextPreparation.revision,
+    expectedPolicyRevision: policy.getPilotPolicy(f.project.id)!.revision,
+    changeReason: '尝试用相同计划替换v2准备',
+  }
+  const preparationHistoryLength = prep.listOwnerExecutionPreparationHistory(f.subject).length
+  const samePlanPreparationPreview = prep.previewOwnerExecutionPreparation(f.subject, samePlanPreparationInput)
+  expect(() => prep.saveOwnerExecutionPreparation(f.subject, samePlanPreparationInput, samePlanPreparationPreview.previewFingerprint)).toThrow('相同计划不能覆盖v2准备')
+  expect(prep.listOwnerExecutionPreparationHistory(f.subject)).toHaveLength(preparationHistoryLength)
+  const nextIssueInput = { requestId: randomUUID(), expectedRevalidationRevision: nextRevalidation.revision, expectedPolicyRevision: policy.getPilotPolicy(f.project.id)!.revision, dispatchMode: 'manual' as const }
+  const nextIssuePreview = grantIssue.previewOwnerExecutionGrantIssue(f.subject, nextIssueInput)
+  const nextGrant = grantIssue.confirmOwnerExecutionGrantIssue(f.subject, { input: nextIssueInput, preview: nextIssuePreview, confirmedFingerprint: nextIssuePreview.approvalFingerprint })
+  expect(nextGrant.state).toBe('active')
+  expect(store.getProjectDb().prepare('SELECT state, revalidation_id FROM project_owner_execution_grants WHERE id=?').get(f.grant.grantId)).toEqual({ state: 'paused', revalidation_id: f.record.id })
+  expect(store.getProjectDb().prepare('SELECT state, revalidation_id FROM project_owner_execution_grants WHERE id=?').get(nextGrant.grantId)).toEqual({ state: 'active', revalidation_id: nextRevalidation.id })
+  if (taskScopedGoal) expect(store.getTask(f.goalTask!.id)?.ownerStepLinkId).toBe(f.batch.links[0]!.id)
+}
+
+test('Given旧grant已撤权且新项目计划已确认 When重新准备/材料化/重验证/发行 Then追加新Task并保留旧任务与证据', () => {
+  verifyAppendNewPlanBatch(false)
+})
+
+test('Given旧grant已撤权且新单任务计划已确认 When重新准备/材料化/重验证/发行 Then追加新Task并保留原目标与证据', () => {
+  verifyAppendNewPlanBatch(true)
 })

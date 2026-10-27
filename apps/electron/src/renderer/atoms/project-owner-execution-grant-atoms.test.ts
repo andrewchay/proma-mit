@@ -222,3 +222,34 @@ test('Given 响应主体不匹配 When 落地 Then 抛错不写入错误subject'
   expect(editor(store).grant).toBeNull()
   expect(editor(store).loaded).toBe(false)
 })
+
+test('Given发行期间旧只读请求晚到 When确认已成功 Then旧null不得覆盖active', async () => {
+  const old = deferred<Awaited<ReturnType<ProjectOwnerExecutionGrantApi['getOwnerExecutionGrant']>>>()
+  const { store } = setup({ getOwnerExecutionGrant: () => old.promise })
+  await store.set(previewOwnerGrantIssueAtom, { subject, input })
+  const pending = store.set(loadOwnerGrantAtom, subject)
+  await store.set(confirmOwnerGrantIssueAtom, { subject, input, confirmedFingerprint: preview.approvalFingerprint })
+  old.resolve({ ok: true, value: null }); await pending
+  expect(editor(store).grant?.state).toBe('active')
+  expect(editor(store).loaded).toBe(true)
+})
+test('Given撤权期间旧active读取晚到 When撤权成功 Then不能复活paused授权', async () => {
+  const old = deferred<Awaited<ReturnType<ProjectOwnerExecutionGrantApi['getOwnerExecutionGrant']>>>()
+  const { store } = setup({ getOwnerExecutionGrant: () => old.promise })
+  await store.set(previewOwnerGrantRevokeAtom, { subject, grantId: grant.grantId })
+  const pending = store.set(loadOwnerGrantAtom, subject)
+  await store.set(confirmOwnerGrantRevokeAtom, { subject, grantId: grant.grantId, confirmedFingerprint: revokePreview.fingerprint })
+  old.resolve({ ok: true, value: grant }); await pending
+  expect(editor(store).grant?.state).toBe('paused')
+})
+
+test('Given旧历史读取在途 When发行成功 Then晚到空历史不能冒充新版本已同步', async () => {
+  const old = deferred<Awaited<ReturnType<ProjectOwnerExecutionGrantApi['listOwnerExecutionGrantHistory']>>>()
+  const { store } = setup({ listOwnerExecutionGrantHistory: () => old.promise })
+  const pending = store.set(loadOwnerGrantHistoryAtom, subject)
+  await store.set(previewOwnerGrantIssueAtom, { subject, input })
+  await store.set(confirmOwnerGrantIssueAtom, { subject, input, confirmedFingerprint: preview.approvalFingerprint })
+  old.resolve({ ok: true, value: [] }); await pending
+  expect(editor(store).historyLoaded).toBe(false)
+  expect(editor(store).grant?.state).toBe('active')
+})

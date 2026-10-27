@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { ProviderType, ProjectOwnerGoalSubject } from '@gravitas/shared'
 import { getAgentProviderProtocol } from '@gravitas/shared'
 import { getChannelById } from './channel-manager'
-import { getPilotReviewedPriceEvidence } from './project-pilot-request-evidence'
+import { getPilotReviewedPriceEvidenceForModel } from './project-pilot-request-evidence'
 import { PILOT_DEFAULT_PRICE_EVIDENCE_ID } from './project-pilot-request-exit'
 import { assertLocalActorEnabled } from './project-owner-plan-service'
 import { ownerExecutionHash, ownerExecutionObject, parseOwnerExecutionSubject } from './project-owner-execution-source'
@@ -159,10 +159,11 @@ function readCandidate(subject: ProjectOwnerGoalSubject, commandId: string): Own
   let reasonCode: string
   if (rejection) {
     const protocol = getAgentProviderProtocol(channel.provider, 'ai-sdk')
+    const expectedPrice = getPilotReviewedPriceEvidenceForModel(row.model_id, providerKindFor(channel.provider))
     if (rejection.execution_id !== execution.id || rejection.command_id !== row.command_id || rejection.project_id !== row.project_id
       || rejection.grant_id !== row.grant_id || rejection.channel_id !== row.channel_id || rejection.model_id !== row.model_id
       || rejection.provider_type !== channel.provider || rejection.provider_protocol !== protocol
-      || rejection.price_evidence_id !== PILOT_DEFAULT_PRICE_EVIDENCE_ID
+      || rejection.price_evidence_id !== (expectedPrice?.evidenceId ?? PILOT_DEFAULT_PRICE_EVIDENCE_ID)
       || rejection.reason_code !== 'reviewed_price_evidence_mismatch' || rejection.error_sha256 !== currentErrorHash) {
       throw new Error('Owner类型化预发送拒绝证据与当前执行不一致，保留needs_reconcile')
     }
@@ -170,7 +171,7 @@ function readCandidate(subject: ProjectOwnerGoalSubject, commandId: string): Own
     reasonCode = rejection.reason_code
   } else {
     const protocol = getAgentProviderProtocol(channel.provider, 'ai-sdk')
-    const price = getPilotReviewedPriceEvidence(PILOT_DEFAULT_PRICE_EVIDENCE_ID)
+    const price = getPilotReviewedPriceEvidenceForModel(row.model_id, providerKindFor(channel.provider))
     if (channel.provider !== 'zhipu' || row.model_id !== LEGACY_ZHIPU_MODEL || protocol !== 'openai-chat'
       || !price || price.model !== row.model_id || price.providerKind !== providerKindFor(channel.provider)) {
       throw new Error('缺少可核验的发送前拒绝事件，且不属于已知旧版Zhipu协议映射回归；保留needs_reconcile')

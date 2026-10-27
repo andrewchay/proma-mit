@@ -1303,7 +1303,31 @@ function migrate(database: SqliteCompat): void {
       created_at INTEGER NOT NULL,
       expires_at INTEGER NOT NULL,
       applied_at INTEGER,
+      rejected_at INTEGER,
+      rejected_by TEXT,
+      rejection_reason TEXT,
       error TEXT
+    )
+  `)
+  const applyColumns = readColumnNames(database, 'development_apply_operations')
+  if (!applyColumns.includes('rejected_at')) database.exec('ALTER TABLE development_apply_operations ADD COLUMN rejected_at INTEGER')
+  if (!applyColumns.includes('rejected_by')) database.exec('ALTER TABLE development_apply_operations ADD COLUMN rejected_by TEXT')
+  if (!applyColumns.includes('rejection_reason')) database.exec('ALTER TABLE development_apply_operations ADD COLUMN rejection_reason TEXT')
+  // Owner敏感动作审批：只存动作指纹与裁决，不保存可能含正文/凭据的工具参数。
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS project_owner_action_approvals (
+      request_id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      command_id TEXT NOT NULL,
+      execution_id TEXT NOT NULL,
+      session_id TEXT NOT NULL,
+      tool_name TEXT NOT NULL,
+      action_fingerprint TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('pending', 'allowed', 'denied', 'invalidated')),
+      requested_at INTEGER NOT NULL,
+      decided_at INTEGER,
+      decided_by TEXT,
+      decision_reason TEXT
     )
   `)
   // 员工岗位模板 ID 只记录显式选择；旧档案不从角色文本反推。

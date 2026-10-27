@@ -68,6 +68,7 @@ const preview: OwnerExecutionPreparationPreview = {
   planFingerprint: 'planhash',
   contextFingerprint: 'ctxhash',
   selectedStepKeys: ['s'],
+  toolRecommendations: [],
   executor: { id: 'e', name: '实际执行', configurationHash: 'employeehash' },
   reviewer: { id: 'r', name: '实际评审', configurationHash: 'reviewhash' },
   workspaceId: 'w',
@@ -229,9 +230,13 @@ test('Given 非研发模式 When SSR Then 无研发scope编辑或自动模型选
 })
 test('Given 唯一roleTemplate只匹配Owner载体 When 显示候选 Then 文案解释不自动推荐但可显式选择', () => {
   const view: OwnerExecutionPreparationView = {
+    workspaceRecommendation: { workspaceId: 'w', source: 'unique_project_workspace' },
+    executionConfigurationRecommendation: null,
+    executionConfigurationRecommendationState: 'none',
     choices: {
       employees: [{ id: 'carrier', name: 'Owner载体', roleTemplateId: 'research', executionProfile: 'controlled', workspaceIds: ['w'], channelId: 'c', modelId: 'm', runtime: 'ai-sdk', isOwnerCarrier: true }],
       workspaces: [{ id: 'w', name: '明确工作区' }],
+      workspaceCapabilities: [],
       knowledgeSources: [],
     },
     revision: 0,
@@ -245,6 +250,124 @@ test('Given 唯一roleTemplate只匹配Owner载体 When 显示候选 Then 文案
   expect(html).toContain('精确模板仅匹配 Owner 规划载体；不会自动推荐。你仍可显式选择并接受服务端配置核验')
   expect(html).toContain('Owner规划载体（不自动推荐）')
   expect(html).toContain('Owner规划载体（仅显式选择）')
+})
+test('Given当前项目没有配置有效员工 When 渲染岗位选择 Then 解释员工渠道模型与工作区需恢复有效', () => {
+  const view: OwnerExecutionPreparationView = {
+    workspaceRecommendation: { workspaceId: 'w', source: 'unique_project_workspace' },
+    executionConfigurationRecommendation: null,
+    executionConfigurationRecommendationState: 'none',
+    choices: { employees: [], workspaces: [{ id: 'w', name: '工作区' }], workspaceCapabilities: [], knowledgeSources: [] },
+    revision: 0,
+    policyRevision: null,
+    preparation: null,
+    status: 'none',
+    blockers: [],
+  }
+  const html = render({ view, selectedStepKeys: ['s'], workspaceId: 'w' })
+  expect(html).toContain('没有当前可执行的项目员工')
+  expect(html).toContain('启用渠道、模型并修复员工工作区配置后，重新读取来源')
+})
+test('Given Owner绑定失效且项目仅剩一个工作区 When 显示准备面板 Then 不静默预选该工作区', () => {
+  const view: OwnerExecutionPreparationView = {
+    workspaceRecommendation: { source: 'owner_binding_unavailable' },
+    executionConfigurationRecommendation: null,
+    executionConfigurationRecommendationState: 'none',
+    choices: { employees: [], workspaces: [{ id: 'w', name: '唯一工作区' }], workspaceCapabilities: [], knowledgeSources: [] },
+    revision: 0,
+    policyRevision: null,
+    preparation: null,
+    status: 'none',
+    blockers: [],
+  }
+  const html = render({ view, workspaceId: '' })
+  expect(html).toContain('Owner绑定工作区或载体配置已失效，须重新核查Owner绑定；不会静默改用其他工作区。')
+  expect(html).not.toContain('value="w" selected=""')
+})
+test('Given多个项目工作区且尚未选择 When 显示岗位 Then 提示先选工作区而非误报无有效员工', () => {
+  const view: OwnerExecutionPreparationView = {
+    workspaceRecommendation: { source: 'ambiguous' },
+    executionConfigurationRecommendation: null,
+    executionConfigurationRecommendationState: 'none',
+    choices: {
+      employees: [{ id: 'e', name: '执行人员', roleTemplateId: 'research', executionProfile: 'controlled', workspaceIds: ['w1'], channelId: 'c', modelId: 'm', runtime: 'ai-sdk' }],
+      workspaces: [{ id: 'w1', name: '工作区一' }, { id: 'w2', name: '工作区二' }],
+      workspaceCapabilities: [],
+      knowledgeSources: [],
+    },
+    revision: 0,
+    policyRevision: null,
+    preparation: null,
+    status: 'none',
+    blockers: [],
+  }
+  const html = render({ view, selectedStepKeys: ['s'], workspaceId: '' })
+  expect(html).toContain('先在下方明确选择项目工作区')
+  expect(html).toContain('先在下方明确选择，随后再筛选匹配员工')
+  expect(html).not.toContain('启用渠道、模型并修复员工工作区配置后，重新读取来源')
+})
+test('Given Owner默认工作区和配置与手动选择冲突 When 显示准备面板 Then 分别询问覆盖确认', () => {
+  const conflictView: OwnerExecutionPreparationView = {
+    choices: {
+      employees: [
+        { id: 'e', name: '执行人员', roleTemplateId: 'research', executionProfile: 'controlled', workspaceIds: ['w', 'w2'], channelId: 'manual-channel', modelId: 'manual-model', runtime: 'ai-sdk' },
+        { id: 'r', name: '评审人员', executionProfile: 'controlled', workspaceIds: ['w', 'w2'], channelId: 'manual-channel', modelId: 'manual-model', runtime: 'ai-sdk' },
+      ],
+      workspaces: [{ id: 'w', name: 'Owner工作区' }, { id: 'w2', name: '手动工作区' }],
+      workspaceCapabilities: [],
+      knowledgeSources: [],
+    },
+    workspaceRecommendation: { workspaceId: 'w', source: 'owner_binding' },
+    executionConfigurationRecommendation: { channelId: 'owner-channel', modelId: 'owner-model', runtime: 'ai-sdk', source: 'owner_binding' },
+    executionConfigurationRecommendationState: 'current',
+    revision: 0,
+    policyRevision: null,
+    preparation: null,
+    status: 'none',
+    blockers: [],
+  }
+  const html = render({
+    view: conflictView,
+    workspaceId: 'w2',
+    selectedStepKeys: ['s'],
+    roleAssignments: { research: 'e' },
+    executorEmployeeId: 'e',
+    reviewerEmployeeId: 'r',
+  })
+  expect(html).toContain('手动选择的项目工作区与Owner绑定默认工作区不同')
+  expect(html).toContain('执行/评审配置与Owner绑定默认配置不同')
+  expect(html.match(/type="checkbox"/g)?.length).toBe(4)
+})
+test('Given 已选执行员工和Reviewer但渠道模型Runtime不一致 When 查看准备面板 Then 明确列出来源并要求选一致人员', () => {
+  const conflictView: OwnerExecutionPreparationView = {
+    workspaceRecommendation: { workspaceId: 'w', source: 'unique_project_workspace' },
+    executionConfigurationRecommendation: null,
+    executionConfigurationRecommendationState: 'none',
+    choices: {
+      employees: [
+        { id: 'e', name: 'e', roleTemplateId: 'research', executionProfile: 'controlled', workspaceIds: ['w'], channelId: 'c', modelId: 'm', runtime: 'ai-sdk' },
+        { id: 'r', name: 'r', executionProfile: 'controlled', workspaceIds: ['w'], channelId: 'other-channel', modelId: 'other-model', runtime: 'ai-sdk' },
+      ],
+      workspaces: [{ id: 'w', name: '工作区' }],
+      workspaceCapabilities: [],
+      knowledgeSources: [],
+    },
+    revision: 0,
+    policyRevision: null,
+    preparation: null,
+    status: 'none',
+    blockers: [],
+  }
+  const html = render({
+    view: conflictView,
+    selectedStepKeys: ['s'],
+    roleAssignments: { research: 'e' },
+    executorEmployeeId: 'e',
+    reviewerEmployeeId: 'r',
+  })
+  expect(html).toContain('执行岗位与 Reviewer 的渠道、模型或 Runtime 来源冲突')
+  expect(html).toContain('roleKey research · e：c / m / ai-sdk')
+  expect(html).toContain('Reviewer · r：other-channel / other-model / ai-sdk')
+  expect(html).toContain('请逐项选择配置一致的员工')
 })
 test('Given 嵌入计划与任务弹窗 When 呈现准备 Then 字段语义唯一且滚动分区具名、不冒充弹窗滚动div', () => {
   const html = render({ preview, history: [record], historyLoaded: true })

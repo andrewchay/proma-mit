@@ -29,8 +29,10 @@ import { createRoot } from 'react-dom/client';
 import { Provider, createStore } from 'jotai';
 import { TaskOwnerGoalEntry } from ${JSON.stringify(join(renderer, 'components/projects/TaskOwnerGoalEntry.tsx'))};
 import { ownerGoalApiAtom } from ${JSON.stringify(join(renderer, 'atoms/project-owner-goal-atoms.ts'))};
+import { ownerSetupApiAtom } from ${JSON.stringify(join(renderer, 'atoms/owner-setup-atoms.ts'))};
 const store = createStore();
 const saved = new Map();
+store.set(ownerSetupApiAtom, {listChannels:async()=>[],listEmployees:async()=>[],listWorkspaces:async()=>[],listBindings:async()=>[],getBinding:async()=>({ok:true,value:null})});
 window.fixture = { reads: [], writes: [] };
 const key = s => JSON.stringify([s.projectId, s.taskId]);
 store.set(ownerGoalApiAtom, {
@@ -64,6 +66,7 @@ createRoot(document.getElementById('root')).render(<App />);
     '-i', join(directory, 'input.css'), '-o', join(directory, 'style.css'), '--content',
     [join(renderer, 'components/projects/TaskOwnerGoalEntry.tsx'),
       join(renderer, 'components/projects/ProjectOwnerGoalPanel.tsx'),
+      join(renderer, 'components/projects/ProjectOwnerConversation.tsx'),
       join(renderer, 'components/ui/dialog.tsx')].join(',')], { cwd: root, env: process.env, stdio: 'pipe' })
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {
     const path = new URL(request.url).pathname
@@ -82,7 +85,7 @@ createRoot(document.getElementById('root')).render(<App />);
     const fixture = () => page.evaluate(() => (window as unknown as { fixture: { reads: Array<{ taskId: string }>; writes: Array<{ taskId: string; expectedRevision: number; input: { objective: string } }> } }).fixture)
     expect((await fixture()).reads).toHaveLength(0)
     await trigger.click()
-    const objective = page.getByLabel('目标', { exact: true })
+    const objective = page.getByLabel('希望达成的目标', { exact: true })
     await objective.waitFor()
     await page.getByRole('status').filter({ hasText: '尚未保存' }).waitFor()
     expect((await fixture()).reads.map(subject => subject.taskId)).toEqual(['a'])
@@ -95,13 +98,14 @@ createRoot(document.getElementById('root')).render(<App />);
     await page.getByRole('status').filter({ hasText: '尚未保存' }).waitFor()
     expect(await objective.inputValue()).toBe('')
     await objective.fill('任务B的独立目标')
-    await page.getByRole('button', { name: '保存目标草案', exact: true }).click()
-    await page.getByRole('status').filter({ hasText: '已保存草案' }).waitFor()
+    await page.getByRole('button', { name: '保存目标，继续', exact: true }).click()
+    await page.getByRole('status').filter({ hasText: '已保存 v' }).waitFor()
     expect((await fixture()).writes.map(request => request.taskId)).toEqual(['b'])
     await page.getByRole('button', { name: 'Close', exact: true }).click()
     await page.getByRole('dialog').waitFor({ state: 'hidden' })
     await trigger.click()
-    await page.getByRole('status').filter({ hasText: '已保存草案' }).waitFor()
+    await page.getByRole('status').filter({ hasText: '已保存 v' }).waitFor()
+    await page.getByRole('button', {name:'调整目标',exact:true}).click()
     expect(await objective.inputValue()).toBe('任务B的独立目标')
     await page.getByRole('button', { name: 'Close', exact: true }).click()
     await page.getByRole('dialog').waitFor({ state: 'hidden' })
@@ -109,8 +113,8 @@ createRoot(document.getElementById('root')).render(<App />);
     await trigger.click()
     await page.getByRole('status').filter({ hasText: '有未保存更改' }).waitFor()
     expect(await objective.inputValue()).toBe(text)
-    await page.getByText('必要约束与完成标准（可选）', { exact: true }).click()
-    await page.getByLabel('必要约束', { exact: true }).fill('x'.repeat(2000))
+    await page.getByText('补充约束与完成标准（可选）', { exact: true }).click()
+    await page.getByLabel('必须遵守的约束', { exact: true }).fill('x'.repeat(2000))
     const bounds = await page.getByRole('dialog').boundingBox()
     expect(bounds).not.toBeNull()
     expect(bounds!.x).toBeGreaterThanOrEqual(0)
@@ -121,8 +125,8 @@ createRoot(document.getElementById('root')).render(<App />);
     const scroll = page.getByRole('dialog').locator('div.overflow-y-auto')
     expect(await scroll.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true)
     await scroll.evaluate(element => { element.scrollTop = element.scrollHeight })
-    await page.getByRole('button', { name: '保存目标草案', exact: true }).click()
-    await page.getByRole('status').filter({ hasText: '已保存草案' }).waitFor()
+    await page.getByRole('button', { name: '保存目标，继续', exact: true }).click()
+    await page.getByRole('status').filter({ hasText: '已保存 v' }).waitFor()
     expect((await fixture()).writes).toHaveLength(2)
     expect((await fixture()).writes[1]).toMatchObject({ taskId: 'a', expectedRevision: 0, input: { objective: text } })
     await page.getByRole('button', { name: 'Close', exact: true }).click()

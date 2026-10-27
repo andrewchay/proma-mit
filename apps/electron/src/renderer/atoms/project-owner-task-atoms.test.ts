@@ -15,6 +15,7 @@ import {
 import {
   editOwnerExecutionAtom,
   getOwnerExecutionEditor,
+  ownerExecutionPlanReady,
   ownerExecutionEditorsAtom,
 } from './project-owner-execution-atoms'
 import {
@@ -127,6 +128,7 @@ function setup() {
       planFingerprint: 'plan',
       contextFingerprint: 'ctx',
       selectedStepKeys: ['s'],
+      toolRecommendations: [],
       executor: { id: 'e', name: '执行', configurationHash: 'eh' },
       reviewer: { id: 'r', name: '技术评审', configurationHash: 'rh' },
       workspaceId: 'w',
@@ -173,7 +175,10 @@ function setup() {
             policyRevision: 2,
             status: 'current',
             preparation,
-            choices: { employees: [], workspaces: [], knowledgeSources: [] },
+            choices: { employees: [], workspaces: [], workspaceCapabilities: [], knowledgeSources: [] },
+            workspaceRecommendation: { source: 'none' },
+            executionConfigurationRecommendation: null,
+            executionConfigurationRecommendationState: 'none',
             blockers: [],
           },
         },
@@ -274,6 +279,41 @@ test('Given 当前AO05 When 读取并预览 Then 精确版本输入、无自由p
     getOwnerTaskEditor(store.get(ownerTaskEditorsAtom), { projectId: 'a', taskId: 'other' })
       .preview,
   ).toBeNull()
+})
+test('Given已有暂停批次 When同计划重试或确认新计划 Then只允许新指纹追加预览', async () => {
+  const { store, api } = setup()
+  await store.set(loadOwnerTasksAtom, subject)
+  await store.set(previewOwnerTasksAtom, subject)
+  const firstInput = ownerTaskInput(store.get, subject)
+  if (!firstInput) throw new Error('fixture missing initial materialization input')
+  const saved = await api.materializeOwnerTasks({ ...subject, input: firstInput, previewFingerprint: 'fingerprint' })
+  if (!saved.ok) throw new Error('fixture failed to create prior batch')
+  const old = getOwnerTaskEditor(store.get(ownerTaskEditorsAtom), subject)
+  store.set(ownerTaskEditorsAtom, new Map([[key, {
+    ...old,
+    view: { revision: 1, status: 'needs_revalidation', materialization: saved.value, blockers: ['需独立重验证'] },
+  }]]))
+  store.set(compareOwnerTasksAtom, subject)
+  expect(ownerTaskInput(store.get, subject)).toBeNull()
+
+  const execution = getOwnerExecutionEditor(store.get(ownerExecutionEditorsAtom), subject)
+  const preparation = execution.view!.preparation!
+  const revisedPlan = { ...preparation.source.plan, planFingerprint: 'plan-v2' }
+  const revisedPreparation = { ...preparation, source: { ...preparation.source, planFingerprint: 'plan-v2', plan: revisedPlan } }
+  store.set(ownerExecutionEditorsAtom, new Map([[key, {
+    ...execution,
+    view: { ...execution.view!, preparation: revisedPreparation },
+  }]]))
+  const planEditor = getOwnerPlanEditor(store.get(ownerPlanEditorsAtom), subject)
+  store.set(ownerPlanEditorsAtom, new Map([[key, { ...planEditor, snapshot: revisedPlan }]]))
+  store.set(compareOwnerTasksAtom, subject)
+  expect(revisedPreparation.source).toMatchObject({ planFingerprint: 'plan-v2', planRevision: revisedPlan.revision })
+  expect(ownerExecutionPlanReady(store.get, subject)).toBe(true)
+  expect(getOwnerExecutionEditor(store.get(ownerExecutionEditorsAtom), subject).view).toMatchObject({ status: 'current', policyRevision: 2 })
+  expect(revisedPreparation.source.planFingerprint).toBe(revisedPlan.planFingerprint)
+  expect(revisedPreparation.source.planRevision).toBe(revisedPlan.revision)
+  expect(revisedPreparation.source.contextFingerprint).toBe(revisedPlan.contextFingerprint)
+  expect(ownerTaskInput(store.get, subject)).toMatchObject({ expectedMaterializationRevision: 1, expectedPreparationId: 'prep-id' })
 })
 test('Given 旧预览 When AO05编辑或计划编辑 Then 立即废弃且不改上游输入', async () => {
   for (const mode of ['prep', 'plan']) {

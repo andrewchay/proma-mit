@@ -69,6 +69,47 @@ describe('AgentPermissionService 权限模式', () => {
     expect(requests).toHaveLength(0)
   })
 
+  test('Given专用Owner动作审批 When请求写工具 Then仅精确单次允许或拒绝且拒绝白名单', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    const audit: string[] = []
+    const canUseTool = service.createCanUseTool('owner-action-session', (request) => requests.push(request), undefined, undefined, 'safe', {
+      onRequest: (request) => audit.push(`request:${request.requestId}:${request.toolName}`),
+      onDecision: (request, behavior) => audit.push(`decision:${request.requestId}:${behavior}:${JSON.stringify(request.toolInput)}`),
+      onCancel: (request) => audit.push(`cancel:${request.requestId}`),
+    })
+    const pending = canUseTool('Write', { file_path: 'deliverable.md', content: 'exact proposal' }, createOptions())
+    const request = requests[0]!
+    expect(request.requiresPerActionApproval).toBe(true)
+    expect(audit).toEqual([`request:${request.requestId}:Write`])
+    expect(() => service.respondToPermission(request.requestId, 'allow', true)).toThrow('只能逐次确认')
+    expect(service.respondToPermission(request.requestId, 'deny', false)).toBe('owner-action-session')
+    expect((await pending).behavior).toBe('deny')
+    expect(audit).toEqual([
+      `request:${request.requestId}:Write`,
+      `decision:${request.requestId}:deny:{"file_path":"deliverable.md","content":"exact proposal"}`,
+    ])
+  })
+
+  test('GivenOwner动作审批账本写入失败 When请求写工具 Then明确拒绝且不发送待审批请求', async () => {
+    const service = new AgentPermissionService()
+    const requests: PermissionRequest[] = []
+    let decisions = 0
+    const canUseTool = service.createCanUseTool('owner-action-audit-failure', (request) => requests.push(request), undefined, undefined, 'safe', {
+      onRequest: () => { throw new Error('sqlite unavailable') },
+      onDecision: () => { decisions += 1 },
+      onCancel: () => undefined,
+    })
+
+    const result = await canUseTool('Write', { file_path: 'deliverable.md', content: 'proposal' }, createOptions())
+
+    expect(result.behavior).toBe('deny')
+    if (result.behavior === 'deny') expect(result.message).toContain('操作未执行')
+    expect(requests).toHaveLength(0)
+    expect(service.getPendingRequests()).toHaveLength(0)
+    expect(decisions).toBe(0)
+  })
+
   test('given safe parent mode when a Worker requests a write tool then agentID cannot bypass denial', async () => {
     const service = new AgentPermissionService()
     const requests: PermissionRequest[] = []

@@ -1,8 +1,9 @@
 import { assertNoOwnerBusinessSession } from './project-owner-task-evidence'
-import { assertToolAllowedForSessionPurpose } from './project-owner-execution-gates'
+import { assertToolAllowedForSessionPurpose, isOwnerWorkspaceFileActionCandidate } from './project-owner-execution-gates'
 import { assertControlledPermissionChange, isControlledProviderSession } from './controlled-provider-boundary'
 import * as projectStore from './project-sqlite-store'
 import { assertOwnerCommandRuntimeContext } from './project-owner-execution-start'
+import { decideOwnerActionApproval, invalidateOwnerActionApproval, recordOwnerActionApprovalRequest } from './project-owner-action-approval'
 /**
  * AgentOrchestrator — Agent 编排层
  *
@@ -690,6 +691,9 @@ export class AgentOrchestrator {
       const agentCwd = runtimeWorkspace.cwd
       const workspaceSlug = runtimeWorkspace.workspaceSlug ?? ''
       const ownerExecution = Boolean(callbacks.ownerExecution)
+      const ownerActionIdentity = callbacks.ownerExecution
+        ? { ...callbacks.ownerExecution, sessionId }
+        : undefined
       const mcpServerConfigs = ownerExecution ? {} : runtimeWorkspace.mcpServers
 
       console.log(`[Agent Runtime] 启动 ${agentRuntime} runtime — provider: ${provider}, adapter=${adapterProvider ?? provider}, model: ${modelId}, cwd: ${agentCwd}`)
@@ -724,6 +728,16 @@ export class AgentOrchestrator {
           runtimeServices.events.emit(sessionId, { kind: 'proma_event', event: { type: 'ask_user_request', request } } as AgentStreamPayload)
         },
         () => permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
+        ownerActionIdentity ? {
+          onRequest: (request) => {
+            assertOwnerCommandRuntimeContext(ownerActionIdentity.executionId, ownerActionIdentity.commandId, sessionId, true)
+            recordOwnerActionApprovalRequest(ownerActionIdentity, request)
+          },
+          onDecision: (request, behavior) => {
+            decideOwnerActionApproval(request, behavior, ownerActionIdentity)
+          },
+          onCancel: (request) => invalidateOwnerActionApproval(request.requestId),
+        } : undefined,
       )
 
       // 内置 collaboration 协作子会话工具：workspaceId 为空时 fallback 默认/最近工作区；子会话自身不再注入
@@ -768,6 +782,7 @@ export class AgentOrchestrator {
         historyMessages,
         attachments,
         permissionMode: permissionMode ?? PROMA_DEFAULT_PERMISSION_MODE,
+        ...(ownerExecution ? { ownerActionApproval: true } : {}),
         worktreeScopedWrite: worktreeScopedWrite === true,
         mcpServers: mcpServerConfigs,
         workspaceSlug,
@@ -780,12 +795,15 @@ export class AgentOrchestrator {
           } as AgentStreamPayload)
         },
         canUseTool: async (toolName: string, input: Record<string, unknown>, signal: AbortSignal) => {
-          assertNoOwnerBusinessSession(sessionId)
+          const ownerApprovalCandidate = Boolean(ownerActionIdentity && isOwnerWorkspaceFileActionCandidate(sessionId, toolName, input))
+          if (!ownerApprovalCandidate) assertNoOwnerBusinessSession(sessionId)
+          if (ownerActionIdentity) assertOwnerCommandRuntimeContext(ownerActionIdentity.executionId, ownerActionIdentity.commandId, sessionId, true)
           const result = await canUseTool(toolName, input, {
             signal,
             toolUseID: `tool-${Date.now()}`,
           })
-          assertNoOwnerBusinessSession(sessionId)
+          if (!ownerApprovalCandidate) assertNoOwnerBusinessSession(sessionId)
+          if (ownerActionIdentity) assertOwnerCommandRuntimeContext(ownerActionIdentity.executionId, ownerActionIdentity.commandId, sessionId, true)
           return { allowed: result.behavior === 'allow', message: result.behavior === 'deny' ? result.message : undefined }
         },
         onEnterPlanMode: () => {

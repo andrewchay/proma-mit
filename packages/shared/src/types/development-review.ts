@@ -174,7 +174,7 @@ export interface DevelopmentApplyManifest {
   expiresAt: number
 }
 
-export type DevelopmentApplyStatus = 'prepared' | 'applying' | 'applied' | 'blocked' | 'recovery_required'
+export type DevelopmentApplyStatus = 'prepared' | 'applying' | 'applied' | 'blocked' | 'rejected' | 'recovery_required'
 
 /** 应用操作记录（持久化，崩溃后可恢复分类）。 */
 export interface DevelopmentApplyOperation {
@@ -194,6 +194,9 @@ export interface DevelopmentApplyOperation {
   createdAt: number
   expiresAt: number
   appliedAt?: number
+  rejectedAt?: number
+  rejectedBy?: 'local-user'
+  rejectionReason?: 'user_rejected'
   error?: string
 }
 

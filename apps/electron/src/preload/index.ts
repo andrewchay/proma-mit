@@ -2133,6 +2133,7 @@ export interface ElectronAPI {
       prepareApply: (taskId: string) => Promise<import('@gravitas/shared').DevelopmentApplyManifest>
       /** 确认应用：二次校验后字节级写入（保留为未提交改动） */
       confirmApply: (operationId: string) => Promise<import('@gravitas/shared').DevelopmentApplyOperation & { taskCompleted: boolean; taskError?: string }>
+      rejectApply: (operationId: string) => Promise<import('@gravitas/shared').DevelopmentApplyOperation>
       /** 确认应用：查询操作状态与恢复分类 */
       getApplyStatus: (taskId: string) => Promise<import('@gravitas/shared').DevelopmentApplyStatusInfo>
       cancelExecution: (executionId: string) => Promise<import('@gravitas/shared').CancelAgentExecutionResult>
@@ -4911,6 +4912,7 @@ const electronAPI: ElectronAPI = {
       listValidations: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_VALIDATIONS, taskId),
       prepareApply: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_APPLY, taskId),
       confirmApply: (operationId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.CONFIRM_APPLY, operationId),
+      rejectApply: (operationId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.REJECT_APPLY, operationId),
       getApplyStatus: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.GET_APPLY_STATUS, taskId),
       listCapabilityVersions: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_VERSIONS, agentId),
       listLearningSamples: (agentId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_LEARNING_SAMPLES, agentId),

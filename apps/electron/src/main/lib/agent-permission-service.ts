@@ -160,6 +160,14 @@ export interface CanUseToolOptions {
 interface PendingPermission {
   resolve: (result: PermissionResult) => void
   request: PermissionRequest
+  onDecision?: (behavior: 'allow' | 'deny') => void
+  onCancel?: () => void
+}
+
+export interface OwnerActionApprovalCallbacks {
+  onRequest: (request: PermissionRequest) => void
+  onDecision: (request: PermissionRequest, behavior: 'allow' | 'deny') => void
+  onCancel: (request: PermissionRequest) => void
 }
 
 /** 会话级白名单 */
@@ -210,6 +218,7 @@ export class AgentPermissionService {
     askUserHandler?: (sessionId: string, input: Record<string, unknown>, signal: AbortSignal, sendToRenderer: (request: AskUserRequest) => void) => Promise<PermissionResult>,
     sendAskUserToRenderer?: (request: AskUserRequest) => void,
     mode?: PromaPermissionMode | (() => PromaPermissionMode),
+    ownerActionApproval?: OwnerActionApprovalCallbacks,
   ): (toolName: string, input: Record<string, unknown>, options: CanUseToolOptions) => Promise<PermissionResult> {
     return async (toolName, input, options) => {
       // AskUserQuestion 拦截：委托给交互式问答服务
@@ -221,7 +230,7 @@ export class AgentPermissionService {
       const currentMode = typeof mode === 'function' ? mode() : mode
 
       // 完全自动模式明确代表所有工具调用均自动放行，包括高危工具；安全与计划模式仍在后续分支执行各自限制。
-      if (currentMode === 'bypassPermissions') return allow()
+      if (currentMode === 'bypassPermissions' && !ownerActionApproval) return allow()
 
       // 系统级桌面读取/控制不能由子 Agent 自动批准，也不能沿用“始终允许”。
       // 这类操作可能读取任意屏幕内容或影响前台应用，必须回到用户确认流程。
@@ -237,15 +246,16 @@ export class AgentPermissionService {
       // 它与父会话共用本回调的 mode、白名单和逐次审批规则；否则 safe 父会话
       // 可以通过创建子代理间接执行写操作。
       // 站点已信任的下载直接放行
-      if (webBridgeDownloadTrusted) return allow()
+      if (webBridgeDownloadTrusted && !ownerActionApproval) return allow()
 
       // safe 模式：非只读操作直接拒绝，不向用户弹审批，也不沿用历史白名单
-      if (currentMode === 'safe' && !this.isReadOnlyTool(toolName, input)) {
+      const ownerSensitiveAction = Boolean(ownerActionApproval && !this.isReadOnlyTool(toolName, input))
+      if (currentMode === 'safe' && !this.isReadOnlyTool(toolName, input) && !ownerActionApproval) {
         return { behavior: 'deny', message: '安全模式下不允许执行写操作，请切换到自动审批或完全自动模式' }
       }
 
       // 会话白名单检查（用户之前选择了"始终允许"）
-      if (!requiresPerActionApproval && this.isWhitelisted(sessionId, toolName, input)) return allow()
+      if (!ownerSensitiveAction && !requiresPerActionApproval && this.isWhitelisted(sessionId, toolName, input)) return allow()
 
       // auto 模式本地 classifier：只读工具（Read/Glob/Grep/WebSearch/WebFetch 及只读 Bash 命令）自动放行
       // 原因：CLI 的 --permission-prompt-tool stdio 会把每次 tool 调用都转发给 canUseTool，
@@ -254,38 +264,70 @@ export class AgentPermissionService {
 
       // auto 模式下 SDK classifier 已判定安全的操作（classifierApprovable）自动放行
       // 例如常规文件写入、常见构建命令等。仅在高风险场景（危险等级 dangerous）仍回退人工确认。
-      if (
+      if (!ownerSensitiveAction && (
         currentMode === 'auto' &&
         options.classifierApprovable === true &&
         this.assessDangerLevel(toolName, input) !== 'dangerous'
-      ) {
+      )) {
         return allow()
       }
 
       // auto 模式下常规文件写入（Write/Edit/NotebookEdit 到工作区内的常规路径）自动放行，
       // 避免每个文件改动都弹窗。危险路径（系统目录、隐藏敏感文件）仍走人工确认。
-      if (
+      if (!ownerSensitiveAction && (
         currentMode === 'auto' &&
         ['Write', 'Edit', 'NotebookEdit'].includes(toolName) &&
         this.isRegularProjectPath(input)
-      ) {
+      )) {
         return allow()
       }
 
       // 需要询问用户：构建请求并发送到 UI
       const request = this.buildPermissionRequest(sessionId, toolName, input, options)
-      sendToRenderer(request)
+      if (ownerSensitiveAction) {
+        request.requiresPerActionApproval = true
+        try {
+          ownerActionApproval?.onRequest(request)
+        } catch (error) {
+          return {
+            behavior: 'deny',
+            message: `Owner动作审批记录失败，操作未执行：${error instanceof Error ? error.message : '审批账本不可用'}`,
+          }
+        }
+      }
 
       return new Promise<PermissionResult>((resolve) => {
-        this.pendingPermissions.set(request.requestId, { resolve, request })
+        this.pendingPermissions.set(request.requestId, {
+          resolve,
+          request,
+          ...(ownerSensitiveAction ? {
+            onDecision: (behavior: 'allow' | 'deny') => ownerActionApproval?.onDecision(request, behavior),
+            onCancel: () => ownerActionApproval?.onCancel(request),
+          } : {}),
+        })
 
         // 如果 signal 被中止，自动拒绝
         options.signal.addEventListener('abort', () => {
           if (this.pendingPermissions.has(request.requestId)) {
+            pendingCancel(this.pendingPermissions.get(request.requestId))
             this.pendingPermissions.delete(request.requestId)
             resolve({ behavior: 'deny' as const, message: '操作已中止' })
           }
         }, { once: true })
+        if (options.signal.aborted) {
+          const pending = this.pendingPermissions.get(request.requestId)
+          pendingCancel(pending)
+          this.pendingPermissions.delete(request.requestId)
+          resolve({ behavior: 'deny' as const, message: '操作已中止' })
+          return
+        }
+        try {
+          sendToRenderer(request)
+        } catch (error) {
+          pendingCancel(this.pendingPermissions.get(request.requestId))
+          this.pendingPermissions.delete(request.requestId)
+          resolve({ behavior: 'deny' as const, message: `权限请求无法送达，操作未执行：${error instanceof Error ? error.message : '界面不可用'}` })
+        }
       })
     }
   }
@@ -298,9 +340,18 @@ export class AgentPermissionService {
   respondToPermission(requestId: string, behavior: 'allow' | 'deny', alwaysAllow: boolean): string | null {
     const pending = this.pendingPermissions.get(requestId)
     if (!pending) return null
-
     const sessionId = pending.request.sessionId
-
+    if (pending.request.requiresPerActionApproval && alwaysAllow) throw new Error('Owner敏感动作只能逐次确认')
+    try {
+      pending.onDecision?.(behavior)
+    } catch (error) {
+      pending.resolve({
+        behavior: 'deny' as const,
+        message: `Owner动作审批校验失败，操作未执行：${error instanceof Error ? error.message : '来源或审计不可用'}`,
+      })
+      this.pendingPermissions.delete(requestId)
+      return sessionId
+    }
     // "总是允许"选项：
     // - Web Bridge 上传除外（仍逐次确认）；其余 WebBridge 工具把「当前站点域名」加入信任
     //   集合，而不是把整个工具加白名单——这样下载/点击等在可信站点下自动放行。
@@ -332,6 +383,7 @@ export class AgentPermissionService {
   clearSessionPending(sessionId: string): void {
     for (const [requestId, pending] of this.pendingPermissions) {
       if (pending.request.sessionId === sessionId) {
+        pendingCancel(pending)
         pending.resolve({ behavior: 'deny' as const, message: '会话已结束' })
         this.pendingPermissions.delete(requestId)
       }
@@ -709,6 +761,10 @@ export class AgentPermissionService {
     if (isWebBridgeFileTransfer(toolName)) return true
     return false
   }
+}
+
+function pendingCancel(pending: PendingPermission | undefined): void {
+  try { pending?.onCancel?.() } catch { /* 审计故障时仍保持拒绝，不执行工具 */ }
 }
 
 function isComputerUseTool(toolName: string): boolean {

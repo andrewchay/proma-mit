@@ -40,20 +40,35 @@ function running(f: ReturnType<typeof prepared>) {
   return { executionId, sessionId }
 }
 function scope() { const f = prepared(); const run = running(f); return source.resolveOwnerPlanningSession(run.sessionId)! }
-test('Given SDK三种协议 When 固定system/user及4096单流式请求 Then 可验证实际payload', () => {
+test('Given 新版Owner规划 When 固定system/user及8192单流式请求 Then 可验证实际payload', () => {
   const s = scope(), { systemPrompt: system, userPrompt: user } = s.request
-  expect(() => assertOwnerPlanningPayload(s, { model: 'model', stream: true, max_tokens: 4096, messages: [{ role: 'system', content: system }, { role: 'user', content: user }], stream_options: { include_usage: true } }, 'openai-chat', new URL('https://example.invalid/v1/chat/completions'))).not.toThrow()
-  expect(() => assertOwnerPlanningPayload(s, { model: 'model', stream: true, max_tokens: 4096, system: [{ type: 'text', text: system }], messages: [{ role: 'user', content: [{ type: 'text', text: user }] }] }, 'anthropic-messages', new URL('https://example.invalid/v1/messages'))).not.toThrow()
-  expect(() => assertOwnerPlanningPayload(s, { generationConfig: { maxOutputTokens: 4096 }, systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }] }, 'google-generative', new URL('https://example.invalid/v1beta/models/model:streamGenerateContent'))).not.toThrow()
+  expect(() => assertOwnerPlanningPayload(s, { model: 'model', stream: true, max_tokens: 8192, messages: [{ role: 'system', content: system }, { role: 'user', content: user }], stream_options: { include_usage: true } }, 'openai-chat', new URL('https://example.invalid/v1/chat/completions'))).not.toThrow()
+  expect(() => assertOwnerPlanningPayload(s, { model: 'model', stream: true, max_tokens: 8192, system: [{ type: 'text', text: system }], messages: [{ role: 'user', content: [{ type: 'text', text: user }] }] }, 'anthropic-messages', new URL('https://example.invalid/v1/messages'))).not.toThrow()
+  expect(() => assertOwnerPlanningPayload(s, { generationConfig: { maxOutputTokens: 8192 }, systemInstruction: { parts: [{ text: system }] }, contents: [{ role: 'user', parts: [{ text: user }] }] }, 'google-generative', new URL('https://example.invalid/v1beta/models/model:streamGenerateContent'))).not.toThrow()
+})
+test('Given GLM-5.3 Owner协议v3 When 实际OpenAI请求缺少冻结low推理参数 Then 拒绝准入', () => {
+  const current = scope()
+  const glm = { ...current, binding: { ...current.binding, modelId: 'glm-5.3-flash' }, link: { ...current.link, protocolVersion: '3' as const, reasoningEffort: 'low' as const } }
+  const body = { model: 'glm-5.3-flash', stream: true, max_tokens: 8192, reasoning_effort: 'low', messages: [{ role: 'system', content: glm.request.systemPrompt }, { role: 'user', content: glm.request.userPrompt }] }
+  expect(() => assertOwnerPlanningPayload(glm, body, 'openai-chat', new URL('https://example.invalid/v1/chat/completions'))).not.toThrow()
+  expect(() => assertOwnerPlanningPayload(glm, { ...body, reasoning_effort: 'max' }, 'openai-chat', new URL('https://example.invalid/v1/chat/completions'))).toThrow('推理强度')
+  expect(() => assertOwnerPlanningPayload(glm, { ...body, reasoning_effort: undefined }, 'openai-chat', new URL('https://example.invalid/v1/chat/completions'))).toThrow('推理强度')
+})
+test('Given 历史v1规划关联 When 继续验证 Then 仍只接受4096输出限制', () => {
+  const current = scope()
+  const legacy = { ...current, link: { ...current.link, protocolVersion: '1' as const, maxOutputTokens: 4096 as const } }
+  const body = { model: 'model', stream: true, max_tokens: 4096, messages: [{ role: 'system', content: legacy.request.systemPrompt }, { role: 'user', content: legacy.request.userPrompt }] }
+  expect(() => assertOwnerPlanningPayload(legacy, body, 'openai-chat', new URL('https://example.invalid/v1/chat/completions'))).not.toThrow()
+  expect(() => assertOwnerPlanningPayload(legacy, { ...body, max_tokens: 8192 }, 'openai-chat', new URL('https://example.invalid/v1/chat/completions'))).toThrow()
 })
 test('Given OpenAI夹带工具/资料/隐藏参数/错误输出限制或出口 When 最终body检查 Then 全拒绝', () => {
-  const s = scope(); const base = { model: 'model', stream: true, max_tokens: 4096, messages: [{ role: 'system', content: s.request.systemPrompt }, { role: 'user', content: s.request.userPrompt }] }
-  for (const patch of [{ model: 'other' }, { max_tokens: 8192 }, { max_tokens: undefined }, { max_completion_tokens: 8000 }, { tools: [{ name: 'Bash' }] }, { tool_choice: 'auto' }, { parallel_tool_calls: true }, { temperature: 1 }, { messages: [...base.messages, { role: 'user', content: '隐藏历史' }] }, { messages: [{ role: 'system', content: 'override' }, base.messages[1]] }, { messages: [base.messages[0], { role: 'user', content: [{ type: 'image_url', image_url: { url: 'private' } }] }] }, { stream_options: { include_usage: false } }]) expect(() => assertOwnerPlanningPayload(s, { ...base, ...patch }, 'openai-chat', new URL('https://example.invalid/v1/chat/completions'))).toThrow()
+  const s = scope(); const base = { model: 'model', stream: true, max_tokens: 8192, messages: [{ role: 'system', content: s.request.systemPrompt }, { role: 'user', content: s.request.userPrompt }] }
+  for (const patch of [{ model: 'other' }, { max_tokens: 4096 }, { max_tokens: undefined }, { max_completion_tokens: 8000 }, { tools: [{ name: 'Bash' }] }, { tool_choice: 'auto' }, { parallel_tool_calls: true }, { temperature: 1 }, { messages: [...base.messages, { role: 'user', content: '隐藏历史' }] }, { messages: [{ role: 'system', content: 'override' }, base.messages[1]] }, { messages: [base.messages[0], { role: 'user', content: [{ type: 'image_url', image_url: { url: 'private' } }] }] }, { stream_options: { include_usage: false } }]) expect(() => assertOwnerPlanningPayload(s, { ...base, ...patch }, 'openai-chat', new URL('https://example.invalid/v1/chat/completions'))).toThrow()
   expect(() => assertOwnerPlanningPayload(s, base, 'openai-chat', new URL('https://example.invalid/v1/embeddings'))).toThrow('出口')
 })
-test('Given Google/Anthropic请求含历史、非文字、工具或无4096 When 实际body检查 Then 拒绝', () => {
-  const s = scope(); const google = { generationConfig: { maxOutputTokens: 4096 }, systemInstruction: { parts: [{ text: s.request.systemPrompt }] }, contents: [{ role: 'user', parts: [{ text: s.request.userPrompt }] }] }
-  for (const patch of [{ tools: [] }, { toolConfig: {} }, { generationConfig: { maxOutputTokens: 8192 } }, { contents: [] }, { contents: [{ role: 'user', parts: [{ inlineData: 'private' }] }] }]) expect(() => assertOwnerPlanningPayload(s, { ...google, ...patch }, 'google-generative', new URL('https://example.invalid/models/model:streamGenerateContent'))).toThrow()
-  const anthropic = { model: 'model', stream: true, max_tokens: 4096, system: s.request.systemPrompt, messages: [{ role: 'user', content: s.request.userPrompt }] }
-  for (const patch of [{ thinking: { type: 'enabled', budget_tokens: 5000 } }, { max_tokens: 8192 }, { messages: [] }, { messages: [{ role: 'user', content: [{ type: 'document', text: 'private' }] }] }]) expect(() => assertOwnerPlanningPayload(s, { ...anthropic, ...patch }, 'anthropic-messages', new URL('https://example.invalid/messages'))).toThrow()
+test('Given Google/Anthropic请求含历史、非文字、工具或非冻结输出限制 When 实际body检查 Then 拒绝', () => {
+  const s = scope(); const google = { generationConfig: { maxOutputTokens: 8192 }, systemInstruction: { parts: [{ text: s.request.systemPrompt }] }, contents: [{ role: 'user', parts: [{ text: s.request.userPrompt }] }] }
+  for (const patch of [{ tools: [] }, { toolConfig: {} }, { generationConfig: { maxOutputTokens: 4096 } }, { contents: [] }, { contents: [{ role: 'user', parts: [{ inlineData: 'private' }] }] }]) expect(() => assertOwnerPlanningPayload(s, { ...google, ...patch }, 'google-generative', new URL('https://example.invalid/models/model:streamGenerateContent'))).toThrow()
+  const anthropic = { model: 'model', stream: true, max_tokens: 8192, system: s.request.systemPrompt, messages: [{ role: 'user', content: s.request.userPrompt }] }
+  for (const patch of [{ thinking: { type: 'enabled', budget_tokens: 5000 } }, { max_tokens: 4096 }, { messages: [] }, { messages: [{ role: 'user', content: [{ type: 'document', text: 'private' }] }] }]) expect(() => assertOwnerPlanningPayload(s, { ...anthropic, ...patch }, 'anthropic-messages', new URL('https://example.invalid/messages'))).toThrow()
 })

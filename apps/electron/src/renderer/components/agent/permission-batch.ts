@@ -42,13 +42,13 @@ export interface PermissionBatchPlan {
  */
 export function resolveBatchAllowPlan(requests: readonly PermissionRequest[]): PermissionBatchPlan | null {
   const first = requests[0]
-  if (!first || requests.length < 2) return null
+  if (!first || requests.length < 2 || first.requiresPerActionApproval) return null
   if (first.dangerLevel === 'dangerous') return null
   if (requiresPerActionApprovalTool(first.toolName)) return null
 
   const requestIds: string[] = [first.requestId]
   for (const candidate of requests.slice(1)) {
-    if (candidate.dangerLevel !== first.dangerLevel) break
+    if (candidate.requiresPerActionApproval || candidate.dangerLevel !== first.dangerLevel) break
     if (candidate.toolName !== first.toolName) break
     if (requiresPerActionApprovalTool(candidate.toolName)) break
     if (first.toolName === 'Bash') {

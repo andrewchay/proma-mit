@@ -320,6 +320,9 @@ export interface SDKResultMessage {
   /** Runtime原文与终止原因；不等于业务成功或Provider直接回执。 */
   result?: string
   finish_reason?: string
+  /** Provider响应关联字段；请求ID仅来自白名单响应头，响应ID单独记录。 */
+  provider_request_id?: string
+  provider_response_id?: string
   /** Owner真实SDK用量；null表示未报告，不能用兼容usage中的0冒充证据。 */
   owner_planning_usage?: {
     inputTokens: number | null
@@ -2030,6 +2033,8 @@ export type DangerLevel = 'safe' | 'normal' | 'dangerous'
 export interface PermissionRequest {
   /** 请求唯一 ID */
   requestId: string
+  /** Owner命令的敏感动作必须逐次确认，禁止加入任何白名单。 */
+  requiresPerActionApproval?: boolean
   /** 会话 ID */
   sessionId: string
   /** 工具名称 */

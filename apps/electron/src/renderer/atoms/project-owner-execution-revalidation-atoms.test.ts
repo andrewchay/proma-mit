@@ -43,7 +43,10 @@ const minimalPreparation = {
   integrityHash: 'prep-hash',
 } as unknown as OwnerExecutionPreparationRecord
 const preparationView: OwnerExecutionPreparationView = {
-  choices: { employees: [], workspaces: [], knowledgeSources: [] },
+  workspaceRecommendation: { source: 'none' },
+  executionConfigurationRecommendation: null,
+  executionConfigurationRecommendationState: 'none',
+  choices: { employees: [], workspaces: [], workspaceCapabilities: [], knowledgeSources: [] },
   revision: 3,
   policyRevision: 2,
   preparation: minimalPreparation,

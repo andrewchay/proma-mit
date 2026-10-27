@@ -1,6 +1,6 @@
 /** 计划审阅仅保存内容；按项目/任务隔离，绝不创建执行或调用模型。 */
 import { atom, type Getter, type Setter } from 'jotai'
-import type { ProjectOwnerGoalSubject, ProjectOwnerPlanApi, ProjectOwnerPlanDraft, ProjectOwnerPlanningContext, ProjectOwnerPlanStep } from '@gravitas/shared'
+import type { ProjectOwnerDeliveryChangeAssessment, ProjectOwnerGoalSubject, ProjectOwnerPlanApi, ProjectOwnerPlanDraft, ProjectOwnerPlanningContext, ProjectOwnerPlanStep } from '@gravitas/shared'
 import { getOwnerGoalEditor, ownerGoalEditorsAtom } from './project-owner-goal-atoms'
 
 export interface OwnerPlanEditor {
@@ -11,6 +11,7 @@ export interface OwnerPlanEditor {
   assumptions: string[]
   risks: string[]
   steps: ProjectOwnerPlanStep[]
+  deliveryChangeAssessment?: ProjectOwnerDeliveryChangeAssessment
   changeReason: string
   loaded: boolean
   loading: boolean
@@ -48,7 +49,7 @@ function update(get: Getter, set: Setter, subject: ProjectOwnerGoalSubject, patc
   const entries = new Map(get(ownerPlanEditorsAtom)); entries.set(key(subject), { ...read(get, subject), ...patch }); set(ownerPlanEditorsAtom, entries)
 }
 function fields(snapshot: ProjectOwnerPlanDraft | null) {
-  return { summary: snapshot?.proposal.summary ?? '', assumptions: [...(snapshot?.proposal.assumptions ?? [])], risks: [...(snapshot?.proposal.risks ?? [])], steps: snapshot?.proposal.steps.map(s => ({ ...s, acceptanceCriteria: [...s.acceptanceCriteria], dependencies: [...s.dependencies] })) ?? [], changeReason: '' }
+  return { summary: snapshot?.proposal.summary ?? '', assumptions: [...(snapshot?.proposal.assumptions ?? [])], risks: [...(snapshot?.proposal.risks ?? [])], steps: snapshot?.proposal.steps.map(s => ({ ...s, acceptanceCriteria: [...s.acceptanceCriteria], dependencies: [...s.dependencies] })) ?? [], ...(snapshot?.proposal.deliveryChangeAssessment ? { deliveryChangeAssessment: snapshot.proposal.deliveryChangeAssessment } : {}), changeReason: '' }
 }
 function assertSubject(value: ProjectOwnerGoalSubject, subject: ProjectOwnerGoalSubject) { if (value.projectId !== subject.projectId || value.taskId !== subject.taskId) throw new Error('计划响应主体与当前项目/任务不匹配') }
 const errorText = (error: unknown) => error instanceof Error ? error.message : '计划操作失败'
@@ -97,6 +98,16 @@ export function canConfirmOwnerPlan(get: Getter, subject: ProjectOwnerGoalSubjec
 export const editOwnerPlanAtom = atom(null, (get, set, payload: { subject: ProjectOwnerGoalSubject; patch: Partial<Pick<OwnerPlanEditor, 'summary' | 'assumptions' | 'risks' | 'steps' | 'changeReason'>> }) => {
   update(get, set, payload.subject, { ...payload.patch, dirty: true, editVersion: read(get, payload.subject).editVersion + 1 })
 })
+export function canRemoveOwnerPlanStep(steps: OwnerPlanEditor['steps'], stepKey: string): boolean {
+  return steps.length > 1 && steps.some(step => step.key === stepKey)
+    && !steps.some(step => step.dependencies.includes(stepKey))
+}
+/** 只改本地草案；保留至少一步，被其他步骤依赖的节点须先明确调整依赖。 */
+export const removeOwnerPlanStepAtom = atom(null, (get, set, input: { subject: ProjectOwnerGoalSubject; stepKey: string }) => {
+  const editor = read(get, input.subject)
+  if (!editor.loaded || editor.loading || editor.saving || !canRemoveOwnerPlanStep(editor.steps, input.stepKey)) return
+  set(editOwnerPlanAtom, { subject: input.subject, patch: { steps: editor.steps.filter(step => step.key !== input.stepKey) } })
+})
 export const loadOwnerPlanAtom = atom(null, async (get, set, subject: ProjectOwnerGoalSubject) => {
   const before = read(get, subject); if (before.loading || before.saving) return
   update(get, set, subject, { loading: true, error: '' })
@@ -138,7 +149,7 @@ async function writePlan(get: Getter, set: Setter, subject: ProjectOwnerGoalSubj
   try {
     const request = { ...subject, expectedGoalRevision: context.goal.revision, expectedRevision: snapshot.revision }
     const api = get(ownerPlanApiAtom)
-    const response = confirm ? await api.confirmOwnerPlanDraft(request) : await api.saveOwnerPlanDraft({ ...request, input: { expectedContextFingerprint: context.fingerprint, summary: before.summary, assumptions: cleanLines(before.assumptions), risks: cleanLines(before.risks), steps: before.steps.map(step => ({ ...step, acceptanceCriteria: cleanLines(step.acceptanceCriteria), dependencies: cleanLines(step.dependencies) })), changeReason: before.changeReason } })
+    const response = confirm ? await api.confirmOwnerPlanDraft(request) : await api.saveOwnerPlanDraft({ ...request, input: { expectedContextFingerprint: context.fingerprint, summary: before.summary, assumptions: cleanLines(before.assumptions), risks: cleanLines(before.risks), steps: before.steps.map(step => ({ ...step, acceptanceCriteria: cleanLines(step.acceptanceCriteria), dependencies: cleanLines(step.dependencies) })), ...(before.deliveryChangeAssessment ? { deliveryChangeAssessment: before.deliveryChangeAssessment } : {}), changeReason: before.changeReason } })
     if (!response.ok) { update(get, set, subject, { error: response.error.message, conflict: response.error.code === 'conflict' }); return }
     assertSubject(response.value, subject); assertSubject(response.value.proposal, subject)
     const edited = read(get, subject).editVersion !== before.editVersion

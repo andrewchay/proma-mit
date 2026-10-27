@@ -195,6 +195,7 @@ import { prepareControlledTask, getControlledTaskStartPreview, startControlledTa
 import {
   prepareApply as prepareDevelopmentApply,
   confirmApply as confirmDevelopmentApply,
+  rejectApply as rejectDevelopmentApply,
   getApplyStatus as getDevelopmentApplyStatus,
 } from './development-apply-service'
 import {
@@ -1022,6 +1023,7 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_VALIDATIONS, (_, taskId: string) => listDevelopmentValidations(taskId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_APPLY, (_, taskId: string) => prepareDevelopmentApply(taskId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.CONFIRM_APPLY, (_, operationId: string) => confirmDevelopmentApply(operationId))
+  ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.REJECT_APPLY, (_, operationId: string) => rejectDevelopmentApply(operationId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.GET_APPLY_STATUS, (_, taskId: string) => getDevelopmentApplyStatus(taskId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.CANCEL_EXECUTION, (_, executionId: string) => cancelAgentExecution(executionId))
   ipcMain.handle(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_CAPABILITY_VERSIONS, (_, agentId: string) => listAgentEmployeeCapabilityVersions(agentId))

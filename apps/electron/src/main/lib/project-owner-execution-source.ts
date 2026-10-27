@@ -1,9 +1,9 @@
 /** 只构造业务准备事实；不开放工具、模型、资料读取或任务执行。 */
 import { execFileSync } from 'node:child_process'
-import { AGENT_RUNTIME_CAPABILITIES } from '@gravitas/shared'
+import { AGENT_RUNTIME_CAPABILITIES, getAgentProviderProtocol } from '@gravitas/shared'
+import { recommendOwnerStepTools } from '@gravitas/shared'
 import { validateDevelopmentScope } from './development-task-service'
-import { PILOT_DEFAULT_PRICE_EVIDENCE_ID } from './project-pilot-request-exit'
-import { getPilotReviewedPriceEvidence } from './project-pilot-request-evidence'
+import { getPilotReviewedPriceEvidenceForModel } from './project-pilot-request-evidence'
 import { createHash } from 'node:crypto'
 import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -12,7 +12,7 @@ import type {
   OwnerExecutionPreparationSource,
   ProjectOwnerGoalSubject,
 } from '@gravitas/shared'
-import { getAgentWorkspace } from './agent-workspace-manager'
+import { getAgentWorkspace, getWorkspaceCapabilities } from './agent-workspace-manager'
 import { getChannelById } from './channel-manager'
 import { getWorkspaceMcpPath, getWorkspaceSkillsDir } from './config-paths'
 import { validateControlledTarget } from './agent-controlled-context'
@@ -103,6 +103,8 @@ export function parseOwnerExecutionInput(raw: unknown): OwnerExecutionPreparatio
     'executorEmployeeId',
     'reviewerEmployeeId',
     'roleAssignments',
+    'acknowledgeOwnerConfigurationOverride',
+    'acknowledgeOwnerWorkspaceOverride',
     'roleBudgetCaps',
     'workspaceId',
     'knowledgeSourceIds',
@@ -114,6 +116,10 @@ export function parseOwnerExecutionInput(raw: unknown): OwnerExecutionPreparatio
   ])
   if (o.executionKind !== 'development' && o.executionKind !== 'controlled')
     throw new Error('Owner执行准备模式无效')
+  if (o.acknowledgeOwnerConfigurationOverride !== undefined && typeof o.acknowledgeOwnerConfigurationOverride !== 'boolean')
+    throw new Error('Owner默认配置覆盖确认无效')
+  if (o.acknowledgeOwnerWorkspaceOverride !== undefined && typeof o.acknowledgeOwnerWorkspaceOverride !== 'boolean')
+    throw new Error('Owner默认工作区覆盖确认无效')
   let developmentScope: OwnerExecutionPreparationInput['developmentScope']
   if (o.executionKind === 'controlled' && o.developmentScope !== undefined)
     throw new Error('非代码准备不能继承研发写入范围')
@@ -169,6 +175,8 @@ export function parseOwnerExecutionInput(raw: unknown): OwnerExecutionPreparatio
     executorEmployeeId: text(o.executorEmployeeId),
     reviewerEmployeeId: text(o.reviewerEmployeeId),
     ...(roleAssignments === undefined ? {} : { roleAssignments }),
+    ...(o.acknowledgeOwnerConfigurationOverride === true ? { acknowledgeOwnerConfigurationOverride: true } : {}),
+    ...(o.acknowledgeOwnerWorkspaceOverride === true ? { acknowledgeOwnerWorkspaceOverride: true } : {}),
     ...(roleBudgetCaps === undefined ? {} : { roleBudgetCaps }),
     workspaceId: text(o.workspaceId),
     knowledgeSourceIds: strings(o.knowledgeSourceIds),
@@ -296,11 +304,23 @@ export function buildOwnerExecutionSource(
     const carrierFacts = getOwnerCarrierFacts(subject.projectId, binding.carrierId, binding.workspaceId)
     if (!ownerCarrierBindingMatches(binding, carrierFacts))
       throw new Error('Owner规划载体配置已漂移，请重新核对绑定来源')
+    if (input.workspaceId !== binding.workspaceId && input.acknowledgeOwnerWorkspaceOverride !== true)
+      throw new Error('选择工作区与Owner绑定默认工作区不同，须明确确认覆盖后才能预览')
+    if (compatibleEmployees.some((employee) => employee.channelId !== binding.channelId
+      || employee.modelId !== binding.modelId || employee.runtime !== binding.runtime)
+      && input.acknowledgeOwnerConfigurationOverride !== true)
+      throw new Error('执行或评审配置与Owner绑定默认配置不同，须明确确认覆盖后才能预览')
   }
   if (!hasProjectWorkspaceBinding(subject.projectId, input.workspaceId))
     throw new Error('Owner执行工作区未绑定当前项目')
   const workspace = getAgentWorkspace(input.workspaceId)!,
     channel = getChannelById(executor.channelId)!
+  const workspaceCapabilities = getWorkspaceCapabilities(workspace.slug)
+  const toolRecommendations = recommendOwnerStepTools(selectedSteps, workspace.id, [{
+    workspaceId: workspace.id,
+    mcpServers: workspaceCapabilities.mcpServers.filter((server) => server.enabled).map(({ name, type }) => ({ name, type })),
+    skills: workspaceCapabilities.skills.filter((skill) => skill.enabled).map(({ slug, name, description }) => ({ slug, name, ...(description ? { description } : {}) })),
+  }])
   let repositoryIdentityHash: string | undefined
   let developmentScope: OwnerExecutionPreparationInput['developmentScope']
   if (input.executionKind === 'development') {
@@ -394,6 +414,7 @@ export function buildOwnerExecutionSource(
     contextFingerprint: plan.contextFingerprint,
     plan,
     selectedStepKeys: input.selectedStepKeys,
+    toolRecommendations,
     ...(roleAssignments === undefined ? {} : {
       roleAssignments: roleEmployees.map(({ roleKey, employee }) => ({
         roleKey,
@@ -431,7 +452,11 @@ export function buildOwnerExecutionSource(
       ...(!AGENT_RUNTIME_CAPABILITIES[executor.runtime].supportsBudgetStopThreshold
         ? ['当前Runtime不支持费用停止阈值']
         : []),
-      ...(getPilotReviewedPriceEvidence(PILOT_DEFAULT_PRICE_EVIDENCE_ID)?.model !== target.modelId
+      ...(!getPilotReviewedPriceEvidenceForModel(
+        target.modelId,
+        getAgentProviderProtocol(channel.provider, 'ai-sdk') === 'openai-chat' ? 'openai'
+          : getAgentProviderProtocol(channel.provider, 'ai-sdk') === 'anthropic-messages' ? 'anthropic' : 'google',
+      )
         ? ['当前模型不匹配已审核价格证据，不能据此发行']
         : []),
       ...(input.executionKind === 'controlled' ? ['非代码Pilot发行与资料适配器尚未接通'] : []),

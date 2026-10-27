@@ -20,6 +20,7 @@ export function OwnerPlanningPreflightSummary({ ownerPlanning }: {
 			<div className="flex flex-wrap gap-2">
 				<span className="rounded-full bg-background px-2 py-1">最多 {ownerPlanning.maxRequests} 次请求</span>
 				<span className="rounded-full bg-background px-2 py-1">输出上限 {ownerPlanning.maxOutputTokens} token</span>
+				{ownerPlanning.reasoningEffort && <span className="rounded-full bg-background px-2 py-1">推理强度 {ownerPlanning.reasoningEffort}</span>}
 			</div>
 			<p>不读取历史或记忆，不使用工具、MCP、Skills；不自动重试或续跑。</p>
 			<p>仅限专用规划出口；safe权限本身不是沙箱。</p>
@@ -27,7 +28,7 @@ export function OwnerPlanningPreflightSummary({ ownerPlanning }: {
 				<summary className="cursor-pointer">查看版本与技术细节</summary>
 				<div className="mt-2 space-y-2">
 					<p>目标 v{goal.goalVersion} / 修订 {ownerPlanning.goalRevision} · 计划修订 {ownerPlanning.planRevision} · Owner配置 v{ownerPlanning.bindingRevision}</p>
-					<p className="break-all">协议 {ownerPlanning.protocolVersion} · 资料指纹 {ownerPlanning.contextFingerprint} · 指令指纹 {ownerPlanning.promptHash}</p>
+					<p className="break-all">协议 {ownerPlanning.protocolVersion}{ownerPlanning.reasoningEffort ? ` · 推理强度 ${ownerPlanning.reasoningEffort}` : ''} · 资料指纹 {ownerPlanning.contextFingerprint} · 指令指纹 {ownerPlanning.promptHash}</p>
 					<details>
 						<summary className="cursor-pointer">查看完整冻结发送资料和固定指令</summary>
 						<p className="mt-2 whitespace-pre-wrap break-words">{ownerPlanning.systemPrompt}</p>

@@ -242,6 +242,21 @@ export async function confirmApply(operationId: string): Promise<DevelopmentAppl
   })
 }
 
+/** 持久记录人工拒绝应用；拒绝只允许发生在 prepared 阶段且不触碰仓库文件。 */
+export function rejectApply(operationId: string): DevelopmentApplyOperation {
+  if (typeof operationId !== 'string' || !/^apply-[0-9a-f-]{36}$/.test(operationId)) throw new DevelopmentApplyError('应用操作身份无效')
+  const database = getProjectDb()
+  const result = database.prepare(`UPDATE development_apply_operations
+    SET status='rejected', rejected_at=?, rejected_by='local-user', rejection_reason='user_rejected'
+    WHERE id=? AND status='prepared'`).run(Date.now(), operationId)
+  if (result.changes !== 1) {
+    const current = loadOperation(operationId)
+    if (current?.status === 'rejected') return current
+    throw new DevelopmentApplyError(current ? `当前状态不可拒绝：${current.status}` : '应用操作不存在')
+  }
+  return loadOperation(operationId)!
+}
+
 /** 查询任务应用操作状态；对 applying 中断记录做恢复分类。 */
 export function getApplyStatus(taskId: string): DevelopmentApplyStatusInfo {
   const operations = listOperations(taskId)
@@ -355,6 +370,9 @@ function rowToOperation(row: Record<string, unknown>): DevelopmentApplyOperation
     createdAt: row.created_at as number,
     expiresAt: row.expires_at as number,
     ...(row.applied_at ? { appliedAt: row.applied_at as number } : {}),
+    ...(row.rejected_at ? { rejectedAt: row.rejected_at as number } : {}),
+    ...(row.rejected_by === 'local-user' ? { rejectedBy: 'local-user' as const } : {}),
+    ...(row.rejection_reason === 'user_rejected' ? { rejectionReason: 'user_rejected' as const } : {}),
     ...(row.error ? { error: row.error as string } : {}),
   }
 }
@@ -362,13 +380,13 @@ function rowToOperation(row: Record<string, unknown>): DevelopmentApplyOperation
 function saveOperation(operation: DevelopmentApplyOperation): void {
   getProjectDb().prepare(
     `INSERT OR REPLACE INTO development_apply_operations
-     (id, task_id, delivery_id, version, execution_id, snapshot_id, content_hash, repo_root, branch, base_commit, files, status, created_at, expires_at, applied_at, error)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+     (id, task_id, delivery_id, version, execution_id, snapshot_id, content_hash, repo_root, branch, base_commit, files, status, created_at, expires_at, applied_at, rejected_at, rejected_by, rejection_reason, error)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(
     operation.id, operation.taskId, operation.deliveryId, operation.version, operation.executionId, operation.snapshotId,
     operation.contentHash, operation.repoRoot, operation.branch, operation.baseCommit,
     JSON.stringify(operation.files), operation.status, operation.createdAt, operation.expiresAt,
-    operation.appliedAt ?? null, operation.error ?? null,
+    operation.appliedAt ?? null, operation.rejectedAt ?? null, operation.rejectedBy ?? null, operation.rejectionReason ?? null, operation.error ?? null,
   )
 }
 

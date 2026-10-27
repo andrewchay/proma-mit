@@ -2,7 +2,7 @@ import type { ToolContext } from './agent-runtime/types'
 /** 非代码准备任务的模型出口。仅按权威execution识别，不接受客户端授权标志。 */
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import type { AnyModel, ProviderRequestOptions } from '@earendil-works/pi-ai'
-import { resolveAgentRuntimeBaseUrl } from '@gravitas/shared'
+import { getAgentProviderProtocol, resolveAgentRuntimeBaseUrl } from '@gravitas/shared'
 import { existsSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { getConfigDir } from './config-paths'
@@ -20,6 +20,7 @@ import { assertNoOwnerBusinessSession } from './project-owner-task-evidence'
 import { assertOwnerExecutionRequestGate } from './project-owner-execution-gates'
 import { assertOwnerCommandRuntimeContext } from './project-owner-execution-start'
 import { createOwnerRequestFetch } from './project-owner-execution-request-exit'
+import { getPilotReviewedPriceEvidenceForModel } from './project-pilot-request-evidence'
 
 export interface ControlledProviderContext {
 	runtime: 'pi' | 'ai-sdk'
@@ -202,7 +203,13 @@ export function createControlledProviderFetch(
 	const guardedFetch = Object.assign(guarded, { preconnect: () => {} })
 	if (ownerCommandId) {
 		const ownerExecution = initialExecution!
-		return createOwnerRequestFetch({ commandId: ownerCommandId, executionId: ownerExecution.id, sessionId, baseFetch: guardedFetch })
+		const ownerEmployee = store.getAgentEmployee(ownerExecution.agentId)
+		const ownerChannel = ownerEmployee && getChannelById(ownerEmployee.channelId)
+		if (!ownerChannel) throw new Error('Owner执行渠道不可用，拒绝绑定价格证据')
+		const protocol = getAgentProviderProtocol(ownerChannel.provider, 'ai-sdk')
+		const providerKind = protocol === 'openai-chat' ? 'openai' : protocol === 'anthropic-messages' ? 'anthropic' : 'google'
+		const priceEvidenceId = getPilotReviewedPriceEvidenceForModel(actual().modelId, providerKind)?.evidenceId
+		return createOwnerRequestFetch({ commandId: ownerCommandId, executionId: ownerExecution.id, sessionId, priceEvidenceId, baseFetch: guardedFetch })
 	}
 	return guardedFetch
 }

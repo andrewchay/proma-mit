@@ -77,7 +77,7 @@ function parseGoalInput(input: unknown, subject: GoalSubject, goalVersion: numbe
     throw new Error('目标草案输入必须是 JSON 对象')
   }
   for (const key of Object.keys(input)) {
-    if (!['objective', 'constraints', 'acceptanceCriteria'].includes(key)) throw new Error(`目标草案存在未知字段：${key}`)
+    if (!['objective', 'constraints', 'acceptanceCriteria', 'codeSourceAccess'].includes(key)) throw new Error(`目标草案存在未知字段：${key}`)
   }
   return prepareProjectOwnerGoalBrief({
     ...input,
@@ -91,6 +91,7 @@ function sameGoalContent(first: ProjectOwnerGoalBrief, second: ProjectOwnerGoalB
   return first.objective === second.objective
     && JSON.stringify(first.constraints) === JSON.stringify(second.constraints)
     && JSON.stringify(first.acceptanceCriteria) === JSON.stringify(second.acceptanceCriteria)
+    && first.codeSourceAccess === second.codeSourceAccess
 }
 
 /**

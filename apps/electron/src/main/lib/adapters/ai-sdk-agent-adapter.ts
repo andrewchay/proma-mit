@@ -1,5 +1,5 @@
 import { assertNoOwnerBusinessSession } from '../project-owner-task-evidence'
-import { assertToolAllowedForSessionPurpose } from '../project-owner-execution-gates'
+import { assertToolAllowedForSessionPurpose, getOwnerExecutionToolNames, isOwnerWorkspaceFileActionCandidate } from '../project-owner-execution-gates'
 import { OwnerPlanningRuntimeError } from '../agent-runtime/owner-planning-runtime-error'
 /**
  * Vercel AI SDK Agent Runtime 适配器。
@@ -48,6 +48,8 @@ export interface AISDKAgentQueryOptions extends AgentQueryInput {
   permissionMode?: PromaPermissionMode
   /** 安全研发隔离写入边界：置位后 safe 模式允许 Write/Edit 仅写会话 cwd 内路径 */
   worktreeScopedWrite?: boolean
+  /** 仅由AgentOrchestrator从专用Owner dispatcher上下文写入。 */
+  ownerActionApproval?: boolean
   /** 自定义权限检查回调 */
   canUseTool?: AISDKCanUseToolCallback
   /** 历史 SDKMessage */
@@ -164,6 +166,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
         permissionMode: owner ? 'safe' : input.permissionMode ?? 'auto',
         planModeEntered: !owner && input.permissionMode === 'plan',
         worktreeScopedWrite: !owner && input.worktreeScopedWrite === true,
+        ownerActionApproval: !owner && input.ownerActionApproval === true,
       },
       queuedMessages: [],
       interrupted: false,
@@ -181,7 +184,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
         const messages = await this.runtimeCore.runAgentTurn({
           sessionId, prompt: owner.request.userPrompt, modelId: model, provider, protocol, apiKey, baseUrl, cwd,
           runtimeTools: [], activeSession: activeSession.state, maxTurns: 1, maxRetries: 0,
-          ownerPlanningRequest: { systemPrompt: owner.request.systemPrompt, userPrompt: owner.request.userPrompt },
+          ownerPlanningRequest: { systemPrompt: owner.request.systemPrompt, userPrompt: owner.request.userPrompt, maxOutputTokens: owner.link.maxOutputTokens, ...(owner.link.reasoningEffort ? { reasoningEffort: owner.link.reasoningEffort } : {}) },
           fetchFn: controlledFetch, onAgentEvent: input.onAgentEvent,
         })
         for (const message of messages) yield message
@@ -204,6 +207,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
         return
       }
 
+      const ownerToolNames = getOwnerExecutionToolNames(sessionId)
       const tools: import('../agent-runtime/types').RuntimeToolDefinition[] = [
         ...createCoreTools({ workspaceSlug }).filter((tool) => tool.name !== GOAL_CHECKPOINT_TOOL_NAME || Boolean(input.onGoalCheckpoint)),
         ...(extraTools ?? []).map((tool) => ({
@@ -215,9 +219,9 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
             return { toolCallId: '', content, isError: false }
           },
         })),
-      ]
+      ].filter(tool => ownerToolNames === null || ownerToolNames.has(tool.name))
       let mcpManager: import('../agent-runtime/mcp-client').McpClientManager | undefined
-      if (mcpServers && Object.keys(mcpServers).length > 0 && workspaceSlug) {
+      if (ownerToolNames === null && mcpServers && Object.keys(mcpServers).length > 0 && workspaceSlug) {
         try {
           const acquired = await this.mcpService.acquireClientManager({
             workspaceSlug,
@@ -244,6 +248,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       }
       assertNoOwnerBusinessSession(sessionId)
       let currentPrompt = buildAISDKSkillRequestedPrompt(prompt, skillMentions)
+      if (ownerToolNames !== null) currentPrompt = `当前Owner用途只提供知识读取及逐次审批的Write/Edit；没有Shell、普通Read、Grep、Glob、MCP或子代理。缺少必要资料或验证能力时直接说明未验证项并停止，不尝试替代工具，不把未运行的检查写成通过。\n\n${currentPrompt}`
       let currentAttachments = attachments
       let historyMessages = input.historyMessages ?? []
 
@@ -309,9 +314,10 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
             },
             onAgentEvent: input.onAgentEvent,
             canUseTool: input.canUseTool ? async (name, args, signal) => {
-              assertToolAllowedForSessionPurpose(sessionId, name, args)
+              const ownerApprovalCandidate = isOwnerWorkspaceFileActionCandidate(sessionId, name, args)
+              if (!ownerApprovalCandidate) assertToolAllowedForSessionPurpose(sessionId, name, args)
               const result = await input.canUseTool!(name, args, signal)
-              assertToolAllowedForSessionPurpose(sessionId, name, args)
+              if (result.allowed) assertToolAllowedForSessionPurpose(sessionId, name, args)
               return result
             } : undefined,
             onPermissionModeChange: (mode) => assertControlledPermissionChange(sessionId, mode),
@@ -330,7 +336,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
           })
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error)
-          if (!activeSession.interrupted && !activeSession.cancelled && !contextOverflowRecovered && isContextOverflowError(errorMessage) && historyMessages.length > 0) {
+          if (ownerToolNames === null && !activeSession.interrupted && !activeSession.cancelled && !contextOverflowRecovered && isContextOverflowError(errorMessage) && historyMessages.length > 0) {
             const recovered = await compactSessionNow({
               sessionId,
               provider,

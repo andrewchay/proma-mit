@@ -80,6 +80,13 @@ test('Given可选岗位上限 When预览并发行授权 Then授权预算与审�
   await store.initProjectDb()
   expect(service.getOwnerExecutionGrant(f.subject)?.budget.roleBudgetCaps).toEqual(preview.budget.roleBudgetCaps)
 })
+test('GivenDeepSeek Flash渠道与官方审核价格证据 When预览并发行Owner grant Then价格模型精确匹配且仍只创建授权记录', () => {
+  const f = fixture('deepseek-flash')
+  const grant = issue(f)
+  expect(grant).toMatchObject({ state: 'active', modelId: 'deepseek-flash' })
+  expect(service.listOwnerExecutionGrantHistory(f.subject)).toHaveLength(1)
+  expect((store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_request_reservations').get() as { count: number }).count).toBe(0)
+})
 test('Given模型未匹配审核价格证据 When预览Owner grant Then拒绝且不写入grant', () => {
   const f = fixture('ao06-fake-only-model'), input = issueInput(f)
   expect(() => service.previewOwnerExecutionGrantIssue(f.subject, input)).toThrow(/价格证据|审核模型/)

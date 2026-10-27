@@ -105,6 +105,77 @@ describe('AI SDK runtime core', () => {
     })
   })
 
+  test('Given Owner safe运行模式 When尝试外发类工具 Then执行前拒绝且外部动作零调用', async () => {
+    const core = new AISDKRuntimeCore()
+    let sendCalls = 0
+    const sendTool = createRuntimeTool('SendExternalMessage', async () => {
+      sendCalls += 1
+      return { toolCallId: 'unexpected', content: '不应发送' }
+    })
+    const activeSession: AISDKRuntimeSessionState = { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false }
+    const toolSet = core.createAISDKTools([sendTool], {
+      sessionId: 'owner-external-send-denied', cwd: '/tmp', signal: activeSession.controller.signal, activeSession,
+    })
+    const send = toolSet.SendExternalMessage as unknown as ExecutableAITool
+    const result = await send.execute({ recipient: 'external', body: 'fixture' }, {
+      toolCallId: 'send-1', messages: [], abortSignal: activeSession.controller.signal, context: {},
+    })
+    expect(result.isError).toBe(true)
+    expect(String(result.content)).toContain('安全模式下不允许执行写操作')
+    expect(sendCalls).toBe(0)
+  })
+
+  test('Given 专用Owner动作审批 When拒绝外发提案 Then请求审批但不执行外部动作', async () => {
+    const core = new AISDKRuntimeCore()
+    let sendCalls = 0
+    let approvalCalls = 0
+    const sendTool = createRuntimeTool('SendExternalMessage', async () => {
+      sendCalls += 1
+      return { toolCallId: 'unexpected', content: '不应发送' }
+    })
+    const activeSession: AISDKRuntimeSessionState = {
+      controller: new AbortController(), permissionMode: 'safe', planModeEntered: false, ownerActionApproval: true,
+    }
+    const toolSet = core.createAISDKTools([sendTool], {
+      sessionId: 'owner-action-denied', cwd: '/tmp', signal: activeSession.controller.signal, activeSession,
+      canUseTool: async (toolName, input) => {
+        approvalCalls += 1
+        expect(toolName).toBe('SendExternalMessage')
+        expect(input).toEqual({ recipient: 'external', body: 'fixture' })
+        return { allowed: false, message: '用户拒绝了此操作' }
+      },
+    })
+    const send = toolSet.SendExternalMessage as unknown as ExecutableAITool
+    const result = await send.execute({ recipient: 'external', body: 'fixture' }, {
+      toolCallId: 'send-owner-denied', messages: [], abortSignal: activeSession.controller.signal, context: {},
+    })
+    expect(result.isError).toBe(true)
+    expect(approvalCalls).toBe(1)
+    expect(sendCalls).toBe(0)
+  })
+
+  test('Given 专用Owner动作审批 When精确外发动作获本次允许 Then只执行该动作一次', async () => {
+    const core = new AISDKRuntimeCore()
+    const sent: string[] = []
+    const sendTool = createRuntimeTool('SendExternalMessage', async (input) => {
+      sent.push(JSON.stringify(input))
+      return { toolCallId: 'sent', content: '已发送' }
+    })
+    const activeSession: AISDKRuntimeSessionState = {
+      controller: new AbortController(), permissionMode: 'safe', planModeEntered: false, ownerActionApproval: true,
+    }
+    const toolSet = core.createAISDKTools([sendTool], {
+      sessionId: 'owner-action-allowed', cwd: '/tmp', signal: activeSession.controller.signal, activeSession,
+      canUseTool: async () => ({ allowed: true }),
+    })
+    const send = toolSet.SendExternalMessage as unknown as ExecutableAITool
+    const result = await send.execute({ recipient: 'external', body: 'fixture' }, {
+      toolCallId: 'send-owner-allowed', messages: [], abortSignal: activeSession.controller.signal, context: {},
+    })
+    expect(result.isError).toBeFalsy()
+    expect(sent).toEqual(['{"recipient":"external","body":"fixture"}'])
+  })
+
   test('given a screenshot result when converting tool output then the model receives an image file block and readable fallback', async () => {
     const core = new AISDKRuntimeCore()
     const screenshotTool = createRuntimeTool('ComputerUseScreenshot', async () => ({

@@ -36,22 +36,23 @@ export function assertOwnerPlanningPayload(source: OwnerPlanningSessionSource, b
     const payload = object(body, ['contents', 'systemInstruction', 'generationConfig', 'tools', 'toolConfig'])
     const config = object(payload.generationConfig, ['maxOutputTokens'])
     const instruction = object(payload.systemInstruction, ['parts', 'role'])
-    if (config.maxOutputTokens !== 4096 || instruction.role !== undefined && instruction.role !== 'system' || !Array.isArray(instruction.parts) || instruction.parts.length !== 1 || object(instruction.parts[0], ['text']).text !== systemPrompt || !Array.isArray(payload.contents) || payload.contents.length !== 1) throw new Error('Owner规划Google请求参数与冻结资料不一致')
+    if (config.maxOutputTokens !== source.link.maxOutputTokens || instruction.role !== undefined && instruction.role !== 'system' || !Array.isArray(instruction.parts) || instruction.parts.length !== 1 || object(instruction.parts[0], ['text']).text !== systemPrompt || !Array.isArray(payload.contents) || payload.contents.length !== 1) throw new Error('Owner规划Google请求参数与冻结资料不一致')
     const user = object(payload.contents[0], ['role', 'parts'])
     if (user.role !== 'user' || !Array.isArray(user.parts) || user.parts.length !== 1 || object(user.parts[0], ['text']).text !== userPrompt || payload.tools !== undefined || payload.toolConfig !== undefined || !url.pathname.endsWith(`/models/${encodeURIComponent(source.binding.modelId)}:streamGenerateContent`)) throw new Error('Owner规划Google请求夹带历史、工具或错误出口')
     return
   }
   const payload = object(body, protocol === 'anthropic-messages'
     ? ['model', 'system', 'messages', 'max_tokens', 'stream', 'tools', 'tool_choice']
-    : ['model', 'messages', 'max_tokens', 'max_completion_tokens', 'stream', 'stream_options', 'tools', 'tool_choice'])
+    : ['model', 'messages', 'max_tokens', 'max_completion_tokens', 'reasoning_effort', 'stream', 'stream_options', 'tools', 'tool_choice'])
   tools(payload)
   if (payload.model !== source.binding.modelId || payload.stream !== true || !Array.isArray(payload.messages)) throw new Error('Owner规划实际模型或流式请求无效')
   if (protocol === 'anthropic-messages') {
-    if (payload.max_tokens !== 4096 || !textContent(payload.system, systemPrompt) || payload.messages.length !== 1 || !url.pathname.endsWith('/messages')) throw new Error('Owner规划Anthropic请求输出限制/指令/出口不一致')
+    if (payload.max_tokens !== source.link.maxOutputTokens || !textContent(payload.system, systemPrompt) || payload.messages.length !== 1 || !url.pathname.endsWith('/messages')) throw new Error('Owner规划Anthropic请求输出限制/指令/出口不一致')
     const user = object(payload.messages[0], ['role', 'content'])
     if (user.role !== 'user' || !textContent(user.content, userPrompt)) throw new Error('Owner规划请求夹带历史或资料已变')
   } else {
-    if ((payload.max_tokens === undefined && payload.max_completion_tokens === undefined) || [payload.max_tokens, payload.max_completion_tokens].some(value => value !== undefined && value !== 4096) || payload.messages.length !== 2 || !url.pathname.endsWith('/chat/completions')) throw new Error('Owner规划OpenAI请求输出限制/历史/出口不一致')
+    if ((payload.max_tokens === undefined && payload.max_completion_tokens === undefined) || [payload.max_tokens, payload.max_completion_tokens].some(value => value !== undefined && value !== source.link.maxOutputTokens) || payload.messages.length !== 2 || !url.pathname.endsWith('/chat/completions')) throw new Error('Owner规划OpenAI请求输出限制/历史/出口不一致')
+    if (payload.reasoning_effort !== source.link.reasoningEffort) throw new Error('Owner规划实际推理强度与冻结协议不一致')
     if (payload.stream_options !== undefined) {
       const options = object(payload.stream_options, ['include_usage'])
       if (options.include_usage !== true) throw new Error('Owner规划请求不能主动隐藏usage')

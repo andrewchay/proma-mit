@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, mock, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildElectronMock } from './testing/electron-mock'
@@ -21,9 +21,9 @@ const planningSource = await import('./project-owner-planning-source')
 const controlled = await import('./controlled-project-task-service')
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
-function fixture() {
+function fixture(rootPath?: string) {
   const project = store.createProject({ title: 'Owner定位', description: '' })
-  const workspace = createAgentWorkspace(`Owner-${randomUUID()}`)
+  const workspace = createAgentWorkspace(`Owner-${randomUUID()}`, rootPath)
   bindWorkspaceToProject(project.id, workspace.id)
   const channel = createChannel({ name: '假渠道', provider: 'openai', baseUrl: 'https://example.invalid', apiKey: 'fake', enabled: true, models: [{ id: 'model', name: 'model', enabled: true }] })
   const employee = employees.createAgentEmployee({ name: '执行载体', role: '研究', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId: 'model', workspaceIds: [workspace.id] })
@@ -40,6 +40,22 @@ test('Given 已生成Owner规划来源 When载体仅增加运行统计 Then发�
 test('Given 合法绑定 When 准备/重复 Then 首次paused仅一个权威承载任务，业务任务不改，无执行', () => { const f = fixture(); service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding); const r = request(f.project.id); const first = service.prepareOwnerPlanning(f.project.id, r); expect(store.getTask(first.planningTaskId)).toMatchObject({ status: 'paused', assignee: { userId: `agent-${f.employee.id}` } }); expect(first.targetTaskId).toBeUndefined(); expect(service.prepareOwnerPlanning(f.project.id, r)).toEqual(first); expect(count('agent_executions')).toBe(0); expect(controlled.getControlledTaskStartPreview(first.planningTaskId).ownerPlanning?.linkId).toBe(first.id); expect(() => service.prepareOwnerPlanning(f.project.id, { ...r, expectedGoalRevision: 99 })).toThrow() })
 test('Given 旧Goal/来源/配置或注入 When 准备 Then 拒绝且不产生承载任务', () => { const f = fixture(); service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding); const r = request(f.project.id); const before = count('tasks'); for (const patch of [{ expectedGoalRevision: 2 }, { expectedBindingRevision: 2 }, { expectedPlanRevision: 1 }, { expectedContextFingerprint: '0'.repeat(64) }, { actor: 'admin' }, { purpose: 'general' }]) expect(() => service.prepareOwnerPlanning(f.project.id, { ...r, ...patch })).toThrow(); expect(count('tasks')).toBe(before) })
 test('Given 单任务目标 When 准备 Then target与carrier任务分开，业务任务内容不改', () => { const f = fixture(); const task = store.createTask(f.project.id, { title: '业务任务', description: '业务成果' }); saveProjectOwnerGoalDraft(f.project.id, 0, { objective: '规划业务成果' }, task.id); service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding); const context = getProjectOwnerPlanningContext(f.project.id, task.id); const before = store.getTask(task.id); const result = service.prepareOwnerPlanning(f.project.id, { ...request(f.project.id), taskId: task.id, expectedContextFingerprint: context.fingerprint }); expect(result.targetTaskId).toBe(task.id); expect(result.planningTaskId).not.toBe(task.id); expect(store.getTask(task.id)).toEqual(before) })
+test('Given 任务目标已明确同意读取绑定工作区 When 规划上下文加载 Then 只返回有界源码证据且绑定于工作区/目标指纹', () => {
+  const root = join(directory, `repo-${randomUUID()}`); mkdirSync(join(root, 'src'), { recursive: true })
+  writeFileSync(join(root, 'src', 'quote.ts'), 'export function quote(quantity: number) {\n  if (quantity < 0) throw new Error("negative")\n  return quantity * 12\n}\n')
+  const f = fixture(root), task = store.createTask(f.project.id, { title: '修复负数量报价', description: '处理数量小于零时的报价错误' })
+  service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding)
+  saveProjectOwnerGoalDraft(f.project.id, 0, { objective: '修复负数量报价并保留正常行为', codeSourceAccess: 'bound_workspace' }, task.id)
+  const context = getProjectOwnerPlanningContext(f.project.id, task.id)
+  expect(context.sources.code).toMatchObject({ workspaceId: f.workspace.id, filesScanned: 1, truncated: false })
+  expect(context.sources.code?.files[0]).toMatchObject({ path: 'src/quote.ts', excerpts: [{ line: 1 }] })
+  expect(() => getProjectOwnerPlanningContext(f.project.id)).not.toThrow()
+  const link = service.prepareOwnerPlanning(f.project.id, { requestId: randomUUID(), taskId: task.id, expectedBindingRevision: 1,
+    expectedGoalRevision: context.goal.revision, expectedPlanRevision: 0, expectedContextFingerprint: context.fingerprint })
+  writeFileSync(join(root, 'src', 'quote.ts'), 'export function quote(quantity: number) { return Math.max(0, quantity) * 12 }\n')
+  expect(planningSource.readOwnerPlanningSnapshot(link.planningTaskId)?.context.sources.code?.files[0]?.sha256).toBe(context.sources.code?.files[0]?.sha256)
+  expect(() => planningSource.resolveOwnerPlanningTask(link.planningTaskId)).toThrow('已更新')
+})
 test('Given owner关联缺失 When 普通启动预检 Then preparation目的标记仍fail closed', () => { const f = fixture(); service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding); const result = service.prepareOwnerPlanning(f.project.id, request(f.project.id)); store.getProjectDb().prepare('DELETE FROM project_owner_planning_links WHERE id = ?').run(result.id); expect(() => controlled.getControlledTaskStartPreview(result.planningTaskId)).toThrow('目的证据缺失') })
 test('Given 外层事务回滚/数据库重开 When 读配置/准备 Then 回滚不留半关联，持久历史可读', async () => { const f = fixture(); service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding); const before = count('tasks'); expect(() => store.getProjectDb().transaction(() => { service.prepareOwnerPlanning(f.project.id, request(f.project.id)); throw new Error('rollback') })()).toThrow('rollback'); expect(count('tasks')).toBe(before); const binding = service.getOwnerRuntimeBinding(f.project.id); store.closeProjectDb(); await store.initProjectDb(); expect(service.getOwnerRuntimeBinding(f.project.id)).toEqual(binding) })
 test('Given 损坏历史 When 读取配置 Then 不回退成无绑定或有效版本', () => { const f = fixture(); service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding); store.getProjectDb().prepare("UPDATE project_owner_runtime_revisions SET payload = '{}' WHERE project_id = ?").run(f.project.id); expect(() => service.getOwnerRuntimeBinding(f.project.id)).toThrow('记录') })

@@ -3,7 +3,7 @@ import { atom } from 'jotai'
 import type { AgentEmployeeResult, AgentWorkspace, OwnerRuntimeBinding, ProjectOwnerGoalResult, ProjectOwnerGoalSubject, ProjectOwnerPlanningContext, ProjectOwnerRunView, ProjectOwnerRuntimeApi, ProjectOwnerPlanApi, ProjectWorkspaceBinding } from '@gravitas/shared'
 import { getOwnerGoalEditor, ownerGoalEditorsAtom } from './project-owner-goal-atoms'
 import { getOwnerPlanEditor, ownerPlanEditorsAtom, ownerPlanGoalReady } from './project-owner-plan-atoms'
-interface OwnerRuntimeDataApi extends ProjectOwnerRuntimeApi {
+export interface OwnerRuntimeDataApi extends ProjectOwnerRuntimeApi {
   getOwnerPlanningContext: ProjectOwnerPlanApi['getOwnerPlanningContext']
   listEmployees: () => Promise<AgentEmployeeResult[]>
   listWorkspaces: () => Promise<AgentWorkspace[]>
@@ -40,6 +40,11 @@ export const ownerRuntimeEditorsAtom = atom(new Map<string, OwnerRuntimeEditor>(
 const key = (subject: ProjectOwnerGoalSubject) => JSON.stringify([subject.projectId, subject.taskId ?? null])
 export const getOwnerRuntimeEditor = (entries: ReadonlyMap<string, OwnerRuntimeEditor>, subject: ProjectOwnerGoalSubject): OwnerRuntimeEditor => entries.get(key(subject)) ?? initial
 function value<T>(response: ProjectOwnerGoalResult<T>): T { if (!response.ok) throw new Error(response.error.message); return response.value }
+type ReadResult<T> = { ok: true; value: T } | { ok: false; error: string }
+async function read<T>(request: () => Promise<T>): Promise<ReadResult<T>> {
+  try { return { ok: true, value: await request() } }
+  catch (cause) { return { ok: false, error: cause instanceof Error ? cause.message : String(cause) } }
+}
 export const editOwnerRuntimeAtom = atom(null, (get, set, input: { subject: ProjectOwnerGoalSubject; patch: Partial<Pick<OwnerRuntimeEditor, 'ownerName' | 'carrierId' | 'workspaceId' | 'changeReason'>> }) => {
   const entries = new Map(get(ownerRuntimeEditorsAtom)); const old = getOwnerRuntimeEditor(entries, input.subject)
   entries.set(key(input.subject), { ...old, ...input.patch, dirty: true, prepareRequestId: null, prepareSignature: null }); set(ownerRuntimeEditorsAtom, entries)
@@ -52,10 +57,28 @@ export const loadOwnerRuntimeAtom = atom(null, async (get, set, subject: Project
   update({ loading: true, generation, error: '' })
   try {
     const api = runtimeApi(get(ownerRuntimeApiAtom))
-    const [binding, runs, employees, workspaces, bindings, context] = await Promise.all([api.getOwnerRuntimeBinding({ projectId: subject.projectId }), api.listOwnerPlanningRuns(subject), api.listEmployees(), api.listWorkspaces(), api.listWorkspaceBindings(subject.projectId), api.getOwnerPlanningContext(subject)])
+    const [bindingRead, runsRead, employeesRead, workspacesRead, bindingsRead, contextRead] = await Promise.all([
+      read(() => api.getOwnerRuntimeBinding({ projectId: subject.projectId })),
+      read(() => api.listOwnerPlanningRuns(subject)),
+      read(() => api.listEmployees()),
+      read(() => api.listWorkspaces()),
+      read(() => api.listWorkspaceBindings(subject.projectId)),
+      read(() => api.getOwnerPlanningContext(subject)),
+    ])
     if (getOwnerRuntimeEditor(get(ownerRuntimeEditorsAtom), subject).generation !== generation) return
-    const current = getOwnerRuntimeEditor(get(ownerRuntimeEditorsAtom), subject), stored = value(binding)
-    update({ binding: stored, runs: value(runs), employees, workspaces, boundWorkspaceIds: bindings.map(item => item.workspaceId), context: context.ok ? context.value : null, error: context.ok || !getOwnerGoalEditor(get(ownerGoalEditorsAtom), subject).snapshot ? '' : `规划来源：${context.error.message}`, ...(!current.dirty ? { ownerName: stored?.ownerName ?? '项目Owner', carrierId: stored?.carrierId ?? '', workspaceId: stored?.workspaceId ?? '', changeReason: '' } : {}) })
+    const current = getOwnerRuntimeEditor(get(ownerRuntimeEditorsAtom), subject)
+    const runs = runsRead.ok ? runsRead.value : { ok: false as const, error: { message: runsRead.error } }
+    const context = contextRead.ok ? contextRead.value : { ok: false as const, error: { message: contextRead.error } }
+    const messages = [
+      !bindingRead.ok ? `Owner绑定读取失败：${bindingRead.error}` : !bindingRead.value.ok ? `Owner绑定读取失败：${bindingRead.value.error.message}` : '',
+      !runs.ok ? `Run记录读取失败：${runs.error.message}；保留记录待核查，载体配置仍可单独查看或修复。` : '',
+      !employeesRead.ok ? `员工候选读取失败：${employeesRead.error}；保留上次成功列表。` : '',
+      !workspacesRead.ok ? `工作区候选读取失败：${workspacesRead.error}；保留上次成功列表。` : '',
+      !bindingsRead.ok ? `项目工作区授权读取失败：${bindingsRead.error}；保留上次成功列表。` : '',
+      !context.ok && getOwnerGoalEditor(get(ownerGoalEditorsAtom), subject).snapshot ? `规划来源：${context.error.message}` : '',
+    ].filter(Boolean)
+    const stored = bindingRead.ok && bindingRead.value.ok ? bindingRead.value.value : current.binding
+    update({ binding: stored, runs: runs.ok ? runs.value : current.runs, employees: employeesRead.ok ? employeesRead.value : current.employees, workspaces: workspacesRead.ok ? workspacesRead.value : current.workspaces, boundWorkspaceIds: bindingsRead.ok ? bindingsRead.value.map(item => item.workspaceId) : current.boundWorkspaceIds, context: context.ok ? context.value : null, error: messages.join(' '), ...(!current.dirty ? { ownerName: stored?.ownerName ?? '项目Owner', carrierId: stored?.carrierId ?? '', workspaceId: stored?.workspaceId ?? '', changeReason: '' } : {}) })
   } catch (cause) { if (getOwnerRuntimeEditor(get(ownerRuntimeEditorsAtom), subject).generation === generation) update({ error: cause instanceof Error ? cause.message : String(cause) }) }
   finally { if (getOwnerRuntimeEditor(get(ownerRuntimeEditorsAtom), subject).generation === generation) update({ loading: false }) }
 })

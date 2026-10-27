@@ -31,7 +31,7 @@ export interface PilotReviewedPriceEvidence {
 const PILOT_REVIEWED_PRICE_EVIDENCE = new Map<string, PilotReviewedPriceEvidence>()
 
 /**
- * 首个经人工审核的真实价格证据（2026-09-28 依据官方页面核对）：
+ * 经人工审核的真实价格证据：
  * Z.ai GLM-5.3-Flash，OpenAI 兼容 Chat Completion；输入 $0.15/M、输出 $0.50/M（USD 计价），
  * 缓存输入 $0.03/M 更低不抬高上界；上下文 1M、最大输出 128K、思考不可关闭（计入输出）。
  * 同名模型在国内平台牌价 ¥0.80/¥2.80，USDCNY≥5.6 时同样被此 USD 上界覆盖；
@@ -51,6 +51,22 @@ const ZAI_GLM_53_FLASH: PilotReviewedPriceEvidence = {
 }
 validatePilotPriceEvidence(ZAI_GLM_53_FLASH)
 PILOT_REVIEWED_PRICE_EVIDENCE.set(ZAI_GLM_53_FLASH.evidenceId, ZAI_GLM_53_FLASH)
+
+/** DeepSeek Flash 采用官方峰时价作上界，避免时段变化导致低估；请求仍按每次最终body单独核验。 */
+const DEEPSEEK_FLASH: PilotReviewedPriceEvidence = {
+  evidenceId: 'deepseek-flash-2026-10-17',
+  providerKind: 'openai',
+  model: 'deepseek-flash',
+  inputMicrosPerMillion: 300_000,
+  outputMicrosPerMillion: 1_200_000,
+  extraCostCeilingMicros: 0,
+  maxModelInputTokens: 1_000_000,
+  maxModelOutputTokens: 384_000,
+  reviewedAt: '2026-10-17',
+  source: 'https://api-docs.deepseek.com/quick_start/pricing/',
+}
+validatePilotPriceEvidence(DEEPSEEK_FLASH)
+PILOT_REVIEWED_PRICE_EVIDENCE.set(DEEPSEEK_FLASH.evidenceId, DEEPSEEK_FLASH)
 
 function validatePilotPriceEvidence(evidence: PilotReviewedPriceEvidence): void {
   if (!evidence || typeof evidence.evidenceId !== 'string' || !evidence.evidenceId.trim()
@@ -76,6 +92,16 @@ export function registerPilotPriceEvidenceForTests(evidence: PilotReviewedPriceE
 
 export function getPilotReviewedPriceEvidence(evidenceId: string): PilotReviewedPriceEvidence | undefined {
   return PILOT_REVIEWED_PRICE_EVIDENCE.get(evidenceId)
+}
+
+/** 精确匹配模型名与协议后才可用审核价格证据；未知模型继续fail-closed。 */
+export function getPilotReviewedPriceEvidenceForModel(
+  model: string,
+  providerKind: PilotProviderKind,
+): PilotReviewedPriceEvidence | undefined {
+  return [...PILOT_REVIEWED_PRICE_EVIDENCE.values()].find(
+    (evidence) => evidence.model === model && evidence.providerKind === providerKind,
+  )
 }
 
 /** 最终 HTTP 请求体的精确字节指纹；body 必须与实际发送的序列化结果逐字节一致。 */

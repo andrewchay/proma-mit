@@ -1,18 +1,22 @@
 /** Owner计划附属版本：只保存/确认内容，不产生任务、执行、授权或模型调用。 */
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { getAgentWorkspace } from './agent-workspace-manager'
 import type {
-  ProjectOwnerGoalDraft, ProjectOwnerPlanDraft, ProjectOwnerPlanningContext,
+  ProjectOwnerDeliveryContext, ProjectOwnerGoalDraft, ProjectOwnerPlanDraft, ProjectOwnerPlanningContext,
   ProjectOwnerPlanSources, ProjectOwnerRoleAdvice,
 } from '@gravitas/shared'
 import { getWorkflowIdentityDirectoryPath } from './config-paths'
 import { getProjectOwnerGoalDraft, listProjectOwnerGoalHistory } from './project-owner-goal-service'
 import { parseProjectOwnerPlanProposal } from './project-owner-planning'
+import { locateOwnerCode } from './project-owner-code-locator'
 import { getProjectOwnerRoleAdviceCatalog } from './project-owner-role-catalog'
 import { getOwnerPlanningRunReceipt, verifyGeneratedOwnerPlan } from './project-owner-planning-run-service'
 import { readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
 import { parseProjectOwnerPlanningResponse } from './project-owner-planning-protocol'
 import { getProject, getProjectDb, getTask } from './project-sqlite-store'
+import { hasProjectWorkspaceBinding } from './project-workspace-bindings'
+import { listOwnerExecutionCommands } from './project-owner-execution-command'
 
 export class ProjectOwnerPlanConflictError extends Error {
   constructor() { super('目标或计划来源已更新，请加载最新版本并比较后重试'); this.name = 'ProjectOwnerPlanConflictError' }
@@ -37,6 +41,11 @@ function digest(input: unknown): string {
   if (typeof input !== 'string' || !/^[a-f0-9]{64}$/.test(input)) throw new Error('Owner 计划来源指纹无效')
   return input
 }
+function codePath(input: unknown): string {
+  const path = text(input, '代码路径', 1000)
+  if (path.startsWith('/') || path.includes('\\') || path.split('/').some(part => !part || part === '.' || part === '..')) throw new Error('Owner代码路径必须是工作区内相对路径')
+  return path
+}
 function subjectKey(taskId?: string): string { return taskId === undefined ? 'project' : `task:${taskId}` }
 function fingerprint(goal: ProjectOwnerGoalDraft, sources: ProjectOwnerPlanSources): string {
   return createHash('sha256').update(JSON.stringify({ goalRevision: goal.revision, goal: goal.goal, sources })).digest('hex')
@@ -51,21 +60,68 @@ function requireGoal(projectId: string, taskId?: string): ProjectOwnerGoalDraft 
   return goal
 }
 
-/** 只读取当前目标、项目/任务元信息与岗位模板摘要；不读取文件、密钥或外部资料。 */
+function getCodeSearchWorkspace(projectId: string): { id: string; rootPath: string } {
+  const rows = getProjectDb().prepare('SELECT revision, payload FROM project_owner_runtime_revisions WHERE project_id = ? ORDER BY revision').all(projectId) as { revision: number; payload: string }[]
+  if (!rows.length || rows.some((row, index) => row.revision !== index + 1)) throw new Error('代码资料读取需要完整有效的Owner工作区绑定')
+  const raw = JSON.parse(rows.at(-1)!.payload) as Record<string, unknown>
+  const allowed = ['schemaVersion', 'projectId', 'revision', 'ownerRole', 'ownerName', 'carrierId', 'workspaceId', 'channelId', 'modelId', 'runtime', 'carrierFingerprint', 'carrierConfigurationFingerprint', 'actor', 'savedAt', 'changeReason']
+  if (!raw || Object.keys(raw).some(key => !allowed.includes(key)) || raw.schemaVersion !== 1 || raw.projectId !== projectId || raw.revision !== rows.length
+    || raw.ownerRole !== 'project_owner' || raw.actor !== 'local-user' || raw.runtime !== 'ai-sdk'
+    || typeof raw.carrierId !== 'string' || typeof raw.workspaceId !== 'string' || !raw.workspaceId.trim()
+    || typeof raw.channelId !== 'string' || typeof raw.modelId !== 'string'
+    || typeof raw.carrierFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(raw.carrierFingerprint)
+    || (raw.carrierConfigurationFingerprint !== undefined && (typeof raw.carrierConfigurationFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(raw.carrierConfigurationFingerprint)))) throw new Error('代码资料读取的Owner工作区绑定无效')
+  if (!hasProjectWorkspaceBinding(projectId, raw.workspaceId)) throw new Error('代码资料读取的工作区已不再绑定此项目')
+  const workspace = getAgentWorkspace(raw.workspaceId)
+  if (!workspace?.rootPath) throw new Error('代码资料读取需要已绑定本地项目目录的工作区')
+  return { id: workspace.id, rootPath: workspace.rootPath }
+}
+
+function getOwnerDeliverySources(projectId: string, taskId: string | undefined, goal: ProjectOwnerGoalDraft): ProjectOwnerDeliveryContext[] | undefined {
+  if (!taskId) return undefined
+  const feedback = goal.goal.constraints.flatMap((constraint) => {
+    const match = /^Owner交付修改意见（命令 ([A-Za-z0-9_-]{1,128})）：([\s\S]{1,1800})$/.exec(constraint)
+    if (constraint.startsWith('Owner交付修改意见') && !match) throw new Error('Owner交付修改意见标记格式损坏，拒绝忽略命令来源')
+    return match ? [{ commandId: match[1]!, feedback: match[2]!.trim() }] : []
+  })
+  if (!feedback.length) return undefined
+  if (new Set(feedback.map(item => item.commandId)).size !== feedback.length) throw new Error('Owner交付修改意见重复关联同一命令，拒绝歧义规划')
+  const commands = listOwnerExecutionCommands({ projectId, taskId })
+  return feedback.map(({ commandId, feedback: comment }) => {
+    const command = commands.find((item) => item.commandId === commandId)
+    if (!command || command.taskId !== taskId) throw new Error('交付修改意见关联的Owner命令已缺失或不属于当前任务')
+    return {
+      commandId: command.commandId, grantId: command.grantId, taskId: command.taskId, role: command.role,
+      priorAuthorization: command.grantAuthorization,
+      reworkOrdinal: command.reworkOrdinal, state: command.state, acceptanceCriteria: command.acceptanceCriteria,
+      ...(command.executionResultSummary ? { executionResultSummary: command.executionResultSummary } : {}),
+      ...(command.technicalReview ? { technicalReview: command.technicalReview } : {}), feedback: comment,
+    }
+  })
+}
+
+/** 只读取当前目标、项目/任务元信息与岗位摘要；任务目标须明确开启源码资料权限才检索文件。 */
 export function getProjectOwnerPlanningContext(projectId: string, taskId?: string): ProjectOwnerPlanningContext {
   const goal = requireGoal(projectId, taskId)
   const project = getProject(projectId)!
   const task = taskId === undefined ? undefined : getTask(taskId)!
+  const codeWorkspace = goal.goal.codeSourceAccess === 'bound_workspace' ? getCodeSearchWorkspace(projectId) : null
+  const delivery = getOwnerDeliverySources(projectId, taskId, goal)
   const sources: ProjectOwnerPlanSources = {
     project: { id: project.id, title: text(project.title, '项目标题'), description: text(project.description, '项目说明', 12000, true) },
     ...(task === undefined ? {} : { task: { id: task.id, projectId: task.projectId, title: text(task.title, '任务标题'), description: text(task.description, '任务说明', 12000, true) } }),
     roles: getProjectOwnerRoleAdviceCatalog(),
+    ...(codeWorkspace ? {
+      code: locateOwnerCode(codeWorkspace.rootPath, [goal.goal.objective, ...goal.goal.constraints, ...goal.goal.acceptanceCriteria,
+        project.title, project.description, ...(task ? [task.title, task.description] : [])].filter(Boolean).join('\n'), codeWorkspace.id),
+    } : {}),
+    ...(delivery ? { delivery } : {}),
   }
   return { goal, sources, fingerprint: fingerprint(goal, sources) }
 }
 
 function parseSources(input: unknown, projectId: string, taskId?: string): ProjectOwnerPlanSources {
-  const value = record(input, ['project', 'task', 'roles'])
+  const value = record(input, ['project', 'task', 'roles', 'code', 'delivery'])
   const p = record(value.project, ['id', 'title', 'description'])
   if (p.id !== projectId) throw new Error('Owner 计划项目来源不匹配')
   const project = { id: projectId, title: text(p.title, '项目标题'), description: text(p.description, '项目说明', 12000, true) }
@@ -86,7 +142,76 @@ function parseSources(input: unknown, projectId: string, taskId?: string): Proje
       sourceSha256: digest(role.sourceSha256), rulesSha256: digest(role.rulesSha256) }
   })
   if (new Set(roles.map((role) => role.key)).size !== roles.length) throw new Error('Owner 计划岗位来源重复')
-  return { project, ...(task === undefined ? {} : { task }), roles }
+  let code: ProjectOwnerPlanSources['code']
+  if (value.code !== undefined) {
+    const source = record(value.code, ['workspaceId', 'rootFingerprint', 'filesScanned', 'truncated', 'files'])
+    if (!Number.isSafeInteger(source.filesScanned) || (source.filesScanned as number) < 0 || (source.filesScanned as number) > 4000 || typeof source.truncated !== 'boolean' || !Array.isArray(source.files) || source.files.length > 12) throw new Error('Owner 代码定位快照无效')
+    code = {
+      workspaceId: text(source.workspaceId, '代码工作区', 128), rootFingerprint: digest(source.rootFingerprint), filesScanned: source.filesScanned as number, truncated: source.truncated,
+      files: source.files.map(item => {
+        const file = record(item, ['path', 'sha256', 'matchedTerms', 'excerpts'])
+        if (!Array.isArray(file.matchedTerms) || file.matchedTerms.length < 1 || file.matchedTerms.length > 64 || !Array.isArray(file.excerpts) || file.excerpts.length > 2) throw new Error('Owner 代码定位文件证据无效')
+        const excerpts = file.excerpts.map(valueExcerpt => {
+          const excerpt = record(valueExcerpt, ['path', 'line', 'text'])
+          if (excerpt.path !== file.path || !Number.isSafeInteger(excerpt.line) || (excerpt.line as number) < 1) throw new Error('Owner 代码定位片段身份无效')
+          return { path: codePath(excerpt.path), line: excerpt.line as number, text: text(excerpt.text, '代码片段', 700) }
+        })
+        const path = codePath(file.path)
+        return { path, sha256: digest(file.sha256), matchedTerms: file.matchedTerms.map(term => text(term, '匹配词', 100)), excerpts }
+      }),
+    }
+    if (new Set(code.files.map(file => file.path)).size !== code.files.length) throw new Error('Owner 代码定位文件重复')
+  }
+  let delivery: ProjectOwnerDeliveryContext[] | undefined
+  if (value.delivery !== undefined) {
+    if (taskId === undefined || !Array.isArray(value.delivery) || value.delivery.length < 1 || value.delivery.length > 32) throw new Error('Owner交付反馈来源无效')
+    delivery = value.delivery.map((item) => {
+      const source = record(item, ['commandId', 'grantId', 'priorAuthorization', 'taskId', 'role', 'reworkOrdinal', 'state', 'acceptanceCriteria', 'executionResultSummary', 'technicalReview', 'feedback'])
+      if (source.taskId !== taskId || (source.role !== 'executor' && source.role !== 'reviewer') || !Number.isSafeInteger(source.reworkOrdinal) || Number(source.reworkOrdinal) < 0
+        || !Array.isArray(source.acceptanceCriteria) || source.acceptanceCriteria.length > 64) throw new Error('Owner交付反馈来源与当前任务不匹配')
+      const commandId = text(source.commandId, '交付命令', 128), grantId = text(source.grantId, '交付授权', 128)
+      if (!/^[A-Za-z0-9_-]+$/.test(commandId) || !/^[A-Za-z0-9_-]+$/.test(grantId)) throw new Error('Owner交付命令或授权身份无效')
+      const prior = record(source.priorAuthorization, ['grantState', 'dispatchMode', 'maxCostMicros', 'maxRuns', 'maxRework', 'expiresAt', 'roleBudgetCaps'])
+      if (!['active', 'paused', 'needs_reconcile', 'archived'].includes(String(prior.grantState)) || !['manual', 'autonomous'].includes(String(prior.dispatchMode))
+        || !Number.isSafeInteger(prior.maxCostMicros) || Number(prior.maxCostMicros) <= 0 || !Number.isSafeInteger(prior.maxRuns) || Number(prior.maxRuns) <= 0
+        || !Number.isSafeInteger(prior.maxRework) || Number(prior.maxRework) < 0 || !Number.isSafeInteger(prior.expiresAt)
+        || !Array.isArray(prior.roleBudgetCaps) || prior.roleBudgetCaps.length > 64) throw new Error('Owner交付原授权快照无效')
+      const roleBudgetCaps = prior.roleBudgetCaps.map(item => {
+        const cap = record(item, ['roleKey', 'maxCostMicros'])
+        if (!Number.isSafeInteger(cap.maxCostMicros) || Number(cap.maxCostMicros) <= 0 || Number(cap.maxCostMicros) > Number(prior.maxCostMicros)) throw new Error('Owner交付原岗位预算上限无效')
+        return { roleKey: text(cap.roleKey, '原授权岗位键', 200), maxCostMicros: Number(cap.maxCostMicros) }
+      })
+      if (new Set(roleBudgetCaps.map(cap => cap.roleKey)).size !== roleBudgetCaps.length) throw new Error('Owner交付原授权岗位重复')
+      const priorAuthorization: ProjectOwnerDeliveryContext['priorAuthorization'] = { grantState: prior.grantState as ProjectOwnerDeliveryContext['priorAuthorization']['grantState'],
+        dispatchMode: prior.dispatchMode as ProjectOwnerDeliveryContext['priorAuthorization']['dispatchMode'], maxCostMicros: Number(prior.maxCostMicros),
+        maxRuns: Number(prior.maxRuns), maxRework: Number(prior.maxRework), expiresAt: Number(prior.expiresAt), roleBudgetCaps }
+      const acceptanceCriteria = source.acceptanceCriteria.map((criterion) => text(criterion, '冻结验收标准', 2000))
+      const executionResultSummary = source.executionResultSummary === undefined ? undefined : text(source.executionResultSummary, '执行回报', 32000)
+      const feedback = text(source.feedback, '交付修改意见', 1800)
+      let technicalReview: ProjectOwnerDeliveryContext['technicalReview']
+      if (source.technicalReview !== undefined) {
+        const review = record(source.technicalReview, ['verdict', 'summary', 'criteria', 'findings', 'blockerReason'])
+        if (!['approved', 'changes_requested', 'blocked'].includes(String(review.verdict)) || !Array.isArray(review.criteria) || review.criteria.length > 64
+          || !Array.isArray(review.findings) || review.findings.length > 64 || !(review.blockerReason === null || typeof review.blockerReason === 'string')) throw new Error('Owner交付技术评审来源无效')
+        const criteria = review.criteria.map((item) => {
+          const criterion = record(item, ['criterion', 'status', 'evidence'])
+          if (!['met', 'not_met', 'not_verified'].includes(String(criterion.status))) throw new Error('Owner交付评审标准状态无效')
+          return { criterion: text(criterion.criterion, '评审标准', 2000), status: criterion.status as 'met' | 'not_met' | 'not_verified', evidence: text(criterion.evidence, '评审证据', 4000) }
+        })
+        const findings = review.findings.map((item) => {
+          const finding = record(item, ['severity', 'description', 'requestedChange'])
+          if (!['low', 'medium', 'high'].includes(String(finding.severity))) throw new Error('Owner交付评审发现级别无效')
+          return { severity: finding.severity as 'low' | 'medium' | 'high', description: text(finding.description, '评审发现', 4000), requestedChange: text(finding.requestedChange, '评审要求变更', 4000) }
+        })
+        technicalReview = { verdict: review.verdict as 'approved' | 'changes_requested' | 'blocked', summary: text(review.summary, '技术评审摘要', 8000), criteria, findings,
+          blockerReason: review.blockerReason === null ? null : text(review.blockerReason, '评审阻塞原因', 4000) }
+      }
+      return { commandId, grantId, taskId, role: source.role, priorAuthorization, reworkOrdinal: Number(source.reworkOrdinal), state: text(source.state, '命令状态', 40), acceptanceCriteria,
+        ...(executionResultSummary ? { executionResultSummary } : {}), ...(technicalReview ? { technicalReview } : {}), feedback }
+    })
+    if (new Set(delivery.map((item) => item.commandId)).size !== delivery.length) throw new Error('Owner交付反馈命令重复')
+  }
+  return { project, ...(task === undefined ? {} : { task }), roles, ...(code === undefined ? {} : { code }), ...(delivery ? { delivery } : {}) }
 }
 
 /** 历史按冻结的合法目标/岗位来源解析，角色升级只使当前计划失效，不重写历史。 */
@@ -104,12 +229,13 @@ function parseRow(row: PlanRow, projectId: string, taskId: string | undefined, g
     const goal = goals.find((item) => item.revision === goalRevision && item.goal.goalVersion === goalVersion)
     if (!goal) throw new Error('绑定的历史目标不存在')
     const sources = parseSources(value.sources, projectId, taskId)
+    if ((goal.goal.codeSourceAccess === 'bound_workspace') !== Boolean(sources.code)) throw new Error('计划中的代码资料授权与冻结来源不一致')
     const contextFingerprint = digest(value.contextFingerprint)
     if (contextFingerprint !== fingerprint(goal, sources)) throw new Error('计划来源指纹不匹配')
-    const rawProposal = record(value.proposal, ['projectId', 'taskId', 'goalVersion', 'mode', 'summary', 'assumptions', 'risks', 'steps'])
+    const rawProposal = record(value.proposal, ['projectId', 'taskId', 'goalVersion', 'mode', 'summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment'])
     if (rawProposal.mode !== 'proposal_only') throw new Error('计划夹带执行模式')
     const { mode: _mode, ...proposalInput } = rawProposal
-    const proposal = parseProjectOwnerPlanProposal(proposalInput, goal.goal, sources.roles.map((role) => role.key))
+    const proposal = parseProjectOwnerPlanProposal(proposalInput, goal.goal, sources.roles.map((role) => role.key), sources.code?.files ?? [], false, sources.delivery ?? [])
     const contentFingerprint = digest(value.planFingerprint)
     if (contentFingerprint !== planFingerprint({ planVersion, goalRevision, contextFingerprint, proposal })) throw new Error('计划内容指纹不匹配')
     let sourceRun: ProjectOwnerPlanDraft['sourceRun']
@@ -208,11 +334,11 @@ export function saveProjectOwnerPlanDraft(projectId: string, expectedGoalRevisio
     const current = readCurrent(context)
     checkVersions(context, current, expectedGoalRevision, expectedRevision)
     assertLocalActorEnabled()
-    const value = record(input, ['expectedContextFingerprint', 'summary', 'assumptions', 'risks', 'steps', 'changeReason'])
+    const value = record(input, ['expectedContextFingerprint', 'summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'changeReason'])
     if (digest(value.expectedContextFingerprint) !== context.fingerprint) throw new ProjectOwnerPlanConflictError()
     const changeReason = text(value.changeReason, '变更原因').trim()
     const { expectedContextFingerprint: _fingerprint, changeReason: _reason, ...proposalInput } = value
-    const proposal = parseProjectOwnerPlanProposal({ ...proposalInput, projectId, ...(taskId === undefined ? {} : { taskId }), goalVersion: context.goal.goal.goalVersion }, context.goal.goal, context.sources.roles.map((role) => role.key))
+    const proposal = parseProjectOwnerPlanProposal({ ...proposalInput, projectId, ...(taskId === undefined ? {} : { taskId }), goalVersion: context.goal.goal.goalVersion }, context.goal.goal, context.sources.roles.map((role) => role.key), context.sources.code?.files ?? [], false, context.sources.delivery ?? [])
     if (current && current.state !== 'stale' && JSON.stringify(current.proposal) === JSON.stringify(proposal)) return current
     const plan: ProjectOwnerPlanDraft = { schemaVersion: 1, projectId, ...(taskId === undefined ? {} : { taskId }), revision: expectedRevision + 1,
       planVersion: (current?.planVersion ?? 0) + 1, goalRevision: context.goal.revision, goalVersion: context.goal.goal.goalVersion,

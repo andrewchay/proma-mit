@@ -257,26 +257,81 @@ export function listOwnerExecutionCommands(rawSubject: unknown): OwnerExecutionC
   assertLocalActorEnabled()
   const subject = parseOwnerExecutionSubject(rawSubject)
   const rows = store.getProjectDb().prepare(`SELECT c.id AS command_id, c.grant_id, c.source_task_id AS task_id, t.title AS task_title,
+      t.owner_step_link_id, c.source_step_link_id, l.materialization_id,
       c.employee_id, c.role, c.budget_role_key, c.rework_ordinal, c.state, c.execution_id, e.status AS execution_status,
+      CASE WHEN e.owner_command_id = c.id THEN e.result_summary ELSE NULL END AS execution_result_summary,
       c.reserved_cost_micros, c.actual_cost_micros, c.ack_fingerprint, c.created_at, c.updated_at,
       r.evidence_kind AS preflight_evidence_kind, r.reason_code AS preflight_reason_code,
       r.error_sha256 AS preflight_error_sha256, r.provider_console_checked_no_usage AS preflight_provider_checked,
       r.pre_reconciliation_usage_marker AS preflight_usage_marker,
-      r.actor AS preflight_actor, r.created_at AS preflight_created_at
+      r.actor AS preflight_actor, r.created_at AS preflight_created_at,
+      g.state AS grant_state, g.dispatch_mode AS grant_dispatch_mode, g.max_cost_micros AS grant_max_cost_micros,
+      g.max_runs AS grant_max_runs, g.max_rework AS grant_max_rework, g.expires_at AS grant_expires_at, g.role_budgets_json AS grant_role_budgets_json
     FROM project_owner_execution_commands c JOIN tasks t ON t.id=c.source_task_id
+    LEFT JOIN project_owner_task_step_links l ON l.id=c.source_step_link_id AND l.task_id=c.source_task_id AND l.project_id=c.project_id
     LEFT JOIN agent_executions e ON e.id=c.execution_id
     LEFT JOIN project_owner_execution_preflight_reconciliations r ON r.command_id=c.id
+    LEFT JOIN project_owner_execution_grants g ON g.id=c.grant_id AND g.project_id=c.project_id
     WHERE c.project_id=? AND (? IS NULL OR c.source_task_id=?) ORDER BY c.created_at DESC`).all(subject.projectId, subject.taskId ?? null, subject.taskId ?? null) as Array<{
-      command_id: string; grant_id: string; task_id: string; task_title: string; employee_id: string; role: OwnerExecutionCommandRole; budget_role_key: string | null; rework_ordinal: number
-      state: string; execution_id: string | null; execution_status: string | null; reserved_cost_micros: number; actual_cost_micros: number | null
+      command_id: string; grant_id: string; task_id: string; task_title: string; owner_step_link_id: string | null; source_step_link_id: string; materialization_id: string | null
+      employee_id: string; role: OwnerExecutionCommandRole; budget_role_key: string | null; rework_ordinal: number
+      state: string; execution_id: string | null; execution_status: string | null; execution_result_summary: string | null; reserved_cost_micros: number; actual_cost_micros: number | null
       ack_fingerprint: string; created_at: number; updated_at: number
       preflight_evidence_kind: 'typed_preflight' | 'legacy_operator_attested' | null; preflight_reason_code: string | null
       preflight_error_sha256: string | null; preflight_provider_checked: number | null; preflight_usage_marker: 'none' | 'runtime_unknown' | null
       preflight_actor: string | null; preflight_created_at: number | null
+      grant_state: string | null; grant_dispatch_mode: string | null; grant_max_cost_micros: number | null; grant_max_runs: number | null
+      grant_max_rework: number | null; grant_expires_at: number | null; grant_role_budgets_json: string | null
     }>
+  const materializations = new Map<string, ReturnType<typeof getOwnerTaskMaterializationRecord>>()
+  const technicalReviews = new Map<string, OwnerTechnicalReviewEvidence[]>()
+  const actionApprovals = new Map<string, NonNullable<OwnerExecutionCommandView['actionApprovals']>>()
+  const approvalRows = store.getProjectDb().prepare(`SELECT request_id, command_id, tool_name, action_fingerprint, status,
+      requested_at, decided_at, decided_by, decision_reason
+    FROM project_owner_action_approvals WHERE project_id=? ORDER BY requested_at`).all(subject.projectId) as Array<{
+      request_id: string; command_id: string; tool_name: string; action_fingerprint: string; status: string
+      requested_at: number; decided_at: number | null; decided_by: string | null; decision_reason: string | null
+    }>
+  for (const approval of approvalRows) {
+    if (!/^[a-f0-9]{64}$/.test(approval.action_fingerprint) || !['pending', 'allowed', 'denied', 'invalidated'].includes(approval.status)
+      || !Number.isSafeInteger(approval.requested_at) || (approval.decided_at !== null && !Number.isSafeInteger(approval.decided_at))) {
+      throw new Error('Owner动作审批审计无法核验')
+    }
+    const items = actionApprovals.get(approval.command_id) ?? []
+    items.push({ requestId: approval.request_id, toolName: approval.tool_name, actionFingerprint: approval.action_fingerprint,
+      status: approval.status as NonNullable<OwnerExecutionCommandView['actionApprovals']>[number]['status'],
+      requestedAt: approval.requested_at, decidedAt: approval.decided_at, decidedBy: approval.decided_by, reason: approval.decision_reason })
+    actionApprovals.set(approval.command_id, items)
+  }
   const states = new Set<OwnerExecutionCommandView['state']>(['reserved', 'queued', 'running', 'settled', 'released', 'needs_reconcile', 'unknown', 'failed', 'cancelled'])
   return rows.map(row => {
     if (!states.has(row.state as OwnerExecutionCommandView['state'])) throw new Error('Owner命令包含未知状态，拒绝展示')
+    if (!['active', 'paused', 'needs_reconcile', 'archived'].includes(String(row.grant_state))
+      || (row.grant_dispatch_mode !== 'manual' && row.grant_dispatch_mode !== 'autonomous')
+      || !Number.isSafeInteger(row.grant_max_cost_micros) || Number(row.grant_max_cost_micros) <= 0
+      || !Number.isSafeInteger(row.grant_max_runs) || Number(row.grant_max_runs) <= 0
+      || !Number.isSafeInteger(row.grant_max_rework) || Number(row.grant_max_rework) < 0
+      || !Number.isSafeInteger(row.grant_expires_at) || typeof row.grant_role_budgets_json !== 'string') throw new Error('Owner命令关联授权缺失或损坏，拒绝展示')
+    const roleBudgetCaps = parseRoleBudgetCaps(row.grant_role_budgets_json, Number(row.grant_max_cost_micros))
+    const grantAuthorization = { grantState: row.grant_state as OwnerExecutionCommandView['grantAuthorization']['grantState'],
+      dispatchMode: row.grant_dispatch_mode as OwnerExecutionCommandView['grantAuthorization']['dispatchMode'], maxCostMicros: Number(row.grant_max_cost_micros),
+      maxRuns: Number(row.grant_max_runs), maxRework: Number(row.grant_max_rework), expiresAt: Number(row.grant_expires_at), roleBudgetCaps }
+    if (!row.owner_step_link_id || row.source_step_link_id !== row.owner_step_link_id || !row.materialization_id) throw new Error('Owner命令缺少冻结步骤关联，拒绝展示审阅内容')
+    let materialization = materializations.get(row.materialization_id)
+    if (!materialization) {
+      materialization = getOwnerTaskMaterializationRecord(subject.projectId, row.materialization_id)
+      materializations.set(row.materialization_id, materialization)
+    }
+    const stepLink = materialization.links.find(link => link.id === row.source_step_link_id && link.taskId === row.task_id)
+    if (!stepLink || stepLink.projectId !== subject.projectId || !Array.isArray(stepLink.projection.acceptanceCriteria)
+      || stepLink.projection.acceptanceCriteria.some(item => typeof item !== 'string')) throw new Error('Owner命令冻结验收标准无法核验，拒绝展示')
+    let taskReviews = technicalReviews.get(row.task_id)
+    if (!taskReviews) {
+      taskReviews = listOwnerTechnicalReviewEvidence(subject.projectId, row.task_id)
+      technicalReviews.set(row.task_id, taskReviews)
+    }
+    const review = row.role === 'reviewer' ? taskReviews.find(item => item.reviewerCommandId === row.command_id
+      && item.grantId === row.grant_id && item.stepLinkId === row.source_step_link_id && item.reworkOrdinal === row.rework_ordinal) : undefined
     let preflightReconciliation: OwnerExecutionCommandView['preflightReconciliation']
     if (row.preflight_evidence_kind !== null) {
       if ((row.preflight_evidence_kind !== 'typed_preflight' && row.preflight_evidence_kind !== 'legacy_operator_attested')
@@ -287,6 +342,40 @@ export function listOwnerExecutionCommands(rawSubject: unknown): OwnerExecutionC
         errorSha256: row.preflight_error_sha256!, providerConsoleCheckedNoUsage: true,
         preReconciliationUsageMarker: row.preflight_usage_marker, actor: 'local-user', createdAt: row.preflight_created_at! }
     }
-    return { commandId: row.command_id, grantId: row.grant_id, taskId: row.task_id, taskTitle: row.task_title, employeeId: row.employee_id, role: row.role, ...(row.budget_role_key ? { budgetRoleKey: row.budget_role_key } : {}), reworkOrdinal: row.rework_ordinal, state: row.state as OwnerExecutionCommandView['state'], executionId: row.execution_id, executionStatus: row.execution_status, reservedCostMicros: row.reserved_cost_micros, actualCostMicros: row.actual_cost_micros, ...(preflightReconciliation ? { preflightReconciliation } : {}), ackFingerprint: row.ack_fingerprint, createdAt: row.created_at, updatedAt: row.updated_at }
+    const summary = row.execution_result_summary
+    const executionResultSummary = summary
+      ? summary.length > 32_000 ? `${summary.slice(0, 32_000)}\n（回报过长，界面仅显示前32,000字符）` : summary
+      : undefined
+    const technicalReview = review ? {
+      verdict: review.verdict,
+      summary: review.summary,
+      criteria: review.criteria,
+      findings: review.findings,
+      blockerReason: review.blockerReason,
+    } : undefined
+    return {
+      commandId: row.command_id,
+      grantId: row.grant_id,
+      taskId: row.task_id,
+      taskTitle: row.task_title,
+      employeeId: row.employee_id,
+      role: row.role,
+      ...(row.budget_role_key ? { budgetRoleKey: row.budget_role_key } : {}),
+      reworkOrdinal: row.rework_ordinal,
+      state: row.state as OwnerExecutionCommandView['state'],
+      executionId: row.execution_id,
+      executionStatus: row.execution_status,
+      ...(executionResultSummary ? { executionResultSummary } : {}),
+      ...(actionApprovals.has(row.command_id) ? { actionApprovals: actionApprovals.get(row.command_id)! } : {}),
+      acceptanceCriteria: stepLink.projection.acceptanceCriteria,
+      ...(technicalReview ? { technicalReview } : {}),
+      reservedCostMicros: row.reserved_cost_micros,
+      actualCostMicros: row.actual_cost_micros,
+      grantAuthorization,
+      ...(preflightReconciliation ? { preflightReconciliation } : {}),
+      ackFingerprint: row.ack_fingerprint,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    }
   })
 }
