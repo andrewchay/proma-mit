@@ -197,6 +197,9 @@ function toExecutionResult(execution: ReturnType<typeof listAgentExecutionsByEnt
     requestedPermissions: execution.requestedPermissions ?? [],
     ...(execution.capabilityVersionIds?.length ? { capabilityVersionIds: execution.capabilityVersionIds } : {}),
     ...(execution.capabilityContentHash ? { capabilityContentHash: execution.capabilityContentHash } : {}),
+    ...(execution.developmentStandardId ? { developmentStandardId: execution.developmentStandardId } : {}),
+    ...(execution.developmentStandardVersion ? { developmentStandardVersion: execution.developmentStandardVersion } : {}),
+    ...(execution.developmentStandardHash ? { developmentStandardHash: execution.developmentStandardHash } : {}),
     startedAt: execution.startedAt,
     ...(execution.completedAt ? { completedAt: execution.completedAt } : {}),
   }

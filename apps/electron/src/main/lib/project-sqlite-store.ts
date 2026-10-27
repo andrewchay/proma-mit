@@ -993,6 +993,9 @@ function migrate(database: SqliteCompat): void {
       last_heartbeat_at INTEGER,
       capability_version_ids TEXT NOT NULL DEFAULT '[]',
       capability_content_hash TEXT,
+      development_standard_id TEXT,
+      development_standard_version TEXT,
+      development_standard_hash TEXT,
       started_at INTEGER NOT NULL,
       completed_at INTEGER
     );
@@ -1451,6 +1454,9 @@ function migrate(database: SqliteCompat): void {
   }
   if (!execColumns.includes('capability_version_ids')) database.exec("ALTER TABLE agent_executions ADD COLUMN capability_version_ids TEXT NOT NULL DEFAULT '[]'")
   if (!execColumns.includes('capability_content_hash')) database.exec('ALTER TABLE agent_executions ADD COLUMN capability_content_hash TEXT')
+  if (!execColumns.includes('development_standard_id')) database.exec('ALTER TABLE agent_executions ADD COLUMN development_standard_id TEXT')
+  if (!execColumns.includes('development_standard_version')) database.exec('ALTER TABLE agent_executions ADD COLUMN development_standard_version TEXT')
+  if (!execColumns.includes('development_standard_hash')) database.exec('ALTER TABLE agent_executions ADD COLUMN development_standard_hash TEXT')
   if (!execColumns.includes('pilot_command_id')) database.exec('ALTER TABLE agent_executions ADD COLUMN pilot_command_id TEXT')
   // 活动 Pilot grant 必须保存用户确认的冻结指纹；旧测试/历史行保持 NULL，不能用于新受控命令。
   const pilotGrantColumns = readColumnNames(database, 'pilot_runtime_grants')
@@ -3487,6 +3493,7 @@ type AgentExecutionRow = {
   output_files: string | null; risk_level: string | null; error: string | null;
   requested_permissions: string | null; last_heartbeat_at: number | null;
   capability_version_ids: string | null; capability_content_hash: string | null;
+  development_standard_id: string | null; development_standard_version: string | null; development_standard_hash: string | null;
   started_at: number; completed_at: number | null;
 }
 
@@ -3541,6 +3548,9 @@ function rowToAgentExecution(row: AgentExecutionRow): AgentExecution {
     lastHeartbeatAt: row.last_heartbeat_at ?? undefined,
     capabilityVersionIds: parseJsonArray(row.capability_version_ids),
     capabilityContentHash: row.capability_content_hash ?? undefined,
+    developmentStandardId: row.development_standard_id ?? undefined,
+    developmentStandardVersion: row.development_standard_version ?? undefined,
+    developmentStandardHash: row.development_standard_hash ?? undefined,
     startedAt: row.started_at,
     completedAt: row.completed_at ?? undefined,
   }
@@ -3675,8 +3685,8 @@ export function createAgentExecution(input: CreateAgentExecutionInput): AgentExe
   const now = input.startedAt ?? Date.now()
   database.prepare(
     `INSERT INTO agent_executions
-     (id, project_id, entity_type, entity_id, agent_id, session_id, executor, pilot_command_id, owner_command_id, status, prompt, result_summary, output_files, risk_level, error, requested_permissions, last_heartbeat_at, capability_version_ids, capability_content_hash, started_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', NULL, NULL, ?, NULL, ?, ?, ?, NULL)`
+     (id, project_id, entity_type, entity_id, agent_id, session_id, executor, pilot_command_id, owner_command_id, status, prompt, result_summary, output_files, risk_level, error, requested_permissions, last_heartbeat_at, capability_version_ids, capability_content_hash, development_standard_id, development_standard_version, development_standard_hash, started_at, completed_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', NULL, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, NULL)`
   ).run(
     input.id,
     input.projectId,
@@ -3692,6 +3702,9 @@ export function createAgentExecution(input: CreateAgentExecutionInput): AgentExe
     JSON.stringify(input.requestedPermissions ?? []),
     JSON.stringify(input.capabilityVersionIds ?? []),
     input.capabilityContentHash ?? null,
+    input.developmentStandardId ?? null,
+    input.developmentStandardVersion ?? null,
+    input.developmentStandardHash ?? null,
     now,
   )
   return getAgentExecution(input.id)!
@@ -3722,7 +3735,8 @@ export function updateAgentExecution(id: string, patch: Partial<Omit<AgentExecut
   database.prepare(
     `UPDATE agent_executions SET
        session_id = ?, status = ?, result_summary = ?, output_files = ?, risk_level = ?, error = ?,
-       requested_permissions = ?, last_heartbeat_at = ?, completed_at = ?, prompt = ?, capability_version_ids = ?, capability_content_hash = ?
+       requested_permissions = ?, last_heartbeat_at = ?, completed_at = ?, prompt = ?, capability_version_ids = ?, capability_content_hash = ?,
+       development_standard_id = ?, development_standard_version = ?, development_standard_hash = ?
      WHERE id = ?`
   ).run(
     merged.sessionId,
@@ -3737,6 +3751,9 @@ export function updateAgentExecution(id: string, patch: Partial<Omit<AgentExecut
     merged.prompt,
     JSON.stringify(merged.capabilityVersionIds ?? []),
     merged.capabilityContentHash ?? null,
+    merged.developmentStandardId ?? null,
+    merged.developmentStandardVersion ?? null,
+    merged.developmentStandardHash ?? null,
     id,
   )
   return getAgentExecution(id)

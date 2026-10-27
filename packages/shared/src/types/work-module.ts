@@ -963,6 +963,10 @@ export interface AgentExecutionResult {
   /** 调度时冻结的能力版本；旧执行记录可能缺失。 */
   capabilityVersionIds?: string[]
   capabilityContentHash?: string
+  /** 研发执行采用的共享标准版本；旧记录缺失时不得推断为当前版本。 */
+  developmentStandardId?: string
+  developmentStandardVersion?: string
+  developmentStandardHash?: string
 }
 
 // ===== 成员（PH1-A） =====
