@@ -84,6 +84,8 @@ import {
   getProject,
   createProject,
   updateProject,
+  archiveProject,
+  restoreProject,
   deleteProject,
   reorderProjects,
   listTasks,
@@ -488,6 +490,16 @@ export function registerWorkModuleIpcHandlers(): void {
   })
   ipcMain.handle(PROJECT_IPC_CHANNELS.UPDATE_PROJECT, async (_, id: string, patch) => {
     return updateProject(id, patch)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.ARCHIVE_PROJECT, async (_, id: string) => archiveProject(id))
+  ipcMain.handle(PROJECT_IPC_CHANNELS.RESTORE_PROJECT, async (_, id: string) => restoreProject(id))
+  ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_TASK_ARRANGEMENT_SUGGESTIONS, async () => {
+    const { listTaskArrangementSuggestions } = await import('./project-todo-arrangement-service')
+    return listTaskArrangementSuggestions()
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.APPLY_TASK_ARRANGEMENT_SUGGESTION, async (_, input: unknown) => {
+    const { applyTaskArrangementSuggestion } = await import('./project-todo-arrangement-service')
+    return applyTaskArrangementSuggestion(input)
   })
   ipcMain.handle(PROJECT_IPC_CHANNELS.DELETE_PROJECT, async (_, id: string) => {
     return deleteProject(id)

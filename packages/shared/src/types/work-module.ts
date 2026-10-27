@@ -232,6 +232,10 @@ export const PROJECT_IPC_CHANNELS = {
   SAVE_OWNER_GOAL_DRAFT: 'project:save-owner-goal-draft',
   CREATE_PROJECT: 'project:create-project',
   UPDATE_PROJECT: 'project:update-project',
+  ARCHIVE_PROJECT: 'project:archive-project',
+  RESTORE_PROJECT: 'project:restore-project',
+  LIST_TASK_ARRANGEMENT_SUGGESTIONS: 'project:list-task-arrangement-suggestions',
+  APPLY_TASK_ARRANGEMENT_SUGGESTION: 'project:apply-task-arrangement-suggestion',
   DELETE_PROJECT: 'project:delete-project',
   /** 项目列表手动拖拽排序：入参为按展示顺序排列的项目 id 数组 */
   REORDER_PROJECTS: 'project:reorder-projects',

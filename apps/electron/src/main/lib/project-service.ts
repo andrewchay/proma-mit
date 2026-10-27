@@ -136,6 +136,14 @@ export async function deleteProject(id: string): Promise<boolean> {
   return store.deleteProject(id)
 }
 
+export async function archiveProject(id: string): Promise<Project | null> {
+  return store.archiveProject(id)
+}
+
+export async function restoreProject(id: string): Promise<Project | null> {
+  return store.restoreProject(id)
+}
+
 /** 项目列表手动排序：整表按 id 顺序重写 sort_order */
 export async function reorderProjects(orderedIds: string[]): Promise<boolean> {
   return store.reorderProjects(orderedIds)

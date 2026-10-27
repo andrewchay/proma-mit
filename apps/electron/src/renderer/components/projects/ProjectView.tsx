@@ -25,7 +25,7 @@ import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 import { ProjectChainPanel } from './ProjectChainPanel'
 import { ProjectPilotOverview } from './ProjectPilotOverview'
 import { ProjectOwnerConversation } from './ProjectOwnerConversation'
-import { ProjectOwnerHome } from './ProjectOwnerHome'
+import { OwnerTodoScanPanel } from './OwnerTodoScanPanel'
 import { CreateProjectTaskDialog } from './CreateProjectTaskDialog'
 import { ControlledTaskStartButton } from './ControlledTaskStartButton'
 import { TaskReviewPanel } from './TaskReviewPanel'
@@ -306,6 +306,7 @@ interface Project {
   title: string
   description: string
   status: 'planning' | 'active' | 'completed' | 'cancelled'
+  archivedAt?: number
   createdAt: number
   updatedAt: number
   /** 列表手动排序权重（主进程返回；旧客户端缺省为 -createdAt） */
@@ -535,6 +536,13 @@ export function ProjectView(): React.ReactElement {
           onRefresh={loadProjects}
         />
         <div className="flex-1 overflow-auto p-6">
+          <OwnerTodoScanPanel
+            onOpenTask={(projectId, taskId) => {
+              const project = projects.find((item) => item.id === projectId)
+              if (project) setSelectedProject(project)
+              navigateToOwner({ projectId, taskId, at: Date.now() })
+            }}
+          />
           <OwnerConversationUpdates projects={projects} onOpen={(projectId, taskId) => navigateToOwner({ projectId, ...(taskId ? { taskId } : {}), at: Date.now() })} />
           <ProjectList
             projects={projects}
@@ -547,18 +555,8 @@ export function ProjectView(): React.ReactElement {
     )
   }
 
-  // 项目详情
-  return (
-    <div className="flex h-full flex-col bg-background">
-      <header className="flex items-center gap-4 border-b px-6 py-4">
-        <button onClick={() => setSelectedProject(null)} className="text-sm text-muted-foreground hover:text-foreground titlebar-no-drag">← 返回</button>
-        <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">{selectedProject.title}</h1>
-      </header>
-      <main className="flex-1 overflow-auto p-6">
-        <ProjectOwnerHome key={selectedProject.id} projectId={selectedProject.id} taskId={ownerNavigation?.projectId === selectedProject.id ? ownerNavigation.taskId : undefined} />
-      </main>
-    </div>
-  )
+  // 项目默认页保留 Owner 对话，同时恢复现有任务、看板与项目详情入口。
+  return <ProjectDetail key={selectedProject.id} project={selectedProject} onBack={() => setSelectedProject(null)} onRefresh={loadProjects} />
 }
 
 // ===== 头部 =====
@@ -701,6 +699,8 @@ function ProjectList({
   const [showCreate, setShowCreate] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newDesc, setNewDesc] = useState('')
+  const [projectFilter, setProjectFilter] = useState<'active' | 'archived' | 'all'>('active')
+  const visibleProjects = projects.filter((project) => projectFilter === 'all' || (projectFilter === 'archived' ? Boolean(project.archivedAt) : !project.archivedAt))
 
   // 拖拽排序：5px 阈值以下仍算点击（与看板一致），避免卡片上的点击被拖拽吞掉
   const sensors = useSensors(
@@ -754,10 +754,22 @@ function ProjectList({
     }
   }
 
+  const handleArchiveToggle = async (project: Project) => {
+    try {
+      const updated = await callProjectAPI<Project | null>(project.archivedAt ? 'restoreProject' : 'archiveProject', project.id)
+      if (updated) onProjectsChange(projects.map((item) => item.id === updated.id ? updated : item))
+    } catch (error) {
+      alert(`项目${project.archivedAt ? '恢复' : '归档'}失败：${error instanceof Error ? error.message : String(error)}`)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div><h2 className="text-lg font-medium">项目列表 ({projects.length})</h2><p className="mt-1 text-sm text-muted-foreground">进入项目后可直接与 Owner 对话，由 Owner 负责后续推进。</p></div>
+        <div><h2 className="text-lg font-medium">项目列表 ({visibleProjects.length})</h2><p className="mt-1 text-sm text-muted-foreground">归档会保留项目及其任务；可随时打开查看或恢复。</p></div>
+        <div className="flex items-center gap-1 rounded-lg bg-muted p-1" role="tablist" aria-label="项目归档筛选">
+          {([{ id: 'active', label: '进行中' }, { id: 'archived', label: '已归档' }, { id: 'all', label: '全部' }] as const).map((filter) => <button key={filter.id} type="button" role="tab" aria-selected={projectFilter === filter.id} onClick={() => setProjectFilter(filter.id)} className={`rounded-md px-2.5 py-1 text-xs ${projectFilter === filter.id ? 'bg-background font-medium shadow-sm' : 'text-muted-foreground'}`}>{filter.label}</button>)}
+        </div>
         <button
           onClick={() => setShowCreate(true)}
           className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
@@ -801,26 +813,31 @@ function ProjectList({
 
       {isLoading ? (
         <div className="text-center py-12 text-muted-foreground">加载中...</div>
-      ) : projects.length === 0 ? (
+      ) : visibleProjects.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">
-          <p>暂无项目</p>
-          <p className="text-sm mt-2">点击上方「新建项目」开始</p>
+          <p>{projectFilter === 'archived' ? '没有归档项目' : '暂无项目'}</p>
+          {projectFilter !== 'archived' && <p className="text-sm mt-2">点击上方「新建项目」开始</p>}
         </div>
-      ) : (
+      ) : projectFilter === 'all' ? (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(e) => void handleDragEnd(e)}>
-          <SortableContext items={projects.map((p) => p.id)} strategy={rectSortingStrategy}>
+          <SortableContext items={visibleProjects.map((p) => p.id)} strategy={rectSortingStrategy}>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {projects.map((project) => (
+              {visibleProjects.map((project) => (
                 <SortableProjectCard
                   key={project.id}
                   project={project}
                   onClick={() => onSelectProject(project)}
                   onDelete={() => handleDelete(project.id)}
+                  onArchiveToggle={() => void handleArchiveToggle(project)}
                 />
               ))}
             </div>
           </SortableContext>
         </DndContext>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {visibleProjects.map((project) => <ProjectCard key={project.id} project={project} onClick={() => onSelectProject(project)} onDelete={() => handleDelete(project.id)} onArchiveToggle={() => void handleArchiveToggle(project)} />)}
+        </div>
       )}
     </div>
   )
@@ -831,10 +848,12 @@ function SortableProjectCard({
   project,
   onClick,
   onDelete,
+  onArchiveToggle,
 }: {
   project: Project
   onClick: () => void
   onDelete: () => void
+  onArchiveToggle: () => void
 }): React.ReactElement {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: project.id,
@@ -846,7 +865,7 @@ function SortableProjectCard({
   }
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <ProjectCard project={project} onClick={onClick} onDelete={onDelete} />
+      <ProjectCard project={project} onClick={onClick} onDelete={onDelete} onArchiveToggle={onArchiveToggle} />
     </div>
   )
 }
@@ -855,10 +874,12 @@ export function ProjectCard({
   project,
   onClick,
   onDelete,
+  onArchiveToggle,
 }: {
   project: Project
   onClick: () => void
   onDelete: () => void
+  onArchiveToggle: () => void
 }): React.ReactElement {
   return (
     <div
@@ -869,11 +890,11 @@ export function ProjectCard({
         <h3 className="font-medium text-sm hover:text-primary">
           {project.title}
         </h3>
-        <button
-          onClick={(e) => { e.stopPropagation(); onDelete() }}
-          className="opacity-0 group-hover:opacity-100 text-xs text-red-500 hover:text-red-700 transition-opacity"
-          aria-label={`删除项目 ${project.title}`}
-        >删除</button>
+        <div className="flex items-center gap-2">
+          {project.archivedAt && <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">已归档</span>}
+          <button type="button" onClick={(e) => { e.stopPropagation(); onArchiveToggle() }} className="text-xs text-muted-foreground hover:text-foreground" aria-label={`${project.archivedAt ? '恢复' : '归档'}项目 ${project.title}`}>{project.archivedAt ? '恢复' : '归档'}</button>
+          <button type="button" onClick={(e) => { e.stopPropagation(); onDelete() }} className="opacity-0 group-hover:opacity-100 text-xs text-red-500 hover:text-red-700 transition-opacity" aria-label={`删除项目 ${project.title}`}>删除</button>
+        </div>
       </div>
       <p className="text-sm text-muted-foreground mb-3">{project.description}</p>
 
@@ -942,7 +963,7 @@ function ProjectRiskBadge({ projectId, className = '' }: { projectId: string; cl
 
 // ===== 项目详情 =====
 
-function _ProjectDetail({
+function ProjectDetail({
   project,
   onBack,
   onRefresh,
@@ -952,9 +973,9 @@ function _ProjectDetail({
   onRefresh: () => void
 }): React.ReactElement {
   const [detailTab, setDetailTab] = useState<'pilot' | 'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain' | 'knowledge' | 'workspaces' | 'aicost'>('pilot')
-  const [advancedDetailsOpen, setAdvancedDetailsOpen] = useState(false)
+  const [advancedDetailsOpen, setAdvancedDetailsOpen] = useState(true)
   const ownerNavigation = useAtomValue(ownerConversationNavigationAtom)
-  useEffect(() => { if (ownerNavigation?.projectId === project.id) setDetailTab('pilot') }, [ownerNavigation, project.id])
+  useEffect(() => { if (ownerNavigation?.projectId === project.id) setDetailTab(ownerNavigation.taskId ? 'tasks' : 'pilot') }, [ownerNavigation, project.id])
   const [pilotTaskFocus, setPilotTaskFocus] = useState<{ taskId: string; subTaskId?: string } | null>(null)
   // R-P1-01：项目概览无任务/顶部 CTA 打开统一创建入口
   const [showOverviewCreate, setShowOverviewCreate] = useState(false)
@@ -1241,21 +1262,16 @@ function _ProjectDetail({
       <header className="flex items-center gap-4 border-b px-6 py-4">
         <button onClick={onBack} className="text-sm text-muted-foreground hover:text-foreground titlebar-no-drag">← 返回</button>
         <h1 className="min-w-0 flex-1 truncate text-lg font-semibold">{project.title}</h1>
+        {project.archivedAt && <span className="rounded bg-amber-500/10 px-2 py-1 text-xs text-amber-700">已归档 · 任务保留</span>}
       </header>
       <main className="flex-1 overflow-auto p-6">
         <div className="mx-auto w-full max-w-7xl">
           <ProjectOwnerConversation projectId={project.id} />
-          <details className="mt-6 rounded-xl bg-card p-4 shadow-sm" onToggle={event => setAdvancedDetailsOpen(event.currentTarget.open)}>
-            <summary className="cursor-pointer text-sm font-medium text-muted-foreground">项目管理详情（高级）</summary>
+          <details open={advancedDetailsOpen} className="mt-6 rounded-xl bg-card p-4 shadow-sm" onToggle={event => setAdvancedDetailsOpen(event.currentTarget.open)}>
+            <summary className="cursor-pointer text-sm font-medium text-muted-foreground">任务与项目详情</summary>
             {advancedDetailsOpen && <div className="mt-4">
-      {/* 详情头部 */}
+      {/* 项目操作栏 */}
       <div className="flex items-center gap-4 px-6 py-4 border-b">
-        <button
-          onClick={onBack}
-          className="text-sm text-muted-foreground hover:text-foreground titlebar-no-drag"
-        >
-          ← 返回
-        </button>
         <div className="flex-1">
           {isEditingProject ? (
             <div className="space-y-2">
@@ -1275,10 +1291,7 @@ function _ProjectDetail({
               />
             </div>
           ) : (
-            <>
-              <h1 className="text-lg font-semibold">{project.title}</h1>
-              <p className="text-sm text-muted-foreground">{project.description}</p>
-            </>
+            <p className="text-sm text-muted-foreground">{project.description}</p>
           )}
           <button onClick={() => void handleCreateTemplate()} className="text-xs px-3 py-1.5 rounded border hover:bg-muted transition-colors" title="将当前项目结构保存为模板">存为模板</button>
         </div>
@@ -1373,7 +1386,7 @@ function _ProjectDetail({
       <div className="flex gap-1 px-6 pt-3 border-b">
         {([
           { key: 'pilot', label: '概览' },
-          { key: 'tasks', label: '任务' },
+          { key: 'tasks', label: '工作 / Tasks' },
           { key: 'chain', label: '治理与交付详情' },
           { key: 'knowledge', label: '知识' },
           { key: 'workspaces', label: '工作空间' },

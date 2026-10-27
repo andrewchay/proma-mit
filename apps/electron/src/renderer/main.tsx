@@ -56,6 +56,7 @@ import {
 import { subscriptionStateAtom } from './atoms/subscription-atoms'
 import { useGlobalOwnerManagementListeners } from './hooks/useGlobalOwnerManagementListeners'
 import { useGlobalAgentListeners } from './hooks/useGlobalAgentListeners'
+import { OwnerTodoScanController } from './components/projects/OwnerTodoScanPanel'
 import { pollStatusChangedAtom } from './atoms/project-atoms'
 import { useGlobalChatListeners } from './hooks/useGlobalChatListeners'
 import { tabsAtom, activeTabIdAtom, ensureScratchPadTab, scratchPadContentAtom, scratchPadLoadedAtom, SCRATCH_PAD_ID } from './atoms/tab-atoms'
@@ -979,6 +980,7 @@ if (isQuickTaskWindow) {
       <ChatListenersInitializer />
       <AgentListenersInitializer />
       <ProjectPollListenersInitializer />
+      <OwnerTodoScanController />
       <ChatToolInitializer />
       <UpdaterInitializer />
       <FeishuInitializer />
