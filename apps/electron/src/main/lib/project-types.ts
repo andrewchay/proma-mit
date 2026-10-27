@@ -15,6 +15,8 @@ export interface Project {
   status: ProjectStatus
   createdAt: number
   updatedAt: number
+  /** 本地软归档时间；归档项目及其任务/Owner证据仍保留。 */
+  archivedAt?: number | null
   /** 列表手动排序权重（REAL，升序在前；未手动排序时为 -createdAt） */
   sortOrder: number
 }

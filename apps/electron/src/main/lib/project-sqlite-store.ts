@@ -605,6 +605,7 @@ function migrate(database: SqliteCompat): void {
       title TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'active',
+      archived_at INTEGER,
       created_at INTEGER NOT NULL,
       updated_at INTEGER NOT NULL
     );
@@ -1622,6 +1623,9 @@ function migrate(database: SqliteCompat): void {
     database.exec(`ALTER TABLE projects ADD COLUMN sort_order REAL NOT NULL DEFAULT 0`)
     database.exec(`UPDATE projects SET sort_order = -created_at WHERE sort_order = 0`)
   }
+  if (!projectColumns.includes('archived_at')) {
+    database.exec(`ALTER TABLE projects ADD COLUMN archived_at INTEGER`)
+  }
   // AI 员工执行 token 配额（可选，NULL = 不限）
   if (!columns.includes('token_budget')) {
     database.exec(`ALTER TABLE tasks ADD COLUMN token_budget INTEGER`)
@@ -1759,6 +1763,7 @@ function seedTaskStatusesForProject(database: SqliteCompat, projectId: string): 
 
 type ProjectRow = {
   id: string; title: string; description: string; status: string;
+  archived_at: number | null;
   created_at: number; updated_at: number;
   /** 项目卡片手动排序（REAL，升序即展示顺序；未排序时为 -created_at，最新在前） */
   sort_order: number;
@@ -1813,6 +1818,7 @@ function rowToProject(row: ProjectRow): Project {
     status: row.status as Project['status'],
     createdAt: row.created_at,
     updatedAt: row.updated_at,
+    ...(row.archived_at === null || row.archived_at === undefined ? {} : { archivedAt: row.archived_at }),
     sortOrder: row.sort_order,
   }
 }
@@ -1885,9 +1891,9 @@ export function createProject(input: CreateProjectInput): Project {
   return rowToProject(row)
 }
 
-export function listProjects(): Project[] {
+export function listProjects(includeArchived = true): Project[] {
   const database = getProjectDb()
-  const rows = database.prepare(`SELECT * FROM projects ORDER BY sort_order ASC, created_at DESC`).all() as ProjectRow[]
+  const rows = database.prepare(`SELECT * FROM projects ${includeArchived ? '' : 'WHERE archived_at IS NULL'} ORDER BY sort_order ASC, created_at DESC`).all() as ProjectRow[]
   return rows.map(rowToProject)
 }
 
@@ -1901,16 +1907,19 @@ export function updateProject(id: string, updates: Partial<Omit<Project, 'id' | 
   const database = getProjectDb()
   const existing = database.prepare(`SELECT * FROM projects WHERE id = ?`).get(id) as ProjectRow | undefined
   if (!existing) return null
+  if (updates.archivedAt !== undefined && updates.archivedAt !== null
+    && (!Number.isSafeInteger(updates.archivedAt) || updates.archivedAt <= 0)) throw new Error('项目归档时间必须是有效时间戳或null')
   const next: ProjectRow = {
     ...existing,
     title: updates.title ?? existing.title,
     description: updates.description ?? existing.description,
     status: updates.status ?? existing.status,
+    archived_at: updates.archivedAt === undefined ? existing.archived_at : updates.archivedAt,
     updated_at: now(),
   }
   database.prepare(
-    `UPDATE projects SET title = ?, description = ?, status = ?, updated_at = ? WHERE id = ?`
-  ).run(next.title, next.description, next.status, next.updated_at, id)
+    `UPDATE projects SET title = ?, description = ?, status = ?, archived_at = ?, updated_at = ? WHERE id = ?`
+  ).run(next.title, next.description, next.status, next.archived_at, next.updated_at, id)
   return rowToProject(next)
 }
 
@@ -1923,7 +1932,7 @@ export function updateProject(id: string, updates: Partial<Omit<Project, 'id' | 
 export function reorderProjects(orderedIds: string[]): boolean {
   const database = getProjectDb()
   const existing = new Set(
-    (database.prepare(`SELECT id FROM projects`).all() as Array<{ id: string }>).map((r) => r.id),
+    (database.prepare(`SELECT id FROM projects WHERE archived_at IS NULL`).all() as Array<{ id: string }>).map((r) => r.id),
   )
   // 入参必须与库内项目一一对应，否则视为过期顺序，整体拒绝
   if (orderedIds.length !== existing.size || orderedIds.some((id) => !existing.has(id))) {

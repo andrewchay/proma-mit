@@ -308,6 +308,7 @@ interface Project {
   status: 'planning' | 'active' | 'completed' | 'cancelled'
   createdAt: number
   updatedAt: number
+  archivedAt?: number | null
   /** 列表手动排序权重（主进程返回；旧客户端缺省为 -createdAt） */
   sortOrder?: number
 }
@@ -516,7 +517,7 @@ export function ProjectView(): React.ReactElement {
 
   const loadProjects = useCallback(async () => {
     try {
-      const data = await callProjectAPI<Project[]>('listProjects')
+      const data = await callProjectAPI<Project[]>('listProjects', true)
       setProjects(data)
     } catch (err) {
       console.error('加载项目失败:', err)
@@ -535,7 +536,7 @@ export function ProjectView(): React.ReactElement {
           onRefresh={loadProjects}
         />
         <div className="flex-1 overflow-auto p-6">
-          <OwnerConversationUpdates projects={projects} onOpen={(projectId, taskId) => navigateToOwner({ projectId, ...(taskId ? { taskId } : {}), at: Date.now() })} />
+          <OwnerConversationUpdates projects={projects.filter(project => !project.archivedAt)} onOpen={(projectId, taskId) => navigateToOwner({ projectId, ...(taskId ? { taskId } : {}), at: Date.now() })} />
           <ProjectList
             projects={projects}
             isLoading={isLoading}
@@ -699,8 +700,12 @@ function ProjectList({
   onProjectsChange: (p: Project[]) => void
 }): React.ReactElement {
   const [showCreate, setShowCreate] = useState(false)
+  const [showArchived, setShowArchived] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newDesc, setNewDesc] = useState('')
+  const activeProjects = projects.filter(project => !project.archivedAt)
+  const archivedProjects = projects.filter(project => Boolean(project.archivedAt))
+  const visibleProjects = showArchived ? archivedProjects : activeProjects
 
   // 拖拽排序：5px 阈值以下仍算点击（与看板一致），避免卡片上的点击被拖拽吞掉
   const sensors = useSensors(
@@ -708,16 +713,18 @@ function ProjectList({
   )
 
   const handleDragEnd = async (event: DragEndEvent) => {
+    if (showArchived) return
     const { active, over } = event
     if (!over || active.id === over.id) return
-    const oldIndex = projects.findIndex((p) => p.id === active.id)
-    const newIndex = projects.findIndex((p) => p.id === over.id)
+    const oldIndex = activeProjects.findIndex((p) => p.id === active.id)
+    const newIndex = activeProjects.findIndex((p) => p.id === over.id)
     if (oldIndex < 0 || newIndex < 0) return
-    const next = arrayMove(projects, oldIndex, newIndex)
+    const nextActive = arrayMove(activeProjects, oldIndex, newIndex)
+    const next = [...nextActive, ...archivedProjects]
     // 乐观更新，失败回滚并提示（与看板拖拽同一交互约定）
     onProjectsChange(next)
     try {
-      const ok = await callProjectAPI<boolean>('reorderProjects', next.map((p) => p.id))
+      const ok = await callProjectAPI<boolean>('reorderProjects', nextActive.map((p) => p.id))
       if (!ok) throw new Error('顺序与库内项目不一致')
     } catch (err) {
       console.error('项目排序失败:', err)
@@ -754,16 +761,33 @@ function ProjectList({
     }
   }
 
+  const handleToggleArchive = async (project: Project) => {
+    const archivedAt = project.archivedAt ? null : Date.now()
+    try {
+      const updated = await callProjectAPI<Project | null>('updateProject', project.id, { archivedAt })
+      if (!updated) throw new Error('项目不存在')
+      onProjectsChange(projects.map(item => item.id === project.id ? updated : item))
+    } catch (err) {
+      console.error('项目归档状态更新失败:', err)
+      alert('项目归档状态更新失败: ' + (err instanceof Error ? err.message : String(err)))
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <div><h2 className="text-lg font-medium">项目列表 ({projects.length})</h2><p className="mt-1 text-sm text-muted-foreground">进入项目后可直接与 Owner 对话，由 Owner 负责后续推进。</p></div>
+        <div><h2 className="text-lg font-medium">{showArchived ? '已归档项目' : '项目列表'} ({visibleProjects.length})</h2><p className="mt-1 text-sm text-muted-foreground">进入项目后可直接与 Owner 对话，由 Owner 负责后续推进。归档会保留任务、规划和运行记录。</p></div>
         <button
           onClick={() => setShowCreate(true)}
           className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors"
         >
           + 新建项目
         </button>
+      </div>
+
+      <div className="flex gap-2" role="tablist" aria-label="项目状态">
+        <button type="button" role="tab" aria-selected={!showArchived} onClick={() => setShowArchived(false)} className={`rounded-lg px-3 py-1.5 text-sm ${!showArchived ? 'bg-primary/10 font-medium text-primary' : 'bg-muted text-muted-foreground'}`}>进行中 ({activeProjects.length})</button>
+        <button type="button" role="tab" aria-selected={showArchived} onClick={() => setShowArchived(true)} className={`rounded-lg px-3 py-1.5 text-sm ${showArchived ? 'bg-primary/10 font-medium text-primary' : 'bg-muted text-muted-foreground'}`}>已归档 ({archivedProjects.length})</button>
       </div>
 
       {showCreate && (
@@ -801,21 +825,23 @@ function ProjectList({
 
       {isLoading ? (
         <div className="text-center py-12 text-muted-foreground">加载中...</div>
-      ) : projects.length === 0 ? (
+      ) : visibleProjects.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground">
-          <p>暂无项目</p>
-          <p className="text-sm mt-2">点击上方「新建项目」开始</p>
+          <p>{showArchived ? '暂无已归档项目' : '暂无项目'}</p>
+          {!showArchived && <p className="text-sm mt-2">点击上方「新建项目」开始</p>}
         </div>
       ) : (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={(e) => void handleDragEnd(e)}>
-          <SortableContext items={projects.map((p) => p.id)} strategy={rectSortingStrategy}>
+        <DndContext sensors={showArchived ? [] : sensors} collisionDetection={closestCenter} onDragEnd={(e) => void handleDragEnd(e)}>
+          <SortableContext items={visibleProjects.map((p) => p.id)} strategy={rectSortingStrategy}>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {projects.map((project) => (
+              {visibleProjects.map((project) => (
                 <SortableProjectCard
                   key={project.id}
                   project={project}
                   onClick={() => onSelectProject(project)}
+                  onToggleArchive={() => void handleToggleArchive(project)}
                   onDelete={() => handleDelete(project.id)}
+                  sortable={!showArchived}
                 />
               ))}
             </div>
@@ -830,14 +856,19 @@ function ProjectList({
 function SortableProjectCard({
   project,
   onClick,
+  onToggleArchive,
   onDelete,
+  sortable,
 }: {
   project: Project
   onClick: () => void
+  onToggleArchive: () => void
   onDelete: () => void
+  sortable: boolean
 }): React.ReactElement {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: project.id,
+    disabled: !sortable,
   })
   const style: React.CSSProperties = {
     transform: CSS.Translate.toString(transform),
@@ -846,7 +877,7 @@ function SortableProjectCard({
   }
   return (
     <div ref={setNodeRef} style={style} {...attributes} {...listeners}>
-      <ProjectCard project={project} onClick={onClick} onDelete={onDelete} />
+      <ProjectCard project={project} onClick={onClick} onToggleArchive={onToggleArchive} onDelete={onDelete} />
     </div>
   )
 }
@@ -854,10 +885,12 @@ function SortableProjectCard({
 export function ProjectCard({
   project,
   onClick,
+  onToggleArchive,
   onDelete,
 }: {
   project: Project
   onClick: () => void
+  onToggleArchive: () => void
   onDelete: () => void
 }): React.ReactElement {
   return (
@@ -866,14 +899,16 @@ export function ProjectCard({
       onClick={onClick}
     >
       <div className="flex items-start justify-between mb-3">
-        <h3 className="font-medium text-sm hover:text-primary">
-          {project.title}
-        </h3>
-        <button
-          onClick={(e) => { e.stopPropagation(); onDelete() }}
-          className="opacity-0 group-hover:opacity-100 text-xs text-red-500 hover:text-red-700 transition-opacity"
-          aria-label={`删除项目 ${project.title}`}
-        >删除</button>
+        <div className="flex min-w-0 items-center gap-2">
+          <h3 className="truncate font-medium text-sm hover:text-primary">{project.title}</h3>
+          {project.archivedAt && <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">已归档</span>}
+        </div>
+        <div className="flex shrink-0 items-center gap-2 opacity-0 group-hover:opacity-100">
+          <button type="button" onClick={(e) => { e.stopPropagation(); onToggleArchive() }} className="text-xs text-primary hover:underline" aria-label={`${project.archivedAt ? '恢复' : '归档'}项目 ${project.title}`}>
+            {project.archivedAt ? '恢复' : '归档'}
+          </button>
+          <button type="button" onClick={(e) => { e.stopPropagation(); onDelete() }} className="text-xs text-red-500 hover:text-red-700" aria-label={`删除项目 ${project.title}`}>删除</button>
+        </div>
       </div>
       <p className="text-sm text-muted-foreground mb-3">{project.description}</p>
 

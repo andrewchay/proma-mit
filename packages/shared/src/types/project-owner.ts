@@ -378,6 +378,8 @@ export interface OwnerPlanningLink {
 export interface ProjectOwnerRunView {
   /** 可读项目文档未能同步时的安全提示；不含本地绝对路径。 */
   archiveWarning?: string
+  /** 历史冻结提示格式未知时，记录只读展示并阻止继续执行。 */
+  sourceWarning?: string
   link: OwnerPlanningLink
   executions: { id: string; sessionId: string; status: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'stale'; summary: string | null }[]
   receipts: { id: string; executionId: string; capturedAt: number; responseText: string; responseHash: string; validTerminal: boolean; stopped: boolean; error: string | null; providerRequestId?: string; providerResponseId?: string; usage: { inputTokens: number | null; outputTokens: number | null; cacheReadTokens: number | null; cacheWriteTokens: number | null } | null; cost: { source: 'runtime_reported' | 'unknown'; usd: number | null } }[]
