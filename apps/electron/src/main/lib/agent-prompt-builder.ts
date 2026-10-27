@@ -436,6 +436,14 @@ Gravitas 提供内置 \`collaboration\` 工具，用来创建真实可见、可�
 - 新会话开始时，**两个目录都要检查**以恢复完整上下文`)
   }
 
+  if (ctx.workspaceSlug) {
+    // OpenDesign 语义：设计上下文属于会话级静态内容，只在系统提示词构建时扫描一次。
+    try {
+      const odBlock = buildOdContextForActiveSkills(getWorkspaceSkills(ctx.workspaceSlug), ctx.workspaceSlug, ctx.agentCwd)
+      if (odBlock) sections.push(odBlock)
+    } catch { /* 设计上下文组装失败静默降级 */ }
+  }
+
   // 不确定性处理策略
   sections.push(`## 不确定性处理
 
@@ -700,14 +708,6 @@ export function buildDynamicContext(ctx: DynamicContext): string {
     // Skills 列表已通过 SDK plugin 机制自动发现并注册，无需手动注入
     // 仅检查 skill-creator 是否启用，注入持续改进提示
     const skills = getWorkspaceSkills(ctx.workspaceSlug)
-
-    // OpenDesign 语义：启用中的 Skill 声明 od.craft.requires / od.design_system.requires
-    // 时，静态注入去重后的设计上下文（Claude SDK 无法在 Skill 激活瞬间挂钩，
-    // 改为会话级注入；设计 Skill 为按需启用，体积可控且缓存稳定）
-    try {
-      const odBlock = buildOdContextForActiveSkills(skills, ctx.workspaceSlug, ctx.agentCwd)
-      if (odBlock) wsLines.push(odBlock)
-    } catch { /* 设计上下文组装失败静默降级 */ }
 
     const hasSkillCreator = skills.some((s) => s.slug === 'skill-creator')
     if (hasSkillCreator) {
