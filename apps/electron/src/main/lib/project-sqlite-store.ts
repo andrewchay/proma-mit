@@ -1626,9 +1626,6 @@ function migrate(database: SqliteCompat): void {
     database.exec(`ALTER TABLE projects ADD COLUMN sort_order REAL NOT NULL DEFAULT 0`)
     database.exec(`UPDATE projects SET sort_order = -created_at WHERE sort_order = 0`)
   }
-  if (!projectColumns.includes('archived_at')) {
-    database.exec(`ALTER TABLE projects ADD COLUMN archived_at INTEGER`)
-  }
   // AI 员工执行 token 配额（可选，NULL = 不限）
   if (!columns.includes('token_budget')) {
     database.exec(`ALTER TABLE tasks ADD COLUMN token_budget INTEGER`)
