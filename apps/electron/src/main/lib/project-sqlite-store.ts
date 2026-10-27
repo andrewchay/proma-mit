@@ -3686,7 +3686,7 @@ export function createAgentExecution(input: CreateAgentExecutionInput): AgentExe
   database.prepare(
     `INSERT INTO agent_executions
      (id, project_id, entity_type, entity_id, agent_id, session_id, executor, pilot_command_id, owner_command_id, status, prompt, result_summary, output_files, risk_level, error, requested_permissions, last_heartbeat_at, capability_version_ids, capability_content_hash, development_standard_id, development_standard_version, development_standard_hash, started_at, completed_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', NULL, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, ?, NULL)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, '[]', NULL, NULL, ?, NULL, ?, ?, ?, ?, ?, ?, NULL)`
   ).run(
     input.id,
     input.projectId,
