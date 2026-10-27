@@ -19,6 +19,7 @@ const executionStates: Record<ProjectOwnerRunView['executions'][number]['status'
   queued: '等待开始', running: '正在规划', completed: '规划已完成', failed: '规划未完成', cancelled: '已取消', stale: '来源已变化，结果不能用于当前目标',
 }
 function runStatus(run: ProjectOwnerRunView): { label: string; tone: 'muted' | 'accent' | 'warn' | 'danger' } {
+  if (run.sourceWarning) return { label: '来源待核查', tone: 'warn' }
   const execution = run.executions[0]
   if (!execution) return { label: '准备待发送', tone: 'muted' }
   const outcome = run.outcomes.find(item => item.executionId === execution.id)
@@ -172,7 +173,8 @@ export function ProjectOwnerRuntimePanel({ projectId, taskId, showConfiguration 
       const status = runStatus(run)
       return <article key={run.link.id} className="space-y-2 rounded-lg bg-muted/40 p-3 text-sm">
       <div className="flex items-center justify-between gap-3"><p className="font-medium">规划记录</p><OwnerModuleStatus tone={status.tone}>{status.label}</OwnerModuleStatus></div>
-      {!run.executions.length && goalReady && !editor.dirty && !plan.dirty && run.link.goalRevision === revision && run.link.planRevision === (plan.snapshot?.revision ?? 0) && run.link.bindingRevision === editor.binding?.revision && <ControlledTaskStartButton taskId={run.link.planningTaskId} revision={JSON.stringify([run.link.goalRevision, run.link.planRevision, run.link.bindingRevision])} onChanged={changed} />}
+      {run.sourceWarning && <p role="status" className="rounded-md bg-amber-500/10 p-2 text-xs text-amber-900">{run.sourceWarning}</p>}
+      {!run.sourceWarning && !run.executions.length && goalReady && !editor.dirty && !plan.dirty && run.link.goalRevision === revision && run.link.planRevision === (plan.snapshot?.revision ?? 0) && run.link.bindingRevision === editor.binding?.revision && <ControlledTaskStartButton taskId={run.link.planningTaskId} revision={JSON.stringify([run.link.goalRevision, run.link.planRevision, run.link.bindingRevision])} onChanged={changed} />}
       {run.executions.map(execution => <div key={execution.id} className="space-y-1">{execution.status !== 'completed' && <p className="text-xs text-muted-foreground">{execution.summary ?? '还没有完成回报。'}</p>}<AgentExecutionStopButton execution={{ id: execution.id, status: execution.status, entityType: 'task', entityId: run.link.planningTaskId }} onChanged={changed} /></div>)}
       {run.outcomes.map(outcome => <div key={outcome.executionId}>
         {outcome.state === 'proposed' && <p className="text-xs text-muted-foreground">新计划还没有开始执行。请到下方“Owner 计划审阅”查看计划步骤，再决定是否确认。</p>}

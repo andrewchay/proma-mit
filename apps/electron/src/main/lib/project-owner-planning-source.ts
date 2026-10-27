@@ -21,6 +21,17 @@ export interface OwnerPlanningSessionSource extends OwnerPlanningTaskSource {
   executionId: string
   sessionId: string
 }
+export interface OwnerPlanningHistorySnapshot {
+  link: OwnerPlanningLink
+  context: ProjectOwnerPlanningContext
+  request?: ProjectOwnerPlanningRequest
+  assignmentContext?: OwnerExecutionAssignmentContext
+  sourceWarning?: string
+}
+export interface OwnerPlanningSnapshot extends OwnerPlanningHistorySnapshot {
+  request: ProjectOwnerPlanningRequest
+}
+interface OwnerPlanningReadOptions { allowUnknownPromptForHistory: true }
 interface LinkRow {
   id: string
   project_id: string
@@ -37,7 +48,9 @@ function id(value: unknown): string { if (typeof value !== 'string' || !value.tr
 function number(value: unknown, minimum: number): number { if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < minimum) throw new Error('Owner规划记录版本无效'); return value }
 function digest(value: unknown): string { if (typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)) throw new Error('Owner规划记录指纹无效'); return value }
 /** 严格读取不可覆盖的来源记录。完成回执可读取冻结资料；不据此授权新发送。 */
-export function readOwnerPlanningSnapshot(taskId: string): { link: OwnerPlanningLink; context: ProjectOwnerPlanningContext; request: ProjectOwnerPlanningRequest; assignmentContext?: OwnerExecutionAssignmentContext } | null {
+export function readOwnerPlanningSnapshot(taskId: string): OwnerPlanningSnapshot | null
+export function readOwnerPlanningSnapshot(taskId: string, options: OwnerPlanningReadOptions): OwnerPlanningHistorySnapshot | null
+export function readOwnerPlanningSnapshot(taskId: string, options?: OwnerPlanningReadOptions): OwnerPlanningHistorySnapshot | null {
   const row = store.getProjectDb().prepare('SELECT * FROM project_owner_planning_links WHERE planning_task_id = ?').get(taskId) as LinkRow | undefined
   const purpose = store.getProjectDb().prepare('SELECT id, owner_planning_link_id, execution_id FROM controlled_task_preparations WHERE task_id = ?').get(taskId) as PurposeRow | undefined
   if (!row && !purpose?.owner_planning_link_id) {
@@ -66,24 +79,33 @@ export function readOwnerPlanningSnapshot(taskId: string): { link: OwnerPlanning
     const context = JSON.parse(row.source_snapshot) as ProjectOwnerPlanningContext
     if (context.goal.goal.projectId !== link.projectId || context.goal.goal.taskId !== link.targetTaskId || context.goal.goal.goalVersion !== link.goalVersion || context.goal.revision !== link.goalRevision || context.fingerprint !== link.contextFingerprint) throw new Error('Owner冻结规划资料与关联不一致')
     let assignmentContext: OwnerExecutionAssignmentContext | undefined
-    let request: ProjectOwnerPlanningRequest
+    let request: ProjectOwnerPlanningRequest | undefined
+    let sourceWarning: string | undefined
     if (link.purpose === 'owner_execution_assignment') {
       if (!row.assignment_snapshot || row.assignment_snapshot.length > 300000) throw new Error('Owner安排冻结资料缺失或超限')
       assignmentContext = parseOwnerExecutionAssignmentContext(JSON.parse(row.assignment_snapshot))
       if (assignmentContext.contextFingerprint !== link.assignmentContextFingerprint || assignmentContext.sourceContextFingerprint !== context.fingerprint || assignmentContext.projectId !== link.projectId || assignmentContext.taskId !== link.targetTaskId || assignmentContext.planRevision !== link.planRevision || assignmentContext.bindingRevision !== link.bindingRevision) throw new Error('Owner安排冻结资料与关联不一致')
-      request = resolveOwnerExecutionAssignmentRequest(assignmentContext, link.promptHash)
+      try { request = resolveOwnerExecutionAssignmentRequest(assignmentContext, link.promptHash) }
+      catch (cause) {
+        if (!options || !(cause instanceof Error) || cause.message !== 'Owner冻结安排提示指纹不属于已知格式') throw cause
+        sourceWarning = '历史安排提示指纹不属于当前已知格式；记录已保留待核查，不能用于新执行。'
+      }
     } else {
       if (row.assignment_snapshot !== null || value.assignmentContextFingerprint !== undefined) throw new Error('Owner规划关联夹带安排资料')
-      request = resolveProjectOwnerPlanningRequest(context, link.promptHash)
+      try { request = resolveProjectOwnerPlanningRequest(context, link.promptHash) }
+      catch (cause) {
+        if (!options || !(cause instanceof Error) || cause.message !== 'Owner冻结提示指纹不属于已知历史格式') throw cause
+        sourceWarning = '历史规划提示指纹不属于当前已知格式；记录已保留待核查，不能用于新执行。'
+      }
     }
     if ((context.conversation?.throughMessageId ?? undefined) !== link.conversationMessageId) throw new Error('Owner对话快照与关联不一致')
-    if (hash(request) !== link.promptHash) throw new Error('Owner冻结请求指纹不一致')
+    if (request && hash(request) !== link.promptHash) throw new Error('Owner冻结请求指纹不一致')
     const baseHash = { projectId: link.projectId, requestId: link.requestId, taskId: link.targetTaskId, bindingRevision: link.bindingRevision, goalRevision: link.goalRevision, planRevision: link.planRevision, contextFingerprint: link.contextFingerprint, ...(link.conversationMessageId ? { conversationMessageId: link.conversationMessageId } : {}) }
     const expectedInputHash = link.purpose === 'owner_execution_assignment'
       ? hash({ ...baseHash, planFingerprint: assignmentContext!.planFingerprint, assignmentContextFingerprint: link.assignmentContextFingerprint })
       : hash(baseHash)
     if (row.input_hash !== expectedInputHash) throw new Error('Owner请求关联输入指纹不一致')
-    return { link, context, request, ...(assignmentContext ? { assignmentContext } : {}) }
+    return { link, context, ...(request ? { request } : {}), ...(assignmentContext ? { assignmentContext } : {}), ...(sourceWarning ? { sourceWarning } : {}) }
   } catch { throw new Error('Owner规划来源记录无效，请保留数据核查或重新准备') }
 }
 /** 仅当前来源可送模型。解析无Caller/Runner/费用授权副作用。 */
