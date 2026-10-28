@@ -1,5 +1,6 @@
 import { atom, useAtom } from 'jotai'
 import { useEffect, useMemo, useRef } from 'react'
+import { saveDownload } from './download'
 
 interface SharedFile { path: string; sha256: string; size: number; publishedAt: number }
 interface SharedFilesState { owner: string; workspace: string; files: SharedFile[]; cursor: string | null; status: string; loading: boolean; loaded: boolean }
@@ -46,9 +47,7 @@ export function SharedFiles({ request }: { request: (path: string, init?: Reques
       if (!response.ok) { setState(previous => ({ ...previous, files: [], cursor: null, loaded: false, status: `文件不可用（${response.status}），请重新加载列表。` })); return }
       const blob = await response.blob()
       if (generation.current !== version) return
-      const url = URL.createObjectURL(blob), anchor = document.createElement('a')
-      anchor.href = url; anchor.download = file.path.split('/').pop() || 'download'; anchor.click()
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      saveDownload(blob, file.path.split('/').pop() || 'download')
     } catch { if (generation.current === version) setState(previous => ({ ...previous, status: '下载失败，请检查连接后重试。' })) }
   }
   return <section className="card shared-files" aria-label="共享成果">

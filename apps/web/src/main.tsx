@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './styles.css'
 import { SharedFiles } from './SharedFiles'
+import { exportAuditCsv } from './download'
 
 const apiBaseAtom = atom(import.meta.env.VITE_PROMA_API_BASE_URL ?? '')
 const tokenAtom = atom('')
@@ -213,10 +214,9 @@ function App(): JSX.Element {
     setAdmin(await response.json())
   }
 
-  const exportAudit = (): void => {
-    const query = new URLSearchParams({ format: 'csv' })
-    if (auditAction) query.set('action', auditAction)
-    window.open(`${apiBase}/agent/audit/export?${query}`, '_blank', 'noopener,noreferrer')
+  const exportAudit = async (): Promise<void> => {
+    try { await exportAuditCsv(request, auditAction); setStatus('审计 CSV 已准备下载') }
+    catch (error) { setStatus(error instanceof Error ? error.message : '审计导出失败') }
   }
 
   return <main className="shell">
@@ -228,7 +228,7 @@ function App(): JSX.Element {
       <aside className="side-stack"><section className="card"><h2>待处理交互</h2>{interactions.length === 0 && <p className="muted">当前会话没有待处理审批。</p>}{interactions.map((item) => <InteractionCard key={item.requestId} item={item} answers={answers} setAnswers={setAnswers} feedback={planFeedback[item.requestId] ?? ''} setFeedback={(value) => setPlanFeedback((state) => ({ ...state, [item.requestId]: value }))} onResolve={resolveInteraction} />)}</section><section className="card"><h2>MCP 连接</h2>{mcpServers.length === 0 && <p className="muted">当前工作区没有可显示的 MCP 服务。</p>}{mcpServers.map((server) => <div className="mcp" key={server.serverName}><b>{server.serverName}</b><small>{server.transport} · {server.authType}</small><span className={server.connected ? 'ok' : 'muted'}>{server.connected ? '已授权' : '未授权'}</span></div>)}</section></aside>
     </section>
     <SharedFiles request={request} />
-    <section className="card operations"><div className="section-title"><h2>运维与审计</h2><div><button onClick={() => void loadAdmin('/agent/metrics')}>指标</button><button onClick={() => void loadAdmin('/agent/tasks')}>任务树</button></div></div><div className="audit-actions"><input placeholder="按 action 筛选审计" value={auditAction} onChange={(event) => setAuditAction(event.target.value)} /><button onClick={() => void loadAdmin(`/agent/audit${auditAction ? `?action=${encodeURIComponent(auditAction)}` : ''}`)}>查询审计</button><button className="quiet" onClick={exportAudit}>导出 CSV</button></div>{admin !== undefined && <AdminPanel value={admin} />}</section>
+    <section className="card operations"><div className="section-title"><h2>运维与审计</h2><div><button onClick={() => void loadAdmin('/agent/metrics')}>指标</button><button onClick={() => void loadAdmin('/agent/tasks')}>任务树</button></div></div><div className="audit-actions"><input placeholder="按 action 筛选审计" value={auditAction} onChange={(event) => setAuditAction(event.target.value)} /><button onClick={() => void loadAdmin(`/agent/audit${auditAction ? `?action=${encodeURIComponent(auditAction)}` : ''}`)}>查询审计</button><button className="quiet" onClick={() => void exportAudit()}>导出 CSV</button></div>{admin !== undefined && <AdminPanel value={admin} />}</section>
   </main>
 }
 
