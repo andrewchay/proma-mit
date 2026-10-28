@@ -11,6 +11,7 @@ import { RichTextInput } from '../ai-elements/rich-text-input'
 import { cn } from '../../lib/utils'
 import { OwnerConversationChanges } from './OwnerConversationChanges'
 import { OwnerDeliveredArtifact } from './OwnerDeliveredArtifact'
+import { findReferencedDelivery } from './owner-delivery-reference'
 import { OwnerManagementQuestions } from './OwnerManagementQuestions'
 import { isOwnerWaitingForUser } from './project-owner-progress-state'
 import { CornerDownLeft } from 'lucide-react'
@@ -125,7 +126,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     })
   }
   const referencedDelivery = composer.deliveryReference
-    ? editor.view?.messages.find(message => message.id === composer.deliveryReference?.messageId && message.role === 'assistant' && message.kind === 'delivery')?.delivery?.items.find(item => item.artifactHash === composer.deliveryReference?.artifactHash && item.stepKey === composer.deliveryReference?.stepKey)
+    ? findReferencedDelivery(editor.view?.messages ?? [], taskId, composer.deliveryReference)
     : undefined
   const canSendMessage = !composer.sending && Boolean(composer.text.trim())
     && !(composer.deliveryReference && !referencedDelivery)
