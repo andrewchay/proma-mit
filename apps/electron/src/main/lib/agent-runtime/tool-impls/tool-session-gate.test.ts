@@ -2,6 +2,10 @@ import { afterAll, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { executeExploreContextTool } from './context-graph-tool'
+import { executeProposeAssetTool } from './asset-proposal-tool'
+import { executeCostAuditTool } from './cost-audit-tool'
+import { executeTodoContextTool } from './todo-context-tool'
 import { executeRecallMemoryTool, executeAddMemoryTool } from './memory-tool'
 import { executeInvokeAgentTool } from './agent-invoke-tool'
 import { executeAgentTool } from './agent-tool'
@@ -24,6 +28,10 @@ test('Given 权威项目账本不可用 When 直接调用工具 Then 拒绝读�
   let subAgentCalls = 0
   globalThis.fetch = (async () => { networkCalls++; return new Response('unexpected') }) as unknown as typeof fetch
   const results = await Promise.all([
+    executeExploreContextTool({ entityType: 'session', entityId: 'other' }, context),
+    executeProposeAssetTool({ sessionId: 'other' }, context),
+    executeCostAuditTool({}, context),
+    executeTodoContextTool({ todoId: 'other' }, context),
     executeRecallMemoryTool({ query: '偏好' }, context),
     executeAddMemoryTool({ userMessage: '偏好' }, context),
     executeInvokeAgentTool({ toMemberId: 'agent-example', task: '检查' }, context),

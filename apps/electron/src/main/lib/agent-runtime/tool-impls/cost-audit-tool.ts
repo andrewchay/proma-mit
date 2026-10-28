@@ -8,6 +8,7 @@
  */
 
 import type { ToolResult } from '@gravitas/core'
+import { guardOwnerTool } from './tool-utils'
 import type { RuntimeToolDefinition, ToolContext } from '../types.ts'
 
 export const COST_AUDIT_TOOL_NAME = 'RunCostAudit'
@@ -28,7 +29,7 @@ export function createCostAuditToolDefinition(): Omit<RuntimeToolDefinition, 'ex
   }
 }
 
-export async function executeCostAuditTool(input: unknown, _ctx: ToolContext): Promise<ToolResult> {
+async function executeCostAuditToolUnchecked(input: unknown, _ctx: ToolContext): Promise<ToolResult> {
   const params = (input ?? {}) as { windowMs?: number }
   try {
     const { runCostAudit, costAuditToText } = await import('../../cost-audit-service')
@@ -38,3 +39,5 @@ export async function executeCostAuditTool(input: unknown, _ctx: ToolContext): P
     return { toolCallId: '', content: `费用审计失败: ${error instanceof Error ? error.message : String(error)}`, isError: true }
   }
 }
+
+export const executeCostAuditTool = guardOwnerTool(COST_AUDIT_TOOL_NAME, executeCostAuditToolUnchecked)

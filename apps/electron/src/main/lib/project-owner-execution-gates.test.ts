@@ -25,6 +25,10 @@ const { executeBashToolOnPlatform } = await import('./agent-runtime/tool-impls/b
 const { executeEditTool } = await import('./agent-runtime/tool-impls/edit-tool')
 const { executeReadTool } = await import('./agent-runtime/tool-impls/read-tool')
 const { executeWriteTool } = await import('./agent-runtime/tool-impls/write-tool')
+const { executeExploreContextTool } = await import('./agent-runtime/tool-impls/context-graph-tool')
+const { executeProposeAssetTool } = await import('./agent-runtime/tool-impls/asset-proposal-tool')
+const { executeCostAuditTool } = await import('./agent-runtime/tool-impls/cost-audit-tool')
+const { executeTodoContextTool } = await import('./agent-runtime/tool-impls/todo-context-tool')
 const computer = await import('./agent-runtime/tool-impls/computer-use-tools')
 const bridge = await import('./agent-runtime/tool-impls/web-bridge-tools')
 const { executeRecallMemoryTool, executeAddMemoryTool } = await import('./agent-runtime/tool-impls/memory-tool')
@@ -187,6 +191,17 @@ test('Given Owner 会话未带标记 When 直接调用桌面工具 Then 在读�
   const tools = [computer.executeComputerUseStatusTool, computer.executeComputerUseCapabilitiesTool, computer.executeComputerUseFrontmostApplicationTool, computer.executeComputerUseFrontmostWindowTool, computer.executeComputerUseDisplaysTool, computer.executeComputerUseRequestPermissionsTool, computer.executeComputerUseScreenshotTool, computer.executeComputerUseClickTool, computer.executeComputerUseMoveTool, computer.executeComputerUseDoubleClickTool, computer.executeComputerUseTypeTool, computer.executeComputerUseScrollTool, computer.executeComputerUseDragTool, computer.executeComputerUseKeyComboTool]
   for (const tool of tools) {
     const result = await tool({ x: 1, y: 1, text: 'example' }, { cwd: work, sessionId })
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('Owner')
+  }
+})
+test('Given Owner 会话未带标记 When 直接读取上下文和费用 Then 在查询前拒绝', async () => {
+  const f = fixture(), sessionId = syntheticRunningExecution(f)
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
+  for (const tool of [executeExploreContextTool, executeProposeAssetTool, executeCostAuditTool, executeTodoContextTool]) {
+    const result = await tool({ entityType: 'session', entityId: 'other', sessionId: 'other', todoId: 'other' }, { cwd: work, sessionId })
     expect(result.isError).toBe(true)
     expect(result.content).toContain('Owner')
   }
