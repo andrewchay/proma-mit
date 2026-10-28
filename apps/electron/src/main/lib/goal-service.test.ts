@@ -3,7 +3,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, afterAll, mock } from 'bun:test'
-import { mkdirSync, rmSync, existsSync } from 'node:fs'
+import { mkdirSync, rmSync, existsSync, writeFileSync, readFileSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
@@ -45,6 +45,16 @@ describe('Goal 服务', () => {
       homedir: () => originalHomedir,
       tmpdir,
     }))
+  })
+
+  test('Given 目录外文件 When Goal ID 包含路径或保留名称 Then 拒绝且不修改文件', () => {
+    const outside = join(configDir, 'outside.json')
+    writeFileSync(outside, '原有内容')
+    expect(() => getGoal('../outside')).toThrow('Goal ID 无效')
+    expect(() => deleteGoal('../outside')).toThrow('Goal ID 无效')
+    expect(() => deleteGoal('index')).toThrow('Goal ID 无效')
+    expect(() => deleteGoal('INDEX')).toThrow('Goal ID 无效')
+    expect(readFileSync(outside, 'utf8')).toBe('原有内容')
   })
 
   test('创建 Goal 并设置默认草稿阶段', () => {
