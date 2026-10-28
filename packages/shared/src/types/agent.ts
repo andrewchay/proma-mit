@@ -2095,6 +2095,8 @@ export const AGENT_IPC_CHANNELS = {
   CREATE_SESSION: 'agent:create-session',
   /** 获取会话 SDKMessage（Phase 4 新格式） */
   GET_SDK_MESSAGES: 'agent:get-sdk-messages',
+  /** 获取供聊天界面展示的完整历史（递归展开本地压缩归档） */
+  GET_SESSION_TRANSCRIPT: 'agent:get-session-transcript',
   /** 更新会话标题 */
   UPDATE_TITLE: 'agent:update-title',
   /** 更新会话当前 Project（同时切换项目知识范围；必须已通过工作空间绑定授权） */

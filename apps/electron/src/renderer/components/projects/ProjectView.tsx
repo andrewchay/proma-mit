@@ -24,7 +24,7 @@ import type { AgentEmployeeResult, AgentExecutionResult, MemberResult } from '@g
 import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 import { ProjectChainPanel } from './ProjectChainPanel'
 import { ProjectPilotOverview } from './ProjectPilotOverview'
-import { ProjectOwnerConversation } from './ProjectOwnerConversation'
+import { ProjectOwnerHome } from './ProjectOwnerHome'
 import { OwnerTodoScanPanel } from './OwnerTodoScanPanel'
 import { CreateProjectTaskDialog } from './CreateProjectTaskDialog'
 import { ControlledTaskStartButton } from './ControlledTaskStartButton'
@@ -973,7 +973,7 @@ function ProjectDetail({
   onRefresh: () => void
 }): React.ReactElement {
   const [detailTab, setDetailTab] = useState<'pilot' | 'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain' | 'knowledge' | 'workspaces' | 'aicost'>('pilot')
-  const [advancedDetailsOpen, setAdvancedDetailsOpen] = useState(true)
+  const [advancedDetailsOpen, setAdvancedDetailsOpen] = useState(false)
   const ownerNavigation = useAtomValue(ownerConversationNavigationAtom)
   useEffect(() => { if (ownerNavigation?.projectId === project.id) setDetailTab(ownerNavigation.taskId ? 'tasks' : 'pilot') }, [ownerNavigation, project.id])
   const [pilotTaskFocus, setPilotTaskFocus] = useState<{ taskId: string; subTaskId?: string } | null>(null)
@@ -1266,7 +1266,7 @@ function ProjectDetail({
       </header>
       <main className="flex-1 overflow-auto p-6">
         <div className="mx-auto w-full max-w-7xl">
-          <ProjectOwnerConversation projectId={project.id} />
+          <ProjectOwnerHome projectId={project.id} />
           <details open={advancedDetailsOpen} className="mt-6 rounded-xl bg-card p-4 shadow-sm" onToggle={event => setAdvancedDetailsOpen(event.currentTarget.open)}>
             <summary className="cursor-pointer text-sm font-medium text-muted-foreground">任务与项目详情</summary>
             {advancedDetailsOpen && <div className="mt-4">
