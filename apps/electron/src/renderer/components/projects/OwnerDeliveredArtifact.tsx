@@ -20,7 +20,7 @@ function downloadArtifact(title: string, content: string, extension: 'md' | 'htm
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-export function OwnerDeliveredArtifact({ item }: { item: OwnerManagementDelivery['items'][number] }): React.ReactElement {
+export function OwnerDeliveredArtifact({ item, onRequestChanges, feedbackDisabled = false }: { item: OwnerManagementDelivery['items'][number]; onRequestChanges?: () => void; feedbackDisabled?: boolean }): React.ReactElement {
   const html = extractDeliveredHtml(item.content)
   const previewAtom = useMemo(() => atom<{ hash: string; visible: boolean; viewport: 'adaptive' | 'mobile' }>({ hash: '', visible: false, viewport: 'adaptive' }), [])
   const [preview, setPreview] = useAtom(previewAtom)
@@ -32,6 +32,7 @@ export function OwnerDeliveredArtifact({ item }: { item: OwnerManagementDelivery
       <div className="flex gap-2">
         <button type="button" className="rounded-lg bg-primary/10 px-3 py-1.5 text-sm text-primary" onClick={() => downloadArtifact(item.title, item.content, 'md')}>下载原文</button>
         {html && <button type="button" className="rounded-lg bg-muted px-3 py-1.5 text-sm" onClick={() => setPreview({ hash: item.artifactHash, visible: !showPreview, viewport: preview.hash === item.artifactHash ? preview.viewport : 'adaptive' })}>{showPreview ? '关闭预览' : '静态预览'}</button>}
+        {onRequestChanges && <button type="button" disabled={feedbackDisabled} className="rounded-lg bg-primary/10 px-3 py-1.5 text-sm text-primary disabled:opacity-50" onClick={onRequestChanges}>针对这个版本提出修改</button>}
         {html && <button type="button" className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground" onClick={() => downloadArtifact(item.title, html, 'html')}>下载 HTML</button>}
       </div>
     </div>

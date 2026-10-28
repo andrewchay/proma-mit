@@ -125,7 +125,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     })
   }
   const referencedDelivery = composer.deliveryReference
-    ? editor.view?.messages.find(message => message.id === composer.deliveryReference?.messageId && message.role === 'assistant' && message.kind === 'delivery')?.delivery?.items.find(item => item.artifactHash === composer.deliveryReference?.artifactHash)
+    ? editor.view?.messages.find(message => message.id === composer.deliveryReference?.messageId && message.role === 'assistant' && message.kind === 'delivery')?.delivery?.items.find(item => item.artifactHash === composer.deliveryReference?.artifactHash && item.stepKey === composer.deliveryReference?.stepKey)
     : undefined
   const canSendMessage = !composer.sending && Boolean(composer.text.trim())
     && !(composer.deliveryReference && !referencedDelivery)
@@ -208,7 +208,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
           })()}
         </section>}
         {message.kind === 'delivery' && message.delivery && <section className="mt-3 space-y-2" aria-label="已验收成果">
-          {message.delivery.items.map(item => <OwnerDeliveredArtifact key={item.stepKey} item={item} />)}
+          {message.delivery.items.map(item => <OwnerDeliveredArtifact key={item.stepKey} item={item} feedbackDisabled={composer.sending || Boolean(composer.pending) || !editor.view?.manager} onRequestChanges={() => { edit({ subject, text: composer.text, deliveryReference: { messageId: message.id, artifactHash: item.artifactHash, stepKey: item.stepKey } }); focusReplyComposer() }} />)}
         </section>}
       </article>)}
     </div>}
@@ -217,7 +217,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
       <div className="rounded-[10px] border border-solid border-border/80 bg-muted/30 backdrop-blur-sm transition-all duration-200 focus-within:border-ring focus-within:bg-muted/50" data-input-mode="chat">
         <RichTextInput ariaLabel="给项目 Owner 的消息" value={composer.text} onChange={text => edit({ subject, text: text.slice(0, 4000) })} onSubmit={() => { void send(subject) }} placeholder={sendWithCmdEnter ? '回答问题、补充想法或询问进度… (⌘/Ctrl+Enter 发送，Enter 换行)' : '回答问题、补充想法或询问进度… (Enter 发送，Shift+Enter 换行)'} disabled={composer.sending || Boolean(composer.pending)} sendWithCmdEnter={sendWithCmdEnter} />
         <p className="px-[15px] pb-2 text-xs leading-5 text-muted-foreground">这条消息会进入项目记录并交给 Owner 判断；实际目标、方案或进度变化会显示在上方“现在最需要关注”。要直接修改正式目标，请使用“调整目标”。</p>
-        {composer.deliveryReference && <p className={`px-[15px] pb-2 text-xs ${referencedDelivery ? 'text-muted-foreground' : 'text-destructive'}`} role={referencedDelivery ? 'status' : 'alert'}>{referencedDelivery ? `本条意见将关联已验收成果《${referencedDelivery.title}》及其准确版本。` : '关联成果版本已无法核对；这条消息不会发送，请从当前交付卡重新选择成果。'}</p>}
+        {composer.deliveryReference && <div className={`flex items-center gap-2 px-[15px] pb-2 text-xs ${referencedDelivery ? 'text-muted-foreground' : 'text-destructive'}`}><p role={referencedDelivery ? 'status' : 'alert'}>{referencedDelivery ? `本条意见将关联已验收成果《${referencedDelivery.title}》及其准确版本。` : '关联成果版本已无法核对；这条消息不会发送，请从当前交付卡重新选择成果。'}</p><button type="button" className="shrink-0 text-primary underline disabled:opacity-50" disabled={composer.sending || Boolean(composer.pending)} onClick={() => edit({ subject, text: composer.text, deliveryReference: null })}>取消关联</button></div>}
         {composer.error && <p role="alert" className="px-[15px] pb-2 text-sm text-destructive">{composer.error}。原消息已保留。</p>}
         <div className="flex items-center justify-between gap-3 border-t border-border/40 px-2.5 py-2">
           <p role={delegation.view?.state === 'stale' ? 'alert' : undefined} className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">{editor.view.manager.status === 'paused' ? '管理已暂停，消息会保留，恢复后再处理。' : delegation.view?.state === 'stale' ? '管理授权因项目目标、配置、资料或费用依据变化而暂停。消息会保留且不会发送；请在上方重新核对并确认当前范围，Owner随后会继续处理。' : delegation.view?.state === 'attention' ? '你的消息会保存，但 Owner 正暂停在上次请求核对；当前不会发送新模型请求。请勿重复提交，先在上方核对原请求状态。' : 'Owner 在已确认的管理额度内回应；必要的方案或执行确认会在这里提出。'}</p>
