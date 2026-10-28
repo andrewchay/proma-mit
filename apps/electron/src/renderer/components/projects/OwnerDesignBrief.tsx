@@ -13,6 +13,15 @@ const referenceLoaders = [
   () => import('../../../../resources/opendesign-references-3.json'),
 ]
 
+/** 用户主动下载原文；不写入或激活工作区。 */
+function downloadDesignReference(id: string, content: string, kind: 'design' | 'tokens'): void {
+  const url = URL.createObjectURL(new Blob([content], { type: kind === 'design' ? 'text/markdown;charset=utf-8' : 'text/css;charset=utf-8' }))
+  const link = document.createElement('a')
+  link.href = url; link.download = `${id}-${kind === 'design' ? 'DESIGN.md' : 'tokens.css'}`
+  document.body.appendChild(link); link.click(); link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 /** 只生成用户可编辑的对话草稿，不改写工作区文件。 */
 export function OwnerDesignBrief({ disabled, onAdd }: { disabled: boolean; onAdd: (text: string) => boolean }): React.ReactElement {
   const draftAtom = useMemo(() => atom<DesignBrief>({ kind: '网页', goal: '', brandId: '', style: '', quote: '', status: '' }), [])
@@ -66,6 +75,8 @@ export function OwnerDesignBrief({ disabled, onAdd }: { disabled: boolean; onAdd
         <summary className="cursor-pointer font-medium">查看本地设计参考</summary>
         <p className="mt-2 text-xs text-muted-foreground">OpenDesign 整理的参考资料，并非品牌官方授权规范。版本 {catalog.revision.slice(0, 12)} · {catalog.license}。查看不会安装、激活或发送内容。</p>
         {reference.id === draft.brandId && reference.value ? <div className="mt-2 grid gap-2">
+          <p className="text-xs text-muted-foreground">可下载原文审阅；若要手动激活，需自行决定是否将其作为 DESIGN.md 与 tokens.css 放入工作区根目录。</p>
+          <div className="flex flex-wrap gap-2"><button type="button" className="rounded-lg bg-muted px-3 py-2" onClick={() => downloadDesignReference(draft.brandId, reference.value!.design, 'design')}>下载设计说明</button><button type="button" className="rounded-lg bg-muted px-3 py-2" onClick={() => downloadDesignReference(draft.brandId, reference.value!.tokens, 'tokens')}>下载设计令牌</button></div>
           <details><summary className="cursor-pointer">设计说明</summary><div><pre onMouseUp={event => { captureSelection(event.currentTarget) }} onKeyUp={event => { captureSelection(event.currentTarget) }} className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs">{reference.value.design}</pre><button type="button" className="mt-2 rounded-lg bg-muted px-3 py-2" onMouseDown={event => event.preventDefault()} onClick={event => quoteSelection(event.currentTarget.parentElement!)}>引用选中的设计说明</button></div></details>
           <details><summary className="cursor-pointer">设计令牌 CSS</summary><div><pre onMouseUp={event => { captureSelection(event.currentTarget) }} onKeyUp={event => { captureSelection(event.currentTarget) }} className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs">{reference.value.tokens}</pre><button type="button" className="mt-2 rounded-lg bg-muted px-3 py-2" onMouseDown={event => event.preventDefault()} onClick={event => quoteSelection(event.currentTarget.parentElement!)}>引用选中的设计令牌</button></div></details>
         </div> : <p className="mt-2 text-xs">{reference.id === draft.brandId && reference.error ? reference.error : '正在加载参考内容…'}</p>}

@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { build } from 'esbuild'
@@ -168,6 +168,20 @@ window.dialogueFixture={render,approvals:()=>approvals,setActionRequests:async()
     await reference.locator('pre').first().evaluate(element => { const range = document.createRange(); range.setStart(element.firstChild!, 2); range.setEnd(element.firstChild!, 34); const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range); element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })) })
     await reference.getByRole('button', { name: '引用选中的设计说明' }).click()
     expect(await brief.getByLabel('参考节选（可编辑）').inputValue()).toContain('Design System Inspired by Stripe')
+    const designDownloadPromise = page.waitForEvent('download')
+    await reference.getByRole('button', { name: '下载设计说明' }).click()
+    const designDownload = await designDownloadPromise
+    expect(designDownload.suggestedFilename()).toBe('stripe-DESIGN.md')
+    const designPath = join(directory, 'stripe-design.md')
+    await designDownload.saveAs(designPath)
+    expect(readFileSync(designPath, 'utf8')).toContain('Design System Inspired by Stripe')
+    const tokensDownloadPromise = page.waitForEvent('download')
+    await reference.getByRole('button', { name: '下载设计令牌' }).click()
+    const tokensDownload = await tokensDownloadPromise
+    expect(tokensDownload.suggestedFilename()).toBe('stripe-tokens.css')
+    const tokensPath = join(directory, 'stripe-tokens.css')
+    await tokensDownload.saveAs(tokensPath)
+    expect(readFileSync(tokensPath, 'utf8')).toContain(':root')
     await reference.getByText('设计令牌 CSS', { exact: true }).click()
     expect(await reference.innerText()).toContain(':root')
     expect(await page.evaluate<number>('window.dialogueFixture.facts().calls.length')).toBe(callsBeforeBrief)
