@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import { atom, useAtom } from 'jotai'
 import type { OwnerManagementDelivery } from '@gravitas/shared'
 
@@ -20,10 +20,20 @@ function downloadArtifact(title: string, content: string, extension: 'md' | 'htm
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-export function OwnerDeliveredArtifact({ item, onRequestChanges, feedbackDisabled = false }: { item: OwnerManagementDelivery['items'][number]; onRequestChanges?: () => void; feedbackDisabled?: boolean }): React.ReactElement {
+export function OwnerDeliveredArtifact({ item, onRequestChanges, feedbackDisabled = false, feedbackCapacity = 4000 }: { item: OwnerManagementDelivery['items'][number]; onRequestChanges?: (excerpt?: string) => void; feedbackDisabled?: boolean; feedbackCapacity?: number }): React.ReactElement {
   const html = extractDeliveredHtml(item.content)
   const previewAtom = useMemo(() => atom<{ hash: string; visible: boolean; viewport: 'adaptive' | 'mobile' }>({ hash: '', visible: false, viewport: 'adaptive' }), [])
   const [preview, setPreview] = useAtom(previewAtom)
+  const selectionAtom = useMemo(() => atom<{ hash: string; text: string; tooLong: boolean }>({ hash: '', text: '', tooLong: false }), [])
+  const [selection, setSelection] = useAtom(selectionAtom)
+  const contentRef = useRef<HTMLPreElement>(null)
+  const captureSelection = (): void => {
+    const selected = window.getSelection()
+    const root = contentRef.current
+    if (!root || !selected || selected.rangeCount !== 1 || !selected.anchorNode || !selected.focusNode || !root.contains(selected.anchorNode) || !root.contains(selected.focusNode)) return
+    const text = selected.toString().trim()
+    setSelection({ hash: item.artifactHash, text: text.length <= 300 ? text : '', tooLong: text.length > 300 })
+  }
   const showPreview = preview.hash === item.artifactHash && preview.visible
   const previewHtml = html?.replace(/^<!doctype html\s*>/i, `$&<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; form-action 'none'; base-uri 'none'">`)
   return <section className="space-y-3 rounded-xl bg-background/70 p-4 shadow-sm" aria-label={`已交付：${item.title}`}>
@@ -32,12 +42,12 @@ export function OwnerDeliveredArtifact({ item, onRequestChanges, feedbackDisable
       <div className="flex gap-2">
         <button type="button" className="rounded-lg bg-primary/10 px-3 py-1.5 text-sm text-primary" onClick={() => downloadArtifact(item.title, item.content, 'md')}>下载原文</button>
         {html && <button type="button" className="rounded-lg bg-muted px-3 py-1.5 text-sm" onClick={() => setPreview({ hash: item.artifactHash, visible: !showPreview, viewport: preview.hash === item.artifactHash ? preview.viewport : 'adaptive' })}>{showPreview ? '关闭预览' : '静态预览'}</button>}
-        {onRequestChanges && <button type="button" disabled={feedbackDisabled} className="rounded-lg bg-primary/10 px-3 py-1.5 text-sm text-primary disabled:opacity-50" onClick={onRequestChanges}>针对这个版本提出修改</button>}
+        {onRequestChanges && <button type="button" disabled={feedbackDisabled} className="rounded-lg bg-primary/10 px-3 py-1.5 text-sm text-primary disabled:opacity-50" onClick={() => onRequestChanges()}>针对这个版本提出修改</button>}
         {html && <button type="button" className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground" onClick={() => downloadArtifact(item.title, html, 'html')}>下载 HTML</button>}
       </div>
     </div>
     {html && <p className="text-sm text-muted-foreground">源码已保存在本对话中。下载 HTML 后可用浏览器打开；运行验证情况以本次验收记录为准。</p>}
-    <div><p className="mb-2 text-xs font-medium text-muted-foreground">成果正文</p><pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/50 p-3 font-sans text-sm">{item.content}</pre></div>
+    <div><p className="mb-2 text-xs font-medium text-muted-foreground">成果正文</p><pre ref={contentRef} onMouseUp={captureSelection} onKeyUp={captureSelection} className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/50 p-3 font-sans text-sm">{item.content}</pre>{selection.hash === item.artifactHash && selection.tooLong && <p className="mt-2 text-xs text-destructive">选中片段超过 300 字，请缩小选区。</p>}{onRequestChanges && selection.hash === item.artifactHash && selection.text && <div className="mt-2 space-y-2 rounded-lg bg-primary/5 p-3"><p className="text-xs text-muted-foreground">已选中正文片段，可连同本成果版本提交修改意见。</p><p className="break-words text-sm">{selection.text}</p><button type="button" disabled={feedbackDisabled || selection.text.length + 20 > feedbackCapacity} className="rounded-lg bg-primary/10 px-3 py-1.5 text-sm text-primary disabled:opacity-50" onClick={() => onRequestChanges(selection.text)}>针对选中片段提出修改</button>{selection.text.length + 20 > feedbackCapacity && <p className="text-xs text-destructive">当前草稿空间不足，请精简后再引用。</p>}</div>}</div>
     {showPreview && previewHtml && <div className="overflow-hidden rounded-xl bg-muted/40 p-2">
       <p className="px-1 pb-2 text-xs text-muted-foreground">静态预览不运行脚本或加载外部资源；交互效果请在可信环境中验证。</p>
       <p className="break-all px-1 pb-2 font-mono text-xs text-muted-foreground" title="用于核对当前预览对应的交付内容">成果标识：{item.artifactHash}</p>

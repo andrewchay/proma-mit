@@ -208,7 +208,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
           })()}
         </section>}
         {message.kind === 'delivery' && message.delivery && <section className="mt-3 space-y-2" aria-label="已验收成果">
-          {message.delivery.items.map(item => <OwnerDeliveredArtifact key={item.stepKey} item={item} feedbackDisabled={composer.sending || Boolean(composer.pending) || !editor.view?.manager} onRequestChanges={() => { edit({ subject, text: composer.text, deliveryReference: { messageId: message.id, artifactHash: item.artifactHash, stepKey: item.stepKey } }); focusReplyComposer() }} />)}
+          {message.delivery.items.map(item => <OwnerDeliveredArtifact key={item.stepKey} item={item} feedbackCapacity={4000 - composer.text.length} feedbackDisabled={composer.sending || Boolean(composer.pending) || !editor.view?.manager} onRequestChanges={(excerpt) => { const text = excerpt ? `${composer.text}${composer.text.trim() ? '\n\n' : ''}针对这段内容提出修改：\n“${excerpt}”\n` : composer.text; if (text.length > 4000) return; edit({ subject, text, deliveryReference: { messageId: message.id, artifactHash: item.artifactHash, stepKey: item.stepKey } }); focusReplyComposer() }} />)}
         </section>}
       </article>)}
     </div>}
