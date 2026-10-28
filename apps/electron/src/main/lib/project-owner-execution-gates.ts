@@ -234,7 +234,7 @@ export function isOwnerAutoAllowedWorkspaceWrite(sessionId: string, toolName: st
   return classifyOwnerWorkspaceWrite(sessionId, toolName, args) === 'normal'
 }
 
-export function assertToolAllowedForSessionPurpose(sessionId: string, toolName: string, args?: Record<string, unknown>): void {
+export function assertToolAllowedForSessionPurpose(sessionId: string, toolName: string, args?: Record<string, unknown>, options?: { recordKnowledgeRead?: boolean }): void {
   const context = resolveOwnerExecutionGateSession(sessionId)
   if (context.kind === 'unrestricted') return
   if (context.kind === 'owner_business' && toolName === 'AskUserQuestion') {
@@ -278,9 +278,22 @@ export function assertToolAllowedForSessionPurpose(sessionId: string, toolName: 
     const doc = documentId && handle ? handle.knowledge.getDocument(documentId) : null
     const sourceId = doc?.sourceId ?? ''
     if (!sourceId || !frozen.has(sourceId) || !allowed.includes(sourceId)) throw new Error('目标资料不在Owner冻结白名单内，读取拒绝')
-    recordKnowledgeReadPermission(context, sourceId, doc?.knowledgeBaseId ?? null, doc?.id ?? null, doc?.contentHash ?? null)
+    if (options?.recordKnowledgeRead !== false) recordKnowledgeReadPermission(context, sourceId, doc?.knowledgeBaseId ?? null, doc?.id ?? null, doc?.contentHash ?? null)
   }
   if (!allowed.length) throw new Error('Owner冻结资料集合与当前会话范围无交集，读取拒绝')
+}
+
+/** 搜索实际来源必须与冻结资料取交集，而不仅验证交集非空。 */
+export function filterOwnerKnowledgeSources(sessionId: string, sourceIds: string[]): string[] {
+  const context = resolveOwnerExecutionGateSession(sessionId)
+  if (context.kind === 'unrestricted') return sourceIds
+  assertToolAllowedForSessionPurpose(sessionId, 'SearchKnowledge', {})
+  if (context.kind !== 'owner_business') throw new Error('Owner工具会话未准入')
+  const frozen = new Set(frozenSourceIds(context.record))
+  const meta = getAgentSessionMeta(sessionId)
+  const current = meta ? resolveRetrievableScope({ sessionId, sessionMeta: { knowledgeScopeMode: meta.knowledgeScopeMode, explicitKnowledgeBaseIds: meta.explicitKnowledgeBaseIds, projectId: meta.projectId, workspaceId: meta.workspaceId } }).sources : []
+  const live = new Set(current.map(source => source.id))
+  return sourceIds.filter(id => frozen.has(id) && live.has(id))
 }
 
 /** 工具入口不能仅依赖参数路径；实际 cwd 必须与冻结的 Owner 工作区一致。 */

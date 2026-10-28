@@ -48,11 +48,13 @@ beforeEach(async () => {
   tempDir = mkdtempSync(join(tmpdir(), 'knowledge-tool-'))
   process.env.PROMA_TEST_CONFIG_DIR = tempDir
   vaultDir = join(tempDir, 'vault')
+  await (await import('../../project-sqlite-store')).initProjectDb()
   mkdirSync(vaultDir, { recursive: true })
   writeFileSync(join(vaultDir, '产品.md'), '# 产品\n\n本地优先的存储设计。\n', 'utf-8')
 })
 
-afterEach(() => {
+afterEach(async () => {
+  (await import('../../project-sqlite-store')).closeProjectDb()
   process.env = { ...originalEnv }
   rmSync(tempDir, { recursive: true, force: true })
 })
@@ -99,6 +101,18 @@ describe('SearchKnowledge 范围与提示', () => {
     expect(result.content).toContain('documentId')
     expect(result.content).toContain('产品.md')
     expect(result.content).toContain('字符')
+  })
+
+  test('Given 检索期间会话知识授权撤销 When 索引打开后继续 Then 不返回旧范围内容', async () => {
+    const { kbId } = await setupIndexedKnowledgeBase()
+    const sessionId = await setupSession([kbId])
+    const tools = await loadTools()
+    const sessions = await loadSessionManager()
+    const pending = tools.executeSearchKnowledgeTool({ query: '本地优先' }, makeCtx(sessionId))
+    sessions.updateAgentSessionMeta(sessionId, { knowledgeScopeMode: 'none', explicitKnowledgeBaseIds: [] })
+    const result = await pending
+    expect(result.isError).toBe(true)
+    expect(result.content).not.toContain('产品.md')
   })
 
   test('无索引内容时说明现状而不是伪称不存在', async () => {
@@ -169,6 +183,20 @@ describe('SearchKnowledge 范围与提示', () => {
 })
 
 describe('ReadKnowledgeSource 范围校验', () => {
+  test('Given 读取期间会话授权撤销 When 索引打开后继续 Then 不返回旧文档正文', async () => {
+    const { kbId } = await setupIndexedKnowledgeBase()
+    const sessionId = await setupSession([kbId])
+    const tools = await loadTools()
+    const sessions = await loadSessionManager()
+    const search = await tools.executeSearchKnowledgeTool({ query: '本地优先' }, makeCtx(sessionId))
+    const documentId = /documentId: (\S+)/.exec(search.content)![1]!
+    const pending = tools.executeReadKnowledgeSourceTool({ documentId }, makeCtx(sessionId))
+    sessions.updateAgentSessionMeta(sessionId, { knowledgeScopeMode: 'none', explicitKnowledgeBaseIds: [] })
+    const result = await pending
+    expect(result.isError).toBe(true)
+    expect(result.content).not.toContain('本地优先的存储设计')
+  })
+
   test('读取范围内文档返回全文与版本信息', async () => {
     const { kbId } = await setupIndexedKnowledgeBase()
     const sessionId = await setupSession([kbId])

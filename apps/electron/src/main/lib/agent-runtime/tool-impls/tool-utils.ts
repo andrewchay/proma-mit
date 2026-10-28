@@ -102,17 +102,17 @@ export function requiresOwnerToolGate(sessionId: string, ownerMarker?: boolean):
 }
 
 /** 对当前不在 Owner 工具白名单内的入口执行统一用途检查。 */
-export function assertOwnerToolPermission(sessionId: string, ownerMarker: boolean | undefined, toolName: string, args: Record<string, unknown>): void {
+export function assertOwnerToolPermission(sessionId: string, ownerMarker: boolean | undefined, toolName: string, args: Record<string, unknown>, options?: { recordKnowledgeRead?: boolean }): void {
   if (!requiresOwnerToolGate(sessionId, ownerMarker)) return
   const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
-  gates.assertToolAllowedForSessionPurpose(sessionId, toolName, args)
+  gates.assertToolAllowedForSessionPurpose(sessionId, toolName, args, options)
 }
 
 /** 为工具入口提供统一的受控会话检查。 */
 export function guardOwnerTool(toolName: string, execute: (input: unknown, ctx: ToolContext) => Promise<ToolResult>): (input: unknown, ctx: ToolContext) => Promise<ToolResult> {
   return async (input, ctx) => {
     const args = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {}
-    try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, toolName, args) }
+    try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, toolName, args, { recordKnowledgeRead: false }) }
     catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
     return execute(input, ctx)
   }

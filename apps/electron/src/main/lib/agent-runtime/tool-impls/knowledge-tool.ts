@@ -15,6 +15,7 @@
 
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
+import { assertOwnerToolPermission, formatToolError, guardOwnerTool } from './tool-utils'
 import { getAgentSessionMeta } from '../../agent-session-manager'
 import {
   resolveRetrievableScope,
@@ -94,11 +95,11 @@ export function createReadKnowledgeSourceToolDefinition() {
   }
 }
 
-export async function executeSearchKnowledgeTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+async function executeSearchKnowledgeUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const request = scopeRequest(ctx)
   if (!request) return unconfiguredResult()
 
-  const scope = resolveRetrievableScope(request)
+  let scope = resolveRetrievableScope(request)
   if (scope.mode === 'none' || scope.knowledgeBaseIds.length === 0) return unconfiguredResult()
 
   const query = (input as SearchKnowledgeInput | null)?.query?.trim()
@@ -111,8 +112,15 @@ export async function executeSearchKnowledgeTool(input: unknown, ctx: ToolContex
     : 8
 
   // 索引没有该范围的内容时如实说明，而不是暗示"不存在"
-  const sourceIds = scope.sources.map((source) => source.id)
   const store = await openKnowledgeIndexStore()
+  const refreshedRequest = scopeRequest(ctx)
+  if (!refreshedRequest) return unconfiguredResult()
+  scope = resolveRetrievableScope(refreshedRequest)
+  if (scope.mode === 'none' || scope.knowledgeBaseIds.length === 0) return unconfiguredResult()
+  const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+  let sourceIds: string[]
+  try { sourceIds = gates.filterOwnerKnowledgeSources(ctx.sessionId, scope.sources.map((source) => source.id)) }
+  catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
   const indexedCount = store.knowledge.countDocuments(scope.knowledgeBaseIds, sourceIds)
   if (indexedCount === 0) {
     return {
@@ -147,7 +155,7 @@ export async function executeSearchKnowledgeTool(input: unknown, ctx: ToolContex
   return { toolCallId: '', content: `找到 ${result.hits.length} 个相关片段：\n\n${lines.join('\n\n')}${relaxedNote}` }
 }
 
-export async function executeReadKnowledgeSourceTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+async function executeReadKnowledgeSourceUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const request = scopeRequest(ctx)
   if (!request) return unconfiguredResult()
 
@@ -160,6 +168,8 @@ export async function executeReadKnowledgeSourceTool(input: unknown, ctx: ToolCo
   }
 
   const store = await openKnowledgeIndexStore()
+  try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, READ_KNOWLEDGE_SOURCE_TOOL_NAME, { documentId }, { recordKnowledgeRead: false }) }
+  catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
   const doc = store.knowledge.getDocument(documentId)
   if (!doc) {
     return { toolCallId: '', content: `文档不存在或已被移除: ${documentId}`, isError: true }
@@ -167,7 +177,9 @@ export async function executeReadKnowledgeSourceTool(input: unknown, ctx: ToolCo
 
   // documentId 可能来自更早的搜索结果。读取前重新解析一次实时范围，避免
   // 搜索后停用来源或解除关联时继续使用旧授权；知识库与来源必须同时命中。
-  const currentScope = resolveRetrievableScope(request)
+  const refreshedRequest = scopeRequest(ctx)
+  if (!refreshedRequest) return unconfiguredResult()
+  const currentScope = resolveRetrievableScope(refreshedRequest)
   const allowedSourceIds = new Set(currentScope.sources.map((source) => source.id))
   if (
     !currentScope.knowledgeBaseIds.includes(doc.knowledgeBaseId)
@@ -197,5 +209,10 @@ export async function executeReadKnowledgeSourceTool(input: unknown, ctx: ToolCo
     .map((c) => `## 片段 ${c.chunkIndex}${c.heading ? ` · ${c.heading}` : ''}（字符 ${c.charStart}-${c.charEnd}）\n\n${c.content}`)
     .join('\n\n')
 
+  try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, READ_KNOWLEDGE_SOURCE_TOOL_NAME, { documentId }, { recordKnowledgeRead: true }) }
+  catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
   return { toolCallId: '', content: `${header}\n${body}` }
 }
+
+export const executeSearchKnowledgeTool = guardOwnerTool(SEARCH_KNOWLEDGE_TOOL_NAME, executeSearchKnowledgeUnchecked)
+export const executeReadKnowledgeSourceTool = guardOwnerTool(READ_KNOWLEDGE_SOURCE_TOOL_NAME, executeReadKnowledgeSourceUnchecked)
