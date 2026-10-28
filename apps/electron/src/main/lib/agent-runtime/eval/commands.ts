@@ -67,8 +67,18 @@ async function evaluateCaseAcrossRuns(
   return { score: Math.round(caseScore * 100) / 100, complete, runs }
 }
 
+function assertEvaluationCases(benchmark: BenchmarkConfig, includeHeldOut?: boolean): void {
+  if (!benchmark.cases.length || new Set(benchmark.cases).size !== benchmark.cases.length) throw new Error('训练集 case 为空或重复，不能执行评测')
+  if (includeHeldOut) {
+    const heldOut = benchmark.heldOutCases
+    if (!heldOut?.length || new Set(heldOut).size !== heldOut.length) throw new Error('held-out case 为空或重复，不能执行评测')
+    if (heldOut.some(id => benchmark.cases.includes(id))) throw new Error('训练集与 held-out case 重叠，不能执行评测')
+  }
+}
+
 /** 跑一次 Baseline：对 benchmark 内所有 case 各跑 runsPerCase 次，取平均并写入 scoreboard。 */
 export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineSummary> {
+  assertEvaluationCases(opts.benchmark, opts.includeHeldOut)
   const before = readScoreboard(opts.benchmark.id).evaluations.length
   const byCase: Array<{ caseId: string; score: number; runs: Array<{ score: number; run: number; sessionId?: string; tracePath?: string }> }> = []
   for (const [index, caseId] of opts.benchmark.cases.entries()) {
@@ -86,15 +96,16 @@ export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineSum
       opts.delegate,
       { scoreDelegate: opts.scoreDelegate, abortSignal: opts.abortSignal },
     )
-    byCase.push({ caseId, ...result })
     opts.onProgress?.({
       benchmarkId: opts.benchmark.id,
       caseId,
       phase: 'case_complete',
       completedCases: index + 1,
       totalCases: opts.benchmark.cases.length,
-      score: result.score,
+      ...(result.complete ? { score: result.score } : {}),
     })
+    if (!result.complete) throw new Error(`训练集 case ${caseId} 评测不完整，未保存基线`)
+    byCase.push({ caseId, ...result })
   }
   const total = byCase.length === 0
     ? 0
@@ -111,6 +122,7 @@ export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineSum
         opts.delegate,
         { scoreDelegate: opts.scoreDelegate, abortSignal: opts.abortSignal },
       )
+      if (!result.complete) throw new Error(`held-out case ${caseId} 评测不完整，未保存基线`)
       heldOutByCase.push({ caseId, ...result })
     }
     heldOut = {
@@ -183,6 +195,7 @@ export interface ImproveSummary {
 
 /** 跑一次 Improve 闭环。 */
 export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummary> {
+  assertEvaluationCases(opts.benchmark, opts.includeHeldOut)
   // Baseline 由 selfEvolver 内部完成
   // 构造指定 Case 集的评测函数：train 集驱动优化；held-out 集仅在对照启用时评测
   const makeEvaluator = (caseIds: string[]) => async (def: unknown, benchmark: BenchmarkConfig) => {

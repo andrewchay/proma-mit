@@ -50,6 +50,29 @@ const rubric: Rubric = {
 const delegate = (text: string): SubAgentDelegate => async () => ({ text })
 
 describe('runBaseline', () => {
+  it('Given 多次运行中一次失败 When 建立基线 Then 不写入虚假的零分记录', async () => {
+    for (const failingHeldOut of [false, true]) {
+      const benchmark = { ...config, id: 'baseline-fail-' + String(failingHeldOut), heldOutCases: ['HELD-1'], runsPerCase: 2 }
+      createBenchmark(benchmark, [{ caseId: 'CASE-001', statement: 'train task', rubric }, { caseId: 'HELD-1', statement: 'held task', rubric }])
+      let calls = 0
+      const progress: Array<{ phase: string; score?: number }> = []
+      const delegate: SubAgentDelegate = async ({ task }) => {
+        if (task.includes(failingHeldOut ? 'held task' : 'train task') && ++calls === 2) throw new Error('provider failed')
+        return { text: 'file:line 修复' }
+      }
+      await expect(runBaseline({ benchmark, delegate, agentVersion: 1, includeHeldOut: true, onProgress: value => progress.push(value) })).rejects.toThrow('评测不完整')
+      expect(readScoreboard(benchmark.id).evaluations).toHaveLength(0)
+      if (!failingHeldOut) expect(progress.find(item => item.phase === 'case_complete')?.score).toBeUndefined()
+    }
+  })
+
+  it('Given 训练和 held-out 重叠 When 评测 Then 不调用模型', async () => {
+    let calls = 0
+    const benchmark = { ...config, heldOutCases: ['CASE-001'] }
+    await expect(runBaseline({ benchmark, agentVersion: 1, includeHeldOut: true, delegate: async () => { calls++; return { text: 'x' } } })).rejects.toThrow('重叠')
+    expect(calls).toBe(0)
+  })
+
   it('对单 Case benchmark 跑出 baseline 分数并写入 scoreboard', async () => {
     const baseline = await runBaseline({
       benchmark: config,
