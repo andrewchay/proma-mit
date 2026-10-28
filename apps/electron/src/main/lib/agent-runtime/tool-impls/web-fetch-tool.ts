@@ -103,6 +103,7 @@ export async function executeWebFetchTool(input: unknown, ctx: ToolContext): Pro
       ctx.abortSignal?.removeEventListener('abort', abortFromCaller)
     }
 
+    assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_FETCH_TOOL_NAME, { url })
     const raw = new TextDecoder('utf-8').decode(buffer)
 
     // 非 HTML 内容（JSON、纯文本等）直接截断返回

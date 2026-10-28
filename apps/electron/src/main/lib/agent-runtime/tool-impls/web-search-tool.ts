@@ -241,7 +241,9 @@ export async function executeWebSearchTool(input: unknown, ctx: ToolContext): Pr
             isError: true,
           }
         }
-        return await searchMetaso(query, credentials.metasoApiKey, fetchFn, controller.signal)
+        const result = await searchMetaso(query, credentials.metasoApiKey, fetchFn, controller.signal)
+        assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_SEARCH_TOOL_NAME, { query })
+        return result
       }
 
       if (!credentials.apiKey) {
@@ -251,7 +253,9 @@ export async function executeWebSearchTool(input: unknown, ctx: ToolContext): Pr
           isError: true,
         }
       }
-      return await searchTavily(query, credentials.apiKey, fetchFn, controller.signal)
+      const result = await searchTavily(query, credentials.apiKey, fetchFn, controller.signal)
+      assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_SEARCH_TOOL_NAME, { query })
+      return result
     } finally {
       clearTimeout(timer)
       ctx.abortSignal?.removeEventListener('abort', abortFromCaller)
