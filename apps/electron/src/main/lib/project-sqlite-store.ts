@@ -4140,11 +4140,13 @@ export function listAgentEmployeeLearningSamples(agentId: string): import('./pro
       chains.set(row.project_id, record ? JSON.parse(record.payload) as import('@gravitas/shared').ProjectChain : null)
     }
     const chain = chains.get(row.project_id)
-    const event = [...(chain?.events ?? [])].reverse().find((item) => {
-      if ((item.action !== 'accept' && item.action !== 'reject') || item.actor.startsWith('agent-') || item.actor.startsWith('system:')) return false
-      return chain?.draftHistory?.some((draft) => draft.id === item.entityId && draft.version === item.version && draft.taskId === row.task_id && draft.executionId === row.execution_id && draft.execution?.id === row.execution_id && draft.execution.agentId === row.agent_id && draft.responsibilities?.reviewerId === item.actor)
-    })
-    const ownerJudgment = event ? {
+    const matchingDraft = (item: NonNullable<typeof chain>['events'][number]) => chain?.draftHistory?.find((draft) =>
+      draft.id === item.entityId && draft.version === item.version && draft.taskId === row.task_id && draft.executionId === row.execution_id && draft.execution?.id === row.execution_id && draft.execution.agentId === row.agent_id)
+    const event = [...(chain?.events ?? [])].reverse().find((item) =>
+      (item.action === 'accept' || item.action === 'reject' || item.action === 'auto_accept') && matchingDraft(item))
+    // 当前只有本机公共入口固定 local-user；其他身份是否真实由人操作尚无可核验证据。
+    // 先选择最新关联事件，不能跳过未知身份后误用更早的判断。
+    const ownerJudgment = event && event.action !== 'auto_accept' && event.actor === 'local-user' && matchingDraft(event)?.responsibilities?.reviewerId === event.actor ? {
       outcome: event.action === 'accept' ? 'business_accepted' as const : 'changes_requested' as const,
       ...(event.reasonCode ? { reasonCode: event.reasonCode } : {}),
       deliveryId: event.entityId, deliveryVersion: event.version, actor: event.actor, eventId: event.id, at: event.at,

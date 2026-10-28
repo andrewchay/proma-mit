@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   closeProjectDb, createAgentEmployeeCapabilityVersion, createAgentEmployeeLearningSample, createAgentExecution, createProject,
-  createTask, excludeAgentEmployeeLearningSample, getAgentEmployeeCapabilityHealth, initProjectDb, listAgentEmployeeLearningSamples, reviewAgentEmployeeLearningSample, updateAgentExecution,
+  createTask, excludeAgentEmployeeLearningSample, getAgentEmployeeCapabilityHealth, getProjectDb, initProjectDb, listAgentEmployeeLearningSamples, reviewAgentEmployeeLearningSample, updateAgentExecution,
 } from './project-sqlite-store'
 import { getProjectChain, updateProjectChain } from './project-chain-service'
 
@@ -92,4 +92,29 @@ test('Given 自动验收通过 When 读取学习样本 Then 不生成未经人�
   expect(chain.events.some(event => event.action === 'auto_accept')).toBe(true)
   expect(listAgentEmployeeLearningSamples('auto-agent')[0]!.ownerJudgment).toBeUndefined()
   expect(getAgentEmployeeCapabilityHealth('auto-agent')[0]).toMatchObject({ humanJudgmentEligibleCount: 1, humanAcceptedCount: 0, humanChangesRequestedCount: 0 })
+})
+
+
+test('Given 较新验收事件缺少可验证的人工来源 When 读取样本 Then 不沿用较早本机判断', () => {
+  const project = createProject({ title: '未知验收来源', description: '' })
+  const task = createTask(project.id, { title: '交付', description: '', assignee: { userId: 'local-user', displayName: '本地用户' } })
+  createAgentExecution({ id: 'unknown-run', projectId: project.id, entityType: 'task', entityId: task.id, agentId: 'unknown-agent', sessionId: 'unknown-session', prompt: '交付' })
+  updateAgentExecution('unknown-run', { status: 'completed', completedAt: Date.now() })
+  createAgentEmployeeLearningSample({ agentId: 'unknown-agent', executionId: 'unknown-run', projectId: project.id, taskId: task.id, capabilityVersionIds: [], outcome: 'accepted', evidenceSummary: '执行完成', privacyStatus: 'sanitized' })
+  let chain = updateProjectChain(project.id, 0, { kind: 'decision', title: '方向', rationale: '确定范围', evidence: '依据' })
+  chain = updateProjectChain(project.id, chain.revision, { kind: 'draft', taskId: task.id, title: '报告', content: '内容', criteria: '可阅读', recipient: '本地用户', responsibilities: { ownerId: 'local-user', reviewerId: 'local-user', recipientId: 'local-user' }, decisionIds: [chain.decisions[0]!.id], executionId: 'unknown-run' })
+  const draftId = chain.drafts[0]!.id
+  chain = updateProjectChain(project.id, chain.revision, { kind: 'submit', draftId })
+  chain = updateProjectChain(project.id, chain.revision, { kind: 'accept', draftId, comment: '通过', evidence: '人工核对' })
+  expect(listAgentEmployeeLearningSamples('unknown-agent')[0]!.ownerJudgment?.actor).toBe('local-user')
+  const original = chain.draftHistory.find(item => item.id === draftId)!
+  chain.draftHistory.push({ ...structuredClone(original), responsibilities: { ...original.responsibilities!, reviewerId: 'other-reviewer' } })
+  const event = chain.events.findLast(item => item.action === 'accept')!
+  chain.events.push({ ...structuredClone(event), id: 'unverified-review', actor: 'other-reviewer', at: event.at + 1 })
+  getProjectDb().prepare('UPDATE project_chain_revisions SET payload = ? WHERE project_id = ? AND revision = ?').run(JSON.stringify(chain), project.id, chain.revision)
+  expect(listAgentEmployeeLearningSamples('unknown-agent')[0]!.ownerJudgment).toBeUndefined()
+  chain.events.pop()
+  chain.events.push({ ...structuredClone(event), id: 'automatic-review', action: 'auto_accept', actor: 'system:dod-verifier', at: event.at + 1 })
+  getProjectDb().prepare('UPDATE project_chain_revisions SET payload = ? WHERE project_id = ? AND revision = ?').run(JSON.stringify(chain), project.id, chain.revision)
+  expect(listAgentEmployeeLearningSamples('unknown-agent')[0]!.ownerJudgment).toBeUndefined()
 })
