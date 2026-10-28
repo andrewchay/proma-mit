@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
-  closeProjectDb, createAgentEmployeeLearningSample, createAgentExecution, createProject,
-  createTask, initProjectDb, listAgentEmployeeLearningSamples, updateAgentExecution,
+  closeProjectDb, createAgentEmployeeCapabilityVersion, createAgentEmployeeLearningSample, createAgentExecution, createProject,
+  createTask, excludeAgentEmployeeLearningSample, getAgentEmployeeCapabilityHealth, initProjectDb, listAgentEmployeeLearningSamples, reviewAgentEmployeeLearningSample, updateAgentExecution,
 } from './project-sqlite-store'
 import { getProjectChain, updateProjectChain } from './project-chain-service'
 
@@ -19,11 +19,12 @@ afterAll(() => {
 })
 
 test('Given 人工退回并重新验收 When 读取学习样本 Then 判断按交付版本关联且保留历史', () => {
+  const version = createAgentEmployeeCapabilityVersion({ agentId: 'judgment-agent', versionNumber: 1, scope: 'role', content: '能力', contentHash: 'judgment', status: 'active', source: 'manual' })
   const project = createProject({ title: '人工判断', description: '' })
   const task = createTask(project.id, { title: '交付', description: '', assignee: { userId: 'local-user', displayName: '本地用户' } })
   createAgentExecution({ id: 'judgment-run', projectId: project.id, entityType: 'task', entityId: task.id, agentId: 'judgment-agent', sessionId: 'judgment-session', prompt: '交付' })
   updateAgentExecution('judgment-run', { status: 'completed', completedAt: Date.now() })
-  const sample = createAgentEmployeeLearningSample({ agentId: 'judgment-agent', executionId: 'judgment-run', projectId: project.id, taskId: task.id, capabilityVersionIds: [], outcome: 'accepted', evidenceSummary: '执行完成', privacyStatus: 'pending' })
+  const sample = createAgentEmployeeLearningSample({ agentId: 'judgment-agent', executionId: 'judgment-run', projectId: project.id, taskId: task.id, capabilityVersionIds: [version.id], outcome: 'accepted', evidenceSummary: '执行完成', privacyStatus: 'pending' })
   const initial = updateProjectChain(project.id, 0, { kind: 'decision', title: '方向', rationale: '确定范围', evidence: '依据' })
   const draft = { kind: 'draft' as const, taskId: task.id, title: '报告', content: '初稿', criteria: '可阅读', recipient: '本地用户', responsibilities: { ownerId: 'local-user', reviewerId: 'local-user', recipientId: 'local-user' }, decisionIds: [initial.decisions[0]!.id], executionId: 'judgment-run' }
   let chain = updateProjectChain(project.id, initial.revision, draft)
@@ -35,12 +36,19 @@ test('Given 人工退回并重新验收 When 读取学习样本 Then 判断按�
   expect(rejected.ownerJudgment).toMatchObject({ outcome: 'changes_requested', reasonCode: 'wrong_direction', deliveryId: draftId, deliveryVersion: 1, actor: 'local-user' })
   expect(rejected.outcome).toBe('accepted')
   expect(rejected.privacyStatus).toBe('pending')
+  expect(getAgentEmployeeCapabilityHealth('judgment-agent')[0]).toMatchObject({ humanAcceptedCount: 0, humanChangesRequestedCount: 0 })
+  reviewAgentEmployeeLearningSample(sample.id, '已脱敏的执行摘要')
+  expect(getAgentEmployeeCapabilityHealth('judgment-agent')[0]).toMatchObject({ humanAcceptedCount: 0, humanChangesRequestedCount: 1 })
   chain = updateProjectChain(project.id, chain.revision, { ...draft, draftId, changeReason: '调整方向', content: '修订稿' })
   chain = updateProjectChain(project.id, chain.revision, { kind: 'submit', draftId })
   chain = updateProjectChain(project.id, chain.revision, { kind: 'accept', draftId, comment: '已核对', evidence: '人工核对' })
   expect(listAgentEmployeeLearningSamples('judgment-agent')[0]!.ownerJudgment).toMatchObject({ outcome: 'business_accepted', deliveryVersion: 2, actor: 'local-user' })
+  expect(getAgentEmployeeCapabilityHealth('judgment-agent')[0]).toMatchObject({ humanAcceptedCount: 1, humanChangesRequestedCount: 0 })
   expect(getProjectChain(project.id).events.filter(event => event.action === 'reject' || event.action === 'accept')).toHaveLength(2)
   expect(sample.id).toBe(listAgentEmployeeLearningSamples('judgment-agent')[0]!.id)
+  expect(getAgentEmployeeCapabilityHealth('judgment-agent', 30, Date.now() + 31 * 86400000)[0]).toMatchObject({ humanAcceptedCount: 0, humanChangesRequestedCount: 0 })
+  excludeAgentEmployeeLearningSample(sample.id)
+  expect(getAgentEmployeeCapabilityHealth('judgment-agent')[0]).toMatchObject({ humanAcceptedCount: 0, humanChangesRequestedCount: 0 })
 })
 
 test('Given 不合法的原因标签 When 人工退回 Then 项目链不发生变更', () => {

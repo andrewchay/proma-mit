@@ -728,6 +728,8 @@ export interface AgentEmployeeCapabilityHealthResult {
   failureRate: number | null
   cancellationRate: number | null
   decidedSampleCount: number
+  humanAcceptedCount: number
+  humanChangesRequestedCount: number
   sampleSufficient: boolean
   lastExecutedAt?: number
   comparisonVersionId?: string

@@ -3973,10 +3973,13 @@ export function getAgentEmployeeCapabilityHealth(agentId: string, windowDays = 3
   const samples = getProjectDb().prepare('SELECT capability_version_ids, outcome, privacy_status, created_at FROM agent_employee_learning_samples WHERE agent_id = ?').all(agentId) as Array<{ capability_version_ids: string; outcome: string; privacy_status: string; created_at: number }>
   const observedExecutions = executions.filter((execution) => (execution.completed_at ?? execution.started_at) >= since)
   const observedSamples = samples.filter((sample) => sample.created_at >= since)
+  // 人工判断来自项目链，执行完成不能代替业务验收；仅纳入已脱敏且未排除的样本。
+  const humanSamples = listAgentEmployeeLearningSamples(agentId).filter((sample) => sample.createdAt >= since && sample.privacyStatus === 'sanitized' && sample.outcome !== 'manual_excluded' && sample.ownerJudgment)
   const versions = listAgentEmployeeCapabilityVersions(agentId)
   const statsFor = (versionId: string) => {
     const matchedExecutions = observedExecutions.filter((execution) => parseJsonArray(execution.capability_version_ids).includes(versionId))
     const matchedSamples = observedSamples.filter((sample) => parseJsonArray(sample.capability_version_ids).includes(versionId))
+    const judgments = humanSamples.filter((sample) => sample.capabilityVersionIds.includes(versionId))
     const eligible = matchedSamples.filter((sample) => sample.privacy_status !== 'excluded' && sample.outcome !== 'manual_excluded')
     const decided = eligible.filter((sample) => sample.privacy_status === 'sanitized' && sample.outcome !== 'cancelled')
     const rework = decided.filter((sample) => sample.outcome === 'changes_requested').length
@@ -3989,6 +3992,8 @@ export function getAgentEmployeeCapabilityHealth(agentId: string, windowDays = 3
       failureRate: ratio(failed, decided.length),
       cancellationRate: ratio(cancelled, eligible.length),
       decidedSampleCount: decided.length,
+      humanAcceptedCount: judgments.filter((sample) => sample.ownerJudgment?.outcome === 'business_accepted').length,
+      humanChangesRequestedCount: judgments.filter((sample) => sample.ownerJudgment?.outcome === 'changes_requested').length,
       // 少于 5 条已判定样本时不声称趋势可信。
       sampleSufficient: decided.length >= 5,
       lastExecutedAt: matchedExecutions.length ? Math.max(...matchedExecutions.map((item) => item.completed_at ?? item.started_at)) : undefined,

@@ -4,8 +4,8 @@
 
 | 项目 | 当前值 |
 |---|---:|
-| @gravitas/electron | 0.13.346 |
-| @gravitas/shared | 0.2.130 |
+| @gravitas/electron | 0.13.347 |
+| @gravitas/shared | 0.2.131 |
 | @gravitas/core | 0.2.24 |
 | @gravitas/ui | 0.1.4 |
 | Bun 测试 / Playwright 测试文件 | 727 |
