@@ -21,9 +21,10 @@ function makeHandler(overrides: Partial<AuthRoutesDeps> = {}) {
 describe('auth-routes', () => {
   it('Given OIDC 登录 When 交换授权码 Then 使用该次请求的 PKCE S256 verifier', async () => {
     let verifier = ''
+    let nonce = ''
     const h = makeHandler({
       oidc: { authorizationEndpoint: 'https://idp/a', tokenEndpoint: 'https://idp/token', clientId: 'c', redirectUri: 'https://app/auth/oidc/callback' },
-      oidcTokenFromCode: async (_code, _oidc, codeVerifier) => { verifier = codeVerifier; return { tenantId: 'tenant', userId: 'user', roles: ['operator'] } },
+      oidcTokenFromCode: async (_code, _oidc, codeVerifier, expectedNonce) => { verifier = codeVerifier; nonce = expectedNonce; return { tenantId: 'tenant', userId: 'user', roles: ['operator'] } },
     })
     const start = await h.oidcStart()
     const url = new URL(start.headers.get('location')!)
@@ -31,6 +32,8 @@ describe('auth-routes', () => {
     expect((await h.oidcCallback({ code: 'code', state: url.searchParams.get('state')! }, start.headers.get('set-cookie'))).status).toBe(302)
     expect(verifier.length).toBeGreaterThanOrEqual(43)
     expect(url.searchParams.get('code_challenge')).toBe(createHash('sha256').update(verifier).digest('base64url'))
+    expect(nonce.length).toBeGreaterThan(20)
+    expect(url.searchParams.get('nonce')).toBe(nonce)
   })
 
   it('Given 默认 token 交换 When 提交授权码 Then token 请求携带对应 verifier', async () => {

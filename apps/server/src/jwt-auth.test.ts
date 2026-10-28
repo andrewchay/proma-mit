@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { createOidcJwtAuth } from './jwt-auth.ts'
+import { createOidcJwtAuth, verifyJwtWithJwks } from './jwt-auth.ts'
 
 const originalFetch = globalThis.fetch
 
@@ -8,6 +8,16 @@ afterEach(() => {
 })
 
 describe('OIDC JWT 认证', () => {
+  test('Given OIDC ID token When nonce 不匹配或缺少过期时间 Then 拒绝', async () => {
+    const signing = await createSigningMaterial()
+    stubJwks(signing.jwk)
+    const config = { issuer: 'https://issuer.example', audience: 'proma-web', jwksUrl: 'https://issuer.example/jwks', expectedNonce: 'expected' }
+    const base = { iss: config.issuer, aud: config.audience, tenant_id: 'tenant-a', sub: 'user-a' }
+    for (const claims of [{ ...base, nonce: 'wrong', exp: futureEpoch() }, { ...base, nonce: 'expected' }, { ...base, nonce: 'expected', exp: pastEpoch() }]) {
+      expect(await verifyJwtWithJwks(await signJwt(signing.privateKey, claims), config)).toBeUndefined()
+    }
+    expect(await verifyJwtWithJwks(await signJwt(signing.privateKey, { ...base, nonce: 'expected', exp: futureEpoch() }), config)).toMatchObject({ userId: 'user-a' })
+  })
   test('given a valid signed JWT with tenant and user claims then it returns the trusted scope', async () => {
     const signing = await createSigningMaterial()
     stubJwks(signing.jwk)

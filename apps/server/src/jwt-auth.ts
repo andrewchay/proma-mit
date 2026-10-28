@@ -27,6 +27,8 @@ export interface OidcIdTokenValidationConfig {
   tenantClaim?: string
   userClaim?: string
   rolesClaim?: string
+  /** 设置时按 OIDC ID token 规则强制 nonce 与 exp。 */
+  expectedNonce?: string
 }
 
 /**
@@ -63,6 +65,7 @@ export async function verifyJwtWithJwks(
   const signature = decodeBase64Url(encodedSignature)
   if (!await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, bytesToArrayBuffer(signature), bytesToArrayBuffer(signed))) return undefined
   if (claims.iss !== config.issuer || !hasAudience(claims.aud, config.audience) || !isCurrent(claims)) return undefined
+  if (config.expectedNonce !== undefined && (claims.nonce !== config.expectedNonce || typeof claims.exp !== 'number' || !Number.isFinite(claims.exp))) return undefined
 
   const tenantId = claims[config.tenantClaim ?? 'tenant_id']
   const userId = claims[config.userClaim ?? 'sub']
