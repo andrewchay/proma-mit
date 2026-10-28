@@ -3977,16 +3977,17 @@ export function getAgentEmployeeCapabilityHealth(agentId: string, windowDays = 3
   const statsFor = (versionId: string) => {
     const matchedExecutions = observedExecutions.filter((execution) => parseJsonArray(execution.capability_version_ids).includes(versionId))
     const matchedSamples = observedSamples.filter((sample) => parseJsonArray(sample.capability_version_ids).includes(versionId))
-    const decided = matchedSamples.filter((sample) => sample.privacy_status !== 'pending' && sample.outcome !== 'cancelled')
+    const eligible = matchedSamples.filter((sample) => sample.privacy_status !== 'excluded' && sample.outcome !== 'manual_excluded')
+    const decided = eligible.filter((sample) => sample.privacy_status === 'sanitized' && sample.outcome !== 'cancelled')
     const rework = decided.filter((sample) => sample.outcome === 'changes_requested').length
-    const failed = decided.filter((sample) => sample.outcome === 'failed' || sample.outcome === 'manual_excluded').length
-    const cancelled = matchedSamples.filter((sample) => sample.outcome === 'cancelled').length
+    const failed = decided.filter((sample) => sample.outcome === 'failed').length
+    const cancelled = eligible.filter((sample) => sample.outcome === 'cancelled').length
     const ratio = (value: number, total: number): number | null => total === 0 ? null : Math.round((value / total) * 1000) / 1000
     return {
       executionCount: matchedExecutions.length,
       reworkRate: ratio(rework, decided.length),
       failureRate: ratio(failed, decided.length),
-      cancellationRate: ratio(cancelled, matchedSamples.length),
+      cancellationRate: ratio(cancelled, eligible.length),
       decidedSampleCount: decided.length,
       // 少于 5 条已判定样本时不声称趋势可信。
       sampleSufficient: decided.length >= 5,
@@ -4112,7 +4113,26 @@ export function createAgentEmployeeLearningSample(input: Omit<import('./project-
 }
 
 export function listAgentEmployeeLearningSamples(agentId: string): import('./project-types').AgentEmployeeLearningSample[] {
-  return (getProjectDb().prepare('SELECT * FROM agent_employee_learning_samples WHERE agent_id = ? ORDER BY created_at DESC').all(agentId) as LearningSampleRow[]).map((row) => ({ id: row.id, agentId: row.agent_id, executionId: row.execution_id, projectId: row.project_id, taskId: row.task_id, workspaceId: row.workspace_id ?? undefined, capabilityVersionIds: parseJsonArray(row.capability_version_ids), outcome: row.outcome as import('./project-types').AgentEmployeeLearningOutcome, evidenceSummary: row.evidence_summary, privacyStatus: row.privacy_status as 'pending' | 'sanitized' | 'excluded', createdAt: row.created_at, labeledAt: row.labeled_at ?? undefined }))
+  const database = getProjectDb()
+  const rows = database.prepare('SELECT * FROM agent_employee_learning_samples WHERE agent_id = ? ORDER BY created_at DESC').all(agentId) as LearningSampleRow[]
+  const chains = new Map<string, import('@gravitas/shared').ProjectChain | null>()
+  return rows.map((row) => {
+    if (!chains.has(row.project_id)) {
+      const record = database.prepare('SELECT payload FROM project_chain_revisions WHERE project_id = ? ORDER BY revision DESC LIMIT 1').get(row.project_id) as { payload: string } | undefined
+      chains.set(row.project_id, record ? JSON.parse(record.payload) as import('@gravitas/shared').ProjectChain : null)
+    }
+    const chain = chains.get(row.project_id)
+    const event = [...(chain?.events ?? [])].reverse().find((item) => {
+      if ((item.action !== 'accept' && item.action !== 'reject') || item.actor.startsWith('agent-') || item.actor.startsWith('system:')) return false
+      return chain?.draftHistory?.some((draft) => draft.id === item.entityId && draft.version === item.version && draft.taskId === row.task_id && draft.executionId === row.execution_id && draft.execution?.id === row.execution_id && draft.execution.agentId === row.agent_id && draft.responsibilities?.reviewerId === item.actor)
+    })
+    const ownerJudgment = event ? {
+      outcome: event.action === 'accept' ? 'business_accepted' as const : 'changes_requested' as const,
+      ...(event.reasonCode ? { reasonCode: event.reasonCode } : {}),
+      deliveryId: event.entityId, deliveryVersion: event.version, actor: event.actor, eventId: event.id, at: event.at,
+    } : undefined
+    return { id: row.id, agentId: row.agent_id, executionId: row.execution_id, projectId: row.project_id, taskId: row.task_id, workspaceId: row.workspace_id ?? undefined, capabilityVersionIds: parseJsonArray(row.capability_version_ids), outcome: row.outcome as import('./project-types').AgentEmployeeLearningOutcome, evidenceSummary: row.evidence_summary, privacyStatus: row.privacy_status as 'pending' | 'sanitized' | 'excluded', createdAt: row.created_at, labeledAt: row.labeled_at ?? undefined, ...(ownerJudgment ? { ownerJudgment } : {}) }
+  })
 }
 
 export function reviewAgentEmployeeLearningSample(id: string, evidenceSummary: string): import('./project-types').AgentEmployeeLearningSample | null {

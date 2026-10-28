@@ -129,6 +129,8 @@ export interface ProjectDependencyHandoff {
   receiptComment?: string
   updatedAt: number
 }
+export type ProjectJudgmentReasonCode = 'wrong_direction' | 'missing_context' | 'wrong_granularity' | 'preference_violation' | 'execution_error' | 'other'
+
 export interface ProjectChainEvent {
   id: string
   action: ProjectChainCommand['kind'] | 'auto_accept'
@@ -139,6 +141,8 @@ export interface ProjectChainEvent {
   comment?: string
   evidence?: string
   changeReason?: string
+  /** 人工退回时的结构化原因；旧记录可以缺省。 */
+  reasonCode?: ProjectJudgmentReasonCode
 }
 export interface ProjectChain {
   revision: number
@@ -219,6 +223,7 @@ export type ProjectChainCommand =
       comment: string
       evidence?: string
       completedCriteria?: string[]
+      reasonCode?: ProjectJudgmentReasonCode
     }
 export const PROJECT_CHAIN_IPC = {
   GET: 'project-chain:get',

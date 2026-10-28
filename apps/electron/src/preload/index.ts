@@ -2147,9 +2147,9 @@ export interface ElectronAPI {
       /** 研发返工：记录意见并幂等派发 */
       requestChanges: (taskId: string, comment: string) => Promise<{ taskId: string } | null>
       /** 人工验收通过（local-user 必须是登记验收人） */
-      acceptDelivery: (taskId: string, deliveryId: string, input: { evidence: string; completedCriteria?: string[] }) => Promise<unknown>
+      acceptDelivery: (taskId: string, deliveryId: string, input: { evidence: string; completedCriteria?: string[]; expectedVersion?: number }) => Promise<unknown>
       /** 人工退回 */
-      rejectDelivery: (taskId: string, deliveryId: string, comment: string) => Promise<unknown>
+      rejectDelivery: (taskId: string, deliveryId: string, comment: string, reasonCode?: import('@gravitas/shared').ProjectJudgmentReasonCode, expectedVersion?: number) => Promise<unknown>
       /** 研发验证：运行白名单命令并采集真实退出码 */
       runValidation: (taskId: string, command: string) => Promise<import('@gravitas/shared').DevelopmentValidationResult>
       /** 研发验证：列出验证记录 */
@@ -4962,7 +4962,7 @@ const electronAPI: ElectronAPI = {
       prepareFileDelegation: (input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_FILE_DELEGATION, input),
       requestChanges: (taskId, comment) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.REQUEST_CHANGES, taskId, comment),
       acceptDelivery: (taskId, deliveryId, input) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.ACCEPT_DELIVERY, taskId, deliveryId, input),
-      rejectDelivery: (taskId, deliveryId, comment) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.REJECT_DELIVERY, taskId, deliveryId, comment),
+      rejectDelivery: (taskId, deliveryId, comment, reasonCode, expectedVersion) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.REJECT_DELIVERY, taskId, deliveryId, comment, reasonCode, expectedVersion),
       runValidation: (taskId, command) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.RUN_VALIDATION, taskId, command),
       listValidations: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.LIST_VALIDATIONS, taskId),
       prepareApply: (taskId) => ipcRenderer.invoke(AGENT_EMPLOYEE_IPC_CHANNELS.PREPARE_APPLY, taskId),

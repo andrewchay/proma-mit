@@ -11,6 +11,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
+  ProjectJudgmentReasonCode,
   DevelopmentSnapshot,
   DevelopmentSnapshotDiff,
   PrepareFileDelegationInput,
@@ -257,7 +258,7 @@ export function getSnapshotDiff(executionId: string, filePath: string): Developm
 }
 
 /** 人工验收通过：local-user 必须是登记的验收人；证据必填。 */
-export async function acceptDelivery(taskId: string, deliveryId: string, input: { evidence: string; completedCriteria?: string[] }): Promise<unknown> {
+export async function acceptDelivery(taskId: string, deliveryId: string, input: { evidence: string; completedCriteria?: string[]; expectedVersion?: number }): Promise<unknown> {
   assertLegacyReviewTaskPurpose(taskId)
   const task = await getTask(taskId)
   assertLegacyReviewTaskPurpose(taskId)
@@ -266,6 +267,8 @@ export async function acceptDelivery(taskId: string, deliveryId: string, input: 
   const chain = getProjectChain(task.projectId)
   const draft = chain.drafts.find((item) => item.id === deliveryId)
   if (!draft) throw new DevelopmentReviewError('交付版本不存在')
+  if (draft.taskId !== taskId) throw new DevelopmentReviewError('交付版本不属于当前任务')
+  if (input.expectedVersion !== undefined && draft.version !== input.expectedVersion) throw new DevelopmentReviewError('交付版本已变化，请刷新后重试')
   const reviewerId = draft.responsibilities?.reviewerId ?? 'local-user'
   if (reviewerId !== 'local-user') {
     throw new DevelopmentReviewError(`当前验收人是 ${reviewerId}，本机 local-user 不能代为验收`)
@@ -280,7 +283,7 @@ export async function acceptDelivery(taskId: string, deliveryId: string, input: 
 }
 
 /** 人工退回：意见必填；历史版本不变。 */
-export async function rejectDelivery(taskId: string, deliveryId: string, comment: string): Promise<unknown> {
+export async function rejectDelivery(taskId: string, deliveryId: string, comment: string, reasonCode?: ProjectJudgmentReasonCode, expectedVersion?: number): Promise<unknown> {
   const task = await getTask(taskId)
   if (!task) throw new DevelopmentReviewError('任务不存在')
   const trimmed = comment?.trim()
@@ -288,11 +291,13 @@ export async function rejectDelivery(taskId: string, deliveryId: string, comment
   const chain = getProjectChain(task.projectId)
   const draft = chain.drafts.find((item) => item.id === deliveryId)
   if (!draft) throw new DevelopmentReviewError('交付版本不存在')
+  if (draft.taskId !== taskId) throw new DevelopmentReviewError('交付版本不属于当前任务')
+  if (expectedVersion !== undefined && draft.version !== expectedVersion) throw new DevelopmentReviewError('交付版本已变化，请刷新后重试')
   const reviewerId = draft.responsibilities?.reviewerId ?? 'local-user'
   if (reviewerId !== 'local-user') {
     throw new DevelopmentReviewError(`当前验收人是 ${reviewerId}，本机 local-user 不能代为退回`)
   }
-  return updateProjectChain(task.projectId, chain.revision, { kind: 'reject', draftId: deliveryId, comment: trimmed })
+  return updateProjectChain(task.projectId, chain.revision, { kind: 'reject', draftId: deliveryId, comment: trimmed, ...(reasonCode ? { reasonCode } : {}) })
 }
 
 /**
