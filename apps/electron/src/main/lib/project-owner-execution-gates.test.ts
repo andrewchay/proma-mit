@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, mock, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildElectronMock } from './testing/electron-mock'
@@ -21,6 +21,7 @@ const revalidation = await import('./project-owner-execution-revalidation')
 const grants = await import('./project-pilot-grant-issue')
 const policy = await import('./project-pilot-policy')
 const gates = await import('./project-owner-execution-gates')
+const { executeBashToolOnPlatform } = await import('./agent-runtime/tool-impls/bash-tool')
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
 function fixture(single = false, textDelivery = false) {
@@ -74,6 +75,23 @@ test('Given gate准入+冻结空资料集合 When 知识工具 Then 交集为空
   gates.admitOwnerExecutionGateSession(executionId, sessionId)
   expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'SearchKnowledge', {})).toThrow('交集')
   expect(() => gates.assertToolAllowedForSessionPurpose(sessionId, 'ReadMcpResourceTool', {})).toThrow('Owner')
+})
+test('Given 已准入的 Owner 业务会话 When 直接调用 Bash 工具 Then 工具入口拒绝且不创建文件', async () => {
+  const f = fixture(), sessionId = syntheticRunningExecution(f)
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  const work = mkdtempSync(join(tmpdir(), 'owner-bash-work-'))
+  try {
+    const marker = join(work, 'marker')
+    const ordinary = await executeBashToolOnPlatform({ command: `touch '${marker}'` }, { cwd: work, sessionId: randomUUID() }, 'darwin')
+    expect(ordinary.isError).toBeFalsy()
+    expect(existsSync(marker)).toBe(true)
+    rmSync(marker)
+    const result = await executeBashToolOnPlatform({ command: `touch '${marker}'` }, { cwd: work, sessionId, ownerWorkspaceWrite: true }, 'darwin')
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('Owner')
+    expect(existsSync(marker)).toBe(false)
+  } finally { rmSync(work, { recursive: true, force: true }) }
 })
 test('Given 完整文本交付 Owner执行 When 构建工具白名单 Then 不暴露工作区写入工具', () => {
   const f = fixture(false, true), sessionId = syntheticRunningExecution(f)

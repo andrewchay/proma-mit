@@ -59,7 +59,15 @@ export async function executeBashToolOnPlatform(input: unknown, ctx: ToolContext
   const timeout = params.timeout ?? 30_000
 
   try {
+    const assertOwnerGate = () => {
+      if (!ctx.ownerWorkspaceWrite) return
+      const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+      gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Bash', { command })
+    }
+    assertOwnerGate()
     const sandbox = await prepareBashSandbox(ctx.cwd, ctx.sessionId)
+    // 准备沙箱包含异步操作，启动子进程前再次核验会话授权。
+    assertOwnerGate()
     const [command0, ...rest] = sandbox.argv as [string, ...string[]]
     const { stdout, stderr } = await execFileAsync(command0, [...rest, command], {
       cwd: ctx.cwd,
