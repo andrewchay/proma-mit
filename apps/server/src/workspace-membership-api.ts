@@ -29,6 +29,13 @@ export async function handleWorkspaceMembershipRoute(request: Request, scope: Ag
 }
 
 async function readRole(request: Request): Promise<'editor' | 'viewer' | undefined> {
+  const parsed = await readBoundedJson(request)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
+  const record = parsed as Record<string, unknown>
+  return Object.keys(record).length === 1 && (record.role === 'editor' || record.role === 'viewer') ? record.role : undefined
+}
+
+export async function readBoundedJson(request: Request): Promise<unknown> {
   if (!/^application\/json(?:\s*;|$)/i.test(request.headers.get('content-type') ?? '') || !request.body) return undefined
   const reader = request.body.getReader()
   const decoder = new TextDecoder('utf-8', { fatal: true })
@@ -42,9 +49,6 @@ async function readRole(request: Request): Promise<'editor' | 'viewer' | undefin
       body += decoder.decode(value, { stream: true })
     }
     body += decoder.decode()
-    const parsed: unknown = JSON.parse(body)
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined
-    const record = parsed as Record<string, unknown>
-    return Object.keys(record).length === 1 && (record.role === 'editor' || record.role === 'viewer') ? record.role : undefined
+    return JSON.parse(body) as unknown
   } catch { return undefined } finally { reader.releaseLock() }
 }

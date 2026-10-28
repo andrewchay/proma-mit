@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { PostgresTenantRuntimeStore } from '@gravitas/shared/utils'
+import { createAgentRuntimeWorkspaceObjectKey, InMemoryAgentRuntimeObjectStore, PostgresTenantRuntimeStore } from '@gravitas/shared/utils'
+import { createHash } from 'node:crypto'
 import { PostgresWorkspaceMembershipStore } from './workspace-membership-store.ts'
 import { createPromaWebServerApplication } from './app.ts'
 import { PostgresAuditLog } from './audit.ts'
+import { PostgresSharedFileStore } from './workspace-shared-file.ts'
 
 const databaseUrl = process.env.PROMA_MEMBERSHIP_TEST_DATABASE_URL
 describe.skipIf(!databaseUrl)('企业工作区成员的真实 Postgres 隔离', () => {
@@ -22,6 +24,7 @@ describe.skipIf(!databaseUrl)('企业工作区成员的真实 Postgres 隔离', 
   beforeAll(async () => {
     await workspaces.initializeSchema()
     await members.initializeSchema()
+    await new PostgresSharedFileStore(client).initializeSchema()
     await new PostgresAuditLog(client).initializeSchema()
     await workspaces.setWorkspace({ ...owner, workspaceSlug: 'project', cwd: '/ignored', mcpServers: {} })
   })
@@ -59,5 +62,58 @@ describe.skipIf(!databaseUrl)('企业工作区成员的真实 Postgres 隔离', 
     expect(await listing.json()).toMatchObject({ sharedAccessEnabled: false, members: [{ userId: 'member-api', role: 'editor' }] })
     expect((await app.fetch(request('DELETE', 'owner', path))).status).toBe(204)
     expect(await members.getRole({ tenantId: tenant, userId: 'member-api' }, 'owner', 'project')).toBeNull()
+  })
+  test('Given 所有者明确发布固定内容 When 成员读取 Then 可下载；撤权或内容变化后拒绝', async () => {
+    const objects = new InMemoryAgentRuntimeObjectStore()
+    const key = createAgentRuntimeWorkspaceObjectKey({ ...owner, workspaceSlug: 'project', relativePath: 'report.html' })
+    const body = new TextEncoder().encode('<html>approved</html>')
+    const hash = createHash('sha256').update(body).digest('hex')
+    await objects.putObject({ key, body, contentType: 'text/html' })
+    await members.setMember(owner, 'project', 'reader', 'viewer')
+    const app = createPromaWebServerApplication({ databaseUrl: databaseUrl!, redisUrl: 'redis://unused', s3: { bucket: 'unused', region: 'auto', maxUploadBytes: 1024 }, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test', trustedHeaderAuth: false, workspaceRoot: '/tmp/membership-test', workerId: 'test', taskLeaseMs: 30000 }, { postgres: client, objectStore: objects, auth: ({ request }) => ({ tenantId: request.headers.get('x-test-tenant') ?? tenant, userId: request.headers.get('x-test-user') ?? 'reader', roles: [request.headers.get('x-test-user') === 'owner' ? 'operator' : 'viewer'] }) })
+    const publish = '/agent/workspaces/project/shared-files/report.html'
+    const shared = '/agent/shared-workspaces/owner/project/files/report.html'
+    const request = (method: string, user: string, path: string, payload?: string, tenantId = tenant) => new Request(`http://server${path}`, { method, headers: { 'x-test-user': user, 'x-test-tenant': tenantId, ...(payload ? { 'content-type': 'application/json' } : {}) }, ...(payload ? { body: payload } : {}) })
+    expect((await app.fetch(request('GET', 'reader', shared))).status).toBe(404)
+    expect((await app.fetch(request('GET', 'reader', '/agent/shared-workspaces/owner/project/files/%2e%2e%2Fsecret'))).status).toBe(404)
+    expect((await app.fetch(request('PUT', 'outsider', publish, JSON.stringify({ expectedSha256: hash })))).status).toBe(403)
+    expect((await app.fetch(request('PUT', 'owner', publish, JSON.stringify({ expectedSha256: '0'.repeat(64) })))).status).toBe(409)
+    expect((await app.fetch(request('PUT', 'owner', publish, JSON.stringify({ expectedSha256: hash })))).status).toBe(200)
+    const unicodeKey = createAgentRuntimeWorkspaceObjectKey({ ...owner, workspaceSlug: 'project', relativePath: '目录/报告 %.txt' })
+    await objects.putObject({ key: unicodeKey, body })
+    const encodedPath = '%E7%9B%AE%E5%BD%95/%E6%8A%A5%E5%91%8A%20%25.txt'
+    expect((await app.fetch(request('PUT', 'owner', `/agent/workspaces/project/shared-files/${encodedPath}`, JSON.stringify({ expectedSha256: hash })))).status).toBe(200)
+    expect((await app.fetch(request('GET', 'reader', `/agent/shared-workspaces/owner/project/files/${encodedPath}`))).status).toBe(200)
+    const download = await app.fetch(request('GET', 'reader', shared))
+    expect(download.status).toBe(200)
+    expect(download.headers.get('content-disposition')).toBe('attachment')
+    expect(download.headers.get('cache-control')).toBe('private, no-store')
+    expect(await download.text()).toBe('<html>approved</html>')
+    expect((await app.fetch(request('GET', 'outsider', shared))).status).toBe(404)
+    expect((await app.fetch(request('GET', 'reader', shared, undefined, `${tenant}-other`))).status).toBe(404)
+    let signalFetch = () => {}, releaseFetch = () => {}
+    const fetchStarted = new Promise<void>((resolve) => { signalFetch = resolve })
+    const fetchGate = new Promise<void>((resolve) => { releaseFetch = resolve })
+    const delayedObjects = {
+      putObject: objects.putObject.bind(objects), deleteObject: objects.deleteObject.bind(objects), listObjects: objects.listObjects.bind(objects),
+      getObject: async (objectKey: string) => { signalFetch(); await fetchGate; return objects.getObject(objectKey) },
+    }
+    const delayedApp = createPromaWebServerApplication({ databaseUrl: databaseUrl!, redisUrl: 'redis://unused', s3: { bucket: 'unused', region: 'auto', maxUploadBytes: 1024 }, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test', trustedHeaderAuth: false, workspaceRoot: '/tmp/membership-test', workerId: 'test', taskLeaseMs: 30000 }, { postgres: client, objectStore: delayedObjects, auth: ({ request }) => ({ tenantId: tenant, userId: request.headers.get('x-test-user') ?? 'reader', roles: [request.headers.get('x-test-user') === 'owner' ? 'operator' : 'viewer'] }) })
+    const inFlight = delayedApp.fetch(request('GET', 'reader', shared))
+    await fetchStarted
+    await members.removeMember(owner, 'project', 'reader')
+    releaseFetch()
+    expect((await inFlight).status).toBe(404)
+    await members.setMember(owner, 'project', 'reader', 'viewer')
+    await objects.putObject({ key, body: new TextEncoder().encode('changed') })
+    expect((await app.fetch(request('GET', 'reader', shared))).status).toBe(409)
+    const updatedHash = createHash('sha256').update('changed').digest('hex')
+    expect((await app.fetch(request('PUT', 'owner', publish, JSON.stringify({ expectedSha256: updatedHash })))).status).toBe(200)
+    expect(await (await app.fetch(request('GET', 'reader', shared))).text()).toBe('changed')
+    expect((await app.fetch(request('DELETE', 'owner', publish))).status).toBe(204)
+    expect((await app.fetch(request('GET', 'reader', shared))).status).toBe(404)
+    expect((await app.fetch(request('PUT', 'owner', publish, JSON.stringify({ expectedSha256: updatedHash })))).status).toBe(200)
+    await members.removeMember(owner, 'project', 'reader')
+    expect((await app.fetch(request('GET', 'reader', shared))).status).toBe(404)
   })
 })
