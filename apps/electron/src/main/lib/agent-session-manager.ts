@@ -13,7 +13,7 @@ import { createInterface } from 'node:readline'
 import { writeJsonFileAtomic, readJsonFileSafe } from './safe-file'
 import { safeParseJSONObject } from './safe-json'
 import { createHash, randomUUID } from 'node:crypto'
-import { join, resolve, dirname } from 'node:path'
+import { basename, join, resolve, dirname } from 'node:path'
 import {
   getAgentSessionsIndexPath,
   getAgentSessionsDir,
@@ -353,20 +353,130 @@ export function getAgentSessionSDKMessages(id: string): SDKMessage[] {
   }
 
   try {
-    const raw = readFileSync(filePath, 'utf-8')
-    const lines = raw.split('\n').filter((line) => line.trim())
-    return lines.map((line) => {
-      const parsed = JSON.parse(line)
-      // 旧格式检测：AgentMessage 有 `role` 字段，SDKMessage 有 `type` 字段
-      if ('role' in parsed && !('type' in parsed)) {
-        return convertLegacyMessage(parsed as AgentMessage)
-      }
-      return parsed as SDKMessage
-    })
+    return parseSDKMessagesFile(filePath)
   } catch (error) {
     console.error(`[Agent 会话] 读取 SDKMessage 失败 (${id}):`, error)
     return []
   }
+}
+
+/**
+ * 读取供聊天界面展示的完整会话历史。
+ * 模型继续使用压缩后的活动历史；展示视图则沿 compact_boundary 的归档引用
+ * 递归重建压缩前消息，避免上下文投影覆盖用户可回看的原文。
+ */
+export function getAgentSessionTranscriptSDKMessages(id: string): SDKMessage[] {
+  const archiveDir = join(getAgentSessionsDir(), 'compaction-archive', id)
+  const messages = linkSingleLegacyArchive(archiveDir, getAgentSessionSDKMessages(id))
+  return expandCompactedHistory(id, messages, archiveDir, new Set(), 0)
+}
+
+const MAX_COMPACTION_ARCHIVE_DEPTH = 32
+
+function expandCompactedHistory(
+  sessionId: string,
+  messages: SDKMessage[],
+  archiveDir: string,
+  visitedArchives: Set<string>,
+  depth: number,
+): SDKMessage[] {
+  if (depth >= MAX_COMPACTION_ARCHIVE_DEPTH) return messages
+
+  const expanded: SDKMessage[] = []
+  for (const message of messages) {
+    const record = message as unknown as {
+      subtype?: string
+      compactionSource?: { messageCount?: unknown; archiveFile?: unknown }
+    }
+    const source = record.subtype === 'compact_boundary' ? record.compactionSource : undefined
+    const archiveFile = source?.archiveFile
+    const messageCount = source?.messageCount
+    if (
+      typeof archiveFile !== 'string'
+      || basename(archiveFile) !== archiveFile
+      || !/^\d+-[0-9a-f-]+\.jsonl$/i.test(archiveFile)
+      || !Number.isInteger(messageCount)
+      || (messageCount as number) < 0
+      || visitedArchives.has(archiveFile)
+    ) {
+      expanded.push(message)
+      continue
+    }
+
+    const archivePath = join(archiveDir, archiveFile)
+    try {
+      if (!existsSync(archivePath)) {
+        expanded.push(message)
+        continue
+      }
+      const archivedMessages = parseSDKMessagesFile(archivePath)
+      if ((messageCount as number) > archivedMessages.length) {
+        expanded.push(message)
+        continue
+      }
+      const nextVisited = new Set(visitedArchives)
+      nextVisited.add(archiveFile)
+      const archivedHistory = expandCompactedHistory(
+        sessionId,
+        archivedMessages.slice(0, messageCount as number),
+        archiveDir,
+        nextVisited,
+        depth + 1,
+      )
+      expanded.push(...archivedHistory.map((archivedMessage) => ({
+        ...archivedMessage,
+        _fromCompactionArchive: true,
+      }) as SDKMessage))
+      expanded.push(message)
+    } catch (error) {
+      console.warn(`[Agent 会话] 压缩归档无法读取，保留摘要边界: sessionId=${sessionId}, archive=${archiveFile}`, error)
+      expanded.push(message)
+    }
+  }
+  return expanded
+}
+
+/** 兼容早期版本：只有一个未标注 boundary 和一个归档时可无歧义恢复。 */
+function linkSingleLegacyArchive(archiveDir: string, messages: SDKMessage[]): SDKMessage[] {
+  const boundaryIndexes = messages.flatMap((message, index) => {
+    const record = message as unknown as { subtype?: string; compactionSource?: { archiveFile?: unknown } }
+    return record.subtype === 'compact_boundary' && !record.compactionSource?.archiveFile ? [index] : []
+  })
+  if (boundaryIndexes.length !== 1 || !existsSync(archiveDir)) return messages
+
+  const archives = readdirSync(archiveDir).filter((name) => /^\d+-[0-9a-f-]+\.jsonl$/i.test(name))
+  if (archives.length !== 1) return messages
+
+  try {
+    const archiveFile = archives[0]!
+    const archivedMessages = parseSDKMessagesFile(join(archiveDir, archiveFile))
+    const boundaryIndex = boundaryIndexes[0]!
+    const keptCount = messages.length - boundaryIndex - 1
+    const messageCount = archivedMessages.length - keptCount
+    if (messageCount < 0 || messageCount > archivedMessages.length) return messages
+
+    return messages.map((message, index) => {
+      if (index !== boundaryIndex) return message
+      const record = message as unknown as Record<string, unknown>
+      return {
+        ...record,
+        compactionSource: { messageCount, archiveFile },
+      } as unknown as SDKMessage
+    })
+  } catch {
+    return messages
+  }
+}
+
+function parseSDKMessagesFile(filePath: string): SDKMessage[] {
+  const raw = readFileSync(filePath, 'utf-8')
+  return raw.split('\n').filter((line) => line.trim()).map((line) => {
+    const parsed: unknown = JSON.parse(line)
+    if (typeof parsed === 'object' && parsed !== null && 'role' in parsed && !('type' in parsed)) {
+      return convertLegacyMessage(parsed as AgentMessage)
+    }
+    return parsed as SDKMessage
+  })
 }
 
 /**

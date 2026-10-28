@@ -116,7 +116,7 @@ function CompactBoundaryDivider({ message }: { message?: SDKMessage }): React.Re
           </pre>
           {info.archived && (
             <div className="mt-1.5 text-[10px] text-muted-foreground/50">
-              压缩前原文已归档至本地，可通过回退恢复
+              此摘要用于后续上下文；压缩前原文如有本地归档，会显示在上方
             </div>
           )}
         </div>
@@ -555,6 +555,14 @@ export interface AssistantTurnRendererProps {
 
 export function AssistantTurnRenderer({ turn, sessionId, allMessages, historicalTaskSubjects, basePath, onFork, onRewind, onRetry, onRetryInNewSession, onCompact, isStreaming, stoppedByUser, sessionModelId }: AssistantTurnRendererProps): React.ReactElement | null {
   const channels = useAtomValue(channelsAtom)
+  const isArchivedTurn = turn.turnMessages.some((message) =>
+    (message as unknown as { _fromCompactionArchive?: unknown })._fromCompactionArchive === true,
+  )
+  const forkTurn = isArchivedTurn ? undefined : onFork
+  const rewindTurn = isArchivedTurn ? undefined : onRewind
+  const retryTurn = isArchivedTurn ? undefined : onRetry
+  const retryInNewSessionTurn = isArchivedTurn ? undefined : onRetryInNewSession
+  const compactTurn = isArchivedTurn ? undefined : onCompact
   const [traceExpanded, setTraceExpanded] = React.useState(false)
   const agentSessions = useAtomValue(agentSessionsAtom)
   // 用于「保存为工作流」的会话标题
@@ -668,9 +676,9 @@ export function AssistantTurnRenderer({ turn, sessionId, allMessages, historical
     return (
       <ErrorMessage
         message={errorContent}
-        onRetry={onRetry}
-        onRetryInNewSession={onRetryInNewSession}
-        onCompact={onCompact}
+        onRetry={retryTurn}
+        onRetryInNewSession={retryInNewSessionTurn}
+        onCompact={compactTurn}
       />
     )
   }
@@ -775,7 +783,7 @@ export function AssistantTurnRenderer({ turn, sessionId, allMessages, historical
         const lastUuid = mainlineAssistants.length > 0
           ? mainlineAssistants[mainlineAssistants.length - 1]?.uuid
           : undefined
-        const hasActions = !!(textContent || (onFork && lastUuid) || (onRewind && lastUuid))
+        const hasActions = !!(textContent || (forkTurn && lastUuid) || (rewindTurn && lastUuid))
         const hasDuration = durationMs != null
         if (!hasDuration && !hasActions && !showStoppedBadge) return null
         // 判断本 turn 是否成功完成（result success 且无错误）——用于显示「保存为工作流」
@@ -787,13 +795,13 @@ export function AssistantTurnRenderer({ turn, sessionId, allMessages, historical
             {turnSucceeded && sessionId && (
               <SaveAsWorkflowButton sessionId={sessionId} sessionTitle={sessionTitleForAction} />
             )}
-            {onFork && lastUuid && (
-              <MessageAction tooltip="从此处分叉" onClick={() => onFork(lastUuid)}>
+            {forkTurn && lastUuid && (
+              <MessageAction tooltip="从此处分叉" onClick={() => forkTurn(lastUuid)}>
                 <Split className="size-3.5" />
               </MessageAction>
             )}
-            {onRewind && lastUuid && (
-              <MessageAction tooltip="回退到此处" onClick={() => onRewind(lastUuid)}>
+            {rewindTurn && lastUuid && (
+              <MessageAction tooltip="回退到此处" onClick={() => rewindTurn(lastUuid)}>
                 <Undo2 className="size-3.5" />
               </MessageAction>
             )}

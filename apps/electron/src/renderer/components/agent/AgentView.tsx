@@ -957,7 +957,7 @@ function InteractiveAgentView({ sessionId }: { sessionId: string }): React.React
       setMessagesLoaded(false)
     }
     let cancelled = false
-    window.electronAPI.getAgentSessionSDKMessages(targetSessionId)
+    window.electronAPI.getAgentSessionTranscript(targetSessionId)
       .then((sdkMsgs) => {
         if (cancelled) return
         unstable_batchedUpdates(() => {

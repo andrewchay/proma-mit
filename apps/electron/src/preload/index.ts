@@ -791,6 +791,9 @@ export interface ElectronAPI {
   /** 获取 Agent 会话 SDKMessage（Phase 4 新格式） */
   getAgentSessionSDKMessages: (id: string) => Promise<SDKMessage[]>
 
+  /** 获取完整会话展示历史，包含可恢复的压缩前原文 */
+  getAgentSessionTranscript: (id: string) => Promise<SDKMessage[]>
+
   /** 更新 Agent 会话标题 */
   updateAgentSessionTitle: (id: string, title: string) => Promise<AgentSessionMeta>
 
@@ -3362,6 +3365,10 @@ const electronAPI: ElectronAPI = {
 
   getAgentSessionSDKMessages: (id: string) => {
     return ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_SDK_MESSAGES, id)
+  },
+
+  getAgentSessionTranscript: (id: string) => {
+    return ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_SESSION_TRANSCRIPT, id)
   },
 
   updateAgentSessionTitle: (id: string, title: string) => {
