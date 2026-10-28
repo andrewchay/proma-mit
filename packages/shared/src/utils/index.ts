@@ -120,6 +120,7 @@ export {
 export type {
   AgentRuntimeListObjectsInput,
   AgentRuntimeObjectRef,
+  AgentRuntimeObjectStream,
   AgentRuntimeObjectStore,
   AgentRuntimePutObjectInput,
   AgentRuntimeSessionArtifactObjectInput,
