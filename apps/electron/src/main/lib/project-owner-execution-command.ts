@@ -413,20 +413,22 @@ export function listOwnerExecutionCommands(rawSubject: unknown): OwnerExecutionC
   const technicalReviews = new Map<string, OwnerTechnicalReviewEvidence[]>()
   const actionApprovals = new Map<string, NonNullable<OwnerExecutionCommandView['actionApprovals']>>()
   const approvalRows = store.getProjectDb().prepare(`SELECT request_id, command_id, tool_name, action_fingerprint, status,
-      requested_at, decided_at, decided_by, decision_reason
+      requested_at, decided_at, decided_by, decision_reason, consumed_at, consumption_kind
     FROM project_owner_action_approvals WHERE project_id=? ORDER BY requested_at`).all(subject.projectId) as Array<{
       request_id: string; command_id: string; tool_name: string; action_fingerprint: string; status: string
-      requested_at: number; decided_at: number | null; decided_by: string | null; decision_reason: string | null
+      requested_at: number; decided_at: number | null; decided_by: string | null; decision_reason: string | null; consumed_at: number | null; consumption_kind: string | null
     }>
   for (const approval of approvalRows) {
     if (!/^[a-f0-9]{64}$/.test(approval.action_fingerprint) || !['pending', 'allowed', 'denied', 'invalidated'].includes(approval.status)
-      || !Number.isSafeInteger(approval.requested_at) || (approval.decided_at !== null && !Number.isSafeInteger(approval.decided_at))) {
+      || !Number.isSafeInteger(approval.requested_at) || (approval.decided_at !== null && !Number.isSafeInteger(approval.decided_at))
+      || (approval.consumed_at !== null && (!Number.isSafeInteger(approval.consumed_at) || approval.status !== 'allowed' || !['claimed', 'legacy_unknown'].includes(approval.consumption_kind ?? '')))
+      || (approval.consumed_at === null && approval.consumption_kind !== null)) {
       throw new Error('Owner动作审批审计无法核验')
     }
     const items = actionApprovals.get(approval.command_id) ?? []
     items.push({ requestId: approval.request_id, toolName: approval.tool_name, actionFingerprint: approval.action_fingerprint,
       status: approval.status as NonNullable<OwnerExecutionCommandView['actionApprovals']>[number]['status'],
-      requestedAt: approval.requested_at, decidedAt: approval.decided_at, decidedBy: approval.decided_by, reason: approval.decision_reason })
+      requestedAt: approval.requested_at, decidedAt: approval.decided_at, decidedBy: approval.decided_by, reason: approval.decision_reason, consumedAt: approval.consumed_at, consumptionKind: approval.consumption_kind as 'claimed' | 'legacy_unknown' | null })
     actionApprovals.set(approval.command_id, items)
   }
   const states = new Set<OwnerExecutionCommandView['state']>(['reserved', 'queued', 'running', 'settled', 'released', 'needs_reconcile', 'unknown', 'failed', 'cancelled'])

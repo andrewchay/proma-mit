@@ -995,6 +995,9 @@ export interface OwnerExecutionCommandView {
     decidedAt: number | null
     decidedBy: string | null
     reason: string | null
+    /** 批准不可再使用的时间；旧记录可能仅表示用途未知。 */
+    consumedAt?: number | null
+    consumptionKind?: 'claimed' | 'legacy_unknown' | null
   }>
   /** 从不可变 Owner step link 回读的冻结验收标准。 */
   acceptanceCriteria: string[]

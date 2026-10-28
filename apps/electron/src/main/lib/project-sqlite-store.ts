@@ -1433,6 +1433,17 @@ function migrate(database: SqliteCompat): void {
       decision_reason TEXT
     )
   `)
+  database.transaction(() => {
+    if (!readColumnNames(database, 'project_owner_action_approvals').includes('consumed_at')) {
+      database.exec('ALTER TABLE project_owner_action_approvals ADD COLUMN consumed_at INTEGER')
+      // 旧版无法区分已执行与未执行的批准；不把历史批准恢复为可重放的执行权。
+      database.exec("UPDATE project_owner_action_approvals SET consumed_at = COALESCE(decided_at, requested_at) WHERE status = 'allowed'")
+    }
+    if (!readColumnNames(database, 'project_owner_action_approvals').includes('consumption_kind')) {
+      database.exec('ALTER TABLE project_owner_action_approvals ADD COLUMN consumption_kind TEXT')
+      database.exec("UPDATE project_owner_action_approvals SET consumption_kind = 'legacy_unknown' WHERE consumed_at IS NOT NULL")
+    }
+  })()
   // 员工岗位模板 ID 只记录显式选择；旧档案不从角色文本反推。
   const empColumns = readColumnNames(database, 'agent_employees')
   if (!empColumns.includes('role_template_id')) database.exec('ALTER TABLE agent_employees ADD COLUMN role_template_id TEXT')

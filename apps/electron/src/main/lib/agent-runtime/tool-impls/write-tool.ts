@@ -52,6 +52,10 @@ export async function executeWriteTool(input: unknown, ctx: ToolContext): Promis
       gates.assertOwnerToolWorkingDirectory(ctx.sessionId, ctx.cwd)
       gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Write', { file_path: params.file_path, content: params.content })
       exclusiveCreate = gates.isOwnerAutoAllowedWorkspaceWrite(ctx.sessionId, 'Write', { file_path: params.file_path, content: params.content })
+      if (!exclusiveCreate) {
+        const { consumeApprovedOwnerAction } = require('../../project-owner-action-approval') as typeof import('../../project-owner-action-approval')
+        if (!consumeApprovedOwnerAction(ctx.sessionId, { toolName: 'Write', toolInput: { file_path: params.file_path, content: params.content } })) throw new Error('Owner动作批准已使用或失效，请重新审批')
+      }
     }
     const dir = dirname(path)
     if (!existsSync(dir)) {
