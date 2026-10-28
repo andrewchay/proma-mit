@@ -22,7 +22,7 @@ function downloadArtifact(title: string, content: string, extension: 'md' | 'htm
 
 export function OwnerDeliveredArtifact({ item }: { item: OwnerManagementDelivery['items'][number] }): React.ReactElement {
   const html = extractDeliveredHtml(item.content)
-  const previewAtom = useMemo(() => atom<{ hash: string; visible: boolean }>({ hash: '', visible: false }), [])
+  const previewAtom = useMemo(() => atom<{ hash: string; visible: boolean; viewport: 'adaptive' | 'mobile' }>({ hash: '', visible: false, viewport: 'adaptive' }), [])
   const [preview, setPreview] = useAtom(previewAtom)
   const showPreview = preview.hash === item.artifactHash && preview.visible
   const previewHtml = html?.replace(/^<!doctype html\s*>/i, `$&<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:; form-action 'none'; base-uri 'none'">`)
@@ -31,7 +31,7 @@ export function OwnerDeliveredArtifact({ item }: { item: OwnerManagementDelivery
       <h4 className="font-medium">{item.title}</h4>
       <div className="flex gap-2">
         <button type="button" className="rounded-lg bg-primary/10 px-3 py-1.5 text-sm text-primary" onClick={() => downloadArtifact(item.title, item.content, 'md')}>下载原文</button>
-        {html && <button type="button" className="rounded-lg bg-muted px-3 py-1.5 text-sm" onClick={() => setPreview({ hash: item.artifactHash, visible: !showPreview })}>{showPreview ? '关闭预览' : '静态预览'}</button>}
+        {html && <button type="button" className="rounded-lg bg-muted px-3 py-1.5 text-sm" onClick={() => setPreview({ hash: item.artifactHash, visible: !showPreview, viewport: preview.hash === item.artifactHash ? preview.viewport : 'adaptive' })}>{showPreview ? '关闭预览' : '静态预览'}</button>}
         {html && <button type="button" className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground" onClick={() => downloadArtifact(item.title, html, 'html')}>下载 HTML</button>}
       </div>
     </div>
@@ -39,7 +39,11 @@ export function OwnerDeliveredArtifact({ item }: { item: OwnerManagementDelivery
     <div><p className="mb-2 text-xs font-medium text-muted-foreground">成果正文</p><pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/50 p-3 font-sans text-sm">{item.content}</pre></div>
     {showPreview && previewHtml && <div className="overflow-hidden rounded-xl bg-muted/40 p-2">
       <p className="px-1 pb-2 text-xs text-muted-foreground">静态预览不运行脚本或加载外部资源；交互效果请在可信环境中验证。</p>
-      <iframe title={`${item.title} 静态预览`} sandbox="" srcDoc={previewHtml} className="h-[420px] w-full rounded-lg bg-white shadow-sm" />
+      <div className="mb-2 flex gap-2" aria-label="预览宽度">
+        <button type="button" aria-pressed={preview.viewport === 'adaptive'} className="rounded-lg bg-background px-2 py-1 text-xs aria-pressed:bg-primary aria-pressed:text-primary-foreground" onClick={() => setPreview({ ...preview, viewport: 'adaptive' })}>自适应宽度</button>
+        <button type="button" aria-pressed={preview.viewport === 'mobile'} className="rounded-lg bg-background px-2 py-1 text-xs aria-pressed:bg-primary aria-pressed:text-primary-foreground" onClick={() => setPreview({ ...preview, viewport: 'mobile' })}>手机宽度</button>
+      </div>
+      <iframe title={`${item.title} 静态预览`} sandbox="" srcDoc={previewHtml} style={{ width: preview.viewport === 'mobile' ? 'min(100%, 390px)' : '100%', display: 'block', margin: '0 auto', border: 0 }} className="h-[420px] rounded-lg bg-white shadow-sm" />
     </div>}
     <details><summary className="cursor-pointer text-sm text-muted-foreground">验收标准与评审记录</summary>
       <div className="mt-3 space-y-3">
