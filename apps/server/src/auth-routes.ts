@@ -2,6 +2,7 @@ import { randomBytes, randomUUID } from 'node:crypto'
 import type { AgentRuntimeRole } from '@gravitas/shared/utils'
 import { verifyPassword } from './local-admin-auth'
 import { verifyJwtWithJwks } from './jwt-auth'
+import { parseSessionCookie } from './auth-resolvers'
 
 export interface OidcAuthConfig {
   authorizationEndpoint: string
@@ -35,7 +36,7 @@ export interface AuthRoutesDeps {
 export interface AuthHandler {
   loginPage(): Promise<Response>
   loginForm(body: { username: string; password: string }): Promise<Response>
-  logout(): Response
+  logout(cookieHeader?: string | null): Promise<Response>
   oidcStart(): Promise<Response>
   oidcCallback(query: { code?: string; state?: string }): Promise<Response>
 }
@@ -131,7 +132,9 @@ export function createAuthHandler(deps: AuthRoutesDeps): AuthHandler {
       return issueSession(account.tenantId, username, [...account.roles])
     },
 
-    logout() {
+    async logout(cookieHeader) {
+      const sessionId = parseSessionCookie(cookieHeader ?? null, cookieName)
+      if (sessionId) await deps.sessionStore.destroy(sessionId)
       return new Response(null, { status: 302, headers: { location: '/auth/login', 'set-cookie': expiredCookie(cookieName) } })
     },
 

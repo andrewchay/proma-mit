@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
 import { createAuthHandler, readLoginCredentials, type AuthRoutesDeps } from './auth-routes'
 import type { AgentRuntimeRole } from '@gravitas/shared/utils'
+import { createCookieSessionAuthResolver } from './auth-resolvers'
 
 function makeHandler(overrides: Partial<AuthRoutesDeps> = {}) {
   return createAuthHandler({
@@ -68,6 +69,30 @@ describe('auth-routes', () => {
     const setCookie = res.headers.get('set-cookie')
     expect(setCookie).toContain('proma_session=')
     expect(setCookie).toContain('Max-Age=0')
+  })
+
+  it('Given 已登录会话 When 登出 Then 旧 cookie 无法再次认证', async () => {
+    const sessions = new Map<string, { sessionId: string; tenantId: string; userId: string; roles: AgentRuntimeRole[]; expiresAt: number }>()
+    const store = {
+      create: async (session: { sessionId: string; tenantId: string; userId: string; roles: AgentRuntimeRole[]; expiresAt: number }) => { sessions.set(session.sessionId, session) },
+      destroy: async (sessionId: string) => { sessions.delete(sessionId) },
+      get: async (sessionId: string, now: number) => { const session = sessions.get(sessionId); return session && session.expiresAt > now ? session : null },
+    }
+    const handler = makeHandler({ sessionStore: store })
+    const login = await handler.loginForm({ username: 'admin', password: 's3cret' })
+    const cookie = login.headers.get('set-cookie')!.split(';')[0]!
+    const resolver = createCookieSessionAuthResolver({ store })
+    const request = new Request('https://example.invalid/agent', { headers: { cookie } })
+    expect(await resolver({ request, url: new URL(request.url) })).toMatchObject({ tenantId: 'tenant-a', userId: 'admin' })
+    const result = await handler.logout(cookie)
+    expect(result.status).toBe(302)
+    expect(result.headers.get('set-cookie')).toContain('Max-Age=0')
+    expect(await resolver({ request, url: new URL(request.url) })).toBeUndefined()
+  })
+
+  it('Given 会话存储不可用 When 登出 Then 不报告成功', async () => {
+    const handler = makeHandler({ sessionStore: { create: async () => {}, destroy: async () => { throw new Error('存储不可用') } } })
+    await expect(handler.logout('proma_session=session-1')).rejects.toThrow('存储不可用')
   })
 
   it('oidcCallback 用 code 交换 token 并设会话 cookie（含 state 校验）', async () => {

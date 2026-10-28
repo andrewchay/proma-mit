@@ -482,7 +482,7 @@ export function createPromaWebServerApplication(
           return authHandler.loginForm(parsed.credentials)
         }
       }
-      if (url.pathname === '/auth/logout') return authHandler.logout()
+      if (url.pathname === '/auth/logout') return authHandler.logout(request.headers.get('cookie'))
       if (url.pathname === '/auth/oidc/start') return authHandler.oidcStart()
       if (url.pathname === '/auth/oidc/callback') {
         const code = url.searchParams.get('code') ?? ''
