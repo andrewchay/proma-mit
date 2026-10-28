@@ -58,13 +58,14 @@ export function resolveEvalChannel(benchmark: BenchmarkConfig): EvalChannelInfo 
  * 评判独立性判定（纯函数，可单测）。
  *
  * 综述基准（arXiv:2607.13104 §8.1.2）：驱动更新的 judge 与报告终值的 judge 必须独立，
- * 否则形成自我确认循环。判据：评判渠道与被测/候选生成渠道的 channelId 或 modelId 不同。
+ * 否则形成自我确认循环。保守要求模型标识不同；这只是配置区分，不证明实际独立性。
  */
 export function computeJudgeIndependence(
   evalChannel: Pick<EvalChannelInfo, 'channelId' | 'modelId'>,
   judgeChannel: Pick<EvalChannelInfo, 'channelId' | 'modelId'>,
 ): boolean {
-  return evalChannel.channelId !== judgeChannel.channelId || evalChannel.modelId !== judgeChannel.modelId
+  const testedModel = evalChannel.modelId.trim().toLowerCase(), judgeModel = judgeChannel.modelId.trim().toLowerCase()
+  return Boolean(testedModel && judgeModel && testedModel !== judgeModel)
 }
 
 /**
@@ -72,7 +73,7 @@ export function computeJudgeIndependence(
  *
  * 未指定 channelId 时沿用 benchmark.runtime.channelId ?? 全局默认渠道；
  * 未指定 modelId 时用该渠道第一个 enabled 模型。
- * 返回 null 表示未配置独立评判（调用方回退规则打分或注入 delegate）。
+ * 返回 null 表示未配置模型评判；只有未指定评判函数时才使用规则打分。
  */
 export function resolveJudgeChannel(
   benchmark: BenchmarkConfig,

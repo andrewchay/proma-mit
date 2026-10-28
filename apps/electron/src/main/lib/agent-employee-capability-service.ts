@@ -48,7 +48,7 @@ export function proposeEmployeeCapabilityAdoption(input: {
   const approval = createApproval({
     sourceType: 'employee_capability',
     title: `推广 AI 员工能力候选：${employee.name}`,
-    summary: `训练集 ${input.trainingScore.toFixed(1)}；held-out ${input.heldOutScore.toFixed(1)}；${selected.length} 条已脱敏样本；独立评判。批准后才会激活新版本。`,
+    summary: `训练集 ${input.trainingScore.toFixed(1)}；held-out ${input.heldOutScore.toFixed(1)}；${selected.length} 条已脱敏样本；评判配置由本次运行或调用方声明，独立性尚未核验。批准后才会激活新版本。`,
     proposedChange: {
       type: 'employee_capability_adopt',
       agentId: input.agentId,

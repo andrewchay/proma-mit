@@ -184,7 +184,7 @@ export async function runEmployeeCapabilityEvaluation(input: RunEmployeeCapabili
 
   const content = summary.bestAcceptedPrompt?.trim()
   const decision = decideEmployeeEvaluation({ judgeIndependent: judge.independent, heldOutBaseline: heldOutBaselineScore, heldOutFinal: heldOutFinalScore, acceptedRounds: summary.acceptedRounds, content })
-  if (decision === 'judge_not_independent') return { ...base, status: decision, message: '评判者未与被评方独立；本次仅产出 baseline，不能创建可批准候选。' }
+  if (decision === 'judge_not_independent') return { ...base, status: decision, message: '评判模型标识未与被测方区分；本次仅产出 baseline，不能创建可批准候选。' }
   if (decision === 'held_out_unavailable') return { ...base, status: decision, message: 'held-out 基线或候选分数缺失，无法比较；不会创建推广建议。' }
   if (decision === 'held_out_regression') return { ...base, status: decision, message: 'held-out 分数下降，候选已被拒绝，不会创建推广建议。' }
   if (decision === 'no_accepted_candidate' || !content || heldOutFinalScore === null) return { ...base, status: 'no_accepted_candidate', message: '没有评分严格提升的候选，未创建推广建议。' }

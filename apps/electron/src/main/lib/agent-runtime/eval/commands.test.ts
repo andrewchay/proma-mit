@@ -66,6 +66,13 @@ describe('runBaseline', () => {
     }
   })
 
+  it('Given 指定模型评判失败 When 建立基线 Then 不用规则分冒充模型分', async () => {
+    const benchmark = { ...config, id: 'baseline-judge-unavailable' }
+    createBenchmark(benchmark, [{ caseId: 'CASE-001', statement: 'train task', rubric }])
+    await expect(runBaseline({ benchmark, agentVersion: 1, delegate: delegate('file:line 修复 缺陷'), scoreDelegate: async () => null })).rejects.toThrow('评测不完整')
+    expect(readScoreboard(benchmark.id).evaluations).toHaveLength(0)
+  })
+
   it('Given 训练和 held-out 重叠 When 评测 Then 不调用模型', async () => {
     let calls = 0
     const benchmark = { ...config, heldOutCases: ['CASE-001'] }

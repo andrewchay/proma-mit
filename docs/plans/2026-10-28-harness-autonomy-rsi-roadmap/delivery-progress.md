@@ -12,7 +12,7 @@
 
 ## 验证边界
 
-- 固定提交 `c03a39ba` 的全仓隔离测试：745 个文件，5234 pass、39 skip、0 fail。后续提交已做相应定向测试，但尚未重新对最终 HEAD 完成全仓回归。
+- 固定提交 `5ae6b64f` 的全仓隔离测试：756 个文件，5275 pass、45 skip、0 fail。后续提交需要各自定向验证，尚未重新对最终 HEAD 完成全仓回归。
 - 独立临时 Postgres 验证了两个连接池的并发审计追加、事务回滚、跨用户法律保全及与清理的互斥；临时容器已清理。这不是生产集群或外部审计投递验收。
 - Chromium 测试覆盖 HTML 静态预览隔离、宽度切换以及模拟 IPC 的调度回滚提示；尚未完成打包 Electron 与真实 Provider 验收。
 - [沙箱局部证据](sandbox-slice-evidence.md)、[调度开关证据](harness-startup-evidence.md)、[RSI 采纳证据](rsi-adoption-evidence.md)和[设计上下文证据](design-context-evidence.md)记录具体边界。

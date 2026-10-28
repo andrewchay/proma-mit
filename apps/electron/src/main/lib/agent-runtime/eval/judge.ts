@@ -1,5 +1,5 @@
 /**
- * LLM Judge：内置的独立评判打分器。
+ * LLM Judge：按指定渠道调用的评判打分器，不自行证明独立性。
  *
  * 综述基准（arXiv:2607.13104 §8.1.2）：驱动更新的 judge 与报告终值的 judge 必须独立，
  * 否则系统会过优化到评判的潜在偏差（自我确认循环）。本模块提供生产可用的 LLM judge
@@ -8,7 +8,7 @@
  *
  * 设计要点：
  * - 复用 builder.ts 的 `runPlainPrompt`（纯文本调用，不进评测沙箱）。
- * - 输出协议：要求 judge 在最后一行输出 `{"score": N}`，解析失败返回 null（调用方回退规则打分）。
+ * - 输出协议：要求 judge 在最后一行输出 `{"score": N}`，解析失败返回 null，评测记为失败。
  * - 本模块只被 eval-service 引用；eval-runner 不反向依赖，避免运行时循环。
  */
 
@@ -52,7 +52,7 @@ function buildJudgeUserPrompt(input: { rubric: Rubric; statement: string; agentO
  * 解析 judge 输出文本中的总分（纯函数，可单测）。
  *
  * 优先解析最后一行的 `{"score": N}` JSON；找不到时接受最后一行裸数字。
- * 结果 clamp 到 0..100；完全无法解析返回 null（调用方回退规则打分）。
+ * 仅接受 0..100；越界或无法解析返回 null。
  */
 export function parseJudgeScore(text: string): number | null {
   if (!text) return null
@@ -66,26 +66,25 @@ export function parseJudgeScore(text: string): number | null {
     if (!line) continue
     const match = line.match(/\{\s*"score"\s*:\s*(-?\d+(?:\.\d+)?)\s*\}/)
     if (match) {
-      return clampScore(Number(match[1]))
+      return parseValidScore(Number(match[1]))
     }
   }
   // 退化为最后一行裸数字
   const last = lines[lines.length - 1]
   if (last && /^-?\d+(?:\.\d+)?$/.test(last)) {
-    return clampScore(Number(last))
+    return parseValidScore(Number(last))
   }
   return null
 }
 
-function clampScore(n: number): number {
-  if (!Number.isFinite(n)) return 0
-  return Math.max(0, Math.min(100, Math.round(n)))
+function parseValidScore(n: number): number | null {
+  return Number.isFinite(n) && n >= 0 && n <= 100 ? Math.round(n) : null
 }
 
 /**
  * 给任意 ScoreDelegate 套上预算隔离（纯包装，可单测）：
  * - maxCalls：单次评测闭环内 judge 最大调用次数（独立计费桶的最小形态）；
- *   超限后短路返回 null（computeScores 回退规则打分），并 warn 一次。
+ *   超限后短路返回 null（本次评测标记失败），并 warn 一次。
  * - maxPromptChars：被测输出截断上限（max tokens 的代理），防超长输出烧 judge 额度。
  *
  * 计数器在闭包内：每次 runBaseline/runImprove 新建 delegate 即重置。
@@ -98,7 +97,7 @@ export function withJudgeBudget(delegate: ScoreDelegate, budget?: JudgeBudget): 
     if (budget.maxCalls != null && calls >= budget.maxCalls) {
       if (!warned) {
         warned = true
-        console.warn(`[Eval] judge 预算耗尽（maxCalls=${budget.maxCalls}），后续 Case 回退规则打分`)
+        console.warn(`[Eval] judge 预算耗尽（maxCalls=${budget.maxCalls}），后续 Case 标记评测失败`)
       }
       return null
     }
@@ -112,7 +111,7 @@ export function withJudgeBudget(delegate: ScoreDelegate, budget?: JudgeBudget): 
 
 /**
  * 生成 LLM judge 的 ScoreDelegate：用指定渠道按 rubric 打分。
- * judge 调用失败或输出无法解析时返回 null（computeScores 会回退规则打分）。
+ * judge 调用失败或输出无法解析时返回 null，由评测器标记失败。
  * 传入 budget 时自动套预算隔离。
  */
 export function buildLlmJudgeScoreDelegate(channel: EvalChannelInfo, budget?: JudgeBudget): ScoreDelegate {
