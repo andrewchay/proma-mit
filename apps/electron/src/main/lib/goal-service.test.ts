@@ -3,7 +3,7 @@
  */
 
 import { describe, test, expect, beforeEach, afterEach, afterAll, mock } from 'bun:test'
-import { mkdirSync, rmSync, existsSync, writeFileSync, readFileSync } from 'node:fs'
+import { mkdirSync, rmSync, existsSync, writeFileSync, readFileSync, symlinkSync } from 'node:fs'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join } from 'node:path'
@@ -55,6 +55,18 @@ describe('Goal 服务', () => {
     expect(() => deleteGoal('index')).toThrow('Goal ID 无效')
     expect(() => deleteGoal('INDEX')).toThrow('Goal ID 无效')
     expect(readFileSync(outside, 'utf8')).toBe('原有内容')
+  })
+
+  test('Given Goal 路径为指向目录外的符号链接 When 读取、更新或删除 Then 保留链接和目标', () => {
+    const goal = createGoal({ title: '目标', objective: '验证链接' })
+    const goalFile = join(configDir, 'goals', `${goal.id}.json`)
+    const outside = join(configDir, 'outside.json')
+    writeFileSync(outside, JSON.stringify(goal))
+    rmSync(goalFile); symlinkSync(outside, goalFile)
+    expect(() => getGoal(goal.id)).toThrow('不是普通文件')
+    expect(() => updateGoal(goal.id, { title: '修改' })).toThrow('不是普通文件')
+    expect(() => deleteGoal(goal.id)).toThrow('不是普通文件')
+    expect(JSON.parse(readFileSync(outside, 'utf8')).title).toBe('目标')
   })
 
   test('创建 Goal 并设置默认草稿阶段', () => {
