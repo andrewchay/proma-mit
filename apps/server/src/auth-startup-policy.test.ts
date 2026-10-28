@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { assertTrustedHeaderAuthStartupPolicy, assertAuthModeStartupPolicy, assertNoneAuthStartupPolicy, resolveSecureSessionCookie } from './auth-startup-policy.ts'
+import { assertTrustedHeaderAuthStartupPolicy, assertAuthModeStartupPolicy, assertNoneAuthStartupPolicy, resolveDefaultAuthMode, resolveSecureSessionCookie } from './auth-startup-policy.ts'
 
 describe('会话 Cookie 传输策略', () => {
   test('Given HTTPS 公网地址 When 使用浏览器登录 Then 启用 Secure', () => {
@@ -63,6 +63,12 @@ describe('可信 Header 启动策略', () => {
 })
 
 describe('authMode 启动策略', () => {
+  test('Given 只配置企业 OIDC When 推导默认模式 Then 不要求不存在的本地管理员', () => {
+    expect(resolveDefaultAuthMode(true, false)).toBe('oidc')
+    expect(resolveDefaultAuthMode(true, true)).toBe('both')
+    expect(resolveDefaultAuthMode(false, true)).toBe('local')
+    expect(resolveDefaultAuthMode(false, false)).toBe('none')
+  })
   test('given local mode without admin then startup is refused', () => {
     expect(() => assertAuthModeStartupPolicy({
       trustedHeaderAuth: false,

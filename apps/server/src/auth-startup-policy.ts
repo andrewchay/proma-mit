@@ -53,6 +53,10 @@ export interface PromaWebAuthModeStartupPolicyInput {
   hasOidcClient: boolean
 }
 
+export function resolveDefaultAuthMode(hasOidc: boolean, hasLocalAdmin: boolean): 'local' | 'oidc' | 'both' | 'none' {
+  return hasOidc ? (hasLocalAdmin ? 'both' : 'oidc') : hasLocalAdmin ? 'local' : 'none'
+}
+
 /**
  * authMode 启动策略：保证私有部署"登录闭环"被正确配置。
  * - local/both：必须提供 PROMA_WEB_ADMIN（本地 bootstrap 管理员）

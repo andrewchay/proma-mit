@@ -1,5 +1,5 @@
 import { createPromaWebServerApplication } from './app.ts'
-import { assertTrustedHeaderAuthStartupPolicy, assertAuthModeStartupPolicy, assertNoneAuthStartupPolicy, resolveSecureSessionCookie } from './auth-startup-policy.ts'
+import { assertTrustedHeaderAuthStartupPolicy, assertAuthModeStartupPolicy, assertNoneAuthStartupPolicy, resolveDefaultAuthMode, resolveSecureSessionCookie } from './auth-startup-policy.ts'
 import { createOidcJwtAuth } from './jwt-auth.ts'
 import { parseAdminAccount } from './local-admin-auth.ts'
 import type { AgentRuntimeWebAuthResolver } from '@gravitas/shared/utils'
@@ -39,7 +39,7 @@ const oidcIssuer = process.env.PROMA_WEB_OIDC_ISSUER
 const oidcConfigured = Boolean(oidcIssuer && process.env.PROMA_WEB_OIDC_AUDIENCE && process.env.PROMA_WEB_OIDC_JWKS_URL)
 const adminRaw = process.env.PROMA_WEB_ADMIN
 // 默认 authMode：配了 OIDC → both（若也配 admin）；否则 admin → local；否则 none
-const authMode = (process.env.PROMA_WEB_AUTH_MODE ?? (oidcConfigured ? 'both' : adminRaw ? 'local' : 'none')) as 'local' | 'oidc' | 'both' | 'none'
+const authMode = (process.env.PROMA_WEB_AUTH_MODE ?? resolveDefaultAuthMode(oidcConfigured, Boolean(adminRaw))) as 'local' | 'oidc' | 'both' | 'none'
 assertNoneAuthStartupPolicy({ authMode, trustedHeaderAuth, hostname, nodeEnv: process.env.NODE_ENV })
 const secureSessionCookie = !trustedHeaderAuth && authMode !== 'none'
   ? resolveSecureSessionCookie({ publicBaseUrl: process.env.PROMA_WEB_PUBLIC_BASE_URL, hostname, nodeEnv: process.env.NODE_ENV })
