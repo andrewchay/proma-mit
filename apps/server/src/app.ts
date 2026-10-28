@@ -12,6 +12,7 @@ import {
   RedisAgentRuntimeEventStore,
 } from '@gravitas/shared/utils'
 import { ServerMcpConnectionManager } from '@gravitas/shared/utils/node'
+import { readBoundedObjectBody } from './bounded-object-body.ts'
 import type {
   AgentRuntimePostgresClient,
   AgentRuntimeRole,
@@ -1311,7 +1312,7 @@ function matchWorkspaceFileRoute(method: string, pathname: string): { workspaceS
   }
 }
 
-class S3AgentRuntimeObjectStore implements AgentRuntimeObjectStore {
+export class S3AgentRuntimeObjectStore implements AgentRuntimeObjectStore {
   private readonly client: S3Client
 
   constructor(private readonly config: PromaWebS3Config) {
@@ -1330,11 +1331,13 @@ class S3AgentRuntimeObjectStore implements AgentRuntimeObjectStore {
     return { key: input.key, size: input.body.byteLength, contentType: input.contentType, updatedAt: Date.now() }
   }
 
-  async getObject(key: string) {
+  async getObject(key: string, options?: { maxBytes: number }) {
+    if (options && (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0)) throw new Error('读取大小限制无效')
     try {
       const response = await this.client.send(new GetObjectCommand({ Bucket: this.config.bucket, Key: key }))
       if (!response.Body) return undefined
-      return { key, size: Number(response.ContentLength ?? 0), contentType: response.ContentType, updatedAt: Date.now(), body: new Uint8Array(await response.Body.transformToByteArray()) }
+      const body = options ? await readBoundedObjectBody(response.Body.transformToWebStream(), options.maxBytes) : new Uint8Array(await response.Body.transformToByteArray())
+      return { key, size: body.byteLength, contentType: response.ContentType, updatedAt: Date.now(), body }
     } catch (error) {
       if (isS3NotFound(error)) return undefined
       throw error

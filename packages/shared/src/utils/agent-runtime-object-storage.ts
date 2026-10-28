@@ -24,7 +24,7 @@ export interface AgentRuntimeListObjectsInput {
 
 export interface AgentRuntimeObjectStore {
   putObject(input: AgentRuntimePutObjectInput): Promise<AgentRuntimeObjectRef>
-  getObject(key: string): Promise<AgentRuntimeStoredObject | undefined>
+  getObject(key: string, options?: { maxBytes: number }): Promise<AgentRuntimeStoredObject | undefined>
   deleteObject(key: string): Promise<void>
   listObjects(input: AgentRuntimeListObjectsInput): Promise<AgentRuntimeObjectRef[]>
 }
@@ -36,6 +36,10 @@ export interface AgentRuntimeWorkspaceObjectInput extends AgentRuntimeScope {
 
 export interface AgentRuntimeSessionArtifactObjectInput extends ScopedAgentSession {
   relativePath: string
+}
+
+export class AgentRuntimeObjectTooLargeError extends Error {
+  constructor() { super('对象超过读取大小限制'); this.name = 'AgentRuntimeObjectTooLargeError' }
 }
 
 export class InMemoryAgentRuntimeObjectStore implements AgentRuntimeObjectStore {
@@ -53,8 +57,10 @@ export class InMemoryAgentRuntimeObjectStore implements AgentRuntimeObjectStore 
     return objectRef(stored)
   }
 
-  async getObject(key: string): Promise<AgentRuntimeStoredObject | undefined> {
+  async getObject(key: string, options?: { maxBytes: number }): Promise<AgentRuntimeStoredObject | undefined> {
+    if (options && (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0)) throw new Error('读取大小限制无效')
     const object = this.objects.get(key)
+    if (object && options && object.body.byteLength > options.maxBytes) throw new AgentRuntimeObjectTooLargeError()
     return object ? { ...objectRef(object), body: cloneBytes(object.body) } : undefined
   }
 

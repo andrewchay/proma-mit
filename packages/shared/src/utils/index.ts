@@ -114,6 +114,7 @@ export {
   createAgentRuntimeWorkspaceObjectKey,
   createAgentRuntimeWorkspaceObjectPrefix,
   InMemoryAgentRuntimeObjectStore,
+  AgentRuntimeObjectTooLargeError,
   normalizeRelativeObjectPath,
 } from './agent-runtime-object-storage'
 export type {

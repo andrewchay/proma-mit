@@ -75,6 +75,10 @@ describe.skipIf(!databaseUrl)('企业工作区成员的真实 Postgres 隔离', 
     const shared = '/agent/shared-workspaces/owner/project/files/report.html'
     const request = (method: string, user: string, path: string, payload?: string, tenantId = tenant) => new Request(`http://server${path}`, { method, headers: { 'x-test-user': user, 'x-test-tenant': tenantId, ...(payload ? { 'content-type': 'application/json' } : {}) }, ...(payload ? { body: payload } : {}) })
     expect((await app.fetch(request('GET', 'reader', shared))).status).toBe(404)
+    const largeKey = createAgentRuntimeWorkspaceObjectKey({ ...owner, workspaceSlug: 'project', relativePath: 'large.bin' })
+    const largeBody = new Uint8Array(1025)
+    await objects.putObject({ key: largeKey, body: largeBody })
+    expect((await app.fetch(request('PUT', 'owner', '/agent/workspaces/project/shared-files/large.bin', JSON.stringify({ expectedSha256: createHash('sha256').update(largeBody).digest('hex') })))).status).toBe(413)
     expect((await app.fetch(request('GET', 'reader', '/agent/shared-workspaces/owner/project/files/%2e%2e%2Fsecret'))).status).toBe(404)
     expect((await app.fetch(request('PUT', 'outsider', publish, JSON.stringify({ expectedSha256: hash })))).status).toBe(403)
     expect((await app.fetch(request('PUT', 'owner', publish, JSON.stringify({ expectedSha256: '0'.repeat(64) })))).status).toBe(409)
@@ -96,15 +100,17 @@ describe.skipIf(!databaseUrl)('企业工作区成员的真实 Postgres 隔离', 
     const fetchGate = new Promise<void>((resolve) => { releaseFetch = resolve })
     const delayedObjects = {
       putObject: objects.putObject.bind(objects), deleteObject: objects.deleteObject.bind(objects), listObjects: objects.listObjects.bind(objects),
-      getObject: async (objectKey: string) => { signalFetch(); await fetchGate; return objects.getObject(objectKey) },
+      getObject: async (objectKey: string, options?: { maxBytes: number }) => { signalFetch(); await fetchGate; return objects.getObject(objectKey, options) },
     }
     const delayedApp = createPromaWebServerApplication({ databaseUrl: databaseUrl!, redisUrl: 'redis://unused', s3: { bucket: 'unused', region: 'auto', maxUploadBytes: 1024 }, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test', trustedHeaderAuth: false, workspaceRoot: '/tmp/membership-test', workerId: 'test', taskLeaseMs: 30000 }, { postgres: client, objectStore: delayedObjects, auth: ({ request }) => ({ tenantId: tenant, userId: request.headers.get('x-test-user') ?? 'reader', roles: [request.headers.get('x-test-user') === 'owner' ? 'operator' : 'viewer'] }) })
     const inFlight = delayedApp.fetch(request('GET', 'reader', shared))
     await fetchStarted
     await members.removeMember(owner, 'project', 'reader')
+    await objects.putObject({ key, body: new Uint8Array(1025) })
     releaseFetch()
     expect((await inFlight).status).toBe(404)
     await members.setMember(owner, 'project', 'reader', 'viewer')
+    expect((await app.fetch(request('GET', 'reader', shared))).status).toBe(409)
     await objects.putObject({ key, body: new TextEncoder().encode('changed') })
     expect((await app.fetch(request('GET', 'reader', shared))).status).toBe(409)
     const updatedHash = createHash('sha256').update('changed').digest('hex')

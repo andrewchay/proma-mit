@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
-import { createAgentRuntimeWorkspaceObjectKey, normalizeRelativeObjectPath } from '@gravitas/shared/utils'
-import type { AgentRuntimeObjectStore, AgentRuntimePostgresClient, AgentRuntimeScope } from '@gravitas/shared/utils'
+import { AgentRuntimeObjectTooLargeError, createAgentRuntimeWorkspaceObjectKey, normalizeRelativeObjectPath } from '@gravitas/shared/utils'
+import type { AgentRuntimeObjectStore, AgentRuntimePostgresClient, AgentRuntimeScope, AgentRuntimeStoredObject } from '@gravitas/shared/utils'
 import { createWorkspaceFileDownloadResponse } from './workspace-file-response.ts'
 import { readBoundedJson } from './workspace-membership-api.ts'
 
@@ -72,7 +72,9 @@ export async function handleSharedFileRoute(request: Request, scope: AgentRuntim
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return Response.json({ error: '必须提供预期 SHA-256' }, { status: 400 })
     const body = raw as Record<string, unknown>
     if (Object.keys(body).length !== 1 || typeof body.expectedSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(body.expectedSha256)) return Response.json({ error: '必须提供预期 SHA-256' }, { status: 400 })
-    const object = await objects.getObject(key)
+    let object: AgentRuntimeStoredObject | undefined
+    try { object = await objects.getObject(key, { maxBytes }) }
+    catch (error) { if (error instanceof AgentRuntimeObjectTooLargeError) return Response.json({ error: '文件超过共享大小限制' }, { status: 413 }); throw error }
     if (!object) return Response.json({ error: '文件不存在或不可发布' }, { status: 404 })
     if (object.body.byteLength > maxBytes) return Response.json({ error: '文件超过共享大小限制' }, { status: 413 })
     const sha256 = createHash('sha256').update(object.body).digest('hex')
@@ -81,10 +83,13 @@ export async function handleSharedFileRoute(request: Request, scope: AgentRuntim
   }
   const before = await store.findAuthorized(scope, route)
   if (!before) return Response.json({ error: '文件不存在或不可访问' }, { status: 404 })
-  const object = await objects.getObject(key)
+  let object: AgentRuntimeStoredObject | undefined
+  let oversized = false
+  try { object = await objects.getObject(key, { maxBytes: Math.min(before.size, maxBytes) }) }
+  catch (error) { if (error instanceof AgentRuntimeObjectTooLargeError) oversized = true; else throw error }
   const after = await store.findAuthorized(scope, route)
   if (!after || after.sha256 !== before.sha256 || after.size !== before.size) return Response.json({ error: '文件不存在或不可访问' }, { status: 404 })
-  if (!object || object.body.byteLength !== after.size || createHash('sha256').update(object.body).digest('hex') !== after.sha256) return Response.json({ error: '共享文件内容已变化，请所有者重新核对发布' }, { status: 409 })
+  if (oversized || !object || object.body.byteLength !== after.size || createHash('sha256').update(object.body).digest('hex') !== after.sha256) return Response.json({ error: '共享文件内容已变化，请所有者重新核对发布' }, { status: 409 })
   const response = createWorkspaceFileDownloadResponse(object.body, object.contentType)
   response.headers.set('cache-control', 'private, no-store')
   return response
