@@ -6,6 +6,7 @@ import type { CreateMonitorInput } from './monitor-service'
 import type { MemoryItemKind } from './memory-plugin-service'
 import { adoptAgentEmployeeCapabilityVersion, getAgentEmployee, listAgentEmployeeLearningSamples } from './project-sqlite-store'
 import { createHash } from 'node:crypto'
+import { fingerprintCapabilityEvidence } from './employee-capability-evidence'
 
 export interface ApprovedChangeExecutorDependencies {
   createSchedule: (input: CreateProactiveScheduleInput) => void
@@ -70,6 +71,7 @@ export async function executeApprovedChange(
       if (evidence.length !== evidenceIds.length || evidence.some((sample) => sample.privacyStatus !== 'sanitized' || sample.outcome === 'manual_excluded' || (change.scope === 'workspace' && sample.workspaceId !== change.workspaceId))) {
         throw new Error('能力推广证据已删除、排除或不属于目标工作区，请重新生成候选')
       }
+      if (!isString(change.evidenceFingerprint) || fingerprintCapabilityEvidence(evidence) !== change.evidenceFingerprint) throw new Error('能力推广证据已变更或缺少冻结摘要，请重新生成候选')
       adoptAgentEmployeeCapabilityVersion({
         agentId: change.agentId,
         parentVersionId: typeof change.parentVersionId === 'string' ? change.parentVersionId : undefined,

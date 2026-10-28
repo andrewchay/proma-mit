@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { approveApproval, createApproval, setApprovedChangeExecutor } from './approval-service'
 import { executeApprovedChange } from './proactive-approved-change-executor'
-import { closeProjectDb, createAgentEmployee, createAgentEmployeeLearningSample, createProject, createTask, excludeAgentEmployeeLearningSample, initProjectDb, listAgentEmployeeCapabilityVersions, updateAgentEmployee } from './project-sqlite-store'
+import { closeProjectDb, createAgentEmployee, createAgentEmployeeLearningSample, createProject, createTask, excludeAgentEmployeeLearningSample, initProjectDb, listAgentEmployeeCapabilityVersions, reviewAgentEmployeeLearningSample, updateAgentEmployee } from './project-sqlite-store'
 import { proposeEmployeeCapabilityAdoption } from './agent-employee-capability-service'
 
 const configDir = join(tmpdir(), `gravitas-capability-approval-${randomUUID()}`)
@@ -65,6 +65,17 @@ test('Given 候选审批待处理时证据被排除 When 批准 Then 不激活�
   const sampleIds = makeEvidence(employee.id)
   const approval = proposeEmployeeCapabilityAdoption({ agentId: employee.id, scope: 'role', content: '先核对证据。', trainingScore: 80, heldOutScore: 80, judgeIndependent: true, evidenceSampleIds: sampleIds })
   excludeAgentEmployeeLearningSample(sampleIds[0]!)
+  const result = await approveApproval(approval.approvalId)
+  expect(result?.executionStatus).toBe('failed')
+  expect(result?.executionError).toContain('证据')
+  expect(listAgentEmployeeCapabilityVersions(employee.id)).toHaveLength(0)
+})
+
+test('Given 候选审批待处理时证据摘要被修改 When 批准 Then 不激活旧候选', async () => {
+  const employee = createAgentEmployee({ name: '证据漂移', role: '测试', description: '', channelId: 'channel' })
+  const sampleIds = makeEvidence(employee.id)
+  const approval = proposeEmployeeCapabilityAdoption({ agentId: employee.id, scope: 'role', content: '先核对证据。', trainingScore: 80, heldOutScore: 80, judgeIndependent: true, evidenceSampleIds: sampleIds })
+  reviewAgentEmployeeLearningSample(sampleIds[0]!, '已重新审核的新摘要')
   const result = await approveApproval(approval.approvalId)
   expect(result?.executionStatus).toBe('failed')
   expect(result?.executionError).toContain('证据')
