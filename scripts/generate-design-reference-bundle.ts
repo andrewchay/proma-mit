@@ -18,5 +18,8 @@ for (const entry of catalog.entries) {
     tokens: await readFile(resolve(dir, 'tokens.css'), 'utf8'),
   }
 }
-await writeFile(resolve(root, 'apps/electron/resources/opendesign-references.json'), JSON.stringify({ revision, license: catalog.license, entries }) + '\n')
+for (let offset = 0; offset < catalog.entries.length; offset += 38) {
+  const part = Object.fromEntries(catalog.entries.slice(offset, offset + 38).map(entry => [entry.id, entries[entry.id]!]))
+  await writeFile(resolve(root, `apps/electron/resources/opendesign-references-${offset / 38}.json`), JSON.stringify({ revision, license: catalog.license, entries: part }) + '\n')
+}
 await writeFile(resolve(root, 'apps/electron/resources/opendesign-LICENSE.txt'), await readFile(resolve(source, 'LICENSE')))

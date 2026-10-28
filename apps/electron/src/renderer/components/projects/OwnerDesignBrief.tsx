@@ -6,6 +6,12 @@ const kinds = ['网页', '报告', '幻灯片', '海报'] as const
 interface DesignReference { design: string; tokens: string }
 interface DesignBrief { kind: typeof kinds[number]; goal: string; brandId: string; style: string; quote: string; status: string }
 const categories = [...new Set(catalog.entries.map(entry => entry.category))]
+const referenceLoaders = [
+  () => import('../../../../resources/opendesign-references-0.json'),
+  () => import('../../../../resources/opendesign-references-1.json'),
+  () => import('../../../../resources/opendesign-references-2.json'),
+  () => import('../../../../resources/opendesign-references-3.json'),
+]
 
 /** 只生成用户可编辑的对话草稿，不改写工作区文件。 */
 export function OwnerDesignBrief({ disabled, onAdd }: { disabled: boolean; onAdd: (text: string) => boolean }): React.ReactElement {
@@ -19,7 +25,10 @@ export function OwnerDesignBrief({ disabled, onAdd }: { disabled: boolean; onAdd
     if (!id) { setReference({ id: '' }); return }
     let active = true
     setReference({ id })
-    void import('../../../../resources/opendesign-references.json').then(bundle => {
+    const index = catalog.entries.findIndex(entry => entry.id === id)
+    const load = referenceLoaders[Math.floor(index / 38)]
+    if (!load) { setReference({ id, error: '参考内容不可用' }); return }
+    void load().then(bundle => {
       if (!active) return
       const value = (bundle.entries as Record<string, DesignReference>)[id]
       setReference(value ? { id, value } : { id, error: '参考内容不可用' })
