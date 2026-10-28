@@ -48,9 +48,13 @@ export interface AuditChainVerification {
   firstMismatchIndex: number
 }
 
+export interface AuditPostgresClient extends AgentRuntimePostgresClient {
+  transaction?(run: (client: AgentRuntimePostgresClient) => Promise<void>): Promise<void>
+}
+
 /** 仅追加的审计记录；不保存请求体、凭证或模型输出。 */
 export class PostgresAuditLog {
-  constructor(private readonly client: AgentRuntimePostgresClient) {}
+  constructor(private readonly client: AuditPostgresClient) {}
 
   async initializeSchema(): Promise<void> {
     await this.client.query(`CREATE TABLE IF NOT EXISTS proma_runtime_audit_log (
@@ -97,26 +101,28 @@ export class PostgresAuditLog {
 
   /**
    * 追加审计记录；自动计算与租户链尾相连的 hash 链。
-   * 会先查询该 tenant 的最新 hash 作为 prev_hash，再插入并写入本行 hash。
-   * 注意：此实现为两次查询（先读链尾再写），极端并发下可能断链；
-   * 生产如需绝对并发安全应改用事务或数据库触发器（P8-3 阶段完善）。
+   * 同租户在事务内取得 advisory lock，再读链尾和插入；跨进程共用数据库锁。
    */
   async append(record: AuditRecord): Promise<void> {
     const createdAt = record.createdAt ?? Date.now()
-    const prevRow = await this.client.query<Record<string, unknown>>(
-      'SELECT hash FROM proma_runtime_audit_log WHERE tenant_id = $1 ORDER BY id DESC LIMIT 1',
-      [record.tenantId],
-    )
-    const prevHash = prevRow.rows[0] && typeof prevRow.rows[0].hash === 'string' ? String(prevRow.rows[0].hash) : ''
-    const hash = PostgresAuditLog.computeHash({
-      tenantId: record.tenantId, userId: record.userId, action: record.action, resource: record.resource,
-      result: record.result, createdAt, prevHash, seq: 1,
+    if (!this.client.transaction) throw new Error('审计追加需要数据库事务支持')
+    await this.client.transaction(async (transaction) => {
+      await transaction.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 17493621))', [record.tenantId])
+      const prevRow = await transaction.query<Record<string, unknown>>(
+        'SELECT hash FROM proma_runtime_audit_log WHERE tenant_id = $1 ORDER BY id DESC LIMIT 1',
+        [record.tenantId],
+      )
+      const prevHash = prevRow.rows[0] && typeof prevRow.rows[0].hash === 'string' ? String(prevRow.rows[0].hash) : ''
+      const hash = PostgresAuditLog.computeHash({
+        tenantId: record.tenantId, userId: record.userId, action: record.action, resource: record.resource,
+        result: record.result, createdAt, prevHash, seq: 1,
     })
-    await this.client.query(
+    await transaction.query(
       `INSERT INTO proma_runtime_audit_log (tenant_id, user_id, action, resource, result, request_id, trace_id, task_id, created_at, prev_hash, hash)
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [record.tenantId, record.userId, record.action, record.resource, record.result, record.requestId ?? null, record.traceId ?? null, record.taskId ?? null, createdAt, prevHash, hash],
     )
+    })
   }
 
   async list(query: AuditQuery): Promise<AuditRecord[]> {

@@ -1402,6 +1402,12 @@ class BunPostgresClient implements AgentRuntimePostgresClient {
     const rows = await this.sql.unsafe<Row[]>(sql, [...params])
     return { rows }
   }
+
+  async transaction(run: (client: AgentRuntimePostgresClient) => Promise<void>): Promise<void> {
+    await this.sql.begin(async (transaction) => {
+      await run({ query: async <Row extends Record<string, unknown>>(sql: string, params: readonly unknown[] = []) => ({ rows: await transaction.unsafe<Row[]>(sql, [...params]) }) })
+    })
+  }
 }
 
 function createTrustedHeaderAuth(enabled: boolean): AgentRuntimeWebAuthResolver {

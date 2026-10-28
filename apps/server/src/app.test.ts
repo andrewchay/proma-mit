@@ -88,10 +88,10 @@ describe('Proma Web 服务', () => {
   test('会话管理 API 默认排除已归档会话，并支持搜索分页参数', async () => {
     const calls: Array<readonly unknown[]> = []
     const auth: AgentRuntimeWebAuthResolver = () => ({ tenantId: 'tenant-a', userId: 'user-a' })
-    const postgres: AgentRuntimePostgresClient = { query: async <Row extends Record<string, unknown>>(_sql: string, params: readonly unknown[] = []) => {
+    const postgres = { query: async <Row extends Record<string, unknown>>(_sql: string, params: readonly unknown[] = []) => {
       calls.push(params)
       return { rows: [] as Row[] }
-    } }
+    }, transaction: async (run: (client: AgentRuntimePostgresClient) => Promise<void>) => { await run(postgres) } }
     const app = createPromaWebServerApplication({
       databaseUrl: 'postgres://unused', redisUrl: 'redis://unused', s3: testS3Config,
       envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test-v1', trustedHeaderAuth: false,
@@ -235,6 +235,7 @@ class FakePostgresClient implements AgentRuntimePostgresClient {
   async query<Row extends Record<string, unknown>>(): Promise<{ rows: Row[] }> {
     return { rows: [] }
   }
+  async transaction(run: (client: AgentRuntimePostgresClient) => Promise<void>): Promise<void> { await run(this) }
 }
 
 const testS3Config = {

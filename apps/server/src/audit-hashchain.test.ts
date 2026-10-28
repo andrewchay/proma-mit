@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { PostgresAuditLog } from './audit.ts'
-import type { AgentRuntimePostgresClient } from '@gravitas/shared/utils'
+import { PostgresAuditLog, type AuditPostgresClient } from './audit.ts'
 
 interface AuditRow {
   id?: number
@@ -23,7 +22,7 @@ const SCOPE = { tenantId: 'tenant-a', userId: 'user-a' }
 function makeMemoryDb() {
   const rows: AuditRow[] = []
   let nextId = 1
-  const client: AgentRuntimePostgresClient = {
+  const client: AuditPostgresClient = {
     query: async <Row extends Record<string, unknown>>(sql: string, params: readonly unknown[] = []) => {
       // SELECT 链尾 hash
       if (sql.includes('ORDER BY id DESC LIMIT 1')) {
@@ -54,6 +53,7 @@ function makeMemoryDb() {
       }
       return { rows: [] }
     },
+    transaction: async (run) => { await run(client) },
   }
   return { client, rows }
 }

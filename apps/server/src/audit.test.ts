@@ -2,14 +2,21 @@ import { describe, expect, test } from 'bun:test'
 import { PostgresAuditLog } from './audit.ts'
 
 describe('P4 audit log', () => {
+  test('Given 数据库连接不支持事务 When 追加审计 Then 明确失败而非写入断链', async () => {
+    let called = false
+    const audit = new PostgresAuditLog({ query: async () => { called = true; return { rows: [] } } })
+    await expect(audit.append({ tenantId: 'tenant', userId: 'user', action: 'test', resource: '/x', result: 'success' })).rejects.toThrow('需要数据库事务')
+    expect(called).toBe(false)
+  })
   test('only appends metadata and never requires request payloads', async () => {
     const calls: readonly unknown[][] = []
-    const audit = new PostgresAuditLog({ query: async (_sql, params: readonly unknown[] = []) => {
+    const client = { query: async (_sql: string, params: readonly unknown[] = []) => {
       ;(calls as unknown[][]).push([...params])
       return { rows: [] }
-    } })
+    }, transaction: async (run: (tx: import('@gravitas/shared/utils').AgentRuntimePostgresClient) => Promise<void>) => { await run(client) } }
+    const audit = new PostgresAuditLog(client)
     await audit.append({ tenantId: 'tenant', userId: 'user', action: 'POST /agent/sessions', resource: '/agent/sessions', result: 'success', requestId: 'request' })
-    // append 现在含一次链尾 SELECT（只传 tenant）与一次 INSERT（含 action），校验 INSERT 不含敏感载荷
+    // 校验 INSERT 不含敏感载荷。
     const insertCall = calls.find((c) => c.includes('POST /agent/sessions'))
     expect(insertCall).toBeDefined()
     expect(insertCall).not.toContain('api-key')
