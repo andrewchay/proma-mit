@@ -9,17 +9,28 @@ const directory = mkdtempSync(join(tmpdir(), 'owner-delivery-download-'))
 afterAll(() => rmSync(directory, { recursive: true, force: true }))
 test('Given已交付代码 When直接查看并点击下载HTML Then不执行正文且下载字节与源码一致', async () => {
   const root = resolve(import.meta.dir, '../../../../../..')
-  const html = '<!DOCTYPE html><html><body><script>window.deliveryRan=true</script>2048</body></html>'
+  const html = '<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=https://example.invalid/preview-redirect"></head><body><script>window.deliveryRan=true</script><img src="https://example.invalid/preview-probe">2048</body></html>'
   const content = `这是已有成果\n\n\`\`\`html\n${html}\n\`\`\``
   const item = { stepKey: 'game', title: '2048游戏', content, artifactHash: 'a'.repeat(64), acceptanceCriteria: ['可玩'], ownerDecision: '已验收', reviewerSummary: '静态检查' }
-  writeFileSync(join(directory, 'entry.tsx'), `import React from 'react';import {createRoot} from 'react-dom/client';import {OwnerDeliveredArtifact} from ${JSON.stringify(join(import.meta.dir, 'OwnerDeliveredArtifact.tsx'))};createRoot(document.getElementById('root')).render(<OwnerDeliveredArtifact item={${JSON.stringify(item)}}/>);`)
+  writeFileSync(join(directory, 'entry.tsx'), `import React from 'react';import {createRoot} from 'react-dom/client';import {OwnerDeliveredArtifact} from ${JSON.stringify(join(import.meta.dir, 'OwnerDeliveredArtifact.tsx'))};const root=createRoot(document.getElementById('root'));window.renderItem=(item)=>root.render(<OwnerDeliveredArtifact item={item}/>);window.renderItem(${JSON.stringify(item)});`)
   await build({ entryPoints: [join(directory, 'entry.tsx')], outfile: join(directory, 'entry.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], logLevel: 'silent' })
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: request => new Response(new URL(request.url).pathname === '/entry.js' ? readFileSync(join(directory, 'entry.js')) : '<div id="root"></div><script src="/entry.js"></script>', { headers: { 'Content-Type': new URL(request.url).pathname === '/entry.js' ? 'text/javascript' : 'text/html' } }) })
   const browser = await chromium.launch({ headless: true })
   try {
     const page = await browser.newPage({ acceptDownloads: true })
+    const externalFailures: string[] = []
+    page.on('requestfailed', request => { if (request.url().includes('preview-')) externalFailures.push(request.failure()?.errorText ?? '') })
     await page.goto(`http://127.0.0.1:${server.port}`)
     expect(await page.getByText(content, { exact: true }).isVisible()).toBe(true)
+    expect(await page.evaluate('window.deliveryRan')).toBeUndefined()
+    await page.getByRole('button', { name: '静态预览', exact: true }).click()
+    const frame = page.frameLocator('iframe[title="2048游戏 静态预览"]')
+    expect(await frame.getByText('2048', { exact: true }).isVisible()).toBe(true)
+    expect(await page.locator('iframe').getAttribute('sandbox')).toBe('')
+    const previewFrame = page.frames().find(candidate => candidate !== page.mainFrame())!
+    expect(await previewFrame.evaluate('window.deliveryRan')).toBeUndefined()
+    await page.waitForTimeout(100)
+    expect(externalFailures).toEqual(['csp'])
     expect(await page.evaluate('window.deliveryRan')).toBeUndefined()
     const download = page.waitForEvent('download')
     await page.getByRole('button', { name: '下载 HTML', exact: true }).click()
@@ -29,5 +40,9 @@ test('Given已交付代码 When直接查看并点击下载HTML Then不执行正�
     const originalDownload = page.waitForEvent('download')
     await page.getByRole('button', { name: '下载原文', exact: true }).click()
     expect(readFileSync((await (await originalDownload).path())!, 'utf8')).toBe(content)
+    await page.evaluate((next) => (window as unknown as { renderItem: (value: unknown) => void }).renderItem(next), { ...item, artifactHash: 'b'.repeat(64), title: '新版本' })
+    await page.getByRole('heading', { name: '新版本', exact: true }).waitFor()
+    expect(await page.locator('iframe').count()).toBe(0)
+    expect(await page.getByRole('button', { name: '静态预览', exact: true }).isVisible()).toBe(true)
   } finally { await browser.close(); server.stop(true) }
 }, 30000)
