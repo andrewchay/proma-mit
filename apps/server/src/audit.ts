@@ -56,6 +56,14 @@ export interface AuditPostgresClient extends AgentRuntimePostgresClient {
 export class PostgresAuditLog {
   constructor(private readonly client: AuditPostgresClient) {}
 
+  private async withTenantLock(tenantId: string, run: (client: AgentRuntimePostgresClient) => Promise<void>): Promise<void> {
+    if (!this.client.transaction) throw new Error('审计操作需要数据库事务支持')
+    await this.client.transaction(async (transaction) => {
+      await transaction.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 17493621))', [tenantId])
+      await run(transaction)
+    })
+  }
+
   async initializeSchema(): Promise<void> {
     await this.client.query(`CREATE TABLE IF NOT EXISTS proma_runtime_audit_log (
       id BIGSERIAL PRIMARY KEY,
@@ -105,9 +113,7 @@ export class PostgresAuditLog {
    */
   async append(record: AuditRecord): Promise<void> {
     const createdAt = record.createdAt ?? Date.now()
-    if (!this.client.transaction) throw new Error('审计追加需要数据库事务支持')
-    await this.client.transaction(async (transaction) => {
-      await transaction.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 17493621))', [record.tenantId])
+    await this.withTenantLock(record.tenantId, async (transaction) => {
       const prevRow = await transaction.query<Record<string, unknown>>(
         'SELECT hash FROM proma_runtime_audit_log WHERE tenant_id = $1 ORDER BY id DESC LIMIT 1',
         [record.tenantId],
@@ -196,34 +202,43 @@ export class PostgresAuditLog {
   }
 
   /** 按保留期清理旧审计记录；调用方必须先完成管理员授权。 */
-  async purgeBefore(scope: AgentRuntimeScope, timestamp: number): Promise<void> {    if (await this.hasActiveLegalHold(scope)) throw new Error('当前租户存在有效法律保全，禁止清理审计记录')
-    await this.client.query(
-      'DELETE FROM proma_runtime_audit_log WHERE tenant_id = $1 AND user_id = $2 AND created_at < $3',
-      [scope.tenantId, scope.userId, timestamp],
-    )
+  async purgeBefore(scope: AgentRuntimeScope, timestamp: number): Promise<void> {
+    await this.withTenantLock(scope.tenantId, async (transaction) => {
+      if (await this.hasActiveLegalHold(scope, transaction)) throw new Error('当前租户存在有效法律保全，禁止清理审计记录')
+      await transaction.query(
+        'DELETE FROM proma_runtime_audit_log WHERE tenant_id = $1 AND user_id = $2 AND created_at < $3',
+        [scope.tenantId, scope.userId, timestamp],
+      )
+    })
   }
 
   async createLegalHold(hold: AuditLegalHold): Promise<void> {
-    await this.client.query(
-      `INSERT INTO proma_runtime_audit_legal_holds (tenant_id, user_id, hold_id, reason, created_at, released_at)
-       VALUES ($1,$2,$3,$4,$5,NULL)
-       ON CONFLICT (tenant_id, user_id, hold_id) DO UPDATE SET reason = EXCLUDED.reason, created_at = EXCLUDED.created_at, released_at = NULL`,
-      [hold.tenantId, hold.userId, hold.holdId, hold.reason, hold.createdAt ?? Date.now()],
-    )
+    await this.withTenantLock(hold.tenantId, async (transaction) => {
+      await transaction.query(
+        `INSERT INTO proma_runtime_audit_legal_holds (tenant_id, user_id, hold_id, reason, created_at, released_at)
+         VALUES ($1,$2,$3,$4,$5,NULL)
+         ON CONFLICT (tenant_id, user_id, hold_id) DO UPDATE SET reason = EXCLUDED.reason, created_at = EXCLUDED.created_at, released_at = NULL`,
+        [hold.tenantId, hold.userId, hold.holdId, hold.reason, hold.createdAt ?? Date.now()],
+      )
+    })
   }
 
   async releaseLegalHold(scope: AgentRuntimeScope, holdId: string): Promise<boolean> {
-    const result = await this.client.query(
-      'UPDATE proma_runtime_audit_legal_holds SET released_at = $4 WHERE tenant_id = $1 AND user_id = $2 AND hold_id = $3 AND released_at IS NULL',
-      [scope.tenantId, scope.userId, holdId, Date.now()],
-    )
-    return (result.rows.length > 0) || Boolean((result as { rowCount?: number }).rowCount)
+    let released = false
+    await this.withTenantLock(scope.tenantId, async (transaction) => {
+      const result = await transaction.query(
+        'UPDATE proma_runtime_audit_legal_holds SET released_at = $4 WHERE tenant_id = $1 AND user_id = $2 AND hold_id = $3 AND released_at IS NULL RETURNING hold_id',
+        [scope.tenantId, scope.userId, holdId, Date.now()],
+      )
+      released = result.rows.length > 0
+    })
+    return released
   }
 
-  async hasActiveLegalHold(scope: AgentRuntimeScope): Promise<boolean> {
-    const result = await this.client.query<Record<string, unknown>>(
-      'SELECT hold_id FROM proma_runtime_audit_legal_holds WHERE tenant_id = $1 AND user_id = $2 AND released_at IS NULL LIMIT 1',
-      [scope.tenantId, scope.userId],
+  async hasActiveLegalHold(scope: AgentRuntimeScope, client: AgentRuntimePostgresClient = this.client): Promise<boolean> {
+    const result = await client.query<Record<string, unknown>>(
+      'SELECT hold_id FROM proma_runtime_audit_legal_holds WHERE tenant_id = $1 AND released_at IS NULL LIMIT 1',
+      [scope.tenantId],
     )
     return result.rows.length > 0
   }

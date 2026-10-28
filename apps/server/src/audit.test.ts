@@ -34,10 +34,11 @@ describe('P4 audit log', () => {
 
   test('given an active legal hold when purging then it refuses to delete audit records', async () => {
     const calls: string[] = []
-    const audit = new PostgresAuditLog({ query: async <Row extends Record<string, unknown>>(sql: string) => {
+    const client = { query: async <Row extends Record<string, unknown>>(sql: string) => {
       calls.push(sql)
       return { rows: (sql.startsWith('SELECT hold_id') ? [{ hold_id: 'hold-1' }] : []) as unknown as Row[] }
-    } })
+    }, transaction: async (run: (tx: import('@gravitas/shared/utils').AgentRuntimePostgresClient) => Promise<void>) => { await run(client) } }
+    const audit = new PostgresAuditLog(client)
     await expect(audit.purgeBefore({ tenantId: 'tenant', userId: 'user' }, Date.now())).rejects.toThrow('法律保全')
     expect(calls.some((sql) => sql.startsWith('DELETE FROM'))).toBe(false)
   })

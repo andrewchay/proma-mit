@@ -88,7 +88,7 @@
 ### M1 浏览器登录闭环（最高优先）✅ 已完成（2026-08-13）
 - 2026-10-28 更新：`none` 会授予匿名管理员，仅允许本机 development；浏览器登录在非本机开发环境要求配置 `PROMA_WEB_PUBLIC_BASE_URL` 为外部 HTTPS 地址，登录和登出 Cookie 带 `Secure`。当前 compose 的 nginx 仅提供 HTTP，需自行配置可信 TLS 终止代理并限制直连；本更新不证明代理、OIDC 或生产部署已验收。
 - OIDC state 同时绑定发起登录浏览器的短期 HttpOnly Cookie，并由服务端一次性消费；授权码交换使用 PKCE S256，ID token 验证 nonce 和必填有效期。当前默认 state 存储仍是进程内的，多 worker 登录需要共享状态存储；真实 IdP 联通仍待验收。
-- 审计追加使用 Postgres 事务和租户级 advisory lock 串行连接链尾；缺少事务能力时拒绝追加。独立 Postgres 已验证并发追加和事务回滚；历史断链不会自动修复，业务操作与审计尚非同一事务，清理/法律保全并发以及外部投递仍需单独验收。
+- 审计追加、保全和清理使用 Postgres 事务和租户级 advisory lock；缺少事务能力时拒绝操作。独立 Postgres 已验证并发追加、事务回滚及同租户跨用户保全与清理互斥；历史断链不会自动修复，业务操作与审计尚非同一事务，外部投递仍需单独验收。
 - 生产 Compose 不再发布 server 的 3000 端口；Web 的 8080 仅绑定本机，需由本机 TLS 代理对外提供 HTTPS。Postgres 口令和连接串由部署者配置。**已有数据库卷的密码不会随环境变量自动修改**，迁移时先通过数据库管理操作修改凭据，再同步连接串；避免将模板空值或示例地址当成生产配置。
 - 目标：私有部署下运维/成员能浏览器登录，而非手动填 token。
 - 方案：本地用户名/密码（默认，scrypt 哈希 + HTTP-only 会话 cookie）与 OIDC Authorization Code（可配置）双路径；`PROMA_WEB_AUTH_MODE=local|oidc|both|none`。
