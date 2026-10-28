@@ -2,6 +2,7 @@ import { afterAll, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { executeInvokeAgentTool } from './agent-invoke-tool'
 import { executeAgentTool } from './agent-tool'
 import { executeReadTool } from './read-tool'
 import { executeWriteTool } from './write-tool'
@@ -22,6 +23,7 @@ test('Given 权威项目账本不可用 When 直接调用工具 Then 拒绝读�
   let subAgentCalls = 0
   globalThis.fetch = (async () => { networkCalls++; return new Response('unexpected') }) as unknown as typeof fetch
   const results = await Promise.all([
+    executeInvokeAgentTool({ toMemberId: 'agent-example', task: '检查' }, context),
     executeAgentTool({ agent_name: 'explorer', task: '检查' }, { ...context, runSubAgent: async () => { subAgentCalls++; return 'unexpected' } }),
     executeReadTool({ file_path: 'test.txt' }, context),
     executeWriteTool({ file_path: 'test.txt', content: 'changed' }, context),
