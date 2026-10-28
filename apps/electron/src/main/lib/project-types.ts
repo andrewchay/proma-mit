@@ -541,6 +541,7 @@ export interface AgentEmployeeCapabilityHealth {
   /** 已判定样本量（排除取消与待审核）；用于判断结论可信度。 */
   decidedSampleCount: number
   /** 观察期内已脱敏样本的最新人工判断，按执行去重。 */
+  humanJudgmentEligibleCount: number
   humanAcceptedCount: number
   humanChangesRequestedCount: number
   /** 样本量是否足以支撑趋势结论。 */
