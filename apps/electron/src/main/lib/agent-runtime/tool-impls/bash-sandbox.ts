@@ -11,6 +11,7 @@
 
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, realpathSync } from 'node:fs'
+import { chmod, copyFile, lstat, readdir, rename, unlink } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { getConfigDir } from '../../config-paths'
@@ -96,11 +97,61 @@ export function buildBashSandboxPolicy(input: {
   }
 }
 
+/**
+ * 将可写范围内 nlink > 1 的普通文件替换为私有副本，使预先存在的跨边界硬链接失效。
+ *
+ * seatbelt 只能按路径授权写入，无法识别"路径在范围内、inode 与范围外共享"的预存硬链接；
+ * 在每次生成策略前把这类文件原子替换为独立副本（保留权限位），写入就不会再影响其他会话。
+ * 边界：扫描与子进程启动之间仍存在理论窗口（外部进程可在此期间创建硬链接），
+ * 且会溶解可写范围内合法的硬链接（如包管理器、本地克隆），这些代价已在证据文档中说明。
+ */
+export async function quarantineWritableHardlinks(policy: SeatbeltPolicy): Promise<void> {
+  const roots = [...policy.writableRoots, ...(policy.writableLiterals ?? [])]
+  let seq = 0
+  const visit = async (path: string): Promise<void> => {
+    let st
+    try {
+      st = await lstat(path)
+    } catch (error) {
+      // 扫描期间被删除属于正常竞态；其余错误按失败关闭处理。
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+      throw error
+    }
+    if (st.isSymbolicLink()) return
+    if (st.isDirectory()) {
+      let names: string[]
+      try {
+        names = await readdir(path)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
+        throw error
+      }
+      await Promise.all(names.map((name) => visit(join(path, name))))
+      return
+    }
+    if (!st.isFile() || st.nlink <= 1) return
+    // 同目录临时文件 + 原子重命名，保证替换后是独立 inode；权限位按原文件恢复。
+    const temp = `${path}.gravitas-quarantine-${process.pid}-${seq++}`
+    try {
+      await copyFile(path, temp)
+      await chmod(temp, st.mode & 0o7777)
+      await rename(temp, path)
+    } catch (error) {
+      await unlink(temp).catch(() => {})
+      throw error
+    }
+  }
+  for (const root of roots) await visit(root)
+}
+
 /** 为一次 Bash 调用生成沙箱命令与受控环境。 */
 export async function prepareBashSandbox(cwd: string, sessionId: string): Promise<{ argv: string[]; env: NodeJS.ProcessEnv }> {
   const scratchDir = scratchDirFor(sessionId)
   const git = await resolveGitLayout(cwd)
-  const profile = buildSeatbeltProfile(buildBashSandboxPolicy({ cwd, scratchDir, git, configDirs: [getConfigDir()] }))
+  const policy = buildBashSandboxPolicy({ cwd, scratchDir, git, configDirs: [getConfigDir()] })
+  // 先溶解预存硬链接，再生成策略；隔离失败时不执行命令（失败关闭）。
+  await quarantineWritableHardlinks(policy)
+  const profile = buildSeatbeltProfile(policy)
   return {
     argv: [SANDBOX_EXEC_PATH, '-p', profile, '/bin/sh', '-c'],
     env: {

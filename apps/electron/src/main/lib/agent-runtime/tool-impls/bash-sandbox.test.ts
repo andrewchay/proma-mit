@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildBashSandboxPolicy, resolveGitLayout, scratchDirFor } from './bash-sandbox'
+import { buildBashSandboxPolicy, quarantineWritableHardlinks, resolveGitLayout, scratchDirFor } from './bash-sandbox'
 import { buildSeatbeltProfile } from '../../pinned-verifier-sandbox'
 import { executeBashTool, executeBashToolOnPlatform } from './bash-tool'
 
@@ -182,9 +182,9 @@ describe('Bash 沙箱（macOS seatbelt）', () => {
     await run(session, `ln '${target}' hardlink && echo changed > hardlink`)
     expect(readFileSync(target, 'utf8')).toBe('original')
   })
-  // seatbelt 按路径授权写入：预先存在的硬链接仍可能指向其他会话的同一 inode。
-  // 在可验证的 inode 隔离方案落地前保留此用例，不将其计为通过。
-  test.skip('Given 预先存在的硬链接指向其他会话 When 写入 Then 不修改其他会话', async () => {
+  // 预存硬链接由 prepareBashSandbox 的隔离步骤溶解为私有副本；seatbelt 只按路径授权，
+  // 无法直接表达 inode 约束。本用例需要在支持嵌套 seatbelt 的宿主环境运行。
+  test('Given 预先存在的硬链接指向其他会话 When 写入 Then 不修改其他会话', async () => {
     const workspace = join(configDir, 'agent-workspaces', 'preexisting-hardlink')
     const session = join(workspace, 'current')
     const other = join(workspace, 'other')
@@ -194,6 +194,19 @@ describe('Bash 沙箱（macOS seatbelt）', () => {
     linkSync(target, join(session, 'hardlink'))
     await run(session, 'echo changed > hardlink')
     expect(readFileSync(target, 'utf8')).toBe('original')
+    // 会话内路径写入成功（落在溶解后的私有副本上），且副本 inode 已与目标分离。
+    expect(readFileSync(join(session, 'hardlink'), 'utf8').trim()).toBe('changed')
+    expect(statSync(join(session, 'hardlink')).nlink).toBe(1)
+    expect(statSync(target).nlink).toBe(1)
+  })
+  test('Given .git/config 的预存硬链接位于工作目录 When 写入副本 Then config 不变', async () => {
+    const session = join(configDir, 'agent-workspaces', 'hardlink-config', 'current')
+    mkdirSync(session, { recursive: true })
+    git(session, ['init', '-q'])
+    const common = (await resolveGitLayout(session))!.commonDir
+    linkSync(join(common, 'config'), join(session, 'config-copy'))
+    await run(session, `echo '[evil]' > config-copy`)
+    expect(readFileSync(join(common, 'config'), 'utf8')).not.toContain('[evil]')
   })
   test('Given 配置目录内 git 工作区 When 修改 hooks 或 config Then 拒绝且正常提交仍可用', async () => {
     const session = join(configDir, 'agent-workspaces', 'git-isolation', 'current')
@@ -255,5 +268,120 @@ describe('沙箱策略内容', () => {
     expect(profile).toContain('(subpath "/plain")')
     expect(profile).not.toContain('objects')
     expect(profile).not.toContain('hooks')
+  })
+})
+
+describe('quarantineWritableHardlinks（纯文件系统）', () => {
+  const makeRoot = (name: string) => {
+    const root = join(mkdtempSync(join(tmpdir(), `quarantine-${name}-`)), 'ws')
+    mkdirSync(root, { recursive: true })
+    return root
+  }
+  const policyFor = (roots: string[], literals: string[] = []) => ({
+    writableRoots: roots,
+    writableLiterals: literals,
+    denyRoots: [],
+  })
+
+  test('Given 预存硬链接指向范围外文件 When 隔离后写入 Then 范围外文件不受影响', async () => {
+    const outside = makeRoot('outside')
+    const inside = makeRoot('inside')
+    const target = join(outside, 'secret.txt')
+    writeFileSync(target, 'original')
+    const link = join(inside, 'hardlink.txt')
+    linkSync(target, link)
+    await quarantineWritableHardlinks(policyFor([inside]))
+    writeFileSync(link, 'changed')
+    expect(readFileSync(target, 'utf8')).toBe('original')
+    // 双方各自成为独立 inode。
+    expect(statSync(link).nlink).toBe(1)
+    expect(statSync(target).nlink).toBe(1)
+  })
+
+  test('Given 权限位不同的硬链接文件 When 隔离 Then 副本保留权限位', async () => {
+    const root = makeRoot('mode')
+    const script = join(root, 'run.sh')
+    writeFileSync(script, '#!/bin/sh\necho ok\n')
+    chmodSync(script, 0o755)
+    const link = join(root, 'run-link.sh')
+    linkSync(script, link)
+    await quarantineWritableHardlinks(policyFor([root]))
+    expect(statSync(link).mode & 0o777).toBe(0o755)
+    expect(statSync(script).mode & 0o777).toBe(0o755)
+  })
+
+  test('Given nlink=1 的普通文件 When 隔离 Then inode 不变', async () => {
+    const root = makeRoot('single')
+    const file = join(root, 'plain.txt')
+    writeFileSync(file, 'data')
+    const before = statSync(file).ino
+    await quarantineWritableHardlinks(policyFor([root]))
+    expect(statSync(file).ino).toBe(before)
+    expect(readFileSync(file, 'utf8')).toBe('data')
+  })
+
+  test('Given 符号链接 When 隔离 Then 跳过且不跟随', async () => {
+    const outside = makeRoot('sym-outside')
+    const root = makeRoot('sym-inside')
+    const target = join(outside, 't.txt')
+    writeFileSync(target, 'original')
+    const link = join(root, 'link')
+    symlinkSync(target, link)
+    await quarantineWritableHardlinks(policyFor([root]))
+    // 符号链接本体保持为链接；未发生副本替换。
+    expect(readFileSync(link, 'utf8')).toBe('original')
+  })
+
+  test('Given 范围内两个互为硬链接的文件 When 隔离 Then 双方独立副本化', async () => {
+    const root = makeRoot('pair')
+    const a = join(root, 'a.txt')
+    const b = join(root, 'b.txt')
+    writeFileSync(a, 'shared')
+    linkSync(a, b)
+    await quarantineWritableHardlinks(policyFor([root]))
+    writeFileSync(a, 'from-a')
+    expect(readFileSync(b, 'utf8')).toBe('shared')
+  })
+
+  test('Given 可写字面路径（writableLiterals）When 文件带预存硬链接 Then 同样溶解', async () => {
+    const outside = makeRoot('lit-outside')
+    const root = makeRoot('lit-inside')
+    const target = join(outside, 't.txt')
+    writeFileSync(target, 'original')
+    const literal = join(root, 'packed-refs')
+    linkSync(target, literal)
+    await quarantineWritableHardlinks(policyFor([], [literal]))
+    writeFileSync(literal, 'changed')
+    expect(readFileSync(target, 'utf8')).toBe('original')
+  })
+
+  test('Given 递归子目录中的预存硬链接 When 隔离 Then 深层文件同样处理', async () => {
+    const outside = makeRoot('deep-outside')
+    const root = makeRoot('deep-inside')
+    const nested = join(root, 'a', 'b')
+    mkdirSync(nested, { recursive: true })
+    const target = join(outside, 't.txt')
+    writeFileSync(target, 'original')
+    linkSync(target, join(nested, 'deep.txt'))
+    await quarantineWritableHardlinks(policyFor([root]))
+    writeFileSync(join(nested, 'deep.txt'), 'changed')
+    expect(readFileSync(target, 'utf8')).toBe('original')
+  })
+
+  test('Given 扫描根不存在 When 隔离 Then 静默跳过不报错', async () => {
+    await quarantineWritableHardlinks(policyFor([join(tmpdir(), 'quarantine-missing-root-xyz')]))
+  })
+
+  test('Given 隔离后目录无残留临时文件 When 列目录 Then 无 .gravitas-quarantine 残留', async () => {
+    const outside = makeRoot('clean-outside')
+    const root = makeRoot('clean-inside')
+    const target = join(outside, 't.txt')
+    writeFileSync(target, 'original')
+    linkSync(target, join(root, 'f.txt'))
+    await quarantineWritableHardlinks(policyFor([root]))
+    const names = [...readdirSync(root)]
+    expect(names.some((n) => n.includes('gravitas-quarantine'))).toBe(false)
+    expect(names).toContain('f.txt')
+    expect(readFileSync(target, 'utf8')).toBe('original')
   })
 })
