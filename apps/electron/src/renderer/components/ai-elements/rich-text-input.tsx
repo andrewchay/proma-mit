@@ -92,6 +92,8 @@ interface RichTextInputProps {
   suggestionActive?: boolean
   /** 是否禁用 */
   disabled?: boolean
+  /** 编辑器的辅助技术名称 */
+  ariaLabel?: string
   /** 自动聚焦触发器（当此值变化时自动聚焦，通常传入对话 ID） */
   autoFocusTrigger?: string | null
   /** 是否支持手动折叠（内容较长时显示折叠按钮） */
@@ -148,6 +150,7 @@ export function RichTextInput({
   suggestionActive = false,
   className,
   disabled = false,
+  ariaLabel,
   autoFocusTrigger,
   collapsible = false,
   enableMentions,
@@ -389,6 +392,7 @@ export function RichTextInput({
     editable: !disabled,
     editorProps: {
       attributes: {
+        ...(ariaLabel ? { 'aria-label': ariaLabel } : {}),
         class: cn(
           'prose dark:prose-invert max-w-none focus:outline-none',
           'min-h-[72px] w-full text-[15px] leading-[1.6]',

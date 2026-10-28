@@ -7,6 +7,12 @@ import { onTaskChange } from './project-service'
 import { onProjectChainChange } from './project-chain-service'
 
 const RECONCILE_INTERVAL_MS = 30_000
+let requestActivePilotReconcile: (() => void) | null = null
+
+/** 系统唤醒后通过同一串行入口立即重读所有项目状态。 */
+export function reconcilePilotProjectsAfterWake(): void {
+  requestActivePilotReconcile?.()
+}
 
 /** 后台对账的可注入面：生产默认走受控出口与控制面快照；测试注入以避免 mock.module 的进程级泄漏。 */
 export interface PilotBackgroundDependencies {
@@ -82,11 +88,24 @@ export function startPilotBackgroundReconcile(dependencies?: PilotBackgroundDepe
       if (!controller.signal.aborted) console.warn(`[Pilot] 项目链事件对账或受控派发失败 project=${projectId}`, error)
     })
   })
+  const requestReconcile = (): void => {
+    void reconcile().catch((error) => {
+      if (!controller.signal.aborted) console.warn('[Pilot] 唤醒后项目对账或受控派发失败', error)
+    })
+  }
+  requestActivePilotReconcile = requestReconcile
   // 启动时补偿上次关闭后的变更，后续周期性重读权威数据。
-  void reconcile().catch((error) => console.warn('[Pilot] 启动对账或受控派发失败', error))
+  requestReconcile()
   const timer = setInterval(() => {
-    void reconcile().catch((error) => console.warn('[Pilot] 定期对账或受控派发失败', error))
+    requestReconcile()
   }, RECONCILE_INTERVAL_MS)
   timer.unref()
-  return () => { stopped = true; controller.abort(); clearInterval(timer); unsubscribe(); unsubscribeChain() }
+  return () => {
+    stopped = true
+    if (requestActivePilotReconcile === requestReconcile) requestActivePilotReconcile = null
+    controller.abort()
+    clearInterval(timer)
+    unsubscribe()
+    unsubscribeChain()
+  }
 }
