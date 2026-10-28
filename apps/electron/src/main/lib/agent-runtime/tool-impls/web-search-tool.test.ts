@@ -5,11 +5,16 @@
  * 通过 mock.module 隔离凭据配置，避免读取真实 ~/.proma/chat-tools.json。
  */
 
-import { describe, expect, mock, test, beforeEach, afterEach } from 'bun:test'
+import { describe, expect, mock, test, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { WebSearchCredentials } from './web-search-tool'
 
 let mockCredentials: WebSearchCredentials = {}
+const originalChatConfig = await import('../../chat-tool-config')
 mock.module('../../chat-tool-config', () => ({
+  ...originalChatConfig,
   getToolCredentials: (toolId: string) => (toolId === 'web-search' ? mockCredentials : {}),
 }))
 
@@ -19,6 +24,20 @@ const {
   resolveWebSearchProvider,
   WEB_SEARCH_TOOL_NAME,
 } = await import('./web-search-tool')
+
+const testConfigDir = mkdtempSync(join(tmpdir(), 'gravitas-web-tool-db-'))
+const previousConfigDir = process.env.PROMA_TEST_CONFIG_DIR
+beforeAll(async () => {
+  process.env.PROMA_TEST_CONFIG_DIR = testConfigDir
+  await (await import('../../project-sqlite-store')).initProjectDb()
+})
+afterAll(async () => {
+  const { closeProjectDb } = await import('../../project-sqlite-store')
+  closeProjectDb()
+  if (previousConfigDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+  else process.env.PROMA_TEST_CONFIG_DIR = previousConfigDir
+  rmSync(testConfigDir, { recursive: true, force: true })
+})
 
 describe('WebSearch 工具', () => {
   const ctx = { cwd: '/tmp/workspace', sessionId: 'test-session' }

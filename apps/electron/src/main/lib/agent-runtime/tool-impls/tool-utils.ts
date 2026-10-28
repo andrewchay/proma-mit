@@ -98,3 +98,10 @@ export function requiresOwnerToolGate(sessionId: string, ownerMarker?: boolean):
   if (ownerMarker && context.kind === 'unrestricted') throw new Error('Owner工具标记与权威会话记录不一致')
   return context.kind !== 'unrestricted'
 }
+
+/** 对当前不在 Owner 工具白名单内的入口执行统一用途检查。 */
+export function assertOwnerToolPermission(sessionId: string, ownerMarker: boolean | undefined, toolName: string, args: Record<string, unknown>): void {
+  if (!requiresOwnerToolGate(sessionId, ownerMarker)) return
+  const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+  gates.assertToolAllowedForSessionPurpose(sessionId, toolName, args)
+}

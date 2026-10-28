@@ -4,9 +4,26 @@
  * 验证 URL 校验、协议限制、HTML 文本提取与错误处理。
  */
 
-import { describe, expect, mock, test, beforeEach, afterEach } from 'bun:test'
+import { describe, expect, mock, test, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 const { executeWebFetchTool, createWebFetchToolDefinition, WEB_FETCH_TOOL_NAME } = await import('./web-fetch-tool')
+
+const testConfigDir = mkdtempSync(join(tmpdir(), 'gravitas-web-tool-db-'))
+const previousConfigDir = process.env.PROMA_TEST_CONFIG_DIR
+beforeAll(async () => {
+  process.env.PROMA_TEST_CONFIG_DIR = testConfigDir
+  await (await import('../../project-sqlite-store')).initProjectDb()
+})
+afterAll(async () => {
+  const { closeProjectDb } = await import('../../project-sqlite-store')
+  closeProjectDb()
+  if (previousConfigDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+  else process.env.PROMA_TEST_CONFIG_DIR = previousConfigDir
+  rmSync(testConfigDir, { recursive: true, force: true })
+})
 
 describe('WebFetch 工具', () => {
   const ctx = { cwd: '/tmp/workspace', sessionId: 'test-session' }

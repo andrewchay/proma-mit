@@ -26,6 +26,8 @@ const { executeEditTool } = await import('./agent-runtime/tool-impls/edit-tool')
 const { executeReadTool } = await import('./agent-runtime/tool-impls/read-tool')
 const { executeWriteTool } = await import('./agent-runtime/tool-impls/write-tool')
 const { executeGrepTool } = await import('./agent-runtime/tool-impls/grep-tool')
+const { executeWebFetchTool } = await import('./agent-runtime/tool-impls/web-fetch-tool')
+const { executeWebSearchTool } = await import('./agent-runtime/tool-impls/web-search-tool')
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
 function fixture(single = false, textDelivery = false) {
@@ -130,6 +132,20 @@ test('Given Owner 未冻结研发读取范围 When 直接调用 Read Then 工具
     expect(grep.isError).toBe(true)
     expect(grep.content).not.toContain('private-content')
   } finally { rmSync(join(work, 'file.txt'), { force: true }) }
+})
+test('Given Owner 会话未带标记 When 直接调用网络工具 Then 不发送请求', async () => {
+  const f = fixture(), sessionId = syntheticRunningExecution(f)
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
+  const previousFetch = globalThis.fetch
+  let calls = 0
+  globalThis.fetch = (async () => { calls++; return new Response('unexpected') }) as unknown as typeof fetch
+  try {
+    expect((await executeWebFetchTool({ url: 'https://example.invalid' }, { cwd: work, sessionId })).isError).toBe(true)
+    expect((await executeWebSearchTool({ query: 'private query' }, { cwd: work, sessionId })).isError).toBe(true)
+    expect(calls).toBe(0)
+  } finally { globalThis.fetch = previousFetch }
 })
 test('Given 已准入的 Owner 会话 When 工具上下文工作目录漂移 Then 拒绝使用该目录', () => {
   const f = fixture(), sessionId = syntheticRunningExecution(f)

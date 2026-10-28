@@ -10,7 +10,7 @@
 
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
-import { truncateOutput } from './tool-utils.ts'
+import { assertOwnerToolPermission, formatToolError, truncateOutput } from './tool-utils.ts'
 import { getFetchFn } from '../../proxy-fetch'
 import { getEffectiveProxyUrl } from '../../proxy-settings-service'
 
@@ -47,7 +47,7 @@ export function createWebFetchToolDefinition() {
   }
 }
 
-export async function executeWebFetchTool(input: unknown, _ctx: ToolContext): Promise<ToolResult> {
+export async function executeWebFetchTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const params = input as WebFetchToolInput
   const url = params.url?.trim()
 
@@ -65,10 +65,14 @@ export async function executeWebFetchTool(input: unknown, _ctx: ToolContext): Pr
     return { toolCallId: '', content: `不支持的协议: ${parsed.protocol}（仅允许 http/https）`, isError: true }
   }
 
+  try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_FETCH_TOOL_NAME, { url }) }
+  catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
+
   try {
     // 网络请求统一跟随 Proma 代理设置
     const proxyUrl = await getEffectiveProxyUrl()
     const fetchFn = getFetchFn(proxyUrl)
+    assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_FETCH_TOOL_NAME, { url })
 
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)

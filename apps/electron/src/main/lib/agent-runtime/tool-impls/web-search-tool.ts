@@ -20,6 +20,7 @@ import type { ToolContext } from '../types.ts'
 import { getToolCredentials } from '../../chat-tool-config'
 import { getFetchFn } from '../../proxy-fetch'
 import { getEffectiveProxyUrl } from '../../proxy-settings-service'
+import { assertOwnerToolPermission, formatToolError } from './tool-utils.ts'
 
 export const WEB_SEARCH_TOOL_NAME = 'WebSearch'
 
@@ -203,9 +204,7 @@ export function resolveWebSearchProvider(credentials: WebSearchCredentials): Web
   return 'tavily'
 }
 
-export async function executeWebSearchTool(input: unknown, _ctx: ToolContext): Promise<ToolResult> {
-  const credentials = getToolCredentials('web-search') as WebSearchCredentials
-
+export async function executeWebSearchTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const params = input as WebSearchToolInput
   const query = params.query?.trim()
 
@@ -213,12 +212,16 @@ export async function executeWebSearchTool(input: unknown, _ctx: ToolContext): P
     return { toolCallId: '', content: '搜索参数缺失: query', isError: true }
   }
 
+  try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_SEARCH_TOOL_NAME, { query }) }
+  catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
+  const credentials = getToolCredentials('web-search') as WebSearchCredentials
   const provider = resolveWebSearchProvider(credentials)
 
   try {
     // 网络请求统一跟随 Proma 代理设置
     const proxyUrl = await getEffectiveProxyUrl()
     const fetchFn = getFetchFn(proxyUrl)
+    assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_SEARCH_TOOL_NAME, { query })
 
     if (provider === 'metaso') {
       if (!credentials.metasoApiKey) {
