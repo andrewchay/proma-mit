@@ -284,7 +284,9 @@ export async function acceptDelivery(taskId: string, deliveryId: string, input: 
 
 /** 人工退回：意见必填；历史版本不变。 */
 export async function rejectDelivery(taskId: string, deliveryId: string, comment: string, reasonCode?: ProjectJudgmentReasonCode, expectedVersion?: number): Promise<unknown> {
+  assertLegacyReviewTaskPurpose(taskId)
   const task = await getTask(taskId)
+  assertLegacyReviewTaskPurpose(taskId)
   if (!task) throw new DevelopmentReviewError('任务不存在')
   const trimmed = comment?.trim()
   if (!trimmed) throw new DevelopmentReviewError('退回必须填写原因')
