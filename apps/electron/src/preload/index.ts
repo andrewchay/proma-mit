@@ -1333,6 +1333,7 @@ export interface ElectronAPI {
 
   /** 获取系统提示词配置 */
   getHarnessPolicyState: () => Promise<HarnessPolicyState>
+  setHarnessSchedulingOnRestart: (parallel: boolean) => Promise<void>
   getSystemPromptConfig: () => Promise<SystemPromptConfig>
 
   /** 创建提示词 */
@@ -4111,6 +4112,9 @@ const electronAPI: ElectronAPI = {
   // Harness 策略（只读）
   getHarnessPolicyState: () => {
     return ipcRenderer.invoke(HARNESS_POLICY_IPC_CHANNELS.GET_STATE)
+  },
+  setHarnessSchedulingOnRestart: (parallel: boolean) => {
+    return ipcRenderer.invoke(HARNESS_POLICY_IPC_CHANNELS.SET_SCHEDULING, parallel)
   },
 
   // 系统提示词管理

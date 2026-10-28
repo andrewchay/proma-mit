@@ -3849,6 +3849,12 @@ export async function registerIpcHandlers(): Promise<void> {
       return { ...buildHarnessPolicyState(), scheduler: getHarnessSchedulerState() }
     }
   )
+  ipcMain.handle(HARNESS_POLICY_IPC_CHANNELS.SET_SCHEDULING, async (_, parallel: unknown): Promise<void> => {
+    if (typeof parallel !== 'boolean') throw new Error('调度设置必须为布尔值')
+    const { saveHarnessSchedulingForNextStartup } = await import('./lib/agent-runtime/harness-startup')
+    const { getConfigDir } = await import('./lib/config-paths')
+    await saveHarnessSchedulingForNextStartup(getConfigDir(), parallel)
+  })
 
   // ===== 系统提示词管理 =====
 

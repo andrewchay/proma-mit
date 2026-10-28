@@ -478,7 +478,7 @@ async function bootstrap(): Promise<void> {
   // 出错时 bootstrap 会打开降级窗口；初始化自身先切换到保守串行，避免错误后恢复默认并行。
   const { initializeHarnessFlags } = await import('./lib/agent-runtime/harness-startup')
   const { getConfigDir } = await import('./lib/config-paths')
-  await initializeHarnessFlags(getConfigDir())
+  await initializeHarnessFlags(getConfigDir)
   // 注册自定义协议 proma-file:// 用于内联预览本地文件。
   // 协议只接受主进程签发的 opaque token，不解析 renderer 提供的绝对路径。
   protocol.handle('proma-file', handlePromaFileRequest)

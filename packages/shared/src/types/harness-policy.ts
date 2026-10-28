@@ -154,6 +154,7 @@ export function assertRuntimeSatisfiesPolicy(
 export const HARNESS_POLICY_IPC_CHANNELS = {
   /** 读取策略状态（含解析错误与各 runtime 缺口），只读 */
   GET_STATE: 'harness-policy:get-state',
+  SET_SCHEDULING: 'harness-policy:set-scheduling',
 } as const
 
 export interface HarnessRuntimeGap {
