@@ -118,7 +118,16 @@ describe.skipIf(!databaseUrl)('企业工作区成员的真实 Postgres 隔离', 
     const listing = await app.fetch(request('GET', 'reader', memberList))
     expect(listing.headers.get('cache-control')).toBe('private, no-store')
     expect(await listing.json()).toMatchObject({ files: [{ path: 'report.html', sha256: hash }, { path: '目录/报告 %.txt', sha256: hash }], nextCursor: null })
-    expect((await app.fetch(request('GET', 'owner', ownerList))).status).toBe(200)
+    const ownerListing = await (await app.fetch(request('GET', 'owner', ownerList))).json() as { files: Array<{ path: string; publicationId: string }> }
+    const firstVersion = ownerListing.files.find(file => file.path === 'report.html')!.publicationId
+    expect((await app.fetch(request('PUT', 'owner', publish, JSON.stringify({ expectedSha256: hash })))).status).toBe(200)
+    const currentListing = await (await app.fetch(request('GET', 'owner', ownerList))).json() as { files: Array<{ path: string; publicationId: string }> }
+    const currentVersion = currentListing.files.find(file => file.path === 'report.html')!.publicationId
+    expect(currentVersion).not.toBe(firstVersion)
+    expect((await app.fetch(request('DELETE', 'owner', `${publish}?publicationId=${firstVersion}`))).status).toBe(409)
+    expect((await app.fetch(request('GET', 'reader', shared))).status).toBe(200)
+    expect((await app.fetch(request('DELETE', 'owner', `${publish}?publicationId=${currentVersion}`))).status).toBe(204)
+    expect((await app.fetch(request('PUT', 'owner', publish, JSON.stringify({ expectedSha256: hash })))).status).toBe(200)
     const download = await app.fetch(request('GET', 'reader', shared))
     expect(download.status).toBe(200)
     expect(download.headers.get('content-disposition')).toBe('attachment')
@@ -126,6 +135,19 @@ describe.skipIf(!databaseUrl)('企业工作区成员的真实 Postgres 隔离', 
     expect(await download.text()).toBe('<html>approved</html>')
     expect((await app.fetch(request('GET', 'outsider', shared))).status).toBe(404)
     expect((await app.fetch(request('GET', 'reader', shared, undefined, `${tenant}-other`))).status).toBe(404)
+    let signalRepublishRead = () => {}, releaseRepublishRead = () => {}
+    const republishReadStarted = new Promise<void>(resolve => { signalRepublishRead = resolve })
+    const republishReadGate = new Promise<void>(resolve => { releaseRepublishRead = resolve })
+    const republishObjects = {
+      putObject: objects.putObject.bind(objects), deleteObject: objects.deleteObject.bind(objects), listObjects: objects.listObjects.bind(objects),
+      getObject: async (objectKey: string, options?: { maxBytes: number }) => { signalRepublishRead(); await republishReadGate; return objects.getObject(objectKey, options) },
+    }
+    const republishApp = createPromaWebServerApplication({ databaseUrl: databaseUrl!, redisUrl: 'redis://unused', s3: { bucket: 'unused', region: 'auto', maxUploadBytes: 1024 }, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test', trustedHeaderAuth: false, workspaceRoot: '/tmp/membership-test', workerId: 'test', taskLeaseMs: 30000 }, { postgres: client, objectStore: republishObjects, auth: ({ request }) => ({ tenantId: tenant, userId: request.headers.get('x-test-user') ?? 'reader', roles: ['viewer'] }) })
+    const staleRead = republishApp.fetch(request('GET', 'reader', shared))
+    await republishReadStarted
+    expect((await app.fetch(request('PUT', 'owner', publish, JSON.stringify({ expectedSha256: hash })))).status).toBe(200)
+    releaseRepublishRead()
+    expect((await staleRead).status).toBe(404)
     let signalFetch = () => {}, releaseFetch = () => {}
     const fetchStarted = new Promise<void>((resolve) => { signalFetch = resolve })
     const fetchGate = new Promise<void>((resolve) => { releaseFetch = resolve })

@@ -27,7 +27,7 @@ export async function handleSharedFileList(request: Request, scope: AgentRuntime
       SELECT w.tenant_id, w.user_id, w.workspace_slug FROM proma_runtime_workspaces w
       WHERE w.tenant_id=$1 AND w.user_id=$2 AND w.workspace_slug=$3
       AND (w.user_id=$4 OR EXISTS (SELECT 1 FROM proma_workspace_members m WHERE m.tenant_id=w.tenant_id AND m.owner_user_id=w.user_id AND m.workspace_slug=w.workspace_slug AND m.member_user_id=$4))
-    ) SELECT f.relative_path, f.sha256, f.size_bytes, f.published_at FROM permitted w
+    ) SELECT f.relative_path, f.sha256, f.size_bytes, f.published_at, f.publication_id FROM permitted w
       LEFT JOIN proma_workspace_shared_files f ON f.tenant_id=w.tenant_id AND f.owner_user_id=w.user_id AND f.workspace_slug=w.workspace_slug
       AND ($5::text IS NULL OR f.relative_path COLLATE "C" > $5 COLLATE "C")
       ORDER BY f.relative_path COLLATE "C" LIMIT 101`, [scope.tenantId, owner, route.workspaceSlug, scope.userId, cursors[0] ?? null])
@@ -35,8 +35,8 @@ export async function handleSharedFileList(request: Request, scope: AgentRuntime
   const rows = result.rows.filter(row => row.relative_path !== null)
   const files = rows.slice(0, 100).map(row => {
     const size = Number(row.size_bytes), publishedAt = Number(row.published_at)
-    if (typeof row.relative_path !== 'string' || typeof row.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(row.sha256) || !Number.isSafeInteger(size) || size < 0 || !Number.isSafeInteger(publishedAt) || publishedAt < 0) throw new Error('共享文件登记损坏')
-    return { path: row.relative_path, sha256: row.sha256, size, publishedAt }
+    if (typeof row.relative_path !== 'string' || typeof row.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(row.sha256) || typeof row.publication_id !== 'string' || !/^[a-f0-9]{32}$/.test(row.publication_id) || !Number.isSafeInteger(size) || size < 0 || !Number.isSafeInteger(publishedAt) || publishedAt < 0) throw new Error('共享文件登记损坏')
+    return { path: row.relative_path, sha256: row.sha256, size, publishedAt, publicationId: row.publication_id }
   })
   return Response.json({ files, nextCursor: rows.length > 100 ? files[files.length - 1]!.path : null }, { headers: { 'cache-control': 'private, no-store' } })
 }

@@ -5,6 +5,7 @@ import './styles.css'
 import { SharedFiles } from './SharedFiles'
 import { PublishSharedFile } from './PublishSharedFile'
 import { WorkspaceMembers } from './WorkspaceMembers'
+import { PublishedFiles } from './PublishedFiles'
 import { exportAuditCsv } from './download'
 
 const apiBaseAtom = atom(import.meta.env.VITE_PROMA_API_BASE_URL ?? '')
@@ -231,6 +232,7 @@ function App(): JSX.Element {
     </section>
     <WorkspaceMembers request={request} />
     <PublishSharedFile request={request} />
+    <PublishedFiles request={request} />
     <SharedFiles request={request} />
     <section className="card operations"><div className="section-title"><h2>运维与审计</h2><div><button onClick={() => void loadAdmin('/agent/metrics')}>指标</button><button onClick={() => void loadAdmin('/agent/tasks')}>任务树</button></div></div><div className="audit-actions"><input placeholder="按 action 筛选审计" value={auditAction} onChange={(event) => setAuditAction(event.target.value)} /><button onClick={() => void loadAdmin(`/agent/audit${auditAction ? `?action=${encodeURIComponent(auditAction)}` : ''}`)}>查询审计</button><button className="quiet" onClick={() => void exportAudit()}>导出 CSV</button></div>{admin !== undefined && <AdminPanel value={admin} />}</section>
   </main>

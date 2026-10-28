@@ -6,6 +6,7 @@ import { readBoundedJson } from './workspace-membership-api.ts'
 
 interface SharedFileRoute { kind: 'owner' | 'member'; ownerUserId?: string; workspaceSlug: string; relativePath: string }
 interface PublishedFile { sha256: string; size: number }
+interface AuthorizedFile extends PublishedFile { publicationId: string }
 
 export class PostgresSharedFileStore {
   constructor(private readonly client: AgentRuntimePostgresClient) {}
@@ -14,35 +15,38 @@ export class PostgresSharedFileStore {
     await this.client.query(`CREATE TABLE IF NOT EXISTS proma_workspace_shared_files (
       tenant_id TEXT NOT NULL, owner_user_id TEXT NOT NULL, workspace_slug TEXT NOT NULL, relative_path TEXT NOT NULL,
       sha256 TEXT NOT NULL, size_bytes BIGINT NOT NULL, published_at BIGINT NOT NULL,
+      publication_id TEXT NOT NULL DEFAULT md5(random()::text || clock_timestamp()::text),
       PRIMARY KEY (tenant_id, owner_user_id, workspace_slug, relative_path),
       FOREIGN KEY (tenant_id, owner_user_id, workspace_slug) REFERENCES proma_runtime_workspaces (tenant_id, user_id, workspace_slug) ON DELETE CASCADE
     )`)
+    // 兼容已有发布记录；数据库为每条记录生成独立版本标识。
+    await this.client.query(`ALTER TABLE proma_workspace_shared_files ADD COLUMN IF NOT EXISTS publication_id TEXT NOT NULL DEFAULT md5(random()::text || clock_timestamp()::text)`)
   }
 
   async publish(scope: AgentRuntimeScope, route: SharedFileRoute, file: PublishedFile): Promise<boolean> {
     const result = await this.client.query(`INSERT INTO proma_workspace_shared_files (tenant_id, owner_user_id, workspace_slug, relative_path, sha256, size_bytes, published_at)
       SELECT tenant_id, user_id, workspace_slug, $4, $5, $6, $7 FROM proma_runtime_workspaces WHERE tenant_id=$1 AND user_id=$2 AND workspace_slug=$3
-      ON CONFLICT (tenant_id, owner_user_id, workspace_slug, relative_path) DO UPDATE SET sha256=EXCLUDED.sha256, size_bytes=EXCLUDED.size_bytes, published_at=EXCLUDED.published_at RETURNING sha256`,
+      ON CONFLICT (tenant_id, owner_user_id, workspace_slug, relative_path) DO UPDATE SET sha256=EXCLUDED.sha256, size_bytes=EXCLUDED.size_bytes, published_at=EXCLUDED.published_at, publication_id=EXCLUDED.publication_id RETURNING sha256`,
     [scope.tenantId, scope.userId, route.workspaceSlug, route.relativePath, file.sha256, file.size, Date.now()])
     return result.rows.length === 1
   }
 
-  async unpublish(scope: AgentRuntimeScope, route: SharedFileRoute): Promise<boolean> {
-    const result = await this.client.query('DELETE FROM proma_workspace_shared_files WHERE tenant_id=$1 AND owner_user_id=$2 AND workspace_slug=$3 AND relative_path=$4 RETURNING relative_path', [scope.tenantId, scope.userId, route.workspaceSlug, route.relativePath])
+  async unpublish(scope: AgentRuntimeScope, route: SharedFileRoute, expectedPublicationId?: string): Promise<boolean> {
+    const result = await this.client.query('DELETE FROM proma_workspace_shared_files WHERE tenant_id=$1 AND owner_user_id=$2 AND workspace_slug=$3 AND relative_path=$4 AND ($5::text IS NULL OR publication_id=$5) RETURNING relative_path', [scope.tenantId, scope.userId, route.workspaceSlug, route.relativePath, expectedPublicationId ?? null])
     return result.rows.length === 1
   }
 
   /** 同一查询内复核当前成员与发布记录，不信任调用者传入的租户。 */
-  async findAuthorized(scope: AgentRuntimeScope, route: SharedFileRoute): Promise<PublishedFile | null> {
-    const result = await this.client.query(`SELECT f.sha256, f.size_bytes FROM proma_workspace_shared_files f
+  async findAuthorized(scope: AgentRuntimeScope, route: SharedFileRoute): Promise<AuthorizedFile | null> {
+    const result = await this.client.query(`SELECT f.sha256, f.size_bytes, f.publication_id FROM proma_workspace_shared_files f
       WHERE f.tenant_id=$1 AND f.owner_user_id=$2 AND f.workspace_slug=$3 AND f.relative_path=$4
       AND (f.owner_user_id=$5 OR EXISTS (SELECT 1 FROM proma_workspace_members m WHERE m.tenant_id=f.tenant_id AND m.owner_user_id=f.owner_user_id AND m.workspace_slug=f.workspace_slug AND m.member_user_id=$5))`,
     [scope.tenantId, route.ownerUserId, route.workspaceSlug, route.relativePath, scope.userId])
     const row = result.rows[0]
     if (!row) return null
     const size = Number(row.size_bytes)
-    if (typeof row.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(row.sha256) || !Number.isSafeInteger(size) || size < 0) throw new Error('共享文件登记损坏')
-    return { sha256: row.sha256, size }
+    if (typeof row.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(row.sha256) || typeof row.publication_id !== 'string' || !/^[a-f0-9]{32}$/.test(row.publication_id) || !Number.isSafeInteger(size) || size < 0) throw new Error('共享文件登记损坏')
+    return { sha256: row.sha256, size, publicationId: row.publication_id }
   }
 }
 
@@ -66,7 +70,12 @@ export function matchSharedFileRoute(method: string, pathname: string): SharedFi
 export async function handleSharedFileRoute(request: Request, scope: AgentRuntimeScope, route: SharedFileRoute, store: PostgresSharedFileStore, objects: AgentRuntimeObjectStore, maxBytes: number): Promise<Response> {
   const ownerUserId = route.kind === 'owner' ? scope.userId : route.ownerUserId!
   const key = createAgentRuntimeWorkspaceObjectKey({ tenantId: scope.tenantId, userId: ownerUserId, workspaceSlug: route.workspaceSlug, relativePath: route.relativePath })
-  if (route.kind === 'owner' && request.method === 'DELETE') return await store.unpublish(scope, route) ? new Response(null, { status: 204 }) : Response.json({ error: '共享文件不存在' }, { status: 404 })
+  if (route.kind === 'owner' && request.method === 'DELETE') {
+    const ids = new URL(request.url).searchParams.getAll('publicationId')
+    if (ids.length > 1 || (ids.length === 1 && !/^[a-f0-9]{32}$/.test(ids[0]!))) return Response.json({ error: '发布版本无效' }, { status: 400 })
+    const removed = await store.unpublish(scope, route, ids[0])
+    return removed ? new Response(null, { status: 204 }) : Response.json({ error: ids.length ? '发布版本已变化或不存在，请刷新' : '共享文件不存在' }, { status: ids.length ? 409 : 404 })
+  }
   if (route.kind === 'owner') {
     const raw = await readBoundedJson(request)
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return Response.json({ error: '必须提供预期 SHA-256' }, { status: 400 })
@@ -88,7 +97,7 @@ export async function handleSharedFileRoute(request: Request, scope: AgentRuntim
   try { object = await objects.getObject(key, { maxBytes: Math.min(before.size, maxBytes) }) }
   catch (error) { if (error instanceof AgentRuntimeObjectTooLargeError) oversized = true; else throw error }
   const after = await store.findAuthorized(scope, route)
-  if (!after || after.sha256 !== before.sha256 || after.size !== before.size) return Response.json({ error: '文件不存在或不可访问' }, { status: 404 })
+  if (!after || after.sha256 !== before.sha256 || after.size !== before.size || after.publicationId !== before.publicationId) return Response.json({ error: '文件不存在或不可访问' }, { status: 404 })
   if (oversized || !object || object.body.byteLength !== after.size || createHash('sha256').update(object.body).digest('hex') !== after.sha256) return Response.json({ error: '共享文件内容已变化，请所有者重新核对发布' }, { status: 409 })
   const response = createWorkspaceFileDownloadResponse(object.body, object.contentType)
   response.headers.set('cache-control', 'private, no-store')
