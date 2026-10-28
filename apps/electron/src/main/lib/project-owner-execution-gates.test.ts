@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { ToolContext } from './agent-runtime/types'
 import { buildElectronMock } from './testing/electron-mock'
 const directory = mkdtempSync(join(tmpdir(), 'owner-execution-gates-')), previous = process.env.PROMA_TEST_CONFIG_DIR
 process.env.PROMA_TEST_CONFIG_DIR = directory
@@ -25,6 +26,7 @@ const { executeBashToolOnPlatform } = await import('./agent-runtime/tool-impls/b
 const { executeEditTool } = await import('./agent-runtime/tool-impls/edit-tool')
 const { executeReadTool } = await import('./agent-runtime/tool-impls/read-tool')
 const { executeWriteTool } = await import('./agent-runtime/tool-impls/write-tool')
+const { createListMcpResourcesToolDefinition, createReadMcpResourceToolDefinition } = await import('./agent-runtime/tool-impls/mcp-resource-tools')
 const { executeSearchProjectMemoryTool, executeReadProjectMemoryTool } = await import('./agent-runtime/tool-impls/project-memory-tool')
 const { executeSkillTool } = await import('./agent-runtime/tool-impls/skill-tool')
 const { executeExploreContextTool } = await import('./agent-runtime/tool-impls/context-graph-tool')
@@ -227,6 +229,18 @@ test('Given Owner 会话未带标记 When 直接读取项目记忆 Then 在读�
     expect(result.isError).toBe(true)
     expect(result.content).toContain('Owner')
   }
+})
+test('Given Owner 会话未带标记 When 直接读取 MCP 资源 Then 不调用 MCP 服务', async () => {
+  const f = fixture(), sessionId = syntheticRunningExecution(f)
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
+  let calls = 0
+  const mcpManager = { listAllResources: async () => { calls++; return [] }, readResource: async () => { calls++; return null } } as unknown as ToolContext['mcpManager']
+  const context = { cwd: work, sessionId, mcpManager }
+  expect((await createListMcpResourcesToolDefinition().execute({}, context)).isError).toBe(true)
+  expect((await createReadMcpResourceToolDefinition().execute({ uri: 'example:test' }, context)).isError).toBe(true)
+  expect(calls).toBe(0)
 })
 test('Given Owner 会话未带标记 When 直接调用网络工具 Then 不发送请求', async () => {
   const f = fixture(), sessionId = syntheticRunningExecution(f)
