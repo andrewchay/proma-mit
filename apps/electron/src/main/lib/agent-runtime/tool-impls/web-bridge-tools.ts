@@ -4,7 +4,7 @@ import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types'
 import { webBridgeService, type WebBridgeSnapshot } from '../../web-bridge-service'
 import { appendWebBridgeAudit } from '../../web-bridge-audit-service'
-import { assertOwnerToolPermission, formatToolError } from './tool-utils'
+import { guardOwnerTool } from './tool-utils'
 
 export const WEB_BRIDGE_NAVIGATE_TOOL_NAME = 'WebBridgeNavigate'
 export const WEB_BRIDGE_SNAPSHOT_TOOL_NAME = 'WebBridgeSnapshot'
@@ -23,15 +23,6 @@ export const WEB_BRIDGE_NEW_TAB_TOOL_NAME = 'WebBridgeNewTab'
 export const WEB_BRIDGE_LIST_TABS_TOOL_NAME = 'WebBridgeListTabs'
 export const WEB_BRIDGE_SELECT_TAB_TOOL_NAME = 'WebBridgeSelectTab'
 export const WEB_BRIDGE_CLOSE_TAB_TOOL_NAME = 'WebBridgeCloseTab'
-
-/** 所有浏览器入口均重查受控身份；紧急停止保持可用。 */
-function guardWebBridge(toolName: string, execute: (input: unknown, ctx: ToolContext) => Promise<ToolResult>): (input: unknown, ctx: ToolContext) => Promise<ToolResult> {
-  return async (input, ctx) => {
-    try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, toolName, {}) }
-    catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
-    return execute(input, ctx)
-  }
-}
 
 function snapshotResult(snapshot: WebBridgeSnapshot): ToolResult {
   return { toolCallId: '', content: JSON.stringify(snapshot, null, 2) }
@@ -204,34 +195,34 @@ function readPort(value: unknown): number { return isRecord(value) && typeof val
 function error(content: string): ToolResult { return { toolCallId: '', content, isError: true } }
 function audit(ctx: ToolContext, action: string, detail: Record<string, unknown>): void { void appendWebBridgeAudit(ctx.sessionId, action, detail).catch(() => undefined) }
 
-export const executeWebBridgeNavigateTool = guardWebBridge(WEB_BRIDGE_NAVIGATE_TOOL_NAME, executeWebBridgeNavigateUnchecked)
+export const executeWebBridgeNavigateTool = guardOwnerTool(WEB_BRIDGE_NAVIGATE_TOOL_NAME, executeWebBridgeNavigateUnchecked)
 
-export const executeWebBridgeSnapshotTool = guardWebBridge(WEB_BRIDGE_SNAPSHOT_TOOL_NAME, executeWebBridgeSnapshotUnchecked)
+export const executeWebBridgeSnapshotTool = guardOwnerTool(WEB_BRIDGE_SNAPSHOT_TOOL_NAME, executeWebBridgeSnapshotUnchecked)
 
-export const executeWebBridgeScreenshotTool = guardWebBridge(WEB_BRIDGE_SCREENSHOT_TOOL_NAME, executeWebBridgeScreenshotUnchecked)
+export const executeWebBridgeScreenshotTool = guardOwnerTool(WEB_BRIDGE_SCREENSHOT_TOOL_NAME, executeWebBridgeScreenshotUnchecked)
 
-export const executeWebBridgeClickTool = guardWebBridge(WEB_BRIDGE_CLICK_TOOL_NAME, executeWebBridgeClickUnchecked)
+export const executeWebBridgeClickTool = guardOwnerTool(WEB_BRIDGE_CLICK_TOOL_NAME, executeWebBridgeClickUnchecked)
 
-export const executeWebBridgeTypeTool = guardWebBridge(WEB_BRIDGE_TYPE_TOOL_NAME, executeWebBridgeTypeUnchecked)
+export const executeWebBridgeTypeTool = guardOwnerTool(WEB_BRIDGE_TYPE_TOOL_NAME, executeWebBridgeTypeUnchecked)
 
-export const executeWebBridgeScrollTool = guardWebBridge(WEB_BRIDGE_SCROLL_TOOL_NAME, executeWebBridgeScrollUnchecked)
+export const executeWebBridgeScrollTool = guardOwnerTool(WEB_BRIDGE_SCROLL_TOOL_NAME, executeWebBridgeScrollUnchecked)
 
-export const executeWebBridgeChromeTargetsTool = guardWebBridge(WEB_BRIDGE_CHROME_TARGETS_TOOL_NAME, executeWebBridgeChromeTargetsUnchecked)
+export const executeWebBridgeChromeTargetsTool = guardOwnerTool(WEB_BRIDGE_CHROME_TARGETS_TOOL_NAME, executeWebBridgeChromeTargetsUnchecked)
 
-export const executeWebBridgeConnectChromeTool = guardWebBridge(WEB_BRIDGE_CONNECT_CHROME_TOOL_NAME, executeWebBridgeConnectChromeUnchecked)
+export const executeWebBridgeConnectChromeTool = guardOwnerTool(WEB_BRIDGE_CONNECT_CHROME_TOOL_NAME, executeWebBridgeConnectChromeUnchecked)
 
-export const executeWebBridgeDownloadTool = guardWebBridge(WEB_BRIDGE_DOWNLOAD_TOOL_NAME, executeWebBridgeDownloadUnchecked)
+export const executeWebBridgeDownloadTool = guardOwnerTool(WEB_BRIDGE_DOWNLOAD_TOOL_NAME, executeWebBridgeDownloadUnchecked)
 
-export const executeWebBridgeUploadTool = guardWebBridge(WEB_BRIDGE_UPLOAD_TOOL_NAME, executeWebBridgeUploadUnchecked)
+export const executeWebBridgeUploadTool = guardOwnerTool(WEB_BRIDGE_UPLOAD_TOOL_NAME, executeWebBridgeUploadUnchecked)
 
-export const executeWebBridgeStatusTool = guardWebBridge(WEB_BRIDGE_STATUS_TOOL_NAME, executeWebBridgeStatusUnchecked)
+export const executeWebBridgeStatusTool = guardOwnerTool(WEB_BRIDGE_STATUS_TOOL_NAME, executeWebBridgeStatusUnchecked)
 
-export const executeWebBridgeObserveTool = guardWebBridge(WEB_BRIDGE_OBSERVE_TOOL_NAME, executeWebBridgeObserveUnchecked)
+export const executeWebBridgeObserveTool = guardOwnerTool(WEB_BRIDGE_OBSERVE_TOOL_NAME, executeWebBridgeObserveUnchecked)
 
-export const executeWebBridgeNewTabTool = guardWebBridge(WEB_BRIDGE_NEW_TAB_TOOL_NAME, executeWebBridgeNewTabUnchecked)
+export const executeWebBridgeNewTabTool = guardOwnerTool(WEB_BRIDGE_NEW_TAB_TOOL_NAME, executeWebBridgeNewTabUnchecked)
 
-export const executeWebBridgeListTabsTool = guardWebBridge(WEB_BRIDGE_LIST_TABS_TOOL_NAME, executeWebBridgeListTabsUnchecked)
+export const executeWebBridgeListTabsTool = guardOwnerTool(WEB_BRIDGE_LIST_TABS_TOOL_NAME, executeWebBridgeListTabsUnchecked)
 
-export const executeWebBridgeSelectTabTool = guardWebBridge(WEB_BRIDGE_SELECT_TAB_TOOL_NAME, executeWebBridgeSelectTabUnchecked)
+export const executeWebBridgeSelectTabTool = guardOwnerTool(WEB_BRIDGE_SELECT_TAB_TOOL_NAME, executeWebBridgeSelectTabUnchecked)
 
-export const executeWebBridgeCloseTabTool = guardWebBridge(WEB_BRIDGE_CLOSE_TAB_TOOL_NAME, executeWebBridgeCloseTabUnchecked)
+export const executeWebBridgeCloseTabTool = guardOwnerTool(WEB_BRIDGE_CLOSE_TAB_TOOL_NAME, executeWebBridgeCloseTabUnchecked)

@@ -6,6 +6,8 @@
 
 import { resolve, relative, isAbsolute, dirname } from 'node:path'
 import { realpathSync, existsSync } from 'node:fs'
+import type { ToolResult } from '@gravitas/core'
+import type { ToolContext } from '../types'
 
 /**
  * 将用户提供的相对路径解析为绝对路径
@@ -104,4 +106,14 @@ export function assertOwnerToolPermission(sessionId: string, ownerMarker: boolea
   if (!requiresOwnerToolGate(sessionId, ownerMarker)) return
   const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
   gates.assertToolAllowedForSessionPurpose(sessionId, toolName, args)
+}
+
+/** 为工具入口提供统一的受控会话检查。 */
+export function guardOwnerTool(toolName: string, execute: (input: unknown, ctx: ToolContext) => Promise<ToolResult>): (input: unknown, ctx: ToolContext) => Promise<ToolResult> {
+  return async (input, ctx) => {
+    const args = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {}
+    try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, toolName, args) }
+    catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
+    return execute(input, ctx)
+  }
 }

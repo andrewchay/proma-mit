@@ -5,7 +5,7 @@ import { appendComputerUseAudit } from '../../computer-use-audit-service'
 import { computerUseService } from '../../computer-use-service'
 import { webBridgeService } from '../../web-bridge-service'
 import type { ToolContext } from '../types'
-import { assertOwnerToolPermission, formatToolError } from './tool-utils'
+import { guardOwnerTool } from './tool-utils'
 
 export const COMPUTER_USE_STATUS_TOOL_NAME = 'ComputerUseStatus'
 export const COMPUTER_USE_CAPABILITIES_TOOL_NAME = 'ComputerUseCapabilities'
@@ -22,15 +22,6 @@ export const COMPUTER_USE_SCROLL_TOOL_NAME = 'ComputerUseScroll'
 export const COMPUTER_USE_DRAG_TOOL_NAME = 'ComputerUseDrag'
 export const COMPUTER_USE_KEY_COMBO_TOOL_NAME = 'ComputerUseKeyCombo'
 export const COMPUTER_USE_REQUEST_TAKEOVER_TOOL_NAME = 'ComputerUseRequestTakeover'
-
-/** 桌面读取和操作前重查受控身份；用户接管仍可请求。 */
-function guardComputerUse(toolName: string, execute: (input: unknown, ctx: ToolContext) => Promise<ToolResult>): (input: unknown, ctx: ToolContext) => Promise<ToolResult> {
-  return async (input, ctx) => {
-    try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, toolName, {}) }
-    catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
-    return execute(input, ctx)
-  }
-}
 
 const DISPLAY_COORDINATE_PROPERTIES = {
   display_id: { type: 'string', description: 'ComputerUseScreenshot 或 ComputerUseDisplays 返回的显示器 ID，可选' },
@@ -249,30 +240,30 @@ function isRecord(value: unknown): value is Record<string, unknown> { return typ
 function readString(value: unknown, key: string): string | undefined { return isRecord(value) && typeof value[key] === 'string' ? value[key] : undefined }
 function readNumber(value: unknown, key: string): number | undefined { return isRecord(value) && typeof value[key] === 'number' ? value[key] : undefined }
 
-export const executeComputerUseStatusTool = guardComputerUse(COMPUTER_USE_STATUS_TOOL_NAME, executeComputerUseStatusUnchecked)
+export const executeComputerUseStatusTool = guardOwnerTool(COMPUTER_USE_STATUS_TOOL_NAME, executeComputerUseStatusUnchecked)
 
-export const executeComputerUseCapabilitiesTool = guardComputerUse(COMPUTER_USE_CAPABILITIES_TOOL_NAME, executeComputerUseCapabilitiesUnchecked)
+export const executeComputerUseCapabilitiesTool = guardOwnerTool(COMPUTER_USE_CAPABILITIES_TOOL_NAME, executeComputerUseCapabilitiesUnchecked)
 
-export const executeComputerUseFrontmostApplicationTool = guardComputerUse(COMPUTER_USE_FRONTMOST_APPLICATION_TOOL_NAME, executeComputerUseFrontmostApplicationUnchecked)
+export const executeComputerUseFrontmostApplicationTool = guardOwnerTool(COMPUTER_USE_FRONTMOST_APPLICATION_TOOL_NAME, executeComputerUseFrontmostApplicationUnchecked)
 
-export const executeComputerUseFrontmostWindowTool = guardComputerUse(COMPUTER_USE_FRONTMOST_WINDOW_TOOL_NAME, executeComputerUseFrontmostWindowUnchecked)
+export const executeComputerUseFrontmostWindowTool = guardOwnerTool(COMPUTER_USE_FRONTMOST_WINDOW_TOOL_NAME, executeComputerUseFrontmostWindowUnchecked)
 
-export const executeComputerUseDisplaysTool = guardComputerUse(COMPUTER_USE_DISPLAYS_TOOL_NAME, executeComputerUseDisplaysUnchecked)
+export const executeComputerUseDisplaysTool = guardOwnerTool(COMPUTER_USE_DISPLAYS_TOOL_NAME, executeComputerUseDisplaysUnchecked)
 
-export const executeComputerUseRequestPermissionsTool = guardComputerUse(COMPUTER_USE_REQUEST_PERMISSIONS_TOOL_NAME, executeComputerUseRequestPermissionsUnchecked)
+export const executeComputerUseRequestPermissionsTool = guardOwnerTool(COMPUTER_USE_REQUEST_PERMISSIONS_TOOL_NAME, executeComputerUseRequestPermissionsUnchecked)
 
-export const executeComputerUseScreenshotTool = guardComputerUse(COMPUTER_USE_SCREENSHOT_TOOL_NAME, executeComputerUseScreenshotUnchecked)
+export const executeComputerUseScreenshotTool = guardOwnerTool(COMPUTER_USE_SCREENSHOT_TOOL_NAME, executeComputerUseScreenshotUnchecked)
 
-export const executeComputerUseClickTool = guardComputerUse(COMPUTER_USE_CLICK_TOOL_NAME, executeComputerUseClickUnchecked)
+export const executeComputerUseClickTool = guardOwnerTool(COMPUTER_USE_CLICK_TOOL_NAME, executeComputerUseClickUnchecked)
 
-export const executeComputerUseMoveTool = guardComputerUse(COMPUTER_USE_MOVE_TOOL_NAME, executeComputerUseMoveUnchecked)
+export const executeComputerUseMoveTool = guardOwnerTool(COMPUTER_USE_MOVE_TOOL_NAME, executeComputerUseMoveUnchecked)
 
-export const executeComputerUseDoubleClickTool = guardComputerUse(COMPUTER_USE_DOUBLE_CLICK_TOOL_NAME, executeComputerUseDoubleClickUnchecked)
+export const executeComputerUseDoubleClickTool = guardOwnerTool(COMPUTER_USE_DOUBLE_CLICK_TOOL_NAME, executeComputerUseDoubleClickUnchecked)
 
-export const executeComputerUseTypeTool = guardComputerUse(COMPUTER_USE_TYPE_TOOL_NAME, executeComputerUseTypeUnchecked)
+export const executeComputerUseTypeTool = guardOwnerTool(COMPUTER_USE_TYPE_TOOL_NAME, executeComputerUseTypeUnchecked)
 
-export const executeComputerUseScrollTool = guardComputerUse(COMPUTER_USE_SCROLL_TOOL_NAME, executeComputerUseScrollUnchecked)
+export const executeComputerUseScrollTool = guardOwnerTool(COMPUTER_USE_SCROLL_TOOL_NAME, executeComputerUseScrollUnchecked)
 
-export const executeComputerUseDragTool = guardComputerUse(COMPUTER_USE_DRAG_TOOL_NAME, executeComputerUseDragUnchecked)
+export const executeComputerUseDragTool = guardOwnerTool(COMPUTER_USE_DRAG_TOOL_NAME, executeComputerUseDragUnchecked)
 
-export const executeComputerUseKeyComboTool = guardComputerUse(COMPUTER_USE_KEY_COMBO_TOOL_NAME, executeComputerUseKeyComboUnchecked)
+export const executeComputerUseKeyComboTool = guardOwnerTool(COMPUTER_USE_KEY_COMBO_TOOL_NAME, executeComputerUseKeyComboUnchecked)
