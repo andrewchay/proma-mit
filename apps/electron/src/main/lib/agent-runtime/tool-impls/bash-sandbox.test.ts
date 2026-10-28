@@ -473,3 +473,22 @@ describe('quarantineNewGitHooks（纯文件系统）', () => {
     expect(await quarantineNewGitHooks(root, false)).toBeUndefined()
   })
 })
+
+describe('Bash 会话中止（端到端）', () => {
+  test('Given 命令运行中会话被中止 When 停止 Then 命令与后代被终止且不再产生副作用', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'abort-'))
+    const marker = join(dir, 'survived')
+    const controller = new AbortController()
+    const pending = executeBashTool(
+      { command: `sleep 3; touch '${marker}'` },
+      { cwd: dir, sessionId, abortSignal: controller.signal },
+    )
+    setTimeout(() => controller.abort(), 200)
+    const result = await pending
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('中止')
+    // 给被中止命令足够时间"如果还活着"就会写下 marker。
+    await new Promise((resolve) => setTimeout(resolve, 3500))
+    expect(existsSync(marker)).toBe(false)
+  }, 15_000)
+})
