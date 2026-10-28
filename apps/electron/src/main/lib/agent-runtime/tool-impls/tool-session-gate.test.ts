@@ -2,6 +2,7 @@ import { afterAll, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { executeSearchProjectMemoryTool, executeReadProjectMemoryTool } from './project-memory-tool'
 import { executeSkillTool } from './skill-tool'
 import { executeExploreContextTool } from './context-graph-tool'
 import { executeProposeAssetTool } from './asset-proposal-tool'
@@ -29,6 +30,8 @@ test('Given 权威项目账本不可用 When 直接调用工具 Then 拒绝读�
   let subAgentCalls = 0
   globalThis.fetch = (async () => { networkCalls++; return new Response('unexpected') }) as unknown as typeof fetch
   const results = await Promise.all([
+    executeSearchProjectMemoryTool({ query: '项目' }, context),
+    executeReadProjectMemoryTool({ memoryId: 'other' }, context),
     executeSkillTool({ skill_slug: 'anything' }, context),
     executeExploreContextTool({ entityType: 'session', entityId: 'other' }, context),
     executeProposeAssetTool({ sessionId: 'other' }, context),
