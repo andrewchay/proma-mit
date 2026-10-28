@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildBashSandboxPolicy, quarantineWritableHardlinks, resolveGitLayout, scratchDirFor } from './bash-sandbox'
+import { buildBashSandboxPolicy, quarantineNewGitHooks, quarantineWritableHardlinks, resolveGitLayout, scratchDirFor } from './bash-sandbox'
 import { buildSeatbeltProfile } from '../../pinned-verifier-sandbox'
 import { executeBashTool, executeBashToolOnPlatform } from './bash-tool'
 
@@ -208,6 +208,19 @@ describe('Bash 沙箱（macOS seatbelt）', () => {
     await run(session, `echo '[evil]' > config-copy`)
     expect(readFileSync(join(common, 'config'), 'utf8')).not.toContain('[evil]')
   })
+  test('Given 非 git 目录 When 同命令 init 并注入 hook Then 命令成功且 hook 被收口', async () => {
+    const session = join(configDir, 'agent-workspaces', 'init-hook-attack', 'current')
+    mkdirSync(session, { recursive: true })
+    const result = await run(session, 'git init -q && echo evil > .git/hooks/pre-commit && echo planted')
+    // git init 本身仍可用（兼容性保持），注入文件在本命令内写入成功。
+    expect(result.isError).toBeFalsy()
+    expect(readFileSync(join(session, '.git', 'hooks', 'pre-commit.gravitas-quarantine'), 'utf8')).toBe('evil\n')
+    expect(existsSync(join(session, '.git', 'hooks', 'pre-commit'))).toBe(false)
+    // 后续命令正常 git 操作不受影响（sample hooks 不被执行，仓库可用）。
+    const commit = await run(session, 'echo ok > a.txt && git add a.txt && git -c user.name=agent -c user.email=agent@example.invalid commit -qm init && git log --oneline')
+    expect(commit.isError).toBeFalsy()
+    expect(commit.content).toContain('init')
+  })
   test('Given 配置目录内 git 工作区 When 修改 hooks 或 config Then 拒绝且正常提交仍可用', async () => {
     const session = join(configDir, 'agent-workspaces', 'git-isolation', 'current')
     mkdirSync(session, { recursive: true })
@@ -383,5 +396,80 @@ describe('quarantineWritableHardlinks（纯文件系统）', () => {
     expect(names.some((n) => n.includes('gravitas-quarantine'))).toBe(false)
     expect(names).toContain('f.txt')
     expect(readFileSync(target, 'utf8')).toBe('original')
+  })
+})
+
+describe('quarantineNewGitHooks（纯文件系统）', () => {
+  const makeRepo = (name: string, options: { config?: string } = {}) => {
+    const root = join(mkdtempSync(join(tmpdir(), `hooks-${name}-`)), 'ws')
+    const hooks = join(root, '.git', 'hooks')
+    mkdirSync(hooks, { recursive: true })
+    // rev-parse 校验仓库需要 objects 与 refs 目录存在。
+    mkdirSync(join(root, '.git', 'objects'), { recursive: true })
+    mkdirSync(join(root, '.git', 'refs'), { recursive: true })
+    writeFileSync(join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n')
+    writeFileSync(join(root, '.git', 'config'), options.config ?? '[core]\n\trepositoryformatversion = 0\n')
+    return { root, hooks }
+  }
+
+  test('Given 新建仓库含恶意 hook When 收口 Then hook 停用而 sample 保留', async () => {
+    const { root, hooks } = makeRepo('evil')
+    writeFileSync(join(hooks, 'pre-commit'), 'evil')
+    writeFileSync(join(hooks, 'pre-commit.sample'), 'sample')
+    const notice = await quarantineNewGitHooks(root, false)
+    expect(notice).toContain('pre-commit')
+    expect(existsSync(join(hooks, 'pre-commit'))).toBe(false)
+    expect(readFileSync(join(hooks, 'pre-commit.gravitas-quarantine'), 'utf8')).toBe('evil')
+    expect(readFileSync(join(hooks, 'pre-commit.sample'), 'utf8')).toBe('sample')
+  })
+
+  test('Given 仓库在命令前已存在 When 收口 Then 不改动任何文件', async () => {
+    const { root, hooks } = makeRepo('preexisting')
+    writeFileSync(join(hooks, 'pre-commit'), 'user-hook')
+    const notice = await quarantineNewGitHooks(root, true)
+    expect(notice).toBeUndefined()
+    expect(readFileSync(join(hooks, 'pre-commit'), 'utf8')).toBe('user-hook')
+  })
+
+  test('Given 无仓库 When 收口 Then 静默无操作', async () => {
+    const root = join(mkdtempSync(join(tmpdir(), 'hooks-empty-')), 'ws')
+    mkdirSync(root, { recursive: true })
+    expect(await quarantineNewGitHooks(root, false)).toBeUndefined()
+  })
+
+  test('Given core.hooksPath 指向工作目录内目录 When 收口 Then 该目录 hook 同样停用', async () => {
+    const { root } = makeRepo('hookspath', { config: '[core]\n\trepositoryformatversion = 0\n\thooksPath = custom-hooks\n' })
+    mkdirSync(join(root, 'custom-hooks'), { recursive: true })
+    writeFileSync(join(root, 'custom-hooks', 'pre-commit'), 'evil')
+    const notice = await quarantineNewGitHooks(root, false)
+    expect(notice).toContain('custom-hooks')
+    expect(existsSync(join(root, 'custom-hooks', 'pre-commit'))).toBe(false)
+    expect(readFileSync(join(root, 'custom-hooks', 'pre-commit.gravitas-quarantine'), 'utf8')).toBe('evil')
+  })
+
+  test('Given core.hooksPath 指向工作目录之外 When 收口 Then 不触碰范围外目录', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'hooks-outside-'))
+    const { root } = makeRepo('outside', { config: `[core]\n\thooksPath = ${outside}\n` })
+    writeFileSync(join(outside, 'pre-commit'), 'outside-hook')
+    await quarantineNewGitHooks(root, false)
+    // 范围外的目录不是本会话创建，保持原样。
+    expect(readFileSync(join(outside, 'pre-commit'), 'utf8')).toBe('outside-hook')
+  })
+
+  test('Given 符号链接形式的 hook When 收口 Then 同样停用', async () => {
+    const { root, hooks } = makeRepo('symlink')
+    const target = join(mkdtempSync(join(tmpdir(), 'hooks-target-')), 'evil.sh')
+    writeFileSync(target, 'evil')
+    symlinkSync(target, join(hooks, 'pre-commit'))
+    const notice = await quarantineNewGitHooks(root, false)
+    expect(notice).toContain('pre-commit')
+    expect(existsSync(join(hooks, 'pre-commit'))).toBe(false)
+    expect(existsSync(join(hooks, 'pre-commit.gravitas-quarantine'))).toBe(true)
+  })
+
+  test('Given 命令前不存在仓库且目录中没有 hooks When 收口 Then 正常完成', async () => {
+    const { root } = makeRepo('nohooksdir')
+    rmSync(join(root, '.git', 'hooks'), { recursive: true })
+    expect(await quarantineNewGitHooks(root, false)).toBeUndefined()
   })
 })

@@ -11,7 +11,7 @@
 
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, realpathSync } from 'node:fs'
-import { chmod, copyFile, lstat, readdir, rename, unlink } from 'node:fs/promises'
+import { chmod, copyFile, lstat, readFile, readdir, rename, unlink } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { getConfigDir } from '../../config-paths'
@@ -145,9 +145,11 @@ export async function quarantineWritableHardlinks(policy: SeatbeltPolicy): Promi
 }
 
 /** 为一次 Bash 调用生成沙箱命令与受控环境。 */
-export async function prepareBashSandbox(cwd: string, sessionId: string): Promise<{ argv: string[]; env: NodeJS.ProcessEnv }> {
+export async function prepareBashSandbox(cwd: string, sessionId: string): Promise<{ argv: string[]; env: NodeJS.ProcessEnv; gitWasPresent: boolean }> {
   const scratchDir = scratchDirFor(sessionId)
   const git = await resolveGitLayout(cwd)
+  // 与策略口径一致：已有仓库或已有 .git 入口都算"命令前已存在"，其后 hooks/config 由策略拒写。
+  const gitWasPresent = Boolean(git) || existsSync(join(realOrSelf(cwd), '.git'))
   const policy = buildBashSandboxPolicy({ cwd, scratchDir, git, configDirs: [getConfigDir()] })
   // 先溶解预存硬链接，再生成策略；隔离失败时不执行命令（失败关闭）。
   await quarantineWritableHardlinks(policy)
@@ -160,5 +162,74 @@ export async function prepareBashSandbox(cwd: string, sessionId: string): Promis
       BUN_INSTALL_CACHE_DIR: join(scratchDir, 'bun-cache'),
       npm_config_cache: join(scratchDir, 'npm-cache'),
     },
+    gitWasPresent,
   }
+}
+
+/** 读取仓库 config 中的 core.hooksPath（无则返回 undefined）。 */
+async function readCoreHooksPath(commonDir: string): Promise<string | undefined> {
+  let text: string
+  try {
+    text = await readFile(join(commonDir, 'config'), 'utf8')
+  } catch {
+    return undefined
+  }
+  const match = text.match(/^\s*hooksPath\s*=\s*(.+)$/m)
+  const value = match?.[1]
+  if (!value) return undefined
+  return value.trim().replace(/^"(.*)"$/, '$1')
+}
+
+/**
+ * 命令结束后收口新建仓库的 hooks：非 .sample 的 hook 文件重命名停用。
+ *
+ * 实测（见 git-init-experiment-f.log）：预 deny .git/hooks 会让 git init 致命失败，
+ * 因此 init 命令期间的 hooks/config 写入无法用策略拦截；这里在命令结束后把
+ * 本命令新建仓库（命令前无 .git）中可自动执行的 hook 停用，防止注入钩子在
+ * 后续 git 操作中持久生效。文件保留（仅加后缀），用户可恢复。
+ * 残留边界：命令内已触发的执行、GIT_DIR 环境变量间接布局、config 别名与
+ * core.fsmonitor 等 config 载体不在本函数覆盖范围。
+ */
+export async function quarantineNewGitHooks(cwd: string, gitWasPresent: boolean): Promise<string | undefined> {
+  if (gitWasPresent) return undefined
+  const real = realOrSelf(cwd)
+  const git = await resolveGitLayout(real)
+  if (!git) return undefined
+  const targets: string[] = []
+  // 范围外的仓库不可能在本沙箱内创建；只处理当前工作目录内的 hooks 目录。
+  const hooksDir = join(git.commonDir, 'hooks')
+  if (hooksDir.startsWith(real + sep)) targets.push(hooksDir)
+  const hooksPath = await readCoreHooksPath(git.commonDir)
+  if (hooksPath) {
+    const resolved = realOrSelf(isAbsolute(hooksPath) ? hooksPath : join(real, hooksPath))
+    if (resolved.startsWith(real + sep) && !targets.includes(resolved)) targets.push(resolved)
+  }
+  const disabled: string[] = []
+  for (const dir of targets) {
+    let names: string[]
+    try {
+      names = await readdir(dir)
+    } catch {
+      continue
+    }
+    for (const name of names) {
+      if (name.endsWith('.sample')) continue
+      const full = join(dir, name)
+      let st
+      try {
+        st = await lstat(full)
+      } catch {
+        continue
+      }
+      if (!st.isFile() && !st.isSymbolicLink()) continue
+      try {
+        await rename(full, `${full}.gravitas-quarantine`)
+        disabled.push(relative(real, full) || full)
+      } catch {
+        // 单个文件停用失败不阻断其他文件；失败项保留原名，风险在证据文档中说明。
+      }
+    }
+  }
+  if (!disabled.length) return undefined
+  return `已停用新建仓库中的 ${disabled.length} 个 hook 文件（加 .gravitas-quarantine 后缀，可手动恢复）：${disabled.join('、')}`
 }

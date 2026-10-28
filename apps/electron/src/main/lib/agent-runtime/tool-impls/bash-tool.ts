@@ -9,7 +9,7 @@ import { promisify } from 'node:util'
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
 import { formatToolError, truncateOutput, requiresOwnerToolGate } from './tool-utils.ts'
-import { prepareBashSandbox } from './bash-sandbox.ts'
+import { prepareBashSandbox, quarantineNewGitHooks } from './bash-sandbox.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -58,6 +58,8 @@ export async function executeBashToolOnPlatform(input: unknown, ctx: ToolContext
 
   const timeout = params.timeout ?? 30_000
 
+  // 沙箱准备结果提升到 try 外，使命令失败路径也能按同一份 gitWasPresent 收口。
+  let sandbox: Awaited<ReturnType<typeof prepareBashSandbox>> | undefined
   try {
     const assertOwnerGate = () => {
       if (!requiresOwnerToolGate(ctx.sessionId, ctx.ownerWorkspaceWrite)) return
@@ -65,7 +67,7 @@ export async function executeBashToolOnPlatform(input: unknown, ctx: ToolContext
       gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Bash', { command })
     }
     assertOwnerGate()
-    const sandbox = await prepareBashSandbox(ctx.cwd, ctx.sessionId)
+    sandbox = await prepareBashSandbox(ctx.cwd, ctx.sessionId)
     // 准备沙箱包含异步操作，启动子进程前再次核验会话授权。
     assertOwnerGate()
     const [command0, ...rest] = sandbox.argv as [string, ...string[]]
@@ -76,12 +78,34 @@ export async function executeBashToolOnPlatform(input: unknown, ctx: ToolContext
     })
 
     const output = stdout || stderr || '[无输出]'
+    // 命令可能新建了仓库；收口其 hooks，防止同命令注入的钩子在后续 git 操作中自动执行。
+    let hookNotice: string | undefined
+    try {
+      hookNotice = await quarantineNewGitHooks(ctx.cwd, sandbox!.gitWasPresent)
+    } catch (error) {
+      hookNotice = `新建仓库 hooks 收口失败：${formatToolError(error)}`
+    }
     return {
       toolCallId: '',
-      content: truncateOutput(output),
+      content: truncateOutput(hookNotice ? `${output}\n[Bash 沙箱] ${hookNotice}` : output),
     }
   } catch (error) {
     const message = formatToolError(error)
+    // 命令失败也可能已创建仓库（如 init 后续步骤失败），同样收口。
+    try {
+      const hookNotice = sandbox
+        ? await quarantineNewGitHooks(ctx.cwd, sandbox.gitWasPresent)
+        : undefined
+      if (hookNotice) {
+        return {
+          toolCallId: '',
+          content: truncateOutput(`${message}\n[Bash 沙箱] ${hookNotice}`),
+          isError: true,
+        }
+      }
+    } catch {
+      // 收口失败不叠加新的错误类型，原命令错误照常返回。
+    }
     return {
       toolCallId: '',
       content: truncateOutput(message),

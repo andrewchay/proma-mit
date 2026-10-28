@@ -26,3 +26,10 @@
 - 原 `test.skip` 的预存硬链接用例已启用并通过，断言补强：会话内路径写入落在私有副本（副本 nlink=1），范围外目标内容不变；新增 `.git/config` 预存硬链接负向用例。新增不依赖 seatbelt 的纯文件系统用例：跨边界硬链接溶解、权限位保留、nlink=1 不动 inode、符号链接跳过不跟随、范围内互链双方独立、writableLiterals 同样处理、递归子目录、扫描根缺失静默跳过、无临时文件残留。
 - 运行环境边界：agent 会话自身处于 seatbelt 之内，嵌套 `sandbox_apply` 返回 EPERM，seatbelt 依赖用例无法在会话内执行；全套 29 用例（0 失败）在非沙箱宿主（用户 Terminal，`bun run test bash-sandbox`）执行通过。该宿主差异需在后续无人值守验证中保持。
 - 代价与剩余边界：每次 Bash 调用全量遍历可写范围，大型 node_modules 有可感知性能成本；扫描与子进程启动之间的窗口仍存在（外部进程可在间隙创建硬链接），下次调用重新扫描会将其溶解；溶解会拆散范围内合法硬链接（pnpm、本地克隆等），表现为磁盘与性能代价，不影响正确性。本切片不表示跨 Runtime、跨平台或其他工具入口的隔离完成，CA-G1 未整体关闭。
+
+## 新建仓库 hooks 收口（2026-10-28 晚，第二切片）
+
+- 实验（非沙箱宿主真实 seatbelt）：预 deny `.git/hooks` 无论是否预创建该目录，`git init` 都致命失败（样本 hook 拷贝被拒，exit 128）；config 拒写同样致命。即"永久拒写 hooks/config"与"同命令 git init 兼容"在按路径授权的 seatbelt 规则下不可兼得，实验记录留存会话上下文。
+- 实现：`prepareBashSandbox` 返回 `gitWasPresent`（与策略口径一致：已有仓库或已有 `.git` 入口都算已存在）；命令结束后（含失败路径）对命令前不存在的仓库执行 `quarantineNewGitHooks`：当前工作目录内 `.git/hooks` 与 `core.hooksPath` 指向目录中的非 `.sample` hook 文件重命名加 `.gravitas-quarantine` 后缀停用，文件保留可恢复；范围外路径不触碰；收口失败以警告附加到工具输出，不吞掉命令结果。
+- 测试：纯 fs 用例 7 项（恶意 hook 停用且 sample 保留、已存在仓库不动、无仓库静默、hooksPath 间接布局、范围外不触碰、符号链接 hook、无 hooks 目录）；seatbelt 集成用例验证同命令 `git init && 写 hook` 后 hook 被收口、后续 commit 正常。全套 37 用例（0 失败）在非沙箱宿主执行通过。
+- 残留边界：同命令内已经触发的 hook 执行无法回收；`GIT_DIR` 环境变量间接布局不会被识别；config 在 init 命令期间仍可写（`core.fsmonitor`、别名等 config 载体），后续命令对其拒写但不追溯；hooks 执行始终在本沙箱约束内，该窗口提供的是持久化而非提权。基于身份绑定的执行收口仍在受控自主路线中推进。
