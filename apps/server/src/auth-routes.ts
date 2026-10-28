@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import type { AgentRuntimeRole } from '@gravitas/shared/utils'
 import { verifyPassword } from './local-admin-auth'
 import { verifyJwtWithJwks } from './jwt-auth'
@@ -27,11 +27,11 @@ export interface AuthRoutesDeps {
   /** 未配置则禁用 OIDC（本地 fallback 模式） */
   oidc?: OidcAuthConfig
   /** OIDC code→token→scope 交换；default 用 fetch 走 token endpoint */
-  oidcTokenFromCode?: (code: string, oidc: OidcAuthConfig) => Promise<{ tenantId: string; userId: string; roles: AgentRuntimeRole[] }>
+  oidcTokenFromCode?: (code: string, oidc: OidcAuthConfig, codeVerifier: string) => Promise<{ tenantId: string; userId: string; roles: AgentRuntimeRole[] }>
   /** 成功 OIDC 登录后的额外 userId 解析（从 claims），default 用 token 的 sub */
   dashboardPath?: string
   /** OIDC login state 校验用；缺省用带 TTL 的内存 Map（单节点私有部署足够，多 worker 需共享存储） */
-  oidcStateStore?: { set(state: string, ttlMs: number): Promise<void>; verify(state: string): Promise<boolean> }
+  oidcStateStore?: { set(state: string, codeVerifier: string, ttlMs: number): Promise<void>; consume(state: string): Promise<string | undefined> }
 }
 
 export interface AuthHandler {
@@ -47,14 +47,14 @@ export function createSessionCookie(sessionId: string, name: string, maxAgeSecon
 }
 
 /** 内存 OIDC login state 存储（单节点私有部署）；多 worker 需换成共享存储。 */
-export function createInMemoryOidcStateStore(): { set(state: string, ttlMs: number): Promise<void>; verify(state: string): Promise<boolean> } {
-  const states = new Map<string, number>()
+export function createInMemoryOidcStateStore(): NonNullable<AuthRoutesDeps['oidcStateStore']> {
+  const states = new Map<string, { expiresAt: number; codeVerifier: string }>()
   return {
-    async set(state, ttlMs) { states.set(state, Date.now() + ttlMs) },
-    async verify(state) {
-      const expiresAt = states.get(state)
+    async set(state, codeVerifier, ttlMs) { states.set(state, { expiresAt: Date.now() + ttlMs, codeVerifier }) },
+    async consume(state) {
+      const entry = states.get(state)
       states.delete(state) // 一次性：验证后即失效（防重放）
-      return typeof expiresAt === 'number' && expiresAt > Date.now()
+      return entry && entry.expiresAt > Date.now() ? entry.codeVerifier : undefined
     },
   }
 }
@@ -145,13 +145,16 @@ export function createAuthHandler(deps: AuthRoutesDeps): AuthHandler {
       const oidc = deps.oidc
       if (!oidc) return new Response(loginPageHtml(false, '未启用企业账号登录'), { status: 400, headers: { 'content-type': 'text/html; charset=utf-8' } })
       const state = randomBytes(16).toString('hex')
-      await stateStore.set(state, 10 * 60_000) // 10 分钟 TTL
+      const codeVerifier = randomBytes(32).toString('base64url')
+      await stateStore.set(state, codeVerifier, 10 * 60_000) // 10 分钟 TTL
       const url = new URL(oidc.authorizationEndpoint)
       url.searchParams.set('response_type', 'code')
       url.searchParams.set('client_id', oidc.clientId)
       url.searchParams.set('redirect_uri', oidc.redirectUri)
       url.searchParams.set('scope', oidc.scope ?? 'openid profile email')
       url.searchParams.set('state', state)
+      url.searchParams.set('code_challenge', createHash('sha256').update(codeVerifier).digest('base64url'))
+      url.searchParams.set('code_challenge_method', 'S256')
       return new Response(null, { status: 302, headers: { location: url.toString(), 'set-cookie': stateCookie(state, 600) } })
     },
 
@@ -160,13 +163,15 @@ export function createAuthHandler(deps: AuthRoutesDeps): AuthHandler {
       if (!oidc) return new Response(loginPageHtml(false, '未启用企业账号登录'), { status: 400, headers: { 'content-type': 'text/html; charset=utf-8' } })
       // 校验 state 防 login CSRF：缺失或不存在/已过期直接拒绝
       const state = query.state ?? ''
-      if (!state || state !== parseSessionCookie(cookieHeader ?? null, stateCookieName) || !await stateStore.verify(state)) {
+      if (!state || state !== parseSessionCookie(cookieHeader ?? null, stateCookieName)) {
         return new Response(loginPageHtml(true, '登录状态校验失败，请重新发起登录'), { status: 400, headers: { 'content-type': 'text/html; charset=utf-8' } })
       }
+      const codeVerifier = await stateStore.consume(state)
+      if (!codeVerifier) return new Response(loginPageHtml(true, '登录状态校验失败，请重新发起登录'), { status: 400, headers: { 'content-type': 'text/html; charset=utf-8' } })
       const code = query.code ?? ''
       if (!code) return new Response(loginPageHtml(true, '缺少授权码'), { status: 400, headers: { 'content-type': 'text/html; charset=utf-8' } })
       const exchange = deps.oidcTokenFromCode ?? defaultOidcTokenFromCode
-      const resolved = await exchange(code, oidc)
+      const resolved = await exchange(code, oidc, codeVerifier)
       if (!resolved) return new Response(loginPageHtml(true, '企业账号校验失败'), { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } })
       const response = await issueSession(resolved.tenantId, resolved.userId, resolved.roles)
       response.headers.append('set-cookie', stateCookie('', 0))
@@ -176,12 +181,13 @@ export function createAuthHandler(deps: AuthRoutesDeps): AuthHandler {
 }
 
 /** 默认 OIDC code→token→ID token 交换；用 JWKS 校验 id_token 签名与 iss/aud/exp 后解析 scope。 */
-async function defaultOidcTokenFromCode(code: string, oidc: OidcAuthConfig): Promise<{ tenantId: string; userId: string; roles: AgentRuntimeRole[] }> {
+async function defaultOidcTokenFromCode(code: string, oidc: OidcAuthConfig, codeVerifier: string): Promise<{ tenantId: string; userId: string; roles: AgentRuntimeRole[] }> {
   const form = new URLSearchParams({
     grant_type: 'authorization_code',
     code,
     redirect_uri: oidc.redirectUri,
     client_id: oidc.clientId,
+    code_verifier: codeVerifier,
   })
   if (oidc.clientSecret) form.set('client_secret', oidc.clientSecret)
   const response = await fetch(oidc.tokenEndpoint, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: form })

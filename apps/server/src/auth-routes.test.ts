@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test'
 import { createAuthHandler, readLoginCredentials, type AuthRoutesDeps } from './auth-routes'
 import type { AgentRuntimeRole } from '@gravitas/shared/utils'
 import { createCookieSessionAuthResolver } from './auth-resolvers'
+import { createHash } from 'node:crypto'
 
 function makeHandler(overrides: Partial<AuthRoutesDeps> = {}) {
   return createAuthHandler({
@@ -18,6 +19,33 @@ function makeHandler(overrides: Partial<AuthRoutesDeps> = {}) {
 }
 
 describe('auth-routes', () => {
+  it('Given OIDC 登录 When 交换授权码 Then 使用该次请求的 PKCE S256 verifier', async () => {
+    let verifier = ''
+    const h = makeHandler({
+      oidc: { authorizationEndpoint: 'https://idp/a', tokenEndpoint: 'https://idp/token', clientId: 'c', redirectUri: 'https://app/auth/oidc/callback' },
+      oidcTokenFromCode: async (_code, _oidc, codeVerifier) => { verifier = codeVerifier; return { tenantId: 'tenant', userId: 'user', roles: ['operator'] } },
+    })
+    const start = await h.oidcStart()
+    const url = new URL(start.headers.get('location')!)
+    expect(url.searchParams.get('code_challenge_method')).toBe('S256')
+    expect((await h.oidcCallback({ code: 'code', state: url.searchParams.get('state')! }, start.headers.get('set-cookie'))).status).toBe(302)
+    expect(verifier.length).toBeGreaterThanOrEqual(43)
+    expect(url.searchParams.get('code_challenge')).toBe(createHash('sha256').update(verifier).digest('base64url'))
+  })
+
+  it('Given 默认 token 交换 When 提交授权码 Then token 请求携带对应 verifier', async () => {
+    const previousFetch = globalThis.fetch
+    let tokenBody = ''
+    globalThis.fetch = (async (_url, init) => { tokenBody = String(init?.body ?? ''); return Response.json({}) }) as typeof fetch
+    try {
+      const h = makeHandler({ oidc: { authorizationEndpoint: 'https://idp/a', tokenEndpoint: 'https://idp/token', clientId: 'c', redirectUri: 'https://app/auth/oidc/callback' } })
+      const start = await h.oidcStart()
+      const url = new URL(start.headers.get('location')!)
+      await expect(h.oidcCallback({ code: 'code', state: url.searchParams.get('state')! }, start.headers.get('set-cookie'))).rejects.toThrow('缺少 id_token')
+      const verifier = new URLSearchParams(tokenBody).get('code_verifier')!
+      expect(createHash('sha256').update(verifier).digest('base64url')).toBe(url.searchParams.get('code_challenge')!)
+    } finally { globalThis.fetch = previousFetch }
+  })
   it('Given HTTPS 会话 When 登录和登出 Then 两次 Cookie 均携带 Secure', async () => {
     const h = makeHandler({ secureSessionCookie: true })
     const login = await h.loginForm({ username: 'admin', password: 's3cret' })
