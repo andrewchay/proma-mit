@@ -4,7 +4,7 @@ import { createMemoryItem } from './memory-plugin-service'
 import { createApprovedWorkspaceSkill } from './agent-workspace-manager'
 import type { CreateMonitorInput } from './monitor-service'
 import type { MemoryItemKind } from './memory-plugin-service'
-import { adoptAgentEmployeeCapabilityVersion, getAgentEmployee } from './project-sqlite-store'
+import { adoptAgentEmployeeCapabilityVersion, getAgentEmployee, listAgentEmployeeLearningSamples } from './project-sqlite-store'
 import { createHash } from 'node:crypto'
 
 export interface ApprovedChangeExecutorDependencies {
@@ -62,6 +62,14 @@ export async function executeApprovedChange(
         if (!allowedWorkspaceIds.has(change.workspaceId)) throw new Error('目标工作区不在该员工获准服务的范围内')
       }
       if (createHash('sha256').update(change.content).digest('hex') !== change.contentHash) throw new Error('能力内容 hash 校验失败')
+      const evidenceIds = stringArray(change.evidenceSampleIds)
+      if (!Array.isArray(change.evidenceSampleIds) || evidenceIds.length !== change.evidenceSampleIds.length || evidenceIds.length < 3 || new Set(evidenceIds).size !== evidenceIds.length) {
+        throw new Error('能力推广缺少有效的独立证据引用，请重新生成候选')
+      }
+      const evidence = listAgentEmployeeLearningSamples(change.agentId).filter((sample) => evidenceIds.includes(sample.id))
+      if (evidence.length !== evidenceIds.length || evidence.some((sample) => sample.privacyStatus !== 'sanitized' || sample.outcome === 'manual_excluded' || (change.scope === 'workspace' && sample.workspaceId !== change.workspaceId))) {
+        throw new Error('能力推广证据已删除、排除或不属于目标工作区，请重新生成候选')
+      }
       adoptAgentEmployeeCapabilityVersion({
         agentId: change.agentId,
         parentVersionId: typeof change.parentVersionId === 'string' ? change.parentVersionId : undefined,
