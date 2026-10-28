@@ -52,10 +52,11 @@ export async function executeEditTool(input: unknown, ctx: ToolContext): Promise
   try {
     if (ctx.ownerWorkspaceWrite) {
       const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+      const toolInput = input as Record<string, unknown>
       gates.assertOwnerToolWorkingDirectory(ctx.sessionId, ctx.cwd)
-      gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Edit', { file_path: params.file_path, old_string: params.old_string, new_string: params.new_string })
+      gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Edit', toolInput)
       const { consumeApprovedOwnerAction } = require('../../project-owner-action-approval') as typeof import('../../project-owner-action-approval')
-      if (!consumeApprovedOwnerAction(ctx.sessionId, { toolName: 'Edit', toolInput: { file_path: params.file_path, old_string: params.old_string, new_string: params.new_string } })) throw new Error('Owner动作批准已使用或失效，请重新审批')
+      if (!consumeApprovedOwnerAction(ctx.sessionId, { toolName: 'Edit', toolInput })) throw new Error('Owner动作批准已使用或失效，请重新审批')
     }
     const descriptor = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK)
     try {

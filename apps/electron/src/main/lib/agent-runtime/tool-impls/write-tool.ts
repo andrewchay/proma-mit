@@ -49,12 +49,13 @@ export async function executeWriteTool(input: unknown, ctx: ToolContext): Promis
     let exclusiveCreate = false
     if (ctx.ownerWorkspaceWrite) {
       const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+      const toolInput = input as Record<string, unknown>
       gates.assertOwnerToolWorkingDirectory(ctx.sessionId, ctx.cwd)
-      gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Write', { file_path: params.file_path, content: params.content })
-      exclusiveCreate = gates.isOwnerAutoAllowedWorkspaceWrite(ctx.sessionId, 'Write', { file_path: params.file_path, content: params.content })
+      gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Write', toolInput)
+      exclusiveCreate = gates.isOwnerAutoAllowedWorkspaceWrite(ctx.sessionId, 'Write', toolInput)
       if (!exclusiveCreate) {
         const { consumeApprovedOwnerAction } = require('../../project-owner-action-approval') as typeof import('../../project-owner-action-approval')
-        if (!consumeApprovedOwnerAction(ctx.sessionId, { toolName: 'Write', toolInput: { file_path: params.file_path, content: params.content } })) throw new Error('Owner动作批准已使用或失效，请重新审批')
+        if (!consumeApprovedOwnerAction(ctx.sessionId, { toolName: 'Write', toolInput })) throw new Error('Owner动作批准已使用或失效，请重新审批')
       }
     }
     const dir = dirname(path)

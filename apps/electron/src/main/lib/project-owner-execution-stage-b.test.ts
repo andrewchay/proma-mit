@@ -149,7 +149,7 @@ test('Given真实Owner命令进入运行态 When审批精确工具动作 Then仅
   expect(actionApproval.consumeApprovedOwnerAction(sessionId, allowedRequest)).toBe(false)
 
   executionGates.admitOwnerExecutionGateSession(executionId, sessionId)
-  const writeRequest = { ...request, requestId: randomUUID() }
+  const writeRequest = { ...request, requestId: randomUUID(), toolInput: { content: 'exact approved proposal', file_path: 'result.md' } }
   actionApproval.recordOwnerActionApprovalRequest({ commandId, executionId, sessionId }, writeRequest)
   actionApproval.decideOwnerActionApproval(writeRequest, 'allow', { commandId, executionId, sessionId })
   const cwd = getAgentWorkspaceCwd(f.workspace, sessionId)
