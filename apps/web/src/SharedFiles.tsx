@@ -15,6 +15,7 @@ export function SharedFiles({ request }: { request: (path: string, init?: Reques
   useEffect(() => {
     generation.current++
     setState(previous => ({ ...previous, files: [], cursor: null, status: '', loading: false, loaded: false }))
+    return () => { generation.current++ }
   }, [request, setState])
   const edit = (field: 'owner' | 'workspace', value: string): void => {
     generation.current++
