@@ -13,6 +13,7 @@ import type { ToolContext } from '../types.ts'
 import { assertOwnerToolPermission, formatToolError, truncateOutput } from './tool-utils.ts'
 import { getFetchFn } from '../../proxy-fetch'
 import { getEffectiveProxyUrl } from '../../proxy-settings-service'
+import { readBoundedWebBody } from './bounded-web-body'
 
 export const WEB_FETCH_TOOL_NAME = 'WebFetch'
 
@@ -96,7 +97,7 @@ export async function executeWebFetchTool(input: unknown, ctx: ToolContext): Pro
         return { toolCallId: '', content: `抓取失败 (${response.status} ${response.statusText})`, isError: true }
       }
       contentType = response.headers.get('content-type') ?? ''
-      buffer = await readWebBody(response.body, controller.signal)
+      buffer = await readBoundedWebBody(response.body, controller.signal, MAX_BODY_BYTES, '页面')
     } finally {
       clearTimeout(timer)
       ctx.abortSignal?.removeEventListener('abort', abortFromCaller)
@@ -119,34 +120,6 @@ export async function executeWebFetchTool(input: unknown, ctx: ToolContext): Pro
     const msg = error instanceof Error ? error.message : String(error)
     console.error('[Agent WebFetch] 执行失败:', error)
     return { toolCallId: '', content: `抓取失败: ${msg}`, isError: true }
-  }
-}
-
-/** 限制实际接收字节；超限或中止时取消读取，不能相信 Content-Length。 */
-async function readWebBody(body: ReadableStream<Uint8Array> | null, signal: AbortSignal): Promise<Uint8Array> {
-  if (signal.aborted) throw new Error('抓取已取消或超时')
-  if (!body) return new Uint8Array()
-  const reader = body.getReader()
-  const cancel = () => { void reader.cancel().catch(() => {}) }
-  signal.addEventListener('abort', cancel, { once: true })
-  const chunks: Uint8Array[] = []
-  let size = 0
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (signal.aborted) throw new Error('抓取已取消或超时')
-      if (done) break
-      size += value.byteLength
-      if (size > MAX_BODY_BYTES) { cancel(); throw new Error('页面过大，已放弃抓取') }
-      chunks.push(value)
-    }
-    const result = new Uint8Array(size)
-    let offset = 0
-    for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength }
-    return result
-  } finally {
-    signal.removeEventListener('abort', cancel)
-    reader.releaseLock()
   }
 }
 

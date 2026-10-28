@@ -21,6 +21,7 @@ import { getToolCredentials } from '../../chat-tool-config'
 import { getFetchFn } from '../../proxy-fetch'
 import { getEffectiveProxyUrl } from '../../proxy-settings-service'
 import { assertOwnerToolPermission, formatToolError } from './tool-utils.ts'
+import { readBoundedWebBody } from './bounded-web-body'
 
 export const WEB_SEARCH_TOOL_NAME = 'WebSearch'
 
@@ -70,9 +71,10 @@ interface TavilySearchResponse {
   answer?: string
 }
 
-async function searchTavily(query: string, apiKey: string, fetchFn: typeof fetch): Promise<ToolResult> {
+async function searchTavily(query: string, apiKey: string, fetchFn: typeof fetch, signal: AbortSignal): Promise<ToolResult> {
   const response = await fetchFn('https://api.tavily.com/search', {
     method: 'POST',
+    signal,
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       api_key: apiKey,
@@ -84,11 +86,11 @@ async function searchTavily(query: string, apiKey: string, fetchFn: typeof fetch
   })
 
   if (!response.ok) {
-    const errorText = await response.text()
+    const errorText = new TextDecoder().decode(await readBoundedWebBody(response.body, signal, 2_000_000, '搜索响应'))
     return { toolCallId: '', content: `搜索请求失败 (${response.status}): ${errorText}`, isError: true }
   }
 
-  const data = await response.json() as TavilySearchResponse
+  const data = JSON.parse(new TextDecoder().decode(await readBoundedWebBody(response.body, signal, 2_000_000, '搜索响应'))) as TavilySearchResponse
   return { toolCallId: '', content: formatTavilyResults(data) }
 }
 
@@ -138,9 +140,10 @@ interface MetasoSearchResponse {
   total?: number
 }
 
-async function searchMetaso(query: string, apiKey: string, fetchFn: typeof fetch): Promise<ToolResult> {
+async function searchMetaso(query: string, apiKey: string, fetchFn: typeof fetch, signal: AbortSignal): Promise<ToolResult> {
   const response = await fetchFn(METASO_SEARCH_URL, {
     method: 'POST',
+    signal,
     headers: {
       'Authorization': `Bearer ${apiKey}`,
       'Accept': 'application/json',
@@ -157,11 +160,11 @@ async function searchMetaso(query: string, apiKey: string, fetchFn: typeof fetch
   })
 
   if (!response.ok) {
-    const errorText = await response.text()
+    const errorText = new TextDecoder().decode(await readBoundedWebBody(response.body, signal, 2_000_000, '搜索响应'))
     return { toolCallId: '', content: `搜索请求失败 (${response.status}): ${errorText}`, isError: true }
   }
 
-  const data = await response.json() as MetasoSearchResponse
+  const data = JSON.parse(new TextDecoder().decode(await readBoundedWebBody(response.body, signal, 2_000_000, '搜索响应'))) as MetasoSearchResponse
   return { toolCallId: '', content: formatMetasoResults(data) }
 }
 
@@ -223,25 +226,36 @@ export async function executeWebSearchTool(input: unknown, ctx: ToolContext): Pr
     const fetchFn = getFetchFn(proxyUrl)
     assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_SEARCH_TOOL_NAME, { query })
 
-    if (provider === 'metaso') {
-      if (!credentials.metasoApiKey) {
+    const controller = new AbortController()
+    const abortFromCaller = () => controller.abort()
+    if (ctx.abortSignal?.aborted) controller.abort()
+    else ctx.abortSignal?.addEventListener('abort', abortFromCaller, { once: true })
+    const timer = setTimeout(() => controller.abort(), 15_000)
+    try {
+      if (controller.signal.aborted) throw new Error('搜索已取消或超时')
+      if (provider === 'metaso') {
+        if (!credentials.metasoApiKey) {
+          return {
+            toolCallId: '',
+            content: 'MetaSo 搜索未配置 API Key。请告知用户在 设置 > Chat 工具 中为「联网搜索」配置 metasoApiKey 后重试。',
+            isError: true,
+          }
+        }
+        return await searchMetaso(query, credentials.metasoApiKey, fetchFn, controller.signal)
+      }
+
+      if (!credentials.apiKey) {
         return {
           toolCallId: '',
-          content: 'MetaSo 搜索未配置 API Key。请告知用户在 设置 > Chat 工具 中为「联网搜索」配置 metasoApiKey 后重试。',
+          content: '搜索工具未配置 API Key（Tavily 或 MetaSo）。请告知用户在 设置 > Chat 工具 中为「联网搜索」配置 API Key 后重试。',
           isError: true,
         }
       }
-      return await searchMetaso(query, credentials.metasoApiKey, fetchFn)
+      return await searchTavily(query, credentials.apiKey, fetchFn, controller.signal)
+    } finally {
+      clearTimeout(timer)
+      ctx.abortSignal?.removeEventListener('abort', abortFromCaller)
     }
-
-    if (!credentials.apiKey) {
-      return {
-        toolCallId: '',
-        content: '搜索工具未配置 API Key（Tavily 或 MetaSo）。请告知用户在 设置 > Chat 工具 中为「联网搜索」配置 API Key 后重试。',
-        isError: true,
-      }
-    }
-    return await searchTavily(query, credentials.apiKey, fetchFn)
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     console.error('[Agent WebSearch] 执行失败:', error)

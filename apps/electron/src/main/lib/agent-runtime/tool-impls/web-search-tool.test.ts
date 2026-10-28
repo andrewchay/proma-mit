@@ -188,4 +188,37 @@ describe('WebSearch 工具', () => {
     expect(result.isError).toBeFalsy()
     expect(result.content).toContain('未找到相关结果')
   })
+
+  test('Given 调用已取消 When 发起搜索 Then 不发送请求', async () => {
+    const controller = new AbortController(); controller.abort()
+    let calls = 0
+    globalThis.fetch = (async () => { calls++; return new Response('{}') }) as unknown as typeof fetch
+    const result = await executeWebSearchTool({ query: '测试' }, { ...ctx, abortSignal: controller.signal })
+    expect(result.isError).toBe(true)
+    expect(calls).toBe(0)
+  })
+
+  test('Given 搜索响应超过上限 When 读取流 Then 停止读取并返回错误', async () => {
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array(2_000_001)) }, cancel() { cancelled = true } })
+    globalThis.fetch = (async () => new Response(body)) as unknown as typeof fetch
+    const result = await executeWebSearchTool({ query: '测试' }, ctx)
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('搜索响应过大')
+    expect(cancelled).toBe(true)
+  })
+
+  test('Given 搜索响应体未结束 When 调用取消 Then 中断等待', async () => {
+    let started!: () => void
+    const ready = new Promise<void>(resolve => { started = resolve })
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({ pull() { started() }, cancel() { cancelled = true } }, { highWaterMark: 0 })
+    globalThis.fetch = (async () => new Response(body)) as unknown as typeof fetch
+    const controller = new AbortController()
+    const pending = executeWebSearchTool({ query: '测试' }, { ...ctx, abortSignal: controller.signal })
+    await ready; controller.abort()
+    expect((await pending).isError).toBe(true)
+    expect(cancelled).toBe(true)
+  })
+
 })
