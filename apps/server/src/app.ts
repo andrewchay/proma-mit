@@ -64,6 +64,7 @@ import type { UsagePriceEntry } from './billing.ts'
 import type { TenantBudgetPolicy } from './billing.ts'
 import type { UsageLedgerRecord } from './billing.ts'
 import { PostgresAuthSessionStore } from './auth-session-store.ts'
+import { PostgresWorkspaceMembershipStore } from './workspace-membership-store.ts'
 import { createAuthHandler, readLoginCredentials, type AuthRoutesDeps } from './auth-routes.ts'
 import { createCookieSessionAuthResolver, createCompositeAuthResolver } from './auth-resolvers.ts'
 import { hashPassword, verifyPassword } from './local-admin-auth.ts'
@@ -179,6 +180,7 @@ export function createPromaWebServerApplication(
   const logger = dependencies.logger ?? consolePromaWebLogger
   const agentTurnRunner = dependencies.agentTurnRunner ?? runAISDKWebAgentTurn
   const store = new PostgresTenantRuntimeStore(postgres)
+  const workspaceMemberships = new PostgresWorkspaceMembershipStore(postgres)
   const taskLease = new PostgresTaskLease(postgres, config.workerId, config.taskLeaseMs)
   const usageLedger = new PostgresUsageLedger(postgres, config.priceCatalog ?? [])
   const auditLog = new PostgresAuditLog(postgres)
@@ -806,6 +808,7 @@ export function createPromaWebServerApplication(
     async initialize() {
       if (redis instanceof NodeRedisClient) await redis.connect()
       await store.initializeSchema()
+      await workspaceMemberships.initializeSchema()
       await taskLease.initializeSchema()
       await usageLedger.initializeSchema()
       await auditLog.initializeSchema()
