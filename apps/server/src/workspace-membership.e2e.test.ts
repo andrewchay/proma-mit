@@ -1,12 +1,17 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { PostgresTenantRuntimeStore } from '@gravitas/shared/utils'
 import { PostgresWorkspaceMembershipStore } from './workspace-membership-store.ts'
+import { createPromaWebServerApplication } from './app.ts'
+import { PostgresAuditLog } from './audit.ts'
 
 const databaseUrl = process.env.PROMA_MEMBERSHIP_TEST_DATABASE_URL
 describe.skipIf(!databaseUrl)('企业工作区成员的真实 Postgres 隔离', () => {
   const sql = new Bun.SQL(databaseUrl!)
   const otherSql = new Bun.SQL(databaseUrl!)
-  const client = { query: <Row extends Record<string, unknown>>(statement: string, params: readonly unknown[] = []) => sql.unsafe<Row[]>(statement, [...params]).then((rows) => ({ rows })) }
+  const client = {
+    query: <Row extends Record<string, unknown>>(statement: string, params: readonly unknown[] = []) => sql.unsafe<Row[]>(statement, [...params]).then((rows) => ({ rows })),
+    transaction: async (run: (tx: import('@gravitas/shared/utils').AgentRuntimePostgresClient) => Promise<void>) => { await sql.begin(async (transaction) => { await run({ query: (statement, params = []) => transaction.unsafe(statement, [...params]).then((rows) => ({ rows })) }) }) },
+  }
   const otherClient = { query: <Row extends Record<string, unknown>>(statement: string, params: readonly unknown[] = []) => otherSql.unsafe<Row[]>(statement, [...params]).then((rows) => ({ rows })) }
   const workspaces = new PostgresTenantRuntimeStore(client)
   const members = new PostgresWorkspaceMembershipStore(client)
@@ -17,10 +22,12 @@ describe.skipIf(!databaseUrl)('企业工作区成员的真实 Postgres 隔离', 
   beforeAll(async () => {
     await workspaces.initializeSchema()
     await members.initializeSchema()
+    await new PostgresAuditLog(client).initializeSchema()
     await workspaces.setWorkspace({ ...owner, workspaceSlug: 'project', cwd: '/ignored', mcpServers: {} })
   })
   afterAll(async () => {
     await sql.unsafe('DELETE FROM proma_runtime_workspaces WHERE tenant_id=$1', [tenant])
+    await sql.unsafe('DELETE FROM proma_runtime_audit_log WHERE tenant_id=$1', [tenant])
     await sql.close()
     await otherSql.close()
   })
@@ -37,5 +44,20 @@ describe.skipIf(!databaseUrl)('企业工作区成员的真实 Postgres 隔离', 
     expect(await members.listMembers(owner, 'project')).toMatchObject([{ userId: 'member', role: 'editor' }])
     expect(await members.removeMember(owner, 'project', 'member')).toBe(true)
     expect(await second.getRole({ tenantId: tenant, userId: 'member' }, 'owner', 'project')).toBeNull()
+  })
+  test('Given 已认证用户 When 管理成员登记 Then 只能修改自己的工作区且明确尚未启用共享访问', async () => {
+    const app = createPromaWebServerApplication({ databaseUrl: databaseUrl!, redisUrl: 'redis://unused', s3: { bucket: 'unused', region: 'auto', maxUploadBytes: 1024 }, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test', trustedHeaderAuth: false, workspaceRoot: '/tmp/membership-test', workerId: 'test', taskLeaseMs: 30000 }, { postgres: client, auth: ({ request }) => { const userId = request.headers.get('x-test-user'); return userId ? { tenantId: tenant, userId, roles: ['operator'] } : undefined } })
+    const request = (method: string, user: string, path: string, body?: string) => new Request(`http://server${path}`, { method, headers: { 'x-test-user': user, ...(body ? { 'content-type': 'application/json' } : {}) }, ...(body ? { body } : {}) })
+    const path = '/agent/workspaces/project/members/member-api'
+    expect((await app.fetch(new Request('http://server/agent/workspaces/project/members'))).status).toBe(401)
+    expect((await app.fetch(request('PUT', 'owner', path, '{"role":"owner"}'))).status).toBe(400)
+    expect((await app.fetch(request('PUT', 'owner', path, JSON.stringify({ role: 'editor', padding: 'x'.repeat(5000) })))).status).toBe(400)
+    expect((await app.fetch(request('PUT', 'owner', path, '{"role":"editor"}'))).status).toBe(200)
+    expect((await app.fetch(request('PUT', 'outsider', path, '{"role":"viewer"}'))).status).toBe(404)
+    expect((await app.fetch(request('GET', 'outsider', '/agent/workspaces/project/members'))).status).toBe(404)
+    const listing = await app.fetch(request('GET', 'owner', '/agent/workspaces/project/members'))
+    expect(await listing.json()).toMatchObject({ sharedAccessEnabled: false, members: [{ userId: 'member-api', role: 'editor' }] })
+    expect((await app.fetch(request('DELETE', 'owner', path))).status).toBe(204)
+    expect(await members.getRole({ tenantId: tenant, userId: 'member-api' }, 'owner', 'project')).toBeNull()
   })
 })
