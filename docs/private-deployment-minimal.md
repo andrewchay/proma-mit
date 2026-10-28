@@ -86,6 +86,7 @@
 按依赖排序，全部 TDD + 真实部署验证：
 
 ### M1 浏览器登录闭环（最高优先）✅ 已完成（2026-08-13）
+- 2026-10-28 更新：`none` 会授予匿名管理员，仅允许本机 development；浏览器登录在非本机开发环境要求配置 `PROMA_WEB_PUBLIC_BASE_URL` 为外部 HTTPS 地址，登录和登出 Cookie 带 `Secure`。当前 compose 的 nginx 仅提供 HTTP，需自行配置可信 TLS 终止代理并限制直连；本更新不证明代理、OIDC 或生产部署已验收。
 - 目标：私有部署下运维/成员能浏览器登录，而非手动填 token。
 - 方案：本地用户名/密码（默认，scrypt 哈希 + HTTP-only 会话 cookie）与 OIDC Authorization Code（可配置）双路径；`PROMA_WEB_AUTH_MODE=local|oidc|both|none`。
 - 产出：`auth-session-store.ts`（Postgres 会话表）、`local-admin-auth.ts`（scrypt）、`auth-resolvers.ts`（cookie→scope 复合 resolver）、`auth-routes.ts`（/auth/login|logout|oidc/start|oidc/callback）、`index.ts`/`app.ts` 接线。

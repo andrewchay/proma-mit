@@ -32,6 +32,20 @@ export function assertNoneAuthStartupPolicy(input: { authMode: string; trustedHe
   }
 }
 
+/** 以明确配置的公开地址判断，不信任客户端提供的转发头。 */
+export function resolveSecureSessionCookie(input: { publicBaseUrl?: string; hostname: string; nodeEnv?: string }): boolean {
+  const localDevelopment = input.nodeEnv === 'development' && isLoopbackHostname(input.hostname)
+  if (!input.publicBaseUrl) {
+    if (localDevelopment) return false
+    throw new Error('浏览器登录需要配置 HTTPS PROMA_WEB_PUBLIC_BASE_URL')
+  }
+  const url = new URL(input.publicBaseUrl)
+  if (url.username || url.password) throw new Error('PROMA_WEB_PUBLIC_BASE_URL 不得包含凭据')
+  if (url.protocol === 'https:') return true
+  if (url.protocol === 'http:' && localDevelopment && isLoopbackHostname(url.hostname)) return false
+  throw new Error('浏览器登录需要 HTTPS；仅本机开发允许 HTTP')
+}
+
 export interface PromaWebAuthModeStartupPolicyInput {
   trustedHeaderAuth: boolean
   authMode?: 'local' | 'oidc' | 'both' | 'none' | string

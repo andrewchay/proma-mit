@@ -87,6 +87,7 @@ export interface PromaWebServerConfig {
   trustedHeaderAuth: boolean
   /** 浏览器登录：local（本地用户名/密码）/ oidc / both / none（仅 Bearer/trusted-header） */
   authMode?: 'local' | 'oidc' | 'both' | 'none'
+  secureSessionCookie?: boolean
   /** OIDC Authorization Code 客户端配置（authMode=oidc|both 时需要） */
   oidc?: { authorizationEndpoint: string; tokenEndpoint: string; clientId: string; clientSecret?: string; redirectUri: string; scope?: string }
   /** 本地 bootstrap 管理员（authMode=local|both 时需要） */
@@ -223,6 +224,7 @@ export function createPromaWebServerApplication(
       destroy: (sessionId) => authSessionStore.destroy(sessionId),
     },
     sessionCookieName: cookieAuthCookieName,
+    secureSessionCookie: config.secureSessionCookie,
     verifyAdmin: localAdmin
       ? async (username, password) => {
           if (username !== localAdmin.username) return null

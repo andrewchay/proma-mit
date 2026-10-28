@@ -41,8 +41,8 @@ services:
       PROMA_WEB_AUTH_MODE: ${PROMA_WEB_AUTH_MODE:-local}
       # local/both 模式所需：username:tenantId:password
       PROMA_WEB_ADMIN: ${PROMA_WEB_ADMIN:?local 模式请设置 PROMA_WEB_ADMIN=user:tenant:pass}
-      # 登录回调/重定向的对外基础 URL（nginx 入口）
-      PROMA_WEB_PUBLIC_BASE_URL: ${PROMA_WEB_PUBLIC_BASE_URL:-http://localhost:8080}
+      # 外部 TLS 终止代理的 HTTPS 地址；当前 nginx 入口本身不提供 TLS
+      PROMA_WEB_PUBLIC_BASE_URL: ${PROMA_WEB_PUBLIC_BASE_URL:?请设置外部 HTTPS 地址 PROMA_WEB_PUBLIC_BASE_URL}
       # OIDC（authMode=oidc|both 时才要求）
       PROMA_WEB_OIDC_ISSUER: ${PROMA_WEB_OIDC_ISSUER:-}
       PROMA_WEB_OIDC_AUDIENCE: ${PROMA_WEB_OIDC_AUDIENCE:-}

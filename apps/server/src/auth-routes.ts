@@ -22,6 +22,7 @@ export interface AuthRoutesDeps {
   /** 本地管理员校验：返回 scope 或 null；内部完成 scrypt 比对 */
   verifyAdmin: (username: string, password: string) => Promise<{ tenantId: string; roles: AgentRuntimeRole[] } | null>
   sessionCookieName?: string
+  secureSessionCookie?: boolean
   sessionTtlMs?: number
   /** 未配置则禁用 OIDC（本地 fallback 模式） */
   oidc?: OidcAuthConfig
@@ -41,8 +42,8 @@ export interface AuthHandler {
   oidcCallback(query: { code?: string; state?: string }): Promise<Response>
 }
 
-export function createSessionCookie(sessionId: string, name: string, maxAgeSeconds: number): string {
-  return `${name}=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}`
+export function createSessionCookie(sessionId: string, name: string, maxAgeSeconds: number, secure = false): string {
+  return `${name}=${sessionId}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}${secure ? '; Secure' : ''}`
 }
 
 /** 内存 OIDC login state 存储（单节点私有部署）；多 worker 需换成共享存储。 */
@@ -81,8 +82,8 @@ export async function readLoginCredentials(request: Request): Promise<{ credenti
   }
 }
 
-function expiredCookie(name: string): string {
-  return `${name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`
+function expiredCookie(name: string, secure: boolean): string {
+  return `${name}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secure ? '; Secure' : ''}`
 }
 
 function loginPageHtml(hasOidc: boolean, error?: string): string {
@@ -114,7 +115,7 @@ export function createAuthHandler(deps: AuthRoutesDeps): AuthHandler {
     const maxAgeSec = Math.floor(ttlMs / 1_000)
     return new Response(null, {
       status: 302,
-      headers: { location: deps.dashboardPath ?? '/agent/ui', 'set-cookie': createSessionCookie(sessionId, cookieName, maxAgeSec) },
+      headers: { location: deps.dashboardPath ?? '/agent/ui', 'set-cookie': createSessionCookie(sessionId, cookieName, maxAgeSec, deps.secureSessionCookie) },
     })
   }
 
@@ -135,7 +136,7 @@ export function createAuthHandler(deps: AuthRoutesDeps): AuthHandler {
     async logout(cookieHeader) {
       const sessionId = parseSessionCookie(cookieHeader ?? null, cookieName)
       if (sessionId) await deps.sessionStore.destroy(sessionId)
-      return new Response(null, { status: 302, headers: { location: '/auth/login', 'set-cookie': expiredCookie(cookieName) } })
+      return new Response(null, { status: 302, headers: { location: '/auth/login', 'set-cookie': expiredCookie(cookieName, deps.secureSessionCookie ?? false) } })
     },
 
     async oidcStart() {

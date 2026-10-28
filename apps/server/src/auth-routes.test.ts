@@ -18,6 +18,13 @@ function makeHandler(overrides: Partial<AuthRoutesDeps> = {}) {
 }
 
 describe('auth-routes', () => {
+  it('Given HTTPS 会话 When 登录和登出 Then 两次 Cookie 均携带 Secure', async () => {
+    const h = makeHandler({ secureSessionCookie: true })
+    const login = await h.loginForm({ username: 'admin', password: 's3cret' })
+    expect(login.headers.get('set-cookie')).toContain('; Secure')
+    const logout = await h.logout(login.headers.get('set-cookie'))
+    expect(logout.headers.get('set-cookie')).toContain('; Secure')
+  })
   it('loginPage 返回登录页 HTML', async () => {
     const h = makeHandler()
     const res = await h.loginPage()

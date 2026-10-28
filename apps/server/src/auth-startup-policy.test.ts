@@ -1,5 +1,21 @@
 import { describe, expect, test } from 'bun:test'
-import { assertTrustedHeaderAuthStartupPolicy, assertAuthModeStartupPolicy, assertNoneAuthStartupPolicy } from './auth-startup-policy.ts'
+import { assertTrustedHeaderAuthStartupPolicy, assertAuthModeStartupPolicy, assertNoneAuthStartupPolicy, resolveSecureSessionCookie } from './auth-startup-policy.ts'
+
+describe('会话 Cookie 传输策略', () => {
+  test('Given HTTPS 公网地址 When 使用浏览器登录 Then 启用 Secure', () => {
+    expect(resolveSecureSessionCookie({ publicBaseUrl: 'https://example.com', hostname: '0.0.0.0', nodeEnv: 'production' })).toBe(true)
+  })
+  test('Given 本机 HTTP 开发 When 使用浏览器登录 Then 允许非 Secure Cookie', () => {
+    expect(resolveSecureSessionCookie({ hostname: '127.0.0.1', nodeEnv: 'development' })).toBe(false)
+    expect(resolveSecureSessionCookie({ publicBaseUrl: 'http://localhost:3000', hostname: 'localhost', nodeEnv: 'development' })).toBe(false)
+  })
+  test('Given 生产环境或非本机 HTTP When 使用浏览器登录 Then 拒绝启动', () => {
+    expect(() => resolveSecureSessionCookie({ hostname: '127.0.0.1', nodeEnv: 'production' })).toThrow()
+    expect(() => resolveSecureSessionCookie({ publicBaseUrl: 'http://example.com', hostname: '127.0.0.1', nodeEnv: 'development' })).toThrow()
+    expect(() => resolveSecureSessionCookie({ publicBaseUrl: 'http://localhost', hostname: '0.0.0.0', nodeEnv: 'development' })).toThrow()
+    expect(() => resolveSecureSessionCookie({ publicBaseUrl: 'ftp://example.com', hostname: '127.0.0.1', nodeEnv: 'development' })).toThrow()
+  })
+})
 
 describe('无鉴权启动策略', () => {
   test('Given 生产环境或非本机监听 When 启用无鉴权 Then 拒绝启动', () => {

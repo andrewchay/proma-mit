@@ -155,6 +155,7 @@ describe('Proma Web 服务', () => {
       envelopeKeyId: 'test-v1',
       trustedHeaderAuth: false,
       authMode: 'local',
+      secureSessionCookie: true,
       localAdmin: { username: 'admin', tenantId: 'tenant-a', password: 'pw-test' },
       workspaceRoot: '/private/tmp/proma-web-test',
       workerId: 'test-worker',
@@ -173,6 +174,7 @@ describe('Proma Web 服务', () => {
     // 登录成功应为 302（重定向到 dashboard）而非 400（请求体必须是 JSON）
     expect(res.status).toBe(302)
     expect(res.headers.get('set-cookie')).toContain('proma_session=')
+    expect(res.headers.get('set-cookie')).toContain('; Secure')
   })
 
   test('登录页 GET /auth/login 可访问', async () => {
