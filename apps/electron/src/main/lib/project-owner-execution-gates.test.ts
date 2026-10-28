@@ -25,6 +25,7 @@ const { executeBashToolOnPlatform } = await import('./agent-runtime/tool-impls/b
 const { executeEditTool } = await import('./agent-runtime/tool-impls/edit-tool')
 const { executeReadTool } = await import('./agent-runtime/tool-impls/read-tool')
 const { executeWriteTool } = await import('./agent-runtime/tool-impls/write-tool')
+const { executeAgentTool } = await import('./agent-runtime/tool-impls/agent-tool')
 const { executeGrepTool } = await import('./agent-runtime/tool-impls/grep-tool')
 const { executeWebFetchTool } = await import('./agent-runtime/tool-impls/web-fetch-tool')
 const { executeWebSearchTool } = await import('./agent-runtime/tool-impls/web-search-tool')
@@ -132,6 +133,16 @@ test('Given Owner 未冻结研发读取范围 When 直接调用 Read Then 工具
     expect(grep.isError).toBe(true)
     expect(grep.content).not.toContain('private-content')
   } finally { rmSync(join(work, 'file.txt'), { force: true }) }
+})
+test('Given Owner 会话未带标记 When 直接委派子代理 Then 不启动子代理', async () => {
+  const f = fixture(), sessionId = syntheticRunningExecution(f)
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
+  let calls = 0
+  const result = await executeAgentTool({ agent_name: 'explorer', task: '检查项目' }, { cwd: work, sessionId, runSubAgent: async () => { calls++; return 'unexpected' } })
+  expect(result.isError).toBe(true)
+  expect(calls).toBe(0)
 })
 test('Given Owner 会话未带标记 When 直接调用网络工具 Then 不发送请求', async () => {
   const f = fixture(), sessionId = syntheticRunningExecution(f)

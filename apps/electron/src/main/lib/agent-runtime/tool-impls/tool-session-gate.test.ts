@@ -2,6 +2,7 @@ import { afterAll, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { executeAgentTool } from './agent-tool'
 import { executeReadTool } from './read-tool'
 import { executeWriteTool } from './write-tool'
 import { executeEditTool } from './edit-tool'
@@ -18,8 +19,10 @@ test('Given 权威项目账本不可用 When 直接调用工具 Then 拒绝读�
   const context = { cwd: directory, sessionId: 'no-project-database' }
   const previousFetch = globalThis.fetch
   let networkCalls = 0
+  let subAgentCalls = 0
   globalThis.fetch = (async () => { networkCalls++; return new Response('unexpected') }) as unknown as typeof fetch
   const results = await Promise.all([
+    executeAgentTool({ agent_name: 'explorer', task: '检查' }, { ...context, runSubAgent: async () => { subAgentCalls++; return 'unexpected' } }),
     executeReadTool({ file_path: 'test.txt' }, context),
     executeWriteTool({ file_path: 'test.txt', content: 'changed' }, context),
     executeEditTool({ file_path: 'test.txt', old_string: 'original', new_string: 'changed' }, context),
@@ -30,6 +33,7 @@ test('Given 权威项目账本不可用 When 直接调用工具 Then 拒绝读�
   ])
   globalThis.fetch = previousFetch
   expect(networkCalls).toBe(0)
+  expect(subAgentCalls).toBe(0)
   expect(results.every(result => result.isError && result.content.includes('数据库未初始化'))).toBe(true)
   expect(readFileSync(path, 'utf8')).toBe('original')
 })
