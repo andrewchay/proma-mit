@@ -575,6 +575,11 @@ async function bootstrap(): Promise<void> {
     stopPilotBackgroundReconcile = startPilotBackgroundReconcile()
   })
   powerMonitor.on('resume', handleSystemResume)
+  await safeAwait('startProjectWebWatchScheduler', async () => {
+    if (!APP_AUTOMATIC_SIDE_EFFECTS) return
+    const { startProjectWebWatchScheduler } = await import('./lib/project-web-watch-service')
+    startProjectWebWatchScheduler()
+  })
 
   // 启动 Brief 回执服务（H5 表单 + 回调，供核心任务回执使用）
   await safeAwait('startBriefCallbackServer', async () => {

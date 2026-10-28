@@ -23,6 +23,7 @@ import { getPilotControlSnapshot } from './project-pilot-control'
 import { confirmPilotGrantIssue, previewPilotGrantIssue } from './project-pilot-grant-issue'
 import { confirmPilotGrantPauseAndRequestStops, previewPilotGrantPauseImpact } from './project-pilot-grant-pause'
 import { savePilotPolicyDraft } from './project-pilot-policy'
+import { getProjectWebWatchConfig, listProjectWebWatchRuns, runProjectWebWatch, saveProjectWebWatchConfig } from './project-web-watch-service'
 import {
   SCHEDULE_IPC_CHANNELS,
   CALENDAR_SYNC_IPC_CHANNELS,
@@ -452,6 +453,10 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(PROJECT_IPC_CHANNELS.GET_PROJECT, async (_, id: string) => {
     return getProject(id)
   })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.GET_WEB_WATCH, (_, projectId: string) => getProjectWebWatchConfig(projectId))
+  ipcMain.handle(PROJECT_IPC_CHANNELS.SAVE_WEB_WATCH, (_, input: Parameters<typeof saveProjectWebWatchConfig>[0]) => saveProjectWebWatchConfig(input))
+  ipcMain.handle(PROJECT_IPC_CHANNELS.RUN_WEB_WATCH, async (_, projectId: string) => runProjectWebWatch(projectId))
+  ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_WEB_WATCH_RUNS, (_, projectId: string) => listProjectWebWatchRuns(projectId))
   ipcMain.handle(PROJECT_IPC_CHANNELS.OBSERVE_PILOT, async (_, projectId: string) => {
     return observeProjectPilot(projectId)
   })

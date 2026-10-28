@@ -972,7 +972,7 @@ function ProjectDetail({
   onBack: () => void
   onRefresh: () => void
 }): React.ReactElement {
-  const [detailTab, setDetailTab] = useState<'pilot' | 'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain' | 'knowledge' | 'workspaces' | 'aicost'>('pilot')
+  const [detailTab, setDetailTab] = useState<'pilot' | 'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain' | 'knowledge' | 'workspaces' | 'aicost' | 'web-watch'>('pilot')
   const [advancedDetailsOpen, setAdvancedDetailsOpen] = useState(false)
   const ownerNavigation = useAtomValue(ownerConversationNavigationAtom)
   useEffect(() => { if (ownerNavigation?.projectId === project.id) setDetailTab(ownerNavigation.taskId ? 'tasks' : 'pilot') }, [ownerNavigation, project.id])
@@ -1386,6 +1386,7 @@ function ProjectDetail({
       <div className="flex gap-1 px-6 pt-3 border-b">
         {([
           { key: 'pilot', label: '概览' },
+          { key: 'web-watch', label: '外网扫描' },
           { key: 'tasks', label: '工作 / Tasks' },
           { key: 'chain', label: '治理与交付详情' },
           { key: 'knowledge', label: '知识' },
@@ -1472,6 +1473,7 @@ function ProjectDetail({
             setDetailTab('chain')
           }
         }} />}
+        {detailTab === 'web-watch' && <ProjectWebWatchPanel projectId={project.id} projectTitle={project.title} projectDescription={project.description} />}
         {detailTab === 'chain' && <ProjectChainPanel key={project.id} projectId={project.id} tasks={dependencyTasks} dependencies={dependencies} blockers={blockers} refreshTasks={loadData} />}
         <CreateProjectTaskDialog
           open={showOverviewCreate}
@@ -1585,6 +1587,98 @@ function ProjectDetail({
       </main>
     </div>
   )
+}
+
+interface ProjectWebWatchConfigView {
+  projectId: string
+  enabled: boolean
+  topics: string[]
+  localTime: string
+  lastSuccessAt?: number
+}
+
+interface ProjectWebWatchRunView {
+  id: string
+  startedAt: number
+  coverageFrom: number
+  coverageTo: number
+  status: 'success' | 'failed'
+  sources: Array<{ title: string; url: string; snippet: string; publishedAt?: string }>
+  newSources: Array<{ title: string; url: string; snippet: string; publishedAt?: string }>
+  analysis?: string
+  error?: string
+}
+
+function ProjectWebWatchPanel({ projectId, projectTitle, projectDescription }: { projectId: string; projectTitle: string; projectDescription: string }): React.ReactElement {
+  const [config, setConfig] = useState<ProjectWebWatchConfigView>({ projectId, enabled: false, topics: [], localTime: '09:00' })
+  const [topicsText, setTopicsText] = useState('')
+  const [runs, setRuns] = useState<ProjectWebWatchRunView[]>([])
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+  const load = useCallback(async () => {
+    const [saved, history] = await Promise.all([
+      callProjectAPI<ProjectWebWatchConfigView>('getWebWatch', projectId),
+      callProjectAPI<ProjectWebWatchRunView[]>('listWebWatchRuns', projectId),
+    ])
+    setConfig(saved)
+    setTopicsText(saved.topics.join('\n'))
+    setRuns(history)
+  }, [projectId])
+  useEffect(() => { void load().catch((error) => setMessage(error instanceof Error ? error.message : String(error))) }, [load])
+
+  const save = async (enabled = config.enabled) => {
+    setBusy(true)
+    setMessage('')
+    try {
+      const next = await callProjectAPI<ProjectWebWatchConfigView>('saveWebWatch', {
+        projectId, enabled, topics: topicsText.split('\n').map((item) => item.trim()).filter(Boolean), localTime: config.localTime,
+      })
+      setConfig(next)
+      setMessage('设置已保存')
+    } catch (error) { setMessage(error instanceof Error ? error.message : String(error)) }
+    finally { setBusy(false) }
+  }
+  const runNow = async () => {
+    setBusy(true)
+    setMessage('正在搜索并分析公开网页…')
+    try {
+      await callProjectAPI<ProjectWebWatchRunView>('runWebWatch', projectId)
+      await load()
+      setMessage('扫描完成')
+    } catch (error) { setMessage(error instanceof Error ? error.message : String(error)) }
+    finally { setBusy(false) }
+  }
+
+  return <section className="mx-auto max-w-4xl space-y-5">
+    <div className="rounded-xl bg-card p-5 shadow-sm">
+      <h2 className="text-lg font-semibold">每日公开网络扫描</h2>
+      <p className="mt-1 text-sm text-muted-foreground">按主题搜索公开网页，结合项目现状整理变化、影响和建议。每个来源会保留链接；不会自动修改任务或联系他人。</p>
+      <div className="mt-4 grid gap-4">
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={config.enabled} onChange={(event) => setConfig({ ...config, enabled: event.target.checked })} />每天自动扫描</label>
+        <label className="grid gap-1 text-sm">扫描时间（本地时间）<input type="time" className="w-40 rounded-md border bg-background px-3 py-2" value={config.localTime} onChange={(event) => setConfig({ ...config, localTime: event.target.value })} /></label>
+        <label className="grid gap-1 text-sm">扫描主题（每行一个，最多 8 个）<textarea className="min-h-24 rounded-md border bg-background px-3 py-2" placeholder={`${projectTitle}\n${projectDescription}`} value={topicsText} onChange={(event) => setTopicsText(event.target.value)} /></label>
+      </div>
+      <div className="mt-4 flex items-center gap-2">
+        <button onClick={() => void save()} disabled={busy} className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50">保存设置</button>
+        <button onClick={() => void save(true)} disabled={busy} className="rounded-md border px-3 py-2 text-sm disabled:opacity-50">启用每日扫描</button>
+        <button onClick={() => void runNow()} disabled={busy} className="rounded-md border px-3 py-2 text-sm disabled:opacity-50">立即扫描</button>
+        {message && <span role="status" className="text-sm text-muted-foreground">{message}</span>}
+      </div>
+      <p className="mt-3 text-xs text-muted-foreground">需要先配置 WebSearch（Tavily 或秘塔）和一个已启用的 AI 渠道。应用离线错过计划后，启动时补扫一次，覆盖上次成功扫描至今。</p>
+      {config.lastSuccessAt && <p className="mt-2 text-xs text-muted-foreground">上次成功：{new Date(config.lastSuccessAt).toLocaleString()}</p>}
+    </div>
+    <div className="space-y-3">
+      <h3 className="font-medium">扫描历史</h3>
+      {runs.length === 0 && <p className="text-sm text-muted-foreground">还没有扫描记录。</p>}
+      {runs.map((run) => <article key={run.id} className="rounded-xl bg-card p-4 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm"><strong>{new Date(run.startedAt).toLocaleString()}</strong><span className={run.status === 'success' ? 'text-emerald-600' : 'text-red-600'}>{run.status === 'success' ? `成功 · ${run.newSources.length} 条新来源` : '失败'}</span></div>
+        <p className="mt-1 text-xs text-muted-foreground">覆盖：{new Date(run.coverageFrom).toLocaleString()} 至 {new Date(run.coverageTo).toLocaleString()}</p>
+        {run.error && <p className="mt-3 text-sm text-red-600">{run.error}</p>}
+        {run.analysis && <pre className="mt-3 whitespace-pre-wrap text-sm leading-6">{run.analysis}</pre>}
+        {run.newSources.length > 0 && <ul className="mt-3 space-y-2 border-t pt-3 text-sm">{run.newSources.map((source) => <li key={source.url}><a className="text-primary underline" href={source.url} target="_blank" rel="noreferrer">{source.title}</a><p className="mt-0.5 text-xs text-muted-foreground">{source.publishedAt ? `${source.publishedAt} · ` : ''}{source.snippet}</p></li>)}</ul>}
+      </article>)}
+    </div>
+  </section>
 }
 
 
