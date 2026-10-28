@@ -1,5 +1,6 @@
 import {
   AgentRuntimeEventReplayHub,
+  AgentRuntimeObjectTooLargeError,
   createAgentRuntimeWebServer,
   createWebCryptoEnvelopeSecretCodec,
   createCloudKmsEnvelopeSecretCodec,
@@ -1279,9 +1280,10 @@ async function handleWorkspaceFile(
   const key = createAgentRuntimeWorkspaceObjectKey({ ...scope, ...route })
   if (request.method === 'PUT') {
     const contentLength = Number.parseInt(request.headers.get('content-length') ?? '0', 10)
-    if (contentLength > maxUploadBytes) return Response.json({ error: '文件超过上传大小限制' }, { status: 413 })
-    const body = new Uint8Array(await request.arrayBuffer())
-    if (body.byteLength > maxUploadBytes) return Response.json({ error: '文件超过上传大小限制' }, { status: 413 })
+    if (contentLength > maxUploadBytes) { void request.body?.cancel().catch(() => {}); return Response.json({ error: '文件超过上传大小限制' }, { status: 413 }) }
+    let body: Uint8Array
+    try { body = request.body ? await readBoundedObjectBody(request.body, maxUploadBytes) : new Uint8Array() }
+    catch (error) { if (error instanceof AgentRuntimeObjectTooLargeError) return Response.json({ error: '文件超过上传大小限制' }, { status: 413 }); throw error }
     const object = await objectStore.putObject({
       key,
       body,

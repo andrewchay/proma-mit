@@ -80,6 +80,17 @@ describe.skipIf(!databaseUrl)('企业工作区成员的真实 Postgres 隔离', 
     expect(await (await app.fetch(request('GET', 'reader', memberList))).json()).toEqual({ files: [], nextCursor: null })
     expect((await app.fetch(request('GET', 'outsider', memberList))).status).toBe(404)
     expect((await app.fetch(request('GET', 'reader', memberList, undefined, `${tenant}-other`))).status).toBe(404)
+    const uploadPath = '/agent/workspaces/project/files/report.html'
+    let cancelled = false
+    const oversized = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array(1025)) }, cancel() { cancelled = true } })
+    const upload = await app.fetch(new Request(`http://server${uploadPath}`, { method: 'PUT', headers: { 'x-test-user': 'owner', 'x-test-tenant': tenant, 'content-length': '1' }, body: oversized }))
+    expect(upload.status).toBe(413)
+    expect(cancelled).toBe(true)
+    expect(new TextDecoder().decode((await objects.getObject(key))!.body)).toBe('<html>approved</html>')
+    const exact = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array(1024)); controller.close() } })
+    expect((await app.fetch(new Request('http://server/agent/workspaces/project/files/exact.bin', { method: 'PUT', headers: { 'x-test-user': 'owner', 'x-test-tenant': tenant }, body: exact }))).status).toBe(201)
+    const exactKey = createAgentRuntimeWorkspaceObjectKey({ ...owner, workspaceSlug: 'project', relativePath: 'exact.bin' })
+    expect((await objects.getObject(exactKey))!.body.byteLength).toBe(1024)
     const largeKey = createAgentRuntimeWorkspaceObjectKey({ ...owner, workspaceSlug: 'project', relativePath: 'large.bin' })
     const largeBody = new Uint8Array(1025)
     await objects.putObject({ key: largeKey, body: largeBody })
