@@ -25,6 +25,7 @@ const { executeBashToolOnPlatform } = await import('./agent-runtime/tool-impls/b
 const { executeEditTool } = await import('./agent-runtime/tool-impls/edit-tool')
 const { executeReadTool } = await import('./agent-runtime/tool-impls/read-tool')
 const { executeWriteTool } = await import('./agent-runtime/tool-impls/write-tool')
+const { executeGrepTool } = await import('./agent-runtime/tool-impls/grep-tool')
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
 function fixture(single = false, textDelivery = false) {
@@ -125,6 +126,9 @@ test('Given Owner 未冻结研发读取范围 When 直接调用 Read Then 工具
     const result = await executeReadTool({ file_path: 'file.txt' }, { cwd: work, sessionId })
     expect(result.isError).toBe(true)
     expect(result.content).not.toContain('private-content')
+    const grep = await executeGrepTool({ regex: 'private-content' }, { cwd: work, sessionId })
+    expect(grep.isError).toBe(true)
+    expect(grep.content).not.toContain('private-content')
   } finally { rmSync(join(work, 'file.txt'), { force: true }) }
 })
 test('Given 已准入的 Owner 会话 When 工具上下文工作目录漂移 Then 拒绝使用该目录', () => {
