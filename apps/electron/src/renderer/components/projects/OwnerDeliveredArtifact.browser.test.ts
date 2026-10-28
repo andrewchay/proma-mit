@@ -9,10 +9,10 @@ const directory = mkdtempSync(join(tmpdir(), 'owner-delivery-download-'))
 afterAll(() => rmSync(directory, { recursive: true, force: true }))
 test('Given已交付代码 When直接查看并点击下载HTML Then不执行正文且下载字节与源码一致', async () => {
   const root = resolve(import.meta.dir, '../../../../../..')
-  const html = '<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=https://example.invalid/preview-redirect"></head><body><script>window.deliveryRan=true</script><img src="https://example.invalid/preview-probe">2048</body></html>'
+  const html = '<!DOCTYPE html><html><head><meta http-equiv="refresh" content="0;url=https://example.invalid/preview-redirect"></head><body><script>window.deliveryRan=true</script><img src="https://example.invalid/preview-probe"><h1>2048</h1></body></html>'
   const content = `这是已有成果\n\n\`\`\`html\n${html}\n\`\`\``
   const item = { stepKey: 'game', title: '2048游戏', content, artifactHash: 'a'.repeat(64), acceptanceCriteria: ['可玩'], ownerDecision: '已验收', reviewerSummary: '静态检查' }
-  writeFileSync(join(directory, 'entry.tsx'), `import React from 'react';import {createRoot} from 'react-dom/client';import {OwnerDeliveredArtifact} from ${JSON.stringify(join(import.meta.dir, 'OwnerDeliveredArtifact.tsx'))};const root=createRoot(document.getElementById('root'));window.renderItem=(item)=>root.render(<OwnerDeliveredArtifact item={item}/>);window.renderItem(${JSON.stringify(item)});`)
+  writeFileSync(join(directory, 'entry.tsx'), `import React from 'react';import {createRoot} from 'react-dom/client';import {OwnerDeliveredArtifact} from ${JSON.stringify(join(import.meta.dir, 'OwnerDeliveredArtifact.tsx'))};const root=createRoot(document.getElementById('root'));window.renderItem=(item)=>root.render(<OwnerDeliveredArtifact item={item} onRequestChanges={excerpt=>{window.lastExcerpt=excerpt}}/>);window.renderItem(${JSON.stringify(item)});`)
   await build({ entryPoints: [join(directory, 'entry.tsx')], outfile: join(directory, 'entry.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], logLevel: 'silent' })
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: request => new Response(new URL(request.url).pathname === '/entry.js' ? readFileSync(join(directory, 'entry.js')) : '<div id="root"></div><script src="/entry.js"></script>', { headers: { 'Content-Type': new URL(request.url).pathname === '/entry.js' ? 'text/javascript' : 'text/html' } }) })
   const browser = await chromium.launch({ headless: true })
@@ -33,7 +33,13 @@ test('Given已交付代码 When直接查看并点击下载HTML Then不执行正�
     expect(await page.getByRole('button', { name: '手机宽度' }).getAttribute('aria-pressed')).toBe('true')
     await page.getByRole('button', { name: '自适应宽度' }).click()
     expect(await page.getByRole('button', { name: '自适应宽度' }).getAttribute('aria-pressed')).toBe('true')
-    expect(await page.locator('iframe').getAttribute('sandbox')).toBe('')
+    expect(await page.locator('iframe').getAttribute('sandbox')).toBe('allow-scripts')
+    await page.evaluate(() => window.postMessage({ type: 'gravitas-design-selection', token: 'forged', tag: 'h1', text: '伪造内容' }, '*'))
+    expect(await page.getByText('伪造内容', { exact: true }).count()).toBe(0)
+    await frame.getByText('2048', { exact: true }).click()
+    await page.getByText('已选中正文片段，可连同本成果版本提交修改意见。').waitFor()
+    await page.getByRole('button', { name: '针对选中片段提出修改' }).click()
+    expect(await page.evaluate<string>('window.lastExcerpt')).toBe('2048')
     const previewFrame = page.frames().find(candidate => candidate !== page.mainFrame())!
     expect(await previewFrame.evaluate('window.deliveryRan')).toBeUndefined()
     await page.waitForTimeout(100)
