@@ -89,6 +89,8 @@ export interface PromaWebServerConfig {
   /** 浏览器登录：local（本地用户名/密码）/ oidc / both / none（仅 Bearer/trusted-header） */
   authMode?: 'local' | 'oidc' | 'both' | 'none'
   secureSessionCookie?: boolean
+  /** 浏览器对外访问地址；生产由启动策略要求为 HTTPS。 */
+  publicBaseUrl?: string
   /** OIDC Authorization Code 客户端配置（authMode=oidc|both 时需要） */
   oidc?: { authorizationEndpoint: string; tokenEndpoint: string; clientId: string; clientSecret?: string; redirectUri: string; scope?: string }
   /** 本地 bootstrap 管理员（authMode=local|both 时需要） */
@@ -498,13 +500,19 @@ export function createPromaWebServerApplication(
         const normalized = (config.authMode ?? 'none') === 'local' || (config.authMode ?? 'none') === 'both' || (config.authMode ?? 'none') === 'oidc' ? config.authMode : 'none'
         return Response.json({ authMode: normalized, hasOidc: Boolean(config.oidc) })
       }
-      const scope = await auth({ request, url })
+      const cookieScope = cookieAuthResolver ? await cookieAuthResolver({ request, url }) : undefined
+      const scope = cookieScope ?? await baseAuth({ request, url })
+      const cookieOriginError = cookieScope && !isAllowedCookieOrigin(request, config.publicBaseUrl, config.secureSessionCookie)
+        ? Response.json({ error: 'Cookie 会话的修改请求需要可信同源 Origin' }, { status: 403 })
+        : undefined
       const actionAuthorizationError = scope ? requireAgentActionRole(scope, request) : undefined
       const fileRoute = matchWorkspaceFileRoute(request.method, url.pathname)
       const oauthStartRoute = matchMcpOAuthStartRoute(request.method, url.pathname)
       const mcpStatusRoute = matchMcpStatusRoute(request.method, url.pathname)
       let response: Response
-      if (actionAuthorizationError) {
+      if (cookieOriginError) {
+        response = cookieOriginError
+      } else if (actionAuthorizationError) {
         response = actionAuthorizationError
       // P3-04：微信第三方平台商家授权（operator/admin）
       } else if (request.method === 'GET' && url.pathname === '/wechat/authorization-url') {
@@ -929,6 +937,12 @@ function parseAuditResult(value: string | null): 'success' | 'failure' | undefin
 
 function hasAnyRole(scope: AgentRuntimeScope, required: readonly AgentRuntimeRole[]): boolean {
   return scope.roles?.some((role) => required.includes(role)) ?? false
+}
+
+function isAllowedCookieOrigin(request: Request, publicBaseUrl?: string, secureCookie?: boolean): boolean {
+  if (request.method === 'GET' || request.method === 'HEAD' || request.method === 'OPTIONS') return true
+  if (secureCookie && !publicBaseUrl) return false
+  try { return request.headers.get('origin') === new URL(publicBaseUrl ?? request.url).origin } catch { return false }
 }
 
 /** 普通 Agent 写操作只允许 operator 或 admin；viewer 与 security-auditor 保持只读。 */

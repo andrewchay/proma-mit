@@ -85,6 +85,7 @@ const application = createPromaWebServerApplication({
   trustedHeaderAuth,
   authMode,
   secureSessionCookie,
+  publicBaseUrl: process.env.PROMA_WEB_PUBLIC_BASE_URL,
   oidc: authMode === 'oidc' || authMode === 'both' ? oidcClientBase : undefined,
   localAdmin,
   workspaceRoot,

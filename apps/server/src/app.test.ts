@@ -3,6 +3,16 @@ import type { AgentRuntimePostgresClient, AgentRuntimeWebAuthResolver } from '@g
 import { createPromaWebServerApplication } from './app.ts'
 
 describe('Proma Web 服务', () => {
+  test('Given Cookie 会话 When 跨站修改资源 Then 拒绝；同源和 Bearer 不受影响', async () => {
+    const postgres = new FakePostgresClient()
+    postgres.query = async <Row extends Record<string, unknown>>(sql = '') => ({ rows: (sql.includes('FROM proma_runtime_auth_sessions') ? [{ session_id: 'session', tenant_id: 'tenant-a', user_id: 'user-a', roles: '["operator"]', expires_at: Date.now() + 60000 }] : []) as unknown as Row[] })
+    const app = createPromaWebServerApplication({ databaseUrl: 'postgres://unused', redisUrl: 'redis://unused', s3: testS3Config, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test-v1', trustedHeaderAuth: false, authMode: 'local', publicBaseUrl: 'https://app.example', workspaceRoot: '/private/tmp/proma-web-test', workerId: 'test-worker', taskLeaseMs: 30_000 }, { postgres, auth: ({ request }) => request.headers.get('authorization') ? { tenantId: 'tenant-a', userId: 'api-user', roles: ['operator'] } : undefined })
+    const request = (headers: Record<string, string>) => new Request('http://internal/agent/tasks/missing/cancel', { method: 'POST', headers })
+    expect((await app.fetch(request({ cookie: 'proma_session=session', origin: 'https://attacker.example' }))).status).toBe(403)
+    expect((await app.fetch(request({ cookie: 'proma_session=session' }))).status).toBe(403)
+    expect((await app.fetch(request({ cookie: 'proma_session=session', origin: 'https://app.example' }))).status).toBe(404)
+    expect((await app.fetch(request({ authorization: 'Bearer token' }))).status).toBe(404)
+  })
   test('Given OIDC 发起登录 When 回调没有浏览器 Cookie Then 路由拒绝登录', async () => {
     const app = createPromaWebServerApplication({ databaseUrl: 'postgres://unused', redisUrl: 'redis://unused', s3: testS3Config, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test-v1', trustedHeaderAuth: false, authMode: 'oidc', secureSessionCookie: true, oidc: { authorizationEndpoint: 'https://idp.example/authorize', tokenEndpoint: 'https://idp.example/token', clientId: 'client', redirectUri: 'https://app.example/auth/oidc/callback' }, workspaceRoot: '/private/tmp/proma-web-test', workerId: 'test-worker', taskLeaseMs: 30_000 }, { postgres: new FakePostgresClient() })
     const start = await app.fetch(new Request('https://app.example/auth/oidc/start'))
@@ -232,7 +242,7 @@ describe('Proma Web 服务', () => {
 })
 
 class FakePostgresClient implements AgentRuntimePostgresClient {
-  async query<Row extends Record<string, unknown>>(): Promise<{ rows: Row[] }> {
+  async query<Row extends Record<string, unknown>>(_sql = ''): Promise<{ rows: Row[] }> {
     return { rows: [] }
   }
   async transaction(run: (client: AgentRuntimePostgresClient) => Promise<void>): Promise<void> { await run(this) }
