@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { createAuthHandler, readLoginCredentials, type AuthRoutesDeps } from './auth-routes'
+import { createAuthHandler, createInMemoryOidcStateStore, readLoginCredentials, type AuthRoutesDeps } from './auth-routes'
 import type { AgentRuntimeRole } from '@gravitas/shared/utils'
 import { createCookieSessionAuthResolver } from './auth-resolvers'
 import { createHash } from 'node:crypto'
@@ -19,6 +19,26 @@ function makeHandler(overrides: Partial<AuthRoutesDeps> = {}) {
 }
 
 describe('auth-routes', () => {
+  it('Given 未完成登录达到容量 When 创建新状态 Then 拒绝而不挤掉有效状态，过期后可恢复', async () => {
+    let now = 1000
+    const store = createInMemoryOidcStateStore({ maxEntries: 1, now: () => now })
+    const context = { codeVerifier: 'verifier', nonce: 'nonce' }
+    await store.set('first', context, 100)
+    await expect(store.set('second', context, 100)).rejects.toThrow('登录状态已满')
+    expect(await store.consume('first')).toEqual(context)
+    await store.set('expired', context, 100)
+    now += 101
+    await store.set('next', context, 100)
+    expect(await store.consume('expired')).toBeUndefined()
+    expect(await store.consume('next')).toEqual(context)
+  })
+  it('Given 登录状态容量已满 When 发起 OIDC 登录 Then 返回可重试的服务繁忙', async () => {
+    const store = createInMemoryOidcStateStore({ maxEntries: 1 })
+    await store.set('occupied', { codeVerifier: 'v', nonce: 'n' }, 60000)
+    const h = makeHandler({ oidcStateStore: store, oidc: { authorizationEndpoint: 'https://idp/a', tokenEndpoint: 'https://idp/token', clientId: 'c', redirectUri: 'https://app/auth/oidc/callback' } })
+    expect((await h.oidcStart()).status).toBe(503)
+    expect(await store.consume('occupied')).toEqual({ codeVerifier: 'v', nonce: 'n' })
+  })
   it('Given OIDC 登录 When 交换授权码 Then 使用该次请求的 PKCE S256 verifier', async () => {
     let verifier = ''
     let nonce = ''

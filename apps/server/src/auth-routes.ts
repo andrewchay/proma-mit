@@ -35,6 +35,7 @@ export interface AuthRoutesDeps {
 }
 
 export interface OidcLoginContext { codeVerifier: string; nonce: string }
+class OidcStateCapacityError extends Error {}
 
 export interface AuthHandler {
   loginPage(): Promise<Response>
@@ -49,14 +50,23 @@ export function createSessionCookie(sessionId: string, name: string, maxAgeSecon
 }
 
 /** 内存 OIDC login state 存储（单节点私有部署）；多 worker 需换成共享存储。 */
-export function createInMemoryOidcStateStore(): NonNullable<AuthRoutesDeps['oidcStateStore']> {
+export function createInMemoryOidcStateStore(options: { maxEntries?: number; now?: () => number } = {}): NonNullable<AuthRoutesDeps['oidcStateStore']> {
+  const maxEntries = options.maxEntries ?? 1000
+  if (!Number.isSafeInteger(maxEntries) || maxEntries < 1) throw new Error('登录状态容量必须为正整数')
+  const now = options.now ?? Date.now
   const states = new Map<string, { expiresAt: number; context: OidcLoginContext }>()
   return {
-    async set(state, context, ttlMs) { states.set(state, { expiresAt: Date.now() + ttlMs, context }) },
+    async set(state, context, ttlMs) {
+      const current = now()
+      for (const [key, entry] of states) if (entry.expiresAt <= current) states.delete(key)
+      if (states.has(state)) throw new Error('登录状态重复')
+      if (states.size >= maxEntries) throw new OidcStateCapacityError('登录状态已满，请稍后重试')
+      states.set(state, { expiresAt: current + ttlMs, context })
+    },
     async consume(state) {
       const entry = states.get(state)
       states.delete(state) // 一次性：验证后即失效（防重放）
-      return entry && entry.expiresAt > Date.now() ? entry.context : undefined
+      return entry && entry.expiresAt > now() ? entry.context : undefined
     },
   }
 }
@@ -149,7 +159,10 @@ export function createAuthHandler(deps: AuthRoutesDeps): AuthHandler {
       const state = randomBytes(16).toString('hex')
       const codeVerifier = randomBytes(32).toString('base64url')
       const nonce = randomBytes(32).toString('base64url')
-      await stateStore.set(state, { codeVerifier, nonce }, 10 * 60_000) // 10 分钟 TTL
+      try { await stateStore.set(state, { codeVerifier, nonce }, 10 * 60_000) } catch (error) {
+        if (error instanceof OidcStateCapacityError) return new Response(loginPageHtml(true, '登录繁忙，请稍后重试'), { status: 503, headers: { 'content-type': 'text/html; charset=utf-8' } })
+        throw error
+      }
       const url = new URL(oidc.authorizationEndpoint)
       url.searchParams.set('response_type', 'code')
       url.searchParams.set('client_id', oidc.clientId)
