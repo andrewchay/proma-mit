@@ -489,7 +489,7 @@ export function createPromaWebServerApplication(
       if (url.pathname === '/auth/oidc/callback') {
         const code = url.searchParams.get('code') ?? ''
         const state = url.searchParams.get('state') ?? ''
-        return authHandler.oidcCallback({ code, state })
+        return authHandler.oidcCallback({ code, state }, request.headers.get('cookie'))
       }
       // 认证元信息（供工作台按 authMode 呈现 UI，公开、不含敏感信息）
       if (url.pathname === '/auth/status') {

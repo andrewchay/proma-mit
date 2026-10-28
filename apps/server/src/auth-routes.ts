@@ -39,7 +39,7 @@ export interface AuthHandler {
   loginForm(body: { username: string; password: string }): Promise<Response>
   logout(cookieHeader?: string | null): Promise<Response>
   oidcStart(): Promise<Response>
-  oidcCallback(query: { code?: string; state?: string }): Promise<Response>
+  oidcCallback(query: { code?: string; state?: string }, cookieHeader?: string | null): Promise<Response>
 }
 
 export function createSessionCookie(sessionId: string, name: string, maxAgeSeconds: number, secure = false): string {
@@ -104,6 +104,8 @@ ${oidcSection}
 
 export function createAuthHandler(deps: AuthRoutesDeps): AuthHandler {
   const cookieName = deps.sessionCookieName ?? 'proma_session'
+  const stateCookieName = 'proma_oidc_state'
+  const stateCookie = (value: string, maxAge: number) => `${stateCookieName}=${value}; Path=/auth/oidc/callback; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${deps.secureSessionCookie ? '; Secure' : ''}`
   const ttlMs = deps.sessionTtlMs ?? 12 * 3_600_000
   const hasOidc = Boolean(deps.oidc)
   const stateStore = deps.oidcStateStore ?? createInMemoryOidcStateStore()
@@ -150,15 +152,15 @@ export function createAuthHandler(deps: AuthRoutesDeps): AuthHandler {
       url.searchParams.set('redirect_uri', oidc.redirectUri)
       url.searchParams.set('scope', oidc.scope ?? 'openid profile email')
       url.searchParams.set('state', state)
-      return new Response(null, { status: 302, headers: { location: url.toString() } })
+      return new Response(null, { status: 302, headers: { location: url.toString(), 'set-cookie': stateCookie(state, 600) } })
     },
 
-    async oidcCallback(query) {
+    async oidcCallback(query, cookieHeader) {
       const oidc = deps.oidc
       if (!oidc) return new Response(loginPageHtml(false, '未启用企业账号登录'), { status: 400, headers: { 'content-type': 'text/html; charset=utf-8' } })
       // 校验 state 防 login CSRF：缺失或不存在/已过期直接拒绝
       const state = query.state ?? ''
-      if (!state || !await stateStore.verify(state)) {
+      if (!state || state !== parseSessionCookie(cookieHeader ?? null, stateCookieName) || !await stateStore.verify(state)) {
         return new Response(loginPageHtml(true, '登录状态校验失败，请重新发起登录'), { status: 400, headers: { 'content-type': 'text/html; charset=utf-8' } })
       }
       const code = query.code ?? ''
@@ -166,7 +168,9 @@ export function createAuthHandler(deps: AuthRoutesDeps): AuthHandler {
       const exchange = deps.oidcTokenFromCode ?? defaultOidcTokenFromCode
       const resolved = await exchange(code, oidc)
       if (!resolved) return new Response(loginPageHtml(true, '企业账号校验失败'), { status: 401, headers: { 'content-type': 'text/html; charset=utf-8' } })
-      return issueSession(resolved.tenantId, resolved.userId, resolved.roles)
+      const response = await issueSession(resolved.tenantId, resolved.userId, resolved.roles)
+      response.headers.append('set-cookie', stateCookie('', 0))
+      return response
     },
   }
 }

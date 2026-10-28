@@ -113,7 +113,7 @@ describe('auth-routes', () => {
     const state = new URL(loc).searchParams.get('state') ?? ''
     expect(state).toBeTruthy()
     // 用合法 state 回调
-    const res = await h.oidcCallback({ code: 'code123', state })
+    const res = await h.oidcCallback({ code: 'code123', state }, startRes.headers.get('set-cookie'))
     expect(res.status).toBe(302)
     expect(res.headers.get('set-cookie')).toContain('proma_session=')
   })
@@ -129,6 +129,22 @@ describe('auth-routes', () => {
     expect((await h.oidcCallback({ code: 'code', state: 'forged' })).status).toBe(400)
   })
 
+  it('Given 攻击者发起的有效 state When 回调没有发起浏览器的绑定 Cookie Then 拒绝登录', async () => {
+    const h = makeHandler({
+      secureSessionCookie: true,
+      oidc: { authorizationEndpoint: 'https://idp/a', tokenEndpoint: 'https://idp/token', clientId: 'c', redirectUri: 'https://app/auth/oidc/callback' },
+      oidcTokenFromCode: async () => ({ tenantId: 'tenant-oidc', userId: 'attacker', roles: ['operator'] as AgentRuntimeRole[] }),
+    })
+    const started = await h.oidcStart()
+    expect(started.headers.get('set-cookie')).toContain('HttpOnly; SameSite=Lax; Max-Age=600; Secure')
+    const state = new URL(started.headers.get('location')!).searchParams.get('state')!
+    expect((await h.oidcCallback({ code: 'code', state })).status).toBe(400)
+    expect((await h.oidcCallback({ code: 'code', state }, 'proma_oidc_state=another-browser')).status).toBe(400)
+    const callback = await h.oidcCallback({ code: 'code', state }, started.headers.get('set-cookie'))
+    expect(callback.status).toBe(302)
+    expect(callback.headers.getSetCookie().some((value) => value.includes('proma_oidc_state=;') && value.includes('Max-Age=0'))).toBe(true)
+  })
+
   it('oidcStateStore verify 一次性（重放被拒）', async () => {
     const h = makeHandler({
       oidc: { authorizationEndpoint: 'https://idp/a', tokenEndpoint: 'https://idp/token', clientId: 'c', redirectUri: 'http://x/auth/oidc/callback' },
@@ -136,8 +152,9 @@ describe('auth-routes', () => {
     })
     const startRes = await h.oidcStart()
     const state = new URL(startRes.headers.get('location') ?? '').searchParams.get('state') ?? ''
-    expect((await h.oidcCallback({ code: 'c1', state })).status).toBe(302) // 首次成功
-    expect((await h.oidcCallback({ code: 'c2', state })).status).toBe(400) // 重放被拒（state 已消耗）
+    const cookie = startRes.headers.get('set-cookie')
+    expect((await h.oidcCallback({ code: 'c1', state }, cookie)).status).toBe(302) // 首次成功
+    expect((await h.oidcCallback({ code: 'c2', state }, cookie)).status).toBe(400) // 重放被拒（state 已消耗）
   })
 
   it('oidcCallback 无配置时返回 400', async () => {
