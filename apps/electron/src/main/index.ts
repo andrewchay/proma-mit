@@ -1,6 +1,6 @@
 import { createDockIcon } from './lib/dock-icon'
 import { getMainWindow, setMainWindow } from './main-window'
-import { app, BrowserWindow, dialog, Menu, nativeTheme, protocol, screen, shell } from 'electron'
+import { app, BrowserWindow, dialog, Menu, nativeTheme, powerMonitor, protocol, screen, shell } from 'electron'
 import { dirname, join } from 'path'
 import { existsSync, readFileSync } from 'fs'
 import { AGENT_IPC_CHANNELS, PROJECT_IPC_CHANNELS } from '@gravitas/shared'
@@ -574,6 +574,7 @@ async function bootstrap(): Promise<void> {
     const { startPilotBackgroundReconcile } = await import('./lib/project-pilot-background-reconcile')
     stopPilotBackgroundReconcile = startPilotBackgroundReconcile()
   })
+  powerMonitor.on('resume', handleSystemResume)
 
   // 启动 Brief 回执服务（H5 表单 + 回调，供核心任务回执使用）
   await safeAwait('startBriefCallbackServer', async () => {
@@ -787,11 +788,24 @@ app.on('window-all-closed', () => {
 let stopPilotBackgroundReconcile: (() => void) | null = null
 let stopOwnerManagementLoop: (() => void) | null = null
 
+function handleSystemResume(): void {
+  console.info('[项目管理] 系统唤醒，重新扫描项目状态')
+  try {
+    const { rescanOwnerManagementProjects } = require('./lib/project-owner-management-loop') as typeof import('./lib/project-owner-management-loop')
+    const { reconcilePilotProjectsAfterWake } = require('./lib/project-pilot-background-reconcile') as typeof import('./lib/project-pilot-background-reconcile')
+    rescanOwnerManagementProjects()
+    reconcilePilotProjectsAfterWake()
+  } catch (cause) {
+    console.warn('[项目管理] 唤醒后的项目状态扫描未完成', cause)
+  }
+}
+
 app.on('before-quit', () => {
   // 标记正在退出，让 close 事件不再阻止关闭
   setQuitting()
   stopOwnerManagementLoop?.()
   stopPilotBackgroundReconcile?.()
+  powerMonitor.off('resume', handleSystemResume)
   // 释放应用自启的本地 HTTP 服务，避免退出后残留端口。
   try {
     const { stopBriefCallbackServer } = require('./lib/brief-callback-server') as { stopBriefCallbackServer: () => void }

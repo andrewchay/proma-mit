@@ -18,6 +18,13 @@ import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt, recoverLegacyOw
 import { ensureOwnerDefaultTeam } from './project-owner-default-team'
 import { getOwnerTeamWorkspaceProposal } from './project-owner-team-workspace-access'
 
+let requestActiveOwnerManagementRescan: (() => void) | null = null
+
+/** 系统唤醒后立即重新扫描项目，补偿休眠期间未触发的定时器与状态事件。 */
+export function rescanOwnerManagementProjects(): void {
+  requestActiveOwnerManagementRescan?.()
+}
+
 /** 即使当前没有可继续处理的Run，也要把失效授权反馈写回Owner对话。 */
 function reportStaleManagementDelegations(projectId: string): void {
   const subjects = store.getProjectDb().prepare('SELECT DISTINCT subject_key FROM project_owner_revisions WHERE project_id = ?').all(projectId) as { subject_key: string }[]
@@ -425,8 +432,17 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
   const unsubscribeChanges = onChanged ? onOwnerManagementChanged(onChanged) : () => {}
   const unsubscribe = onOwnerManagementWake(run)
   const unsubscribeSchedule = onOwnerAutonomousScheduleWake(run)
-  const timer = setInterval(() => { for (const project of store.listProjects()) run(project.id) }, 30_000)
+  const runAllProjects = (): void => { for (const project of store.listProjects()) run(project.id) }
+  requestActiveOwnerManagementRescan = runAllProjects
+  const timer = setInterval(runAllProjects, 30_000)
   timer.unref?.()
-  for (const project of store.listProjects()) run(project.id)
-  return () => { stopped = true; clearInterval(timer); unsubscribe(); unsubscribeSchedule(); unsubscribeChanges() }
+  runAllProjects()
+  return () => {
+    stopped = true
+    if (requestActiveOwnerManagementRescan === runAllProjects) requestActiveOwnerManagementRescan = null
+    clearInterval(timer)
+    unsubscribe()
+    unsubscribeSchedule()
+    unsubscribeChanges()
+  }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { confirmOwnerTeamWorkspaceAccessAtom, editOwnerMessageAtom, getOwnerManagementEditor, getOwnerMessageComposer, loadOwnerManagementAtom, ownerManagementEditorsAtom, ownerMessageComposersAtom, ownerTeamWorkspaceApprovalStatesAtom, sendOwnerMessageAtom } from '../../atoms/project-owner-management-atoms'
 import { getOwnerDelegationEditor, ownerDelegationEditorsAtom } from '../../atoms/owner-management-delegation-atoms'
@@ -6,10 +6,15 @@ import { getOwnerPlanEditor, loadOwnerPlanAtom, ownerPlanEditorsAtom } from '../
 import { allPendingPermissionRequestsAtom } from '../../atoms/agent-atoms'
 import { retakeOwnerAssignmentAtom } from '../../atoms/project-owner-management-atoms'
 import { PermissionBanner } from '../agent/PermissionBanner'
+import { Button } from '../ui/button'
+import { RichTextInput } from '../ai-elements/rich-text-input'
+import { cn } from '../../lib/utils'
 import { OwnerConversationChanges } from './OwnerConversationChanges'
 import { OwnerDeliveredArtifact } from './OwnerDeliveredArtifact'
 import { OwnerManagementQuestions } from './OwnerManagementQuestions'
 import { isOwnerWaitingForUser } from './project-owner-progress-state'
+import { CornerDownLeft } from 'lucide-react'
+import { sendWithCmdEnterAtom } from '../../atoms/shortcut-atoms'
 
 const ORGANIZATION_STALL_HINT_MS = 2 * 60 * 1000
 function ownerFacingMessage(content: string): string {
@@ -48,6 +53,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const view = useMemo(() => atom(get => ({ editor: getOwnerManagementEditor(get(ownerManagementEditorsAtom), projectId), composer: getOwnerMessageComposer(get(ownerMessageComposersAtom), subject), plan: getOwnerPlanEditor(get(ownerPlanEditorsAtom), subject), delegation: getOwnerDelegationEditor(get(ownerDelegationEditorsAtom), subject) })), [projectId, subject])
   const { editor, composer, plan, delegation } = useAtomValue(view)
   const pendingPermissions = useAtomValue(allPendingPermissionRequestsAtom)
+  const sendWithCmdEnter = useAtomValue(sendWithCmdEnterAtom)
   const pendingAction = editor.view?.actionRequests?.find(item =>
     (taskId === undefined || item.taskId === taskId) && pendingPermissions.get(item.sessionId)?.[0]?.requestId === item.requestId
     && pendingPermissions.get(item.sessionId)?.[0]?.requiresPerActionApproval,
@@ -57,7 +63,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const retakeAssignment = useSetAtom(retakeOwnerAssignmentAtom)
   const [retakeStatus, setRetakeStatus] = useState('')
   const load = useSetAtom(loadOwnerManagementAtom), loadPlan = useSetAtom(loadOwnerPlanAtom), edit = useSetAtom(editOwnerMessageAtom), send = useSetAtom(sendOwnerMessageAtom)
-  const id = useId(), loadedMessage = useRef('')
+  const loadedMessage = useRef('')
   const [clock, setClock] = useState(Date.now())
   const messages = editor.view?.messages.filter(message => message.taskId === taskId && message.kind !== 'goal') ?? []
   const latestUserMessageIndex = messages.findLastIndex(message => message.role === 'user')
@@ -113,7 +119,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   }
   const focusReplyComposer = (): void => {
     requestAnimationFrame(() => {
-      const reply = document.querySelector<HTMLTextAreaElement>('form[aria-label="向Owner发送消息"] textarea')
+      const reply = document.querySelector<HTMLElement>('form[aria-label="向Owner发送消息"] [contenteditable="true"][aria-label="给项目 Owner 的消息"]')
       reply?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       reply?.focus()
     })
@@ -121,6 +127,8 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const referencedDelivery = composer.deliveryReference
     ? editor.view?.messages.find(message => message.id === composer.deliveryReference?.messageId && message.role === 'assistant' && message.kind === 'delivery')?.delivery?.items.find(item => item.artifactHash === composer.deliveryReference?.artifactHash)
     : undefined
+  const canSendMessage = !composer.sending && Boolean(composer.text.trim())
+    && !(composer.deliveryReference && !referencedDelivery)
   return <div className="space-y-5" aria-label="项目Owner持续对话">
     {editor.loading && <p role="status" className="text-sm text-muted-foreground">正在读取 Owner 对话…</p>}
     {editor.error && <div className="space-y-2"><p role="alert" className="text-sm text-destructive">Owner对话读取失败：{editor.error}</p><button type="button" className="text-xs text-primary underline" disabled={editor.loading} onClick={() => void load(projectId)}>重新读取 Owner 对话</button></div>}
@@ -205,13 +213,17 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
       </article>)}
     </div>}
     </section>
-    {editor.view?.manager && <form className="sticky bottom-0 z-10 space-y-3 rounded-2xl bg-background/95 p-4 shadow-lg backdrop-blur" aria-label="向Owner发送消息" onSubmit={event => { event.preventDefault(); void send(subject) }}>
-      <label className="sr-only" htmlFor={id}>给项目 Owner 的消息</label>
-      <textarea id={id} rows={3} maxLength={4000} className="w-full resize-y rounded-xl bg-muted/30 p-3 text-sm leading-6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" placeholder="回答问题、补充想法、询问进度，或说明希望修改的目标和方案…" disabled={composer.sending || Boolean(composer.pending)} value={composer.text} onChange={event => edit({ subject, text: event.target.value })} />
-      <p className="text-xs leading-5 text-muted-foreground">这条消息会进入项目记录并交给 Owner 判断；实际目标、方案或进度变化会显示在上方“现在最需要关注”。要直接修改正式目标，请使用“调整目标”。</p>
-      {composer.deliveryReference && <p className={`text-xs ${referencedDelivery ? 'text-muted-foreground' : 'text-destructive'}`} role={referencedDelivery ? 'status' : 'alert'}>{referencedDelivery ? `本条意见将关联已验收成果《${referencedDelivery.title}》及其准确版本。` : '关联成果版本已无法核对；这条消息不会发送，请从当前交付卡重新选择成果。'}</p>}
-      {composer.error && <p role="alert" className="text-sm text-destructive">{composer.error}。原消息已保留。</p>}
-      <div className="flex flex-wrap items-center gap-3"><button type="submit" className="rounded-xl bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50" disabled={composer.sending || !composer.text.trim() || Boolean(composer.deliveryReference && !referencedDelivery)}>{composer.sending ? '正在发送…' : composer.pending ? '重新确认原消息已保存' : '发送给 Owner'}</button><p role={delegation.view?.state === 'stale' ? 'alert' : undefined} className="text-xs text-muted-foreground">{editor.view.manager.status === 'paused' ? '管理已暂停，消息会保留，恢复后再处理。' : delegation.view?.state === 'stale' ? '管理授权因项目目标、配置、资料或费用依据变化而暂停。消息会保留且不会发送；请在上方重新核对并确认当前范围，Owner随后会继续处理。' : delegation.view?.state === 'attention' ? '你的消息会保存，但 Owner 正暂停在上次请求核对；当前不会发送新模型请求。请勿重复提交，先在上方核对原请求状态。' : 'Owner 在已确认的管理额度内回应；必要的方案或执行确认会在这里提出。'}</p></div>
+    {editor.view?.manager && <form className="sticky bottom-0 z-10 px-2.5 pb-2.5 md:px-[18px] md:pb-[18px]" aria-label="向Owner发送消息" onSubmit={event => { event.preventDefault(); void send(subject) }}>
+      <div className="rounded-[10px] border border-solid border-border/80 bg-muted/30 backdrop-blur-sm transition-all duration-200 focus-within:border-ring focus-within:bg-muted/50" data-input-mode="chat">
+        <RichTextInput ariaLabel="给项目 Owner 的消息" value={composer.text} onChange={text => edit({ subject, text: text.slice(0, 4000) })} onSubmit={() => { void send(subject) }} placeholder={sendWithCmdEnter ? '回答问题、补充想法或询问进度… (⌘/Ctrl+Enter 发送，Enter 换行)' : '回答问题、补充想法或询问进度… (Enter 发送，Shift+Enter 换行)'} disabled={composer.sending || Boolean(composer.pending)} sendWithCmdEnter={sendWithCmdEnter} />
+        <p className="px-[15px] pb-2 text-xs leading-5 text-muted-foreground">这条消息会进入项目记录并交给 Owner 判断；实际目标、方案或进度变化会显示在上方“现在最需要关注”。要直接修改正式目标，请使用“调整目标”。</p>
+        {composer.deliveryReference && <p className={`px-[15px] pb-2 text-xs ${referencedDelivery ? 'text-muted-foreground' : 'text-destructive'}`} role={referencedDelivery ? 'status' : 'alert'}>{referencedDelivery ? `本条意见将关联已验收成果《${referencedDelivery.title}》及其准确版本。` : '关联成果版本已无法核对；这条消息不会发送，请从当前交付卡重新选择成果。'}</p>}
+        {composer.error && <p role="alert" className="px-[15px] pb-2 text-sm text-destructive">{composer.error}。原消息已保留。</p>}
+        <div className="flex items-center justify-between gap-3 border-t border-border/40 px-2.5 py-2">
+          <p role={delegation.view?.state === 'stale' ? 'alert' : undefined} className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">{editor.view.manager.status === 'paused' ? '管理已暂停，消息会保留，恢复后再处理。' : delegation.view?.state === 'stale' ? '管理授权因项目目标、配置、资料或费用依据变化而暂停。消息会保留且不会发送；请在上方重新核对并确认当前范围，Owner随后会继续处理。' : delegation.view?.state === 'attention' ? '你的消息会保存，但 Owner 正暂停在上次请求核对；当前不会发送新模型请求。请勿重复提交，先在上方核对原请求状态。' : 'Owner 在已确认的管理额度内回应；必要的方案或执行确认会在这里提出。'}</p>
+          <Button type="submit" variant="ghost" size="icon" className={cn('size-[36px] rounded-full', canSendMessage ? 'text-primary hover:bg-primary/10' : 'cursor-not-allowed text-foreground/30')} disabled={!canSendMessage} aria-label={composer.pending ? '重新确认原消息已保存' : '发送给 Owner'} title={composer.pending ? '重新确认原消息已保存' : '发送给 Owner'}><CornerDownLeft className="size-[22px]" /></Button>
+        </div>
+      </div>
     </form>}
   </div>
 }
