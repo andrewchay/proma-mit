@@ -11,6 +11,7 @@ import type { ToolResult } from '@gravitas/core'
 import type { RuntimeToolDefinition, ToolContext } from './types'
 import { McpOAuthProvider } from './mcp-oauth-provider'
 import { registerPendingMcpOAuth } from './mcp-oauth-pending'
+import { readTransportPid, snapshotDescendants, terminateProcesses, type ReapEvidence } from './mcp-process-reaper'
 
 interface ConnectedServer {
   name: string
@@ -30,6 +31,8 @@ export class McpClientManager {
   private servers: ConnectedServer[] = []
   private abortSignal?: AbortSignal
   private disconnected = false
+  /** 最近一次 disconnect 的进程树回收证据，供审计与测试读取。 */
+  private reapEvidence: ReapEvidence[] = []
 
   constructor(
     private readonly configs: Record<string, McpServerEntry>,
@@ -168,18 +171,41 @@ export class McpClientManager {
     }
   }
 
-  /** 断开所有 MCP 服务器连接 */
+  /** 断开所有 MCP 服务器连接；stdio 服务端额外回收其进程树。 */
   async disconnect(): Promise<void> {
     if (this.disconnected) return
     this.disconnected = true
     for (const server of this.servers) {
+      // 顺序关键：先在父进程仍存活时快照后代，再 close()。
+      // 父进程一旦死掉，后代会被 reparent 到 pid 1，ppid 链断裂后再枚举就找不到了。
+      const pid = readTransportPid(server.transport)
+      const descendants = pid ? await snapshotDescendants(pid) : undefined
       try {
         await server.client.close()
       } catch (err) {
         console.warn(`[MCP 客户端] 断开服务器 ${server.name} 时出错:`, err)
       }
+      if (pid) {
+        // SDK 的 close() 只杀直接子进程，快照里的后代需要单独收口。
+        const evidence = descendants === undefined
+          ? { rootPid: pid, targeted: [], signals: [], survivors: [], status: 'unavailable' as const }
+          : await terminateProcesses([...descendants, pid], { rootPid: pid }).catch(() => undefined)
+        if (evidence) {
+          this.reapEvidence.push(evidence)
+          if (evidence.status !== 'confirmed') {
+            console.warn(
+              `[MCP 客户端] 服务器 ${server.name} 进程树回收${evidence.status === 'unavailable' ? '无法核验（进程表不可用）' : `未确认，仍有 ${evidence.survivors.length} 个进程存活`}，pid=${pid}`,
+            )
+          }
+        }
+      }
     }
     this.servers = []
+  }
+
+  /** 读取最近一次断开的进程树回收证据（只读快照）。 */
+  getReapEvidence(): ReapEvidence[] {
+    return [...this.reapEvidence]
   }
 
   /**
