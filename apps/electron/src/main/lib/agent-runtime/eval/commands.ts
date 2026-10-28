@@ -47,7 +47,7 @@ async function evaluateCaseAcrossRuns(
   agentVersion: number,
   delegate: SubAgentDelegate,
   opts: { scoreDelegate?: ScoreDelegate; abortSignal?: AbortSignal; systemPrompt?: string } = {},
-): Promise<{ score: number; runs: Array<{ score: number; run: number; sessionId?: string; tracePath?: string }> }> {
+): Promise<{ score: number; complete: boolean; runs: Array<{ score: number; run: number; sessionId?: string; tracePath?: string }> }> {
   const runsCount = Math.max(1, benchmark.runsPerCase ?? 1)
   const allRuns = []
   for (let i = 0; i < runsCount; i++) {
@@ -63,7 +63,8 @@ async function evaluateCaseAcrossRuns(
   const caseScore = scored.length === 0
     ? 0
     : scored.reduce((s, r) => s + r.score, 0) / scored.length
-  return { score: Math.round(caseScore * 100) / 100, runs }
+  const complete = scored.length === runsCount && scored.every((item) => Number.isFinite(item.score) && item.score >= 0 && item.score <= 100)
+  return { score: Math.round(caseScore * 100) / 100, complete, runs }
 }
 
 /** 跑一次 Baseline：对 benchmark 内所有 case 各跑 runsPerCase 次，取平均并写入 scoreboard。 */
@@ -199,7 +200,7 @@ export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummar
         const candidatePrompt = def && typeof def === "object"
           ? (def as Record<string, unknown>).prompt as string | undefined
           : undefined
-        const { score, runs } = await evaluateCaseAcrossRuns(
+        const { score, runs, complete } = await evaluateCaseAcrossRuns(
           benchmark,
           caseId,
           version,
@@ -213,11 +214,11 @@ export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummar
           phase: "case_complete",
           completedCases,
           totalCases: caseIds.length,
-          score,
+          ...(complete ? { score } : {}),
         })
         return {
           caseId,
-          score: score >= 0 ? score : null,
+          score: complete ? score : null,
           costUsd: null,
           durationMs: null,
           sessionId: runs[0]?.sessionId,

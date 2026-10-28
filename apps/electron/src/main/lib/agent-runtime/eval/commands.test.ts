@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { rmSync } from 'node:fs'
-import { createBenchmark } from './benchmark-store'
+import { createBenchmark, readScoreboard } from './benchmark-store'
 import { runBaseline, runImprove, type RunImproveOptions } from './commands'
 import type { SubAgentDelegate } from './evaluator'
 import type { StateGuard } from './self-evolver'
@@ -103,6 +103,21 @@ describe('runImprove', () => {
     expect(out.finalScore).toBeGreaterThan(out.baselineScore)
     expect(phases).toContain("case_start")
     expect(phases).toContain("case_complete")
+  })
+
+  it('Given held-out 实际调用失败 When 训练分数上升 Then 拒绝候选且不伪造零分', async () => {
+    const benchmark = { ...config, id: 'held-out-run-failure', heldOutCases: ['HELD-001'], runsPerCase: 2 }
+    createBenchmark(benchmark, [{ caseId: 'CASE-001', statement: 'train task', rubric }, { caseId: 'HELD-001', statement: 'held task', rubric }])
+    let version = 1
+    let heldCalls = 0
+    const state: StateGuard = { async snapshot() {}, async apply() { version = 2 }, async restore() { version = 1 }, version: () => version }
+    const out = await runImprove({ benchmark, state, includeHeldOut: true, maxRounds: 1,
+      propose: async () => ({ description: 'better', target: 'x', afterState: { prompt: 'new' } }),
+      delegate: async ({ task }) => { if (task.includes('held task') && ++heldCalls === 2) throw new Error('provider failed'); return { text: version === 1 ? 'file:line 修复' : '发现 file:line 缺陷 修复' } },
+    })
+    expect(out.acceptedRounds).toBe(0)
+    expect(version).toBe(1)
+    expect(readScoreboard(benchmark.id).evaluations[0]?.heldOut).toBeNull()
   })
 
   it('propose 保守策略（永不返回候选）时只产出 baseline', async () => {

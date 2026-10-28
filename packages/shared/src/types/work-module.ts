@@ -884,7 +884,7 @@ export interface AgentEmployeeCapabilityEvaluationResult {
   trainingSampleCount: number
   heldOutSampleCount: number
   approvalId?: string
-  status: 'candidate_created' | 'no_accepted_candidate' | 'judge_not_independent' | 'held_out_regression'
+  status: 'candidate_created' | 'no_accepted_candidate' | 'judge_not_independent' | 'held_out_unavailable' | 'held_out_regression'
   message: string
 }
 

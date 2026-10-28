@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { rmSync } from 'node:fs'
 import { selfEvolve, type CaseEval, type StateGuard } from './self-evolver'
 import type { BenchmarkConfig, SelfEvolveChange } from './types'
+import { readScoreboard } from './benchmark-store'
 
 const testDir = join(tmpdir(), `gravitas-eval-selfevolve-test-${Date.now()}`)
 
@@ -132,6 +133,52 @@ describe('selfEvolve', () => {
     expect(out.rounds[0]!.accepted).toBe(false)
     expect(out.rounds[0]!.rolledBack).toBe(true)
     expect(out.rounds[0]!.reason).toContain('held-out')
+  })
+
+  it('训练集缺失 case 时基线停止或候选回滚', async () => {
+    const benchmark = { ...config, id: 'training-missing', cases: ['CASE-001', 'CASE-002'] }
+    let proposed = false
+    const partial = async () => [{ caseId: 'CASE-001', score: 80 }]
+    await expect(selfEvolve({ benchmark, state: mkState(() => 1), maxRounds: 1, evaluate: partial, propose: async () => { proposed = true; return null } })).rejects.toThrow('训练集基线评测不完整')
+    expect(proposed).toBe(false)
+    const out = await selfEvolve({ benchmark, state: mkState(() => 1), maxRounds: 1,
+      propose: async () => ({ description: 'candidate', target: 'x', afterState: 2 }),
+      evaluate: async (def) => def === undefined ? [{ caseId: 'CASE-001', score: 60 }, { caseId: 'CASE-002', score: 60 }] : partial(),
+    })
+    expect(out.rounds[0]!.accepted).toBe(false)
+    expect(out.rounds[0]!.rolledBack).toBe(true)
+  })
+
+  it('held-out 基线或候选缺失 case 时回滚，不把缺失记录成零分', async () => {
+    for (const missingBaseline of [true, false]) {
+      const benchmark = { ...config, id: 'held-out-missing-' + String(missingBaseline), heldOutCases: ['HELD-1', 'HELD-2'] }
+      const out = await selfEvolve({
+        benchmark, maxRounds: 1, state: mkState(() => 1),
+        propose: async () => ({ description: 'candidate', target: 'x', afterState: 2 }),
+        evaluate: evaluateScored(70, 90),
+        evaluateHeldOut: async (def) => {
+          const incomplete = (def === undefined) === missingBaseline
+          return [{ caseId: 'HELD-1', score: 80, sessionId: 'one' }, { caseId: 'HELD-2', score: incomplete ? null : 80, sessionId: 'two' }]
+        },
+      })
+      expect(out.rounds[0]!.accepted).toBe(false)
+      expect(out.rounds[0]!.rolledBack).toBe(true)
+      expect(out.rounds[0]!.reason).toContain('不完整')
+      const records = readScoreboard(benchmark.id).evaluations
+      expect(records).toHaveLength(1)
+      if (missingBaseline) expect(records[0]!.heldOut).toBeNull()
+    }
+  })
+
+  it('held-out case 完整且不回退时保留候选和真实分数', async () => {
+    const benchmark = { ...config, id: 'held-out-complete', heldOutCases: ['HELD-1', 'HELD-2'] }
+    const out = await selfEvolve({ benchmark, maxRounds: 1, state: mkState(() => 1),
+      propose: async () => ({ description: 'candidate', target: 'x', afterState: 2 }),
+      evaluate: evaluateScored(70, 90),
+      evaluateHeldOut: async (def) => [{ caseId: 'HELD-1', score: def === undefined ? 70 : 80 }, { caseId: 'HELD-2', score: 90 }],
+    })
+    expect(out.rounds[0]!.accepted).toBe(true)
+    expect(readScoreboard(benchmark.id).evaluations.map(item => item.heldOut?.score)).toEqual([80, 85])
   })
 
   it('候选评测异常时回滚并在 round 中记录失败', async () => {
