@@ -4,11 +4,11 @@
  * 将内容写入指定文件，若文件所在目录不存在则自动创建。
  */
 
-import { writeFileSync, mkdirSync, existsSync, openSync, closeSync, fstatSync, ftruncateSync, constants } from 'node:fs'
-import { dirname } from 'node:path'
+import { writeFileSync, mkdirSync, existsSync, openSync, closeSync, fstatSync, ftruncateSync, constants, realpathSync, statSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
-import { resolveToolPath, formatToolError, requiresOwnerToolGate } from './tool-utils.ts'
+import { resolveToolPath, assertDescriptorMatchesStat, formatToolError, requiresOwnerToolGate } from './tool-utils.ts'
 
 export interface WriteToolInput {
   file_path: string
@@ -74,9 +74,12 @@ export async function executeWriteTool(input: unknown, ctx: ToolContext): Promis
     try {
       const stat = fstatSync(descriptor)
       if (!stat.isFile() || stat.nlink !== 1) throw new Error('Write拒绝符号链接、硬链接和非普通文件')
-      // 打开后再次检查父路径，缩小检查与使用窗口；这不是跨进程文件系统沙箱。
-      const recheck = resolveToolPath(params.file_path, ctx.cwd)
-      if (recheck.error) throw new Error(recheck.error)
+      // 新建文件无法在打开前 stat，组合两道校验：打开后 stat 预期路径比 inode（捕获
+      // "换出去再换回来"），再按规范化路径复核范围（捕获替换后持续指向外部）。
+      const expected = join(realpathSync(dirname(path)), basename(path))
+      assertDescriptorMatchesStat(descriptor, statSync(expected))
+      const scope = resolveToolPath(expected, ctx.cwd)
+      if (scope.error) throw new Error(scope.error)
       ftruncateSync(descriptor, 0)
       writeFileSync(descriptor, params.content, 'utf-8')
     } finally { closeSync(descriptor) }

@@ -4,10 +4,11 @@
  * 通过旧字符串替换新字符串来编辑文件。
  */
 
-import { closeSync, constants, fstatSync, ftruncateSync, openSync, readFileSync, writeSync } from 'node:fs'
+import { closeSync, constants, fstatSync, ftruncateSync, openSync, readFileSync, realpathSync, statSync, writeSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
-import { resolveToolPath, formatToolError, truncateOutput, requiresOwnerToolGate } from './tool-utils.ts'
+import { resolveToolPath, assertDescriptorMatchesStat, formatToolError, truncateOutput, requiresOwnerToolGate } from './tool-utils.ts'
 
 export interface EditToolInput {
   file_path: string
@@ -58,12 +59,16 @@ export async function executeEditTool(input: unknown, ctx: ToolContext): Promise
       const { consumeApprovedOwnerAction } = require('../../project-owner-action-approval') as typeof import('../../project-owner-action-approval')
       if (!consumeApprovedOwnerAction(ctx.sessionId, { toolName: 'Edit', toolInput })) throw new Error('Owner动作批准已使用或失效，请重新审批')
     }
+    // 打开前固定 inode 基准，打开后比对，关闭父目录替换竞态。
+    const expected = join(realpathSync(dirname(path)), basename(path))
+    const before = statSync(expected)
     const descriptor = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK)
     try {
       const stat = fstatSync(descriptor)
       if (!stat.isFile() || stat.nlink !== 1) throw new Error('Edit拒绝符号链接、硬链接和非普通文件')
-      const recheck = resolveToolPath(params.file_path, ctx.cwd)
-      if (recheck.error) throw new Error(recheck.error)
+      assertDescriptorMatchesStat(descriptor, before)
+      const scope = resolveToolPath(expected, ctx.cwd)
+      if (scope.error) throw new Error(scope.error)
       const content = readFileSync(descriptor, 'utf-8')
       const occurrences = content.split(params.old_string).length - 1
 

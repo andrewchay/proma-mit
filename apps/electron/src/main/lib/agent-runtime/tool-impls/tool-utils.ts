@@ -5,7 +5,7 @@
  */
 
 import { resolve, relative, isAbsolute, dirname } from 'node:path'
-import { realpathSync, existsSync } from 'node:fs'
+import { realpathSync, existsSync, fstatSync, statSync } from 'node:fs'
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types'
 
@@ -17,6 +17,21 @@ import type { ToolContext } from '../types'
  * - 相对路径基于 cwd 解析
  * - 返回路径必须在 cwd 内部（防止路径遍历，包括 symlink 绕过）
  */
+/**
+ * 校验已打开描述符与打开前捕获的 inode 基准一致（dev+ino 比对）。
+ *
+ * 抵御"路径检查通过后、打开前父目录被替换"的竞态：调用方在打开前 stat 目标路径
+ * 固定 dev+ino，描述符被内核固定在打开瞬间的 inode 上，两者不一致即拒绝（失败关闭）。
+ * 基准必须在打开前捕获——打开后再 stat 路径会跟随被替换后的父目录，失去检测能力。
+ * 不用 /dev/fd 反查是因为 write-only 描述符在 macOS 返回 EACCES；dev+ino 与模式无关。
+ */
+export function assertDescriptorMatchesStat(descriptor: number, expected: { dev: number; ino: number }): void {
+  const actual = fstatSync(descriptor)
+  if (actual.dev !== expected.dev || actual.ino !== expected.ino) {
+    throw new Error('文件路径在打开过程中被替换，已拒绝访问')
+  }
+}
+
 export function resolveToolPath(inputPath: string, cwd: string): { path: string; error?: string } {
   if (!inputPath) {
     return { path: '', error: '路径不能为空' }
