@@ -8,7 +8,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
-import { formatToolError, truncateOutput } from './tool-utils.ts'
+import { formatToolError, truncateOutput, requiresOwnerToolGate } from './tool-utils.ts'
 import { prepareBashSandbox } from './bash-sandbox.ts'
 
 const execFileAsync = promisify(execFile)
@@ -60,7 +60,7 @@ export async function executeBashToolOnPlatform(input: unknown, ctx: ToolContext
 
   try {
     const assertOwnerGate = () => {
-      if (!ctx.ownerWorkspaceWrite) return
+      if (!requiresOwnerToolGate(ctx.sessionId, ctx.ownerWorkspaceWrite)) return
       const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
       gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Bash', { command })
     }

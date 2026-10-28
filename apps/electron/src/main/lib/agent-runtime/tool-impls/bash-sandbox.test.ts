@@ -13,11 +13,15 @@ const originalConfig = process.env.PROMA_TEST_CONFIG_DIR
 const sessionId = `bash-sandbox-${process.pid}`
 const identity = ['-c', 'user.name=agent', '-c', 'user.email=agent@example.invalid']
 
-beforeAll(() => {
+beforeAll(async () => {
   mkdirSync(configDir)
   process.env.PROMA_TEST_CONFIG_DIR = configDir
+  const { initProjectDb } = await import('../../project-sqlite-store')
+  await initProjectDb()
 })
-afterAll(() => {
+afterAll(async () => {
+  const { closeProjectDb } = await import('../../project-sqlite-store')
+  closeProjectDb()
   if (originalConfig === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
   else process.env.PROMA_TEST_CONFIG_DIR = originalConfig
   rmSync(root, { recursive: true, force: true })

@@ -4,7 +4,7 @@
  * 验证 Read / Write / Edit / Bash / Grep 五个基础工具的正确性。
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test'
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, linkSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +14,21 @@ import { executeEditTool, createEditToolDefinition } from './edit-tool'
 import { executeBashTool, createBashToolDefinition } from './bash-tool'
 import { executeGrepTool, createGrepToolDefinition } from './grep-tool'
 import { executeAgentTool, createAgentToolDefinition, AGENT_TOOL_NAME } from './agent-tool'
+
+const databaseDir = mkdtempSync(join(tmpdir(), 'gravitas-tool-db-'))
+const previousConfigDir = process.env.PROMA_TEST_CONFIG_DIR
+beforeAll(async () => {
+  process.env.PROMA_TEST_CONFIG_DIR = databaseDir
+  const { initProjectDb } = await import('../../project-sqlite-store')
+  await initProjectDb()
+})
+afterAll(async () => {
+  const { closeProjectDb } = await import('../../project-sqlite-store')
+  closeProjectDb()
+  if (previousConfigDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+  else process.env.PROMA_TEST_CONFIG_DIR = previousConfigDir
+  rmSync(databaseDir, { recursive: true, force: true })
+})
 
 describe('Agent Runtime 核心工具', () => {
   let tempDir: string

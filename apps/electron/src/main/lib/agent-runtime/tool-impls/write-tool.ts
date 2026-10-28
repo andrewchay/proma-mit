@@ -8,7 +8,7 @@ import { writeFileSync, mkdirSync, existsSync, openSync, closeSync, fstatSync, f
 import { dirname } from 'node:path'
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
-import { resolveToolPath, formatToolError } from './tool-utils.ts'
+import { resolveToolPath, formatToolError, requiresOwnerToolGate } from './tool-utils.ts'
 
 export interface WriteToolInput {
   file_path: string
@@ -47,7 +47,7 @@ export async function executeWriteTool(input: unknown, ctx: ToolContext): Promis
 
   try {
     let exclusiveCreate = false
-    if (ctx.ownerWorkspaceWrite) {
+    if (requiresOwnerToolGate(ctx.sessionId, ctx.ownerWorkspaceWrite)) {
       const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
       const toolInput = input as Record<string, unknown>
       gates.assertOwnerToolWorkingDirectory(ctx.sessionId, ctx.cwd)

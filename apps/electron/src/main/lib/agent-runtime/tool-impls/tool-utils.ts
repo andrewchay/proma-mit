@@ -90,3 +90,11 @@ export function truncateOutput(output: string, maxLength = 100_000): string {
   if (output.length <= maxLength) return output
   return output.slice(0, maxLength) + `\n...（输出已截断，共 ${output.length} 字符）`
 }
+
+/** 受控身份从项目账本重查，不能只依赖工具调用方提供的标志。账本不可用时拒绝工具操作。 */
+export function requiresOwnerToolGate(sessionId: string, ownerMarker?: boolean): boolean {
+  const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+  const context = gates.resolveOwnerExecutionGateSession(sessionId)
+  if (ownerMarker && context.kind === 'unrestricted') throw new Error('Owner工具标记与权威会话记录不一致')
+  return context.kind !== 'unrestricted'
+}

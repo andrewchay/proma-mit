@@ -7,7 +7,7 @@
 import { closeSync, constants, fstatSync, ftruncateSync, openSync, readFileSync, writeSync } from 'node:fs'
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
-import { resolveToolPath, formatToolError, truncateOutput } from './tool-utils.ts'
+import { resolveToolPath, formatToolError, truncateOutput, requiresOwnerToolGate } from './tool-utils.ts'
 
 export interface EditToolInput {
   file_path: string
@@ -50,7 +50,7 @@ export async function executeEditTool(input: unknown, ctx: ToolContext): Promise
   }
 
   try {
-    if (ctx.ownerWorkspaceWrite) {
+    if (requiresOwnerToolGate(ctx.sessionId, ctx.ownerWorkspaceWrite)) {
       const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
       const toolInput = input as Record<string, unknown>
       gates.assertOwnerToolWorkingDirectory(ctx.sessionId, ctx.cwd)
