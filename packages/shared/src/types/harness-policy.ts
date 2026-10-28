@@ -171,6 +171,14 @@ export interface HarnessPolicyState {
   readonly error: string | null
   readonly reasons: readonly string[]
   readonly runtimeGaps: readonly HarnessRuntimeGap[]
+  /** 当前进程启动时应用的调度状态；不是文件的实时视图。 */
+  readonly scheduler?: HarnessSchedulerState
+}
+
+export interface HarnessSchedulerState {
+  readonly status: 'loading' | 'default' | 'configured' | 'invalid'
+  readonly parallel: boolean
+  readonly error?: string
 }
 
 /** 由策略计算各 runtime 的 required 缺口（供主进程与 UI 共用，保持同一份语义）。 */

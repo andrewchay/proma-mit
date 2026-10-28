@@ -3845,7 +3845,8 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(
     HARNESS_POLICY_IPC_CHANNELS.GET_STATE,
     async (): Promise<HarnessPolicyState> => {
-      return buildHarnessPolicyState()
+      const { getHarnessSchedulerState } = await import('./lib/agent-runtime/harness-startup')
+      return { ...buildHarnessPolicyState(), scheduler: getHarnessSchedulerState() }
     }
   )
 
