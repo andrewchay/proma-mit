@@ -48,6 +48,15 @@ describe.skipIf(!databaseUrl)('企业工作区成员的真实 Postgres 隔离', 
     expect(await members.removeMember(owner, 'project', 'member')).toBe(true)
     expect(await second.getRole({ tenantId: tenant, userId: 'member' }, 'owner', 'project')).toBeNull()
   })
+  test('Given 两个实例同时登记同一成员 When 仅允许新建 Then 仅一方成功且不覆盖角色', async () => {
+    const outcomes = await Promise.all([
+      members.setMember(owner, 'project', 'concurrent-member', 'editor', { createOnly: true }),
+      second.setMember(owner, 'project', 'concurrent-member', 'viewer', { createOnly: true }),
+    ])
+    expect(outcomes.filter(Boolean)).toHaveLength(1)
+    expect(await members.getRole({ tenantId: tenant, userId: 'concurrent-member' }, 'owner', 'project')).toBe(outcomes[0] ? 'editor' : 'viewer')
+    expect(await members.removeMember(owner, 'project', 'concurrent-member')).toBe(true)
+  })
   test('Given 已认证用户 When 管理成员登记 Then 只能修改自己的工作区且明确尚未启用共享访问', async () => {
     const app = createPromaWebServerApplication({ databaseUrl: databaseUrl!, redisUrl: 'redis://unused', s3: { bucket: 'unused', region: 'auto', maxUploadBytes: 1024 }, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test', trustedHeaderAuth: false, workspaceRoot: '/tmp/membership-test', workerId: 'test', taskLeaseMs: 30000 }, { postgres: client, auth: ({ request }) => { const userId = request.headers.get('x-test-user'); return userId ? { tenantId: tenant, userId, roles: ['operator'] } : undefined } })
     const request = (method: string, user: string, path: string, body?: string) => new Request(`http://server${path}`, { method, headers: { 'x-test-user': user, ...(body ? { 'content-type': 'application/json' } : {}) }, ...(body ? { body } : {}) })
@@ -56,6 +65,8 @@ describe.skipIf(!databaseUrl)('企业工作区成员的真实 Postgres 隔离', 
     expect((await app.fetch(request('PUT', 'owner', path, '{"role":"owner"}'))).status).toBe(400)
     expect((await app.fetch(request('PUT', 'owner', path, JSON.stringify({ role: 'editor', padding: 'x'.repeat(5000) })))).status).toBe(400)
     expect((await app.fetch(request('PUT', 'owner', path, '{"role":"editor"}'))).status).toBe(200)
+    expect((await app.fetch(request('PUT', 'owner', path, '{"role":"viewer","createOnly":true}'))).status).toBe(409)
+    expect(await members.getRole({ tenantId: tenant, userId: 'member-api' }, 'owner', 'project')).toBe('editor')
     expect((await app.fetch(request('PUT', 'outsider', path, '{"role":"viewer"}'))).status).toBe(404)
     expect((await app.fetch(request('GET', 'outsider', '/agent/workspaces/project/members'))).status).toBe(404)
     const listing = await app.fetch(request('GET', 'owner', '/agent/workspaces/project/members'))

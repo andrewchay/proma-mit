@@ -19,14 +19,14 @@ export class PostgresWorkspaceMembershipStore {
   }
 
   /** 只为当前认证用户拥有的工作区设置成员；不根据同名 slug 推断其他所有者。 */
-  async setMember(scope: AgentRuntimeScope, workspaceSlug: string, memberUserId: string, role: 'editor' | 'viewer'): Promise<boolean> {
+  async setMember(scope: AgentRuntimeScope, workspaceSlug: string, memberUserId: string, role: 'editor' | 'viewer', options?: { createOnly?: boolean }): Promise<boolean> {
     if (!workspaceSlug.trim() || !memberUserId.trim() || memberUserId === scope.userId || (role !== 'editor' && role !== 'viewer')) throw new Error('工作区成员或角色无效')
     const result = await this.client.query(
       `INSERT INTO proma_workspace_members (tenant_id, owner_user_id, workspace_slug, member_user_id, role, updated_at)
        SELECT tenant_id, user_id, workspace_slug, $4, $5, $6 FROM proma_runtime_workspaces
        WHERE tenant_id=$1 AND user_id=$2 AND workspace_slug=$3
        ON CONFLICT (tenant_id, owner_user_id, workspace_slug, member_user_id)
-       DO UPDATE SET role=EXCLUDED.role, updated_at=EXCLUDED.updated_at RETURNING member_user_id`,
+       ${options?.createOnly ? 'DO NOTHING' : 'DO UPDATE SET role=EXCLUDED.role, updated_at=EXCLUDED.updated_at'} RETURNING member_user_id`,
       [scope.tenantId, scope.userId, workspaceSlug, memberUserId, role, Date.now()],
     )
     return result.rows.length === 1
