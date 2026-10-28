@@ -11,7 +11,7 @@
 
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, realpathSync } from 'node:fs'
-import { chmod, copyFile, lstat, readFile, readdir, rename, unlink } from 'node:fs/promises'
+import { chmod, copyFile, lstat, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { getConfigDir } from '../../config-paths'
@@ -181,14 +181,147 @@ async function readCoreHooksPath(commonDir: string): Promise<string | undefined>
 }
 
 /**
+ * 可在普通 git 操作中被自动执行的 config 键（小写全名）。
+ *
+ * hooks 目录之外，config 本身就是一条命令执行通道：core.fsmonitor 在 status 时运行、
+ * core.pager 在任何输出时运行、filter.*.clean 在 add 时运行、diff.external 在 diff 时运行、
+ * include.path 可把外部文件里的上述键间接引入。新建仓库的 config 由命令自己写出，
+ * 策略无法在命令期间拒写，只能在命令结束后清洗。
+ */
+const COMMAND_CARRYING_CONFIG_KEYS = new Set([
+  'core.fsmonitor',
+  'core.pager',
+  'core.editor',
+  'core.sshcommand',
+  'core.askpass',
+  'core.hookspath',
+  'credential.helper',
+  'diff.external',
+  'gpg.program',
+])
+
+/** 判断一条 config 条目是否携带命令执行能力（值语义相关的键只在值以 ! 开头时算）。 */
+export function isCommandCarryingConfigKey(fullKey: string, value: string): boolean {
+  if (COMMAND_CARRYING_CONFIG_KEYS.has(fullKey)) return true
+  if (/^filter\..+\.(clean|smudge|process)$/.test(fullKey)) return true
+  if (/^include(if\..+)?\.path$/.test(fullKey)) return true
+  if (/^alias\..+$/.test(fullKey) && value.trimStart().startsWith('!')) return true
+  if (/^submodule\..+\.update$/.test(fullKey) && value.trimStart().startsWith('!')) return true
+  return false
+}
+
+/**
+ * 从 git config 文本中移除可执行载体条目，返回清洗后的文本与被移除的键。
+ *
+ * 按行处理并跟踪 section/subsection，因此 `[filter "x"] clean = ...` 这类小节形式
+ * 与 `filter.x.clean` 的点分形式都能命中；`\` 续行整体移除，避免留下半条值。
+ * 只删条目本身，其余内容与顺序原样保留。
+ */
+export function sanitizeGitConfigText(text: string): { text: string; removed: string[] } {
+  const lines = text.split('\n')
+  const kept: string[] = []
+  const removed: string[] = []
+  let section = ''
+  let subsection: string | undefined
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i] ?? ''
+    const header = raw.match(/^\s*\[([^\]\s"]+)(?:\s+"((?:[^"\\]|\\.)*)")?\]\s*$/)
+    const sectionName = header?.[1]
+    if (header && sectionName) {
+      // 兼容老式 [section.subsection] 写法；新式带引号小节走 header[2]。
+      const [head, ...dots] = sectionName.toLowerCase().split('.')
+      section = head ?? ''
+      subsection = header[2] !== undefined ? header[2].toLowerCase() : dots.length ? dots.join('.') : undefined
+      kept.push(raw)
+      continue
+    }
+    const entry = raw.match(/^\s*([A-Za-z][A-Za-z0-9.-]*)\s*(?:=(.*))?$/)
+    const name = entry?.[1]
+    if (!entry || !name) {
+      kept.push(raw)
+      continue
+    }
+    const span = [raw]
+    let value = entry[2] ?? ''
+    while (value.endsWith('\\') && i + 1 < lines.length) {
+      i += 1
+      const next = lines[i] ?? ''
+      value = `${value.slice(0, -1)}${next}`
+      span.push(next)
+    }
+    const fullKey = [section, subsection, name.toLowerCase()].filter(Boolean).join('.')
+    if (isCommandCarryingConfigKey(fullKey, value)) {
+      removed.push(fullKey)
+      continue
+    }
+    kept.push(...span)
+  }
+  return { text: kept.join('\n'), removed: [...new Set(removed)] }
+}
+
+/**
+ * 命令结束后清洗新建仓库 config 中的可执行载体，原文件保留为 .gravitas-quarantine。
+ *
+ * 只处理本命令新建（命令前无 .git）、且 gitdir 位于工作目录内的仓库；
+ * 范围外或预存仓库一律不触碰。返回被移除的键名，无改动时返回 undefined。
+ */
+export async function sanitizeNewGitConfig(cwd: string, gitWasPresent: boolean): Promise<string[] | undefined> {
+  if (gitWasPresent) return undefined
+  const real = realOrSelf(cwd)
+  const git = await resolveGitLayout(real)
+  if (!git) return undefined
+  const configPath = join(git.commonDir, 'config')
+  if (!configPath.startsWith(`${real}${sep}`)) return undefined
+  let text: string
+  try {
+    const st = await lstat(configPath)
+    // 符号链接不跟随：改写链接目标等于越界写入。
+    if (!st.isFile()) return undefined
+    text = await readFile(configPath, 'utf8')
+  } catch {
+    return undefined
+  }
+  const { text: cleaned, removed } = sanitizeGitConfigText(text)
+  if (!removed.length) return undefined
+  const temp = `${configPath}.gravitas-tmp`
+  try {
+    await writeFile(temp, cleaned, { mode: 0o600 })
+    await rename(configPath, `${configPath}.gravitas-quarantine`)
+    await rename(temp, configPath)
+  } catch {
+    await unlink(temp).catch(() => {})
+    // 清洗失败时保持原 config 不变；残留风险在证据文档中说明。
+    return undefined
+  }
+  return removed
+}
+
+/**
+ * 新建仓库的命令后收口：停用 hooks 并清洗 config 可执行载体。
+ *
+ * Bash 工具必须调用本函数而非单独的 quarantineNewGitHooks，两者缺一都会留下
+ * 可在后续 git 操作中自动执行的通道。
+ */
+export async function quarantineNewGitArtifacts(cwd: string, gitWasPresent: boolean): Promise<string | undefined> {
+  const notices: string[] = []
+  const hooks = await quarantineNewGitHooks(cwd, gitWasPresent)
+  if (hooks) notices.push(hooks)
+  const configKeys = await sanitizeNewGitConfig(cwd, gitWasPresent)
+  if (configKeys?.length) {
+    notices.push(`已从新建仓库 config 移除 ${configKeys.length} 个可执行载体（原文件另存为 config.gravitas-quarantine）：${configKeys.join('、')}`)
+  }
+  return notices.length ? notices.join('；') : undefined
+}
+
+/**
  * 命令结束后收口新建仓库的 hooks：非 .sample 的 hook 文件重命名停用。
  *
  * 实测（见 git-init-experiment-f.log）：预 deny .git/hooks 会让 git init 致命失败，
  * 因此 init 命令期间的 hooks/config 写入无法用策略拦截；这里在命令结束后把
  * 本命令新建仓库（命令前无 .git）中可自动执行的 hook 停用，防止注入钩子在
  * 后续 git 操作中持久生效。文件保留（仅加后缀），用户可恢复。
- * 残留边界：命令内已触发的执行、GIT_DIR 环境变量间接布局、config 别名与
- * core.fsmonitor 等 config 载体不在本函数覆盖范围。
+ * 残留边界：命令内已触发的执行、GIT_DIR 环境变量间接布局不在本函数覆盖范围；
+ * config 载体由 sanitizeNewGitConfig 处理，Bash 工具应调用 quarantineNewGitArtifacts。
  */
 export async function quarantineNewGitHooks(cwd: string, gitWasPresent: boolean): Promise<string | undefined> {
   if (gitWasPresent) return undefined

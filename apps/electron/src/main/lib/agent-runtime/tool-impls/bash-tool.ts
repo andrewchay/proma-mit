@@ -9,7 +9,7 @@ import { promisify } from 'node:util'
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
 import { formatToolError, truncateOutput, requiresOwnerToolGate } from './tool-utils.ts'
-import { prepareBashSandbox, quarantineNewGitHooks } from './bash-sandbox.ts'
+import { prepareBashSandbox, quarantineNewGitArtifacts } from './bash-sandbox.ts'
 
 const execFileAsync = promisify(execFile)
 
@@ -78,12 +78,12 @@ export async function executeBashToolOnPlatform(input: unknown, ctx: ToolContext
     })
 
     const output = stdout || stderr || '[无输出]'
-    // 命令可能新建了仓库；收口其 hooks，防止同命令注入的钩子在后续 git 操作中自动执行。
+    // 命令可能新建了仓库；收口其 hooks 与 config 可执行载体，防止注入内容在后续 git 操作中自动执行。
     let hookNotice: string | undefined
     try {
-      hookNotice = await quarantineNewGitHooks(ctx.cwd, sandbox!.gitWasPresent)
+      hookNotice = await quarantineNewGitArtifacts(ctx.cwd, sandbox!.gitWasPresent)
     } catch (error) {
-      hookNotice = `新建仓库 hooks 收口失败：${formatToolError(error)}`
+      hookNotice = `新建仓库收口失败：${formatToolError(error)}`
     }
     return {
       toolCallId: '',
@@ -94,7 +94,7 @@ export async function executeBashToolOnPlatform(input: unknown, ctx: ToolContext
     // 命令失败也可能已创建仓库（如 init 后续步骤失败），同样收口。
     try {
       const hookNotice = sandbox
-        ? await quarantineNewGitHooks(ctx.cwd, sandbox.gitWasPresent)
+        ? await quarantineNewGitArtifacts(ctx.cwd, sandbox.gitWasPresent)
         : undefined
       if (hookNotice) {
         return {
