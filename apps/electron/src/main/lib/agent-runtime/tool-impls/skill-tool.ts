@@ -16,7 +16,7 @@ import type { ToolContext } from '../types.ts'
 import { readSkillFile } from '../../agent-workspace-manager'
 import { getWorkspaceSkillsDir, getDefaultSkillsDir } from '../../config-paths'
 import { composeOdDesignContext, parseOdRequirements, resolveDesignCraftDir } from '../../design-context.ts'
-import { formatToolError, truncateOutput } from './tool-utils.ts'
+import { formatToolError, truncateOutput, guardOwnerTool } from './tool-utils.ts'
 
 export interface ReadSkillToolInput {
   skill_slug: string
@@ -48,7 +48,7 @@ export function createSkillToolDefinition() {
   }
 }
 
-export async function executeSkillTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+async function executeSkillUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const params = input as ReadSkillToolInput
 
   if (!ctx.workspaceSlug) {
@@ -114,3 +114,5 @@ export async function executeSkillTool(input: unknown, ctx: ToolContext): Promis
     }
   }
 }
+
+export const executeSkillTool = guardOwnerTool(READ_SKILL_TOOL_NAME, executeSkillUnchecked)

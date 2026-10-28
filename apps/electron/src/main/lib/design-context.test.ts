@@ -6,7 +6,7 @@
  * 使用 PROMA_TEST_CONFIG_DIR 隔离配置目录，避免写入真实配置。
  */
 
-import { describe, test, expect, afterAll } from 'bun:test'
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
 import { mkdirSync, writeFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -72,7 +72,10 @@ function setupWorkspace(): void {
 
 setupWorkspace()
 
-afterAll(() => {
+beforeAll(async () => { await (await import('./project-sqlite-store')).initProjectDb() })
+
+afterAll(async () => {
+  (await import('./project-sqlite-store')).closeProjectDb()
   if (existsSync(tempHomeDir)) rmSync(tempHomeDir, { recursive: true, force: true })
   delete process.env.PROMA_TEST_CONFIG_DIR
 })
