@@ -213,12 +213,12 @@ async function defaultOidcTokenFromCode(code: string, oidc: OidcAuthConfig, code
   if (!payload.id_token) throw new Error('OIDC token 响应缺少 id_token')
 
   // 校验 id_token 签名与声明（防伪造/提权）。未配 jwksUrl 时拒绝（不能信任未验签的 token）。
-  if (!oidc.jwksUrl || !oidc.issuer || !oidc.audience) {
-    throw new Error('OIDC 登录需要配置 jwksUrl/issuer/audience 以校验 id_token 签名')
+  if (!oidc.jwksUrl || !oidc.issuer || !oidc.clientId) {
+    throw new Error('OIDC 登录需要配置 jwksUrl/issuer/clientId 以校验 id_token 签名')
   }
   const scope = await verifyJwtWithJwks(payload.id_token, {
     issuer: oidc.issuer,
-    audience: oidc.audience,
+    audience: oidc.clientId,
     jwksUrl: oidc.jwksUrl,
     expectedNonce: nonce,
   })

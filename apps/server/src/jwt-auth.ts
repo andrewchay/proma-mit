@@ -65,7 +65,12 @@ export async function verifyJwtWithJwks(
   const signature = decodeBase64Url(encodedSignature)
   if (!await crypto.subtle.verify('RSASSA-PKCS1-v1_5', key, bytesToArrayBuffer(signature), bytesToArrayBuffer(signed))) return undefined
   if (claims.iss !== config.issuer || !hasAudience(claims.aud, config.audience) || !isCurrent(claims)) return undefined
-  if (config.expectedNonce !== undefined && (claims.nonce !== config.expectedNonce || typeof claims.exp !== 'number' || !Number.isFinite(claims.exp))) return undefined
+  if (config.expectedNonce !== undefined) {
+    if (claims.nonce !== config.expectedNonce || typeof claims.exp !== 'number' || !Number.isFinite(claims.exp)) return undefined
+    // 没有配置其他受信 audience 时，拒绝携带额外 audience 或不匹配 azp 的 ID token。
+    if (Array.isArray(claims.aud) && claims.aud.some((audience) => audience !== config.audience)) return undefined
+    if (claims.azp !== undefined && claims.azp !== config.audience) return undefined
+  }
 
   const tenantId = claims[config.tenantClaim ?? 'tenant_id']
   const userId = claims[config.userClaim ?? 'sub']
