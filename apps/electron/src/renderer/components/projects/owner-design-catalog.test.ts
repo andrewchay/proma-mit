@@ -18,3 +18,18 @@ test('Given 内置设计系统索引 When 生成品牌选择目录 Then 保持�
   expect(new Set(catalog.entries.map(entry => entry.id)).size).toBe(catalog.entries.length)
   expect(catalog.license).toBe('Apache-2.0')
 })
+
+
+test('Given 版本固定的设计参考包 When 查看目录 Then 每个条目都有设计说明和令牌', async () => {
+  const bundle = await import('../../../../resources/opendesign-references.json')
+  expect(bundle.revision).toBe(catalog.revision)
+  expect(bundle.license).toBe(catalog.license)
+  const builder = readFileSync(new URL('../../../../electron-builder.yml', import.meta.url), 'utf8')
+  expect(builder).toContain('resources/opendesign-LICENSE.txt')
+  expect(readFileSync(new URL('../../../../resources/opendesign-LICENSE.txt', import.meta.url), 'utf8')).toContain('Apache License')
+  expect(Object.keys(bundle.entries).sort()).toEqual(catalog.entries.map(entry => entry.id).sort())
+  for (const entry of Object.values(bundle.entries)) {
+    expect(entry.design).toContain('# ')
+    expect(entry.tokens).toContain(':root')
+  }
+})

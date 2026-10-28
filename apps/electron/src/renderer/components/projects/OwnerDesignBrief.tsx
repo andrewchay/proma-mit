@@ -1,8 +1,9 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo } from 'react'
 import { atom, useAtom } from 'jotai'
 import catalog from '../../../../resources/opendesign-brand-catalog.json'
 
 const kinds = ['网页', '报告', '幻灯片', '海报'] as const
+interface DesignReference { design: string; tokens: string }
 interface DesignBrief { kind: typeof kinds[number]; goal: string; brandId: string; style: string; status: string }
 const categories = [...new Set(catalog.entries.map(entry => entry.category))]
 
@@ -10,6 +11,20 @@ const categories = [...new Set(catalog.entries.map(entry => entry.category))]
 export function OwnerDesignBrief({ disabled, onAdd }: { disabled: boolean; onAdd: (text: string) => boolean }): React.ReactElement {
   const draftAtom = useMemo(() => atom<DesignBrief>({ kind: '网页', goal: '', brandId: '', style: '', status: '' }), [])
   const [draft, setDraft] = useAtom(draftAtom)
+  const referenceAtom = useMemo(() => atom<{ id: string; value?: DesignReference; error?: string }>({ id: '' }), [])
+  const [reference, setReference] = useAtom(referenceAtom)
+  useEffect(() => {
+    const id = draft.brandId
+    if (!id) { setReference({ id: '' }); return }
+    let active = true
+    setReference({ id })
+    void import('../../../../resources/opendesign-references.json').then(bundle => {
+      if (!active) return
+      const value = (bundle.entries as Record<string, DesignReference>)[id]
+      setReference(value ? { id, value } : { id, error: '参考内容不可用' })
+    }).catch(() => { if (active) setReference({ id, error: '参考内容加载失败' }) })
+    return () => { active = false }
+  }, [draft.brandId, setReference])
   const add = (): void => {
     const goal = draft.goal.trim(), style = draft.style.trim()
     const brand = catalog.entries.find(entry => entry.id === draft.brandId)
@@ -24,8 +39,16 @@ export function OwnerDesignBrief({ disabled, onAdd }: { disabled: boolean; onAdd
       <label className="grid gap-1">交付类型<select className="rounded-lg bg-muted/60 p-2" value={draft.kind} onChange={event => setDraft({ ...draft, kind: event.target.value as DesignBrief['kind'], status: '' })}>{kinds.map(kind => <option key={kind} value={kind}>{kind}</option>)}</select></label>
       <label className="grid gap-1">目标与要求<textarea className="min-h-20 rounded-lg bg-muted/60 p-2" value={draft.goal} maxLength={1200} onChange={event => setDraft({ ...draft, goal: event.target.value, status: '' })} placeholder="说明受众、用途和想交付的内容" /></label>
       <label className="grid gap-1">设计系统参考（可选）<select className="rounded-lg bg-muted/60 p-2" value={draft.brandId} onChange={event => setDraft({ ...draft, brandId: event.target.value, status: '' })}><option value="">不选择设计系统</option>{categories.map(category => <optgroup key={category} label={category}>{catalog.entries.filter(entry => entry.category === category).map(entry => <option key={entry.id} value={entry.id}>{entry.name}</option>)}</optgroup>)}</select></label>
+      {draft.brandId && <details className="rounded-lg bg-muted/40 p-3" aria-label="设计系统参考内容">
+        <summary className="cursor-pointer font-medium">查看本地设计参考</summary>
+        <p className="mt-2 text-xs text-muted-foreground">OpenDesign 整理的参考资料，并非品牌官方授权规范。版本 {catalog.revision.slice(0, 12)} · {catalog.license}。查看不会安装、激活或发送内容。</p>
+        {reference.id === draft.brandId && reference.value ? <div className="mt-2 grid gap-2">
+          <details><summary className="cursor-pointer">设计说明</summary><pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs">{reference.value.design}</pre></details>
+          <details><summary className="cursor-pointer">设计令牌 CSS</summary><pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words text-xs">{reference.value.tokens}</pre></details>
+        </div> : <p className="mt-2 text-xs">{reference.id === draft.brandId && reference.error ? reference.error : '正在加载参考内容…'}</p>}
+      </details>}
       <label className="grid gap-1">补充风格要求（可选）<input className="rounded-lg bg-muted/60 p-2" value={draft.style} maxLength={200} onChange={event => setDraft({ ...draft, style: event.target.value, status: '' })} placeholder="例如简洁编辑风格" /></label>
-      <p className="text-xs text-muted-foreground">目录只记录参考意图，不包含设计规范或品牌资产；规范与资源是否可用需在执行时核对。</p>
+      <p className="text-xs text-muted-foreground">选择只记录参考意图；本地参考可供查看，但不会自动注入任务或安装到工作区。</p>
       {draft.status && <p role="status" className="text-xs text-muted-foreground">{draft.status}</p>}
       <button type="button" disabled={disabled || !draft.goal.trim()} className="w-fit rounded-lg bg-primary px-3 py-2 text-primary-foreground disabled:opacity-50" onClick={add}>添加到对话草稿</button>
     </div>
