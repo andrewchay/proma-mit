@@ -116,8 +116,10 @@ ${oidcSection}
 
 export function createAuthHandler(deps: AuthRoutesDeps): AuthHandler {
   const cookieName = deps.sessionCookieName ?? 'proma_session'
-  const stateCookieName = 'proma_oidc_state'
-  const stateCookie = (value: string, maxAge: number) => `${stateCookieName}=${value}; Path=/auth/oidc/callback; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${deps.secureSessionCookie ? '; Secure' : ''}`
+  // HTTPS 使用 __Host- 约束，阻止子域设置同名 Domain Cookie；本机 HTTP 开发使用普通 cookie。
+  const stateCookieName = deps.secureSessionCookie ? '__Host-proma_oidc_state' : 'proma_oidc_state'
+  const stateCookiePath = deps.secureSessionCookie ? '/' : '/auth/oidc/callback'
+  const stateCookie = (value: string, maxAge: number) => `${stateCookieName}=${value}; Path=${stateCookiePath}; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${deps.secureSessionCookie ? '; Secure' : ''}`
   const ttlMs = deps.sessionTtlMs ?? 12 * 3_600_000
   const hasOidc = Boolean(deps.oidc)
   const stateStore = deps.oidcStateStore ?? createInMemoryOidcStateStore()

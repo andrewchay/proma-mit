@@ -7,7 +7,7 @@ describe('Proma Web 服务', () => {
     const app = createPromaWebServerApplication({ databaseUrl: 'postgres://unused', redisUrl: 'redis://unused', s3: testS3Config, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test-v1', trustedHeaderAuth: false, authMode: 'oidc', secureSessionCookie: true, oidc: { authorizationEndpoint: 'https://idp.example/authorize', tokenEndpoint: 'https://idp.example/token', clientId: 'client', redirectUri: 'https://app.example/auth/oidc/callback' }, workspaceRoot: '/private/tmp/proma-web-test', workerId: 'test-worker', taskLeaseMs: 30_000 }, { postgres: new FakePostgresClient() })
     const start = await app.fetch(new Request('https://app.example/auth/oidc/start'))
     const state = new URL(start.headers.get('location')!).searchParams.get('state')!
-    expect(start.headers.get('set-cookie')).toContain('proma_oidc_state=')
+    expect(start.headers.get('set-cookie')).toContain('__Host-proma_oidc_state=')
     expect((await app.fetch(new Request(`https://app.example/auth/oidc/callback?code=code&state=${state}`))).status).toBe(400)
   })
   test('Given 本机开发显式启用 none When 请求无身份 Then 使用匿名开发会话', async () => {

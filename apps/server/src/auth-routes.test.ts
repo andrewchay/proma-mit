@@ -187,13 +187,14 @@ describe('auth-routes', () => {
       oidcTokenFromCode: async () => ({ tenantId: 'tenant-oidc', userId: 'attacker', roles: ['operator'] as AgentRuntimeRole[] }),
     })
     const started = await h.oidcStart()
-    expect(started.headers.get('set-cookie')).toContain('HttpOnly; SameSite=Lax; Max-Age=600; Secure')
+    expect(started.headers.get('set-cookie')).toContain('__Host-proma_oidc_state=')
+    expect(started.headers.get('set-cookie')).toContain('Path=/; HttpOnly; SameSite=Lax; Max-Age=600; Secure')
     const state = new URL(started.headers.get('location')!).searchParams.get('state')!
     expect((await h.oidcCallback({ code: 'code', state })).status).toBe(400)
-    expect((await h.oidcCallback({ code: 'code', state }, 'proma_oidc_state=another-browser')).status).toBe(400)
+    expect((await h.oidcCallback({ code: 'code', state }, '__Host-proma_oidc_state=another-browser')).status).toBe(400)
     const callback = await h.oidcCallback({ code: 'code', state }, started.headers.get('set-cookie'))
     expect(callback.status).toBe(302)
-    expect(callback.headers.getSetCookie().some((value) => value.includes('proma_oidc_state=;') && value.includes('Max-Age=0'))).toBe(true)
+    expect(callback.headers.getSetCookie().some((value) => value.includes('__Host-proma_oidc_state=;') && value.includes('Max-Age=0'))).toBe(true)
   })
 
   it('oidcStateStore verify 一次性（重放被拒）', async () => {
