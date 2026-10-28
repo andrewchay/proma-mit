@@ -119,7 +119,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   }
   const focusReplyComposer = (): void => {
     requestAnimationFrame(() => {
-      const reply = document.querySelector<HTMLTextAreaElement>('form[aria-label="向Owner发送消息"] textarea')
+      const reply = document.querySelector<HTMLElement>('form[aria-label="向Owner发送消息"] [contenteditable="true"][aria-label="给项目 Owner 的消息"]')
       reply?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       reply?.focus()
     })

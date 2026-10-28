@@ -32,11 +32,11 @@ store.set(ownerGoalEditorsAtom,new Map([[JSON.stringify(['p',null]),{...getOwner
   try {
     await page.goto(`http://127.0.0.1:${server.port}`)
     await page.getByText('直接在下方对话告诉我你的选择或想法，我会整理理解供你确认。', { exact: true }).waitFor()
-    expect(await page.locator('textarea:visible').count()).toBe(1)
+    expect(await page.locator('[contenteditable="true"][aria-label="给项目 Owner 的消息"]:visible').count()).toBe(1)
     expect(await page.getByRole('button', { name: '答复，让 Owner 继续', exact: true }).isVisible()).toBe(false)
     await page.getByLabel('给项目 Owner 的消息').fill('保留已有约束')
     await page.getByRole('button', { name: '现有用户', exact: true }).click()
-    expect(await page.getByLabel('给项目 Owner 的消息').inputValue()).toBe('保留已有约束\n主要服务谁？：现有用户')
+    expect(await page.getByLabel('给项目 Owner 的消息').innerText()).toBe('保留已有约束\n主要服务谁？：现有用户')
     await page.getByRole('button', { name: '发送给 Owner', exact: true }).click()
     await page.getByLabel('Owner理解待确认').getByText('我理解受众是现有用户，请确认。', { exact: true }).waitFor()
     expect(await page.evaluate<number>('window.understandingFixture.facts().goal.revision')).toBe(1)
