@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildBashSandboxPolicy, resolveGitLayout, scratchDirFor } from './bash-sandbox'
@@ -149,6 +149,60 @@ describe('Bash 沙箱（macOS seatbelt）', () => {
     const writeChannels = await run(sessionDir, `echo x > '${join(configDir, 'channels.json')}'`)
     expect(writeChannels.isError).toBe(true)
   })
+  test('Given 配置目录内会话 When 修改其他会话或工作区配置 Then 拒绝写入且本会话仍可工作', async () => {
+    const workspace = join(configDir, 'agent-workspaces', 'isolation')
+    const session = join(workspace, 'current')
+    const other = join(workspace, 'other')
+    mkdirSync(session, { recursive: true })
+    mkdirSync(other, { recursive: true })
+    const mcp = join(workspace, 'mcp.json')
+    const otherFile = join(other, 'state.json')
+    writeFileSync(mcp, 'original')
+    writeFileSync(otherFile, 'original')
+    expect((await run(session, `echo x > '${mcp}'`)).isError).toBe(true)
+    expect((await run(session, `python3 -c "open('${otherFile}', 'w').write('changed')"`)).isError).toBe(true)
+    expect(readFileSync(mcp, 'utf8')).toBe('original')
+    expect(readFileSync(otherFile, 'utf8')).toBe('original')
+    expect((await run(session, 'echo current > allowed.txt')).isError).toBeFalsy()
+  })
+  test('Given 工作目录中的链接指向其他会话 When 通过链接写入 Then 不修改其他会话', async () => {
+    const workspace = join(configDir, 'agent-workspaces', 'link-isolation')
+    const session = join(workspace, 'current')
+    const other = join(workspace, 'other')
+    mkdirSync(session, { recursive: true }); mkdirSync(other, { recursive: true })
+    const target = join(other, 'state.json')
+    writeFileSync(target, 'original')
+    symlinkSync(target, join(session, 'symlink'))
+    await run(session, 'echo changed > symlink')
+    expect(readFileSync(target, 'utf8')).toBe('original')
+    await run(session, `ln '${target}' hardlink && echo changed > hardlink`)
+    expect(readFileSync(target, 'utf8')).toBe('original')
+  })
+  // seatbelt 按路径授权写入：预先存在的硬链接仍可能指向其他会话的同一 inode。
+  // 在可验证的 inode 隔离方案落地前保留此用例，不将其计为通过。
+  test.skip('Given 预先存在的硬链接指向其他会话 When 写入 Then 不修改其他会话', async () => {
+    const workspace = join(configDir, 'agent-workspaces', 'preexisting-hardlink')
+    const session = join(workspace, 'current')
+    const other = join(workspace, 'other')
+    mkdirSync(session, { recursive: true }); mkdirSync(other, { recursive: true })
+    const target = join(other, 'state.json')
+    writeFileSync(target, 'original')
+    linkSync(target, join(session, 'hardlink'))
+    await run(session, 'echo changed > hardlink')
+    expect(readFileSync(target, 'utf8')).toBe('original')
+  })
+  test('Given 配置目录内 git 工作区 When 修改 hooks 或 config Then 拒绝且正常提交仍可用', async () => {
+    const session = join(configDir, 'agent-workspaces', 'git-isolation', 'current')
+    mkdirSync(session, { recursive: true })
+    git(session, ['init', '-q'])
+    const common = (await resolveGitLayout(session))!.commonDir
+    const before = readFileSync(join(common, 'config'), 'utf8')
+    expect((await run(session, `echo x >> '${join(common, 'config')}'`)).isError).toBe(true)
+    expect((await run(session, `echo x > '${join(common, 'hooks', 'pre-commit')}'`)).isError).toBe(true)
+    expect(readFileSync(join(common, 'config'), 'utf8')).toBe(before)
+    const commit = await run(session, 'echo ok > a.txt && git add a.txt && git -c user.name=agent -c user.email=agent@example.invalid commit -qm init')
+    expect(commit.isError).toBeFalsy()
+  })
   test('非 darwin 平台默认拒绝执行，不运行命令', async () => {
     const dir = join(root, 'linux-check')
     mkdirSync(dir)
@@ -174,8 +228,14 @@ describe('沙箱策略内容', () => {
     expect(profile).toContain('(literal "/work/wt/.git")')
     expect(profile).toContain('(subpath "/cfg/verifiers")')
     expect(profile).toContain('(subpath "/cfg")')
-    expect(profile).toContain('(subpath "/cfg/agent-workspaces")')
+    expect(profile).not.toContain('(subpath "/cfg/agent-workspaces")')
     expect(profile).not.toContain('"/repo/.git/worktrees"')
+  })
+  test('配置目录下的工作区根不能作为整个 workspace 的写入例外', () => {
+    const profile = buildSeatbeltProfile(buildBashSandboxPolicy({
+      cwd: '/cfg/agent-workspaces/ws', scratchDir: '/tmp/s', configDirs: ['/cfg'],
+    }))
+    expect(profile).not.toContain('(allow file-write* (subpath \"/cfg/agent-workspaces/ws\"))')
   })
   test('主工作区：禁止其他 worktree 目录与 hooks，允许其余 .git 内容', () => {
     const profile = buildSeatbeltProfile(buildBashSandboxPolicy({

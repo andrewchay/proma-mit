@@ -5,13 +5,13 @@
  *      对象库、引用、日志与本 worktree 自身的 gitdir。
  * 禁写：git hooks（会在之后的正常 git 操作中执行）、主仓库 config、工作目录下的 .git 指针文件、
  *      其他 worktree 的 gitdir。
- * 拒读写：应用配置目录（含签名密钥与已签名记录）。
+ * 配置目录禁止写入；签名目录拒绝读取。只对当前会话目录开放写入。
  * 边界：仅 macOS；其他平台拒绝执行（默认拒绝）。Claude SDK 自带的 Bash 不经过本模块。
  */
 
 import { execFile } from 'node:child_process'
-import { mkdirSync, realpathSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, realpathSync } from 'node:fs'
+import { isAbsolute, join, relative, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { getConfigDir } from '../../config-paths'
 import { buildSeatbeltProfile, SANDBOX_EXEC_PATH, type SeatbeltPolicy } from '../../pinned-verifier-sandbox'
@@ -60,33 +60,39 @@ export function buildBashSandboxPolicy(input: {
   const cwd = realOrSelf(input.cwd)
   const writableRoots = [cwd, input.scratchDir]
   const writableLiterals: string[] = []
-  const denyWriteRoots: string[] = []
-  const denyWriteLiterals: string[] = [join(cwd, '.git')]
+  const finalDenyWriteRoots: string[] = []
+  // 新目录允许 git init 创建 .git；已有指针/仓库仍禁止改写其入口。
+  const finalDenyWriteLiterals: string[] = input.git || existsSync(join(cwd, '.git')) ? [join(cwd, '.git')] : []
   if (input.git) {
     const { commonDir, ownDir } = input.git
     const mainWorktree = ownDir === commonDir
     if (mainWorktree) {
       // 主工作区：整个 .git 可写，但 hooks、config 与其他 worktree 的目录需要单独禁止。
       writableRoots.push(commonDir)
-      denyWriteRoots.push(join(commonDir, 'hooks'), join(commonDir, 'worktrees'))
+      finalDenyWriteRoots.push(join(commonDir, 'hooks'), join(commonDir, 'worktrees'))
     } else {
       // 链接 worktree：只开放对象库、引用、日志与自身 gitdir；其他 worktree 目录保持不可写。
       writableRoots.push(join(commonDir, 'objects'), join(commonDir, 'refs'), join(commonDir, 'logs'), ownDir)
       writableLiterals.push(join(commonDir, 'packed-refs'), join(commonDir, 'packed-refs.lock'), join(commonDir, 'FETCH_HEAD'), join(commonDir, 'ORIG_HEAD'))
-      denyWriteRoots.push(join(commonDir, 'hooks'))
+      finalDenyWriteRoots.push(join(commonDir, 'hooks'))
     }
-    denyWriteLiterals.push(join(commonDir, 'config'))
+    finalDenyWriteLiterals.push(join(commonDir, 'config'))
   }
-  // 配置目录禁止写入（Agent 会话目录 agent-workspaces 例外放行，否则 git 连父目录都无法 stat）；
-  // 读取只禁止签名目录（密钥密文与记录），其余配置为密文或本就经 Read 工具可读。
+  // 配置目录只为当前工作目录开例外；兄弟会话与工作区配置仍保持只读。
   const configDirs = input.configDirs.map(realOrSelf)
+  const insideWorkspace = configDirs.some((dir) => {
+    const workspaceRoot = realOrSelf(join(dir, 'agent-workspaces'))
+    const path = relative(workspaceRoot, cwd)
+    return path.split(sep).length >= 2 && path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path)
+  })
   return {
     writableRoots,
     writableLiterals,
     denyRoots: configDirs.map((dir) => realOrSelf(join(dir, 'verifiers'))),
-    denyWriteRoots: [...denyWriteRoots, ...configDirs],
-    denyWriteLiterals,
-    allowAfterDenyRoots: configDirs.map((dir) => realOrSelf(join(dir, 'agent-workspaces'))),
+    denyWriteRoots: configDirs,
+    allowAfterDenyRoots: insideWorkspace ? [cwd] : [],
+    finalDenyWriteRoots,
+    finalDenyWriteLiterals,
   }
 }
 
