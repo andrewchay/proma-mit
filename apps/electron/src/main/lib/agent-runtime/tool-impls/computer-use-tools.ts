@@ -5,6 +5,7 @@ import { appendComputerUseAudit } from '../../computer-use-audit-service'
 import { computerUseService } from '../../computer-use-service'
 import { webBridgeService } from '../../web-bridge-service'
 import type { ToolContext } from '../types'
+import { assertOwnerToolPermission, formatToolError } from './tool-utils'
 
 export const COMPUTER_USE_STATUS_TOOL_NAME = 'ComputerUseStatus'
 export const COMPUTER_USE_CAPABILITIES_TOOL_NAME = 'ComputerUseCapabilities'
@@ -21,6 +22,15 @@ export const COMPUTER_USE_SCROLL_TOOL_NAME = 'ComputerUseScroll'
 export const COMPUTER_USE_DRAG_TOOL_NAME = 'ComputerUseDrag'
 export const COMPUTER_USE_KEY_COMBO_TOOL_NAME = 'ComputerUseKeyCombo'
 export const COMPUTER_USE_REQUEST_TAKEOVER_TOOL_NAME = 'ComputerUseRequestTakeover'
+
+/** 桌面读取和操作前重查受控身份；用户接管仍可请求。 */
+function guardComputerUse(toolName: string, execute: (input: unknown, ctx: ToolContext) => Promise<ToolResult>): (input: unknown, ctx: ToolContext) => Promise<ToolResult> {
+  return async (input, ctx) => {
+    try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, toolName, {}) }
+    catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
+    return execute(input, ctx)
+  }
+}
 
 const DISPLAY_COORDINATE_PROPERTIES = {
   display_id: { type: 'string', description: 'ComputerUseScreenshot 或 ComputerUseDisplays 返回的显示器 ID，可选' },
@@ -119,14 +129,14 @@ export function createComputerUseRequestTakeoverToolDefinition() {
   }
 }
 
-export async function executeComputerUseStatusTool(_input: unknown, _ctx: ToolContext): Promise<ToolResult> { return result(await computerUseService.getStatus()) }
-export async function executeComputerUseCapabilitiesTool(_input: unknown, _ctx: ToolContext): Promise<ToolResult> { return result(computerUseService.getCapabilities()) }
-export async function executeComputerUseFrontmostApplicationTool(_input: unknown, _ctx: ToolContext): Promise<ToolResult> { return result(computerUseService.getFrontmostApplication()) }
-export async function executeComputerUseFrontmostWindowTool(_input: unknown, _ctx: ToolContext): Promise<ToolResult> { return result(computerUseService.getFrontmostWindow()) }
-export async function executeComputerUseDisplaysTool(_input: unknown, _ctx: ToolContext): Promise<ToolResult> { return result(computerUseService.getDisplays()) }
-export async function executeComputerUseRequestPermissionsTool(_input: unknown, _ctx: ToolContext): Promise<ToolResult> { return result(await computerUseService.requestPermissions()) }
+async function executeComputerUseStatusUnchecked(_input: unknown, _ctx: ToolContext): Promise<ToolResult> { return result(await computerUseService.getStatus()) }
+async function executeComputerUseCapabilitiesUnchecked(_input: unknown, _ctx: ToolContext): Promise<ToolResult> { return result(computerUseService.getCapabilities()) }
+async function executeComputerUseFrontmostApplicationUnchecked(_input: unknown, _ctx: ToolContext): Promise<ToolResult> { return result(computerUseService.getFrontmostApplication()) }
+async function executeComputerUseFrontmostWindowUnchecked(_input: unknown, _ctx: ToolContext): Promise<ToolResult> { return result(computerUseService.getFrontmostWindow()) }
+async function executeComputerUseDisplaysUnchecked(_input: unknown, _ctx: ToolContext): Promise<ToolResult> { return result(computerUseService.getDisplays()) }
+async function executeComputerUseRequestPermissionsUnchecked(_input: unknown, _ctx: ToolContext): Promise<ToolResult> { return result(await computerUseService.requestPermissions()) }
 
-export async function executeComputerUseScreenshotTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+async function executeComputerUseScreenshotUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const fallbackError = requireComputerFallback(ctx)
   if (fallbackError) return fallbackError
   const screenshot = await computerUseService.screenshot(readString(input, 'display_id'))
@@ -134,11 +144,11 @@ export async function executeComputerUseScreenshotTool(input: unknown, ctx: Tool
   return { toolCallId: '', content: JSON.stringify({ width: screenshot.width, height: screenshot.height, displayId: screenshot.displayId, scaleFactor: screenshot.scaleFactor, coordinateScale: screenshot.coordinateScale, message: '截图已附加。后续使用截图像素坐标时，必须将 coordinateScale 原样作为 coordinate_scale 传给操作工具。' }), imageData: [{ mediaType: screenshot.mediaType, data: screenshot.data }] }
 }
 
-export async function executeComputerUseClickTool(input: unknown, ctx: ToolContext): Promise<ToolResult> { return executePoint(input, ctx, 'click') }
-export async function executeComputerUseMoveTool(input: unknown, ctx: ToolContext): Promise<ToolResult> { return executePoint(input, ctx, 'move') }
-export async function executeComputerUseDoubleClickTool(input: unknown, ctx: ToolContext): Promise<ToolResult> { return executePoint(input, ctx, 'doubleClick') }
+async function executeComputerUseClickUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> { return executePoint(input, ctx, 'click') }
+async function executeComputerUseMoveUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> { return executePoint(input, ctx, 'move') }
+async function executeComputerUseDoubleClickUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> { return executePoint(input, ctx, 'doubleClick') }
 
-export async function executeComputerUseTypeTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+async function executeComputerUseTypeUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const fallbackError = requireComputerFallback(ctx)
   if (fallbackError) return fallbackError
   const text = readString(input, 'text')
@@ -148,7 +158,7 @@ export async function executeComputerUseTypeTool(input: unknown, ctx: ToolContex
   return result({ message })
 }
 
-export async function executeComputerUseScrollTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+async function executeComputerUseScrollUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const fallbackError = requireComputerFallback(ctx)
   if (fallbackError) return fallbackError
   const direction = readString(input, 'direction')
@@ -159,7 +169,7 @@ export async function executeComputerUseScrollTool(input: unknown, ctx: ToolCont
   return result({ message })
 }
 
-export async function executeComputerUseDragTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+async function executeComputerUseDragUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const fallbackError = requireComputerFallback(ctx)
   if (fallbackError) return fallbackError
   const fromX = readNumber(input, 'from_x')
@@ -175,7 +185,7 @@ export async function executeComputerUseDragTool(input: unknown, ctx: ToolContex
   return result({ message })
 }
 
-export async function executeComputerUseKeyComboTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+async function executeComputerUseKeyComboUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const fallbackError = requireComputerFallback(ctx)
   if (fallbackError) return fallbackError
   const key = readString(input, 'key')
@@ -238,3 +248,31 @@ function error(content: string): ToolResult { return { toolCallId: '', content, 
 function isRecord(value: unknown): value is Record<string, unknown> { return typeof value === 'object' && value !== null }
 function readString(value: unknown, key: string): string | undefined { return isRecord(value) && typeof value[key] === 'string' ? value[key] : undefined }
 function readNumber(value: unknown, key: string): number | undefined { return isRecord(value) && typeof value[key] === 'number' ? value[key] : undefined }
+
+export const executeComputerUseStatusTool = guardComputerUse(COMPUTER_USE_STATUS_TOOL_NAME, executeComputerUseStatusUnchecked)
+
+export const executeComputerUseCapabilitiesTool = guardComputerUse(COMPUTER_USE_CAPABILITIES_TOOL_NAME, executeComputerUseCapabilitiesUnchecked)
+
+export const executeComputerUseFrontmostApplicationTool = guardComputerUse(COMPUTER_USE_FRONTMOST_APPLICATION_TOOL_NAME, executeComputerUseFrontmostApplicationUnchecked)
+
+export const executeComputerUseFrontmostWindowTool = guardComputerUse(COMPUTER_USE_FRONTMOST_WINDOW_TOOL_NAME, executeComputerUseFrontmostWindowUnchecked)
+
+export const executeComputerUseDisplaysTool = guardComputerUse(COMPUTER_USE_DISPLAYS_TOOL_NAME, executeComputerUseDisplaysUnchecked)
+
+export const executeComputerUseRequestPermissionsTool = guardComputerUse(COMPUTER_USE_REQUEST_PERMISSIONS_TOOL_NAME, executeComputerUseRequestPermissionsUnchecked)
+
+export const executeComputerUseScreenshotTool = guardComputerUse(COMPUTER_USE_SCREENSHOT_TOOL_NAME, executeComputerUseScreenshotUnchecked)
+
+export const executeComputerUseClickTool = guardComputerUse(COMPUTER_USE_CLICK_TOOL_NAME, executeComputerUseClickUnchecked)
+
+export const executeComputerUseMoveTool = guardComputerUse(COMPUTER_USE_MOVE_TOOL_NAME, executeComputerUseMoveUnchecked)
+
+export const executeComputerUseDoubleClickTool = guardComputerUse(COMPUTER_USE_DOUBLE_CLICK_TOOL_NAME, executeComputerUseDoubleClickUnchecked)
+
+export const executeComputerUseTypeTool = guardComputerUse(COMPUTER_USE_TYPE_TOOL_NAME, executeComputerUseTypeUnchecked)
+
+export const executeComputerUseScrollTool = guardComputerUse(COMPUTER_USE_SCROLL_TOOL_NAME, executeComputerUseScrollUnchecked)
+
+export const executeComputerUseDragTool = guardComputerUse(COMPUTER_USE_DRAG_TOOL_NAME, executeComputerUseDragUnchecked)
+
+export const executeComputerUseKeyComboTool = guardComputerUse(COMPUTER_USE_KEY_COMBO_TOOL_NAME, executeComputerUseKeyComboUnchecked)
