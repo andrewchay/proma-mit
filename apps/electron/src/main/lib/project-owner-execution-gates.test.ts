@@ -26,6 +26,7 @@ const { executeBashToolOnPlatform } = await import('./agent-runtime/tool-impls/b
 const { executeEditTool } = await import('./agent-runtime/tool-impls/edit-tool')
 const { executeReadTool } = await import('./agent-runtime/tool-impls/read-tool')
 const { executeWriteTool } = await import('./agent-runtime/tool-impls/write-tool')
+const { executeAskUserQuestionTool } = await import('./agent-runtime/tool-impls/ask-user-tool')
 const { createListMcpResourcesToolDefinition, createReadMcpResourceToolDefinition } = await import('./agent-runtime/tool-impls/mcp-resource-tools')
 const { executeSearchProjectMemoryTool, executeReadProjectMemoryTool } = await import('./agent-runtime/tool-impls/project-memory-tool')
 const { executeSkillTool } = await import('./agent-runtime/tool-impls/skill-tool')
@@ -251,6 +252,18 @@ test('Given Owner 会话 When 直接请求桌面接管 Then 不弹出用户请�
   const result = await computer.executeComputerUseRequestTakeoverTool({ reason: '验证', instruction: '请继续' }, { cwd: work, sessionId, abortSignal: new AbortController().signal, onAskUser: async () => { calls++; return { behavior: 'deny', message: '取消' } } })
   expect(result.isError).toBe(true)
   expect(calls).toBe(0)
+})
+test('Given Owner 会话 When 直接提问 Then 正常问题可继续而接管类型被拒绝', async () => {
+  const f = fixture(), sessionId = syntheticRunningExecution(f)
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
+  let calls = 0
+  const ctx = { cwd: work, sessionId, onAskUser: async () => { calls++; return { behavior: 'allow' as const, answers: { '问题': '回答' } } } }
+  const questions = [{ question: '问题' }]
+  expect((await executeAskUserQuestionTool({ questions }, ctx)).content).toContain('回答')
+  expect((await executeAskUserQuestionTool({ questions, interactionType: 'computer_use_takeover' }, ctx)).isError).toBe(true)
+  expect(calls).toBe(1)
 })
 test('Given Owner 会话未带标记 When 直接调用网络工具 Then 不发送请求', async () => {
   const f = fixture(), sessionId = syntheticRunningExecution(f)
