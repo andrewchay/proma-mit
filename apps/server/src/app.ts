@@ -483,12 +483,17 @@ export function createPromaWebServerApplication(
       if (url.pathname === '/auth/login') {
         if (request.method === 'GET') return authHandler.loginPage()
         if (request.method === 'POST') {
+          if (!isAllowedCookieOrigin(request, config.publicBaseUrl, config.secureSessionCookie)) return Response.json({ error: '登录请求需要可信同源 Origin' }, { status: 403 })
           const parsed = await readLoginCredentials(request)
           if (parsed.error || !parsed.credentials) return Response.json({ error: parsed.error ?? '请求体无效' }, { status: 400 })
           return authHandler.loginForm(parsed.credentials)
         }
       }
-      if (url.pathname === '/auth/logout') return authHandler.logout(request.headers.get('cookie'))
+      if (url.pathname === '/auth/logout') {
+        if (request.method !== 'POST') return new Response(null, { status: 405, headers: { allow: 'POST' } })
+        if (!isAllowedCookieOrigin(request, config.publicBaseUrl, config.secureSessionCookie)) return Response.json({ error: '登出请求需要可信同源 Origin' }, { status: 403 })
+        return authHandler.logout(request.headers.get('cookie'))
+      }
       if (url.pathname === '/auth/oidc/start') return authHandler.oidcStart()
       if (url.pathname === '/auth/oidc/callback') {
         const code = url.searchParams.get('code') ?? ''

@@ -3,6 +3,16 @@ import type { AgentRuntimePostgresClient, AgentRuntimeWebAuthResolver } from '@g
 import { createPromaWebServerApplication } from './app.ts'
 
 describe('Proma Web 服务', () => {
+  test('Given 浏览器登录或登出 When 来源跨站或方法不安全 Then 拒绝', async () => {
+    const app = createPromaWebServerApplication({ databaseUrl: 'postgres://unused', redisUrl: 'redis://unused', s3: testS3Config, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test-v1', trustedHeaderAuth: false, authMode: 'local', publicBaseUrl: 'https://app.example', localAdmin: { username: 'admin', tenantId: 'tenant', password: 'pw' }, workspaceRoot: '/private/tmp/proma-web-test', workerId: 'test-worker', taskLeaseMs: 30_000 }, { postgres: new FakePostgresClient() })
+    const login = (origin?: string) => new Request('http://internal/auth/login', { method: 'POST', headers: { ...(origin ? { origin } : {}), 'content-type': 'application/x-www-form-urlencoded' }, body: 'username=admin&password=pw' })
+    expect((await app.fetch(login('https://attacker.example'))).status).toBe(403)
+    expect((await app.fetch(login())).status).toBe(403)
+    expect((await app.fetch(login('https://app.example'))).status).toBe(302)
+    expect((await app.fetch(new Request('http://internal/auth/logout'))).status).toBe(405)
+    expect((await app.fetch(new Request('http://internal/auth/logout', { method: 'POST', headers: { origin: 'https://attacker.example' } }))).status).toBe(403)
+    expect((await app.fetch(new Request('http://internal/auth/logout', { method: 'POST', headers: { origin: 'https://app.example' } }))).status).toBe(302)
+  })
   test('Given Cookie 会话 When 跨站修改资源 Then 拒绝；同源和 Bearer 不受影响', async () => {
     const postgres = new FakePostgresClient()
     postgres.query = async <Row extends Record<string, unknown>>(sql = '') => ({ rows: (sql.includes('FROM proma_runtime_auth_sessions') ? [{ session_id: 'session', tenant_id: 'tenant-a', user_id: 'user-a', roles: '["operator"]', expires_at: Date.now() + 60000 }] : []) as unknown as Row[] })
@@ -173,6 +183,7 @@ describe('Proma Web 服务', () => {
       trustedHeaderAuth: false,
       authMode: 'local',
       secureSessionCookie: true,
+      publicBaseUrl: 'https://app.example',
       localAdmin: { username: 'admin', tenantId: 'tenant-a', password: 'pw-test' },
       workspaceRoot: '/private/tmp/proma-web-test',
       workerId: 'test-worker',
@@ -185,7 +196,7 @@ describe('Proma Web 服务', () => {
     // 真实浏览器：application/x-www-form-urlencoded，无 JSON content-type
     const res = await app.fetch(new Request('http://localhost/auth/login', {
       method: 'POST',
-      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      headers: { 'content-type': 'application/x-www-form-urlencoded', origin: 'https://app.example' },
       body: 'username=admin&password=pw-test',
     }))
     // 登录成功应为 302（重定向到 dashboard）而非 400（请求体必须是 JSON）
