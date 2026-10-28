@@ -10,7 +10,7 @@ mock.module('electron', () => buildElectronMock())
 mock.module('./agent-service', () => ({ isAgentSessionActive: () => false }))
 const store = await import('./project-sqlite-store')
 const employees = await import('./agent-employee-service')
-const { createAgentWorkspace } = await import('./agent-workspace-manager')
+const { createAgentWorkspace, getAgentWorkspace, getAgentWorkspaceCwd } = await import('./agent-workspace-manager')
 const { createChannel } = await import('./channel-manager')
 const { bindWorkspaceToProject } = await import('./project-workspace-bindings')
 const { saveProjectOwnerGoalDraft } = await import('./project-owner-goal-service')
@@ -23,6 +23,7 @@ const policy = await import('./project-pilot-policy')
 const gates = await import('./project-owner-execution-gates')
 const { executeBashToolOnPlatform } = await import('./agent-runtime/tool-impls/bash-tool')
 const { executeEditTool } = await import('./agent-runtime/tool-impls/edit-tool')
+const { executeReadTool } = await import('./agent-runtime/tool-impls/read-tool')
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
 function fixture(single = false, textDelivery = false) {
@@ -98,14 +99,34 @@ test('Given 未经逐次审批的 Owner 业务会话 When 直接调用 Edit Then
   const f = fixture(), sessionId = syntheticRunningExecution(f)
   const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
   gates.admitOwnerExecutionGateSession(executionId, sessionId)
-  const work = mkdtempSync(join(tmpdir(), 'owner-edit-work-'))
+  const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
   try {
     writeFileSync(join(work, 'file.txt'), 'original')
     const result = await executeEditTool({ file_path: 'file.txt', old_string: 'original', new_string: 'changed' }, { cwd: work, sessionId, ownerWorkspaceWrite: true })
     expect(result.isError).toBe(true)
     expect(result.content).toContain('Owner')
     expect(readFileSync(join(work, 'file.txt'), 'utf8')).toBe('original')
-  } finally { rmSync(work, { recursive: true, force: true }) }
+  } finally { rmSync(join(work, 'file.txt'), { force: true }) }
+})
+test('Given Owner 未冻结研发读取范围 When 直接调用 Read Then 工具入口拒绝且不返回文件内容', async () => {
+  const f = fixture(), sessionId = syntheticRunningExecution(f)
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
+  try {
+    writeFileSync(join(work, 'file.txt'), 'private-content')
+    const result = await executeReadTool({ file_path: 'file.txt' }, { cwd: work, sessionId, ownerWorkspaceWrite: true })
+    expect(result.isError).toBe(true)
+    expect(result.content).not.toContain('private-content')
+  } finally { rmSync(join(work, 'file.txt'), { force: true }) }
+})
+test('Given 已准入的 Owner 会话 When 工具上下文工作目录漂移 Then 拒绝使用该目录', () => {
+  const f = fixture(), sessionId = syntheticRunningExecution(f)
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
+  expect(() => gates.assertOwnerToolWorkingDirectory(sessionId, work)).not.toThrow()
+  expect(() => gates.assertOwnerToolWorkingDirectory(sessionId, directory)).toThrow('不一致')
 })
 test('Given 完整文本交付 Owner执行 When 构建工具白名单 Then 不暴露工作区写入工具', () => {
   const f = fixture(false, true), sessionId = syntheticRunningExecution(f)

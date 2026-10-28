@@ -49,6 +49,7 @@ export async function executeWriteTool(input: unknown, ctx: ToolContext): Promis
     let exclusiveCreate = false
     if (ctx.ownerWorkspaceWrite) {
       const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+      gates.assertOwnerToolWorkingDirectory(ctx.sessionId, ctx.cwd)
       gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Write', { file_path: params.file_path, content: params.content })
       exclusiveCreate = gates.isOwnerAutoAllowedWorkspaceWrite(ctx.sessionId, 'Write', { file_path: params.file_path, content: params.content })
     }

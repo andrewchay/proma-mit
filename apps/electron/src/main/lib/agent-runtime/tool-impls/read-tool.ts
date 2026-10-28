@@ -50,6 +50,11 @@ export async function executeReadTool(input: unknown, ctx: ToolContext): Promise
   }
 
   try {
+    if (ctx.ownerWorkspaceWrite) {
+      const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+      gates.assertOwnerToolWorkingDirectory(ctx.sessionId, ctx.cwd)
+      gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Read', { file_path: params.file_path, offset: params.offset, limit: params.limit })
+    }
     const content = readFileSync(path, 'utf-8')
     const lines = content.split('\n')
     const offset = params.offset ?? 0

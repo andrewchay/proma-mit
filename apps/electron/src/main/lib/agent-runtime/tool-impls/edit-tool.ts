@@ -52,6 +52,7 @@ export async function executeEditTool(input: unknown, ctx: ToolContext): Promise
   try {
     if (ctx.ownerWorkspaceWrite) {
       const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+      gates.assertOwnerToolWorkingDirectory(ctx.sessionId, ctx.cwd)
       gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Edit', { file_path: params.file_path, old_string: params.old_string, new_string: params.new_string })
     }
     const descriptor = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK)
