@@ -11,6 +11,7 @@ import { RichTextInput } from '../ai-elements/rich-text-input'
 import { cn } from '../../lib/utils'
 import { OwnerConversationChanges } from './OwnerConversationChanges'
 import { OwnerDeliveredArtifact } from './OwnerDeliveredArtifact'
+import { OwnerDesignHistory, designDeliveryAnchor } from './OwnerDesignHistory'
 import { findReferencedDelivery } from './owner-delivery-reference'
 import { OwnerManagementQuestions } from './OwnerManagementQuestions'
 import { isOwnerWaitingForUser } from './project-owner-progress-state'
@@ -176,6 +177,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     <section className="space-y-4 rounded-2xl bg-muted/20 p-4 sm:p-5" aria-label="项目历史与事实">
     <div><h3 className="text-base font-semibold">项目记录</h3><p className="mt-1 text-xs text-muted-foreground">已确认的目标、范围、方案和结果，以及之后发生的对话。</p></div>
     {historyFacts}
+    <OwnerDesignHistory messages={messages} />
     {messages.length > 0 && <div className="space-y-3 border-t border-border/60 pt-4" role="log" aria-label="Owner历史对话" aria-live="polite" aria-relevant="additions">
       {messages.map(message => <article key={message.id} className={`max-w-3xl rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm ${message.role === 'user' ? 'ml-6 rounded-tr-sm bg-primary/10' : 'mr-6 rounded-tl-sm bg-muted/60'}`}>
         <p className="mb-1 text-xs font-medium text-muted-foreground">{message.role === 'user' ? '你' : '项目 Owner'}</p>
@@ -209,7 +211,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
           })()}
         </section>}
         {message.kind === 'delivery' && message.delivery && <section className="mt-3 space-y-2" aria-label="已验收成果">
-          {message.delivery.items.map(item => <OwnerDeliveredArtifact key={item.stepKey} item={item} feedbackCapacity={4000 - composer.text.length} feedbackDisabled={composer.sending || Boolean(composer.pending) || !editor.view?.manager} onRequestChanges={(excerpt) => { const text = excerpt ? `${composer.text}${composer.text.trim() ? '\n\n' : ''}针对这段内容提出修改：\n“${excerpt}”\n` : composer.text; if (text.length > 4000) return; edit({ subject, text, deliveryReference: { messageId: message.id, artifactHash: item.artifactHash, stepKey: item.stepKey } }); focusReplyComposer() }} />)}
+          {message.delivery.items.map(item => <div key={item.stepKey} id={designDeliveryAnchor(message.id, item.stepKey, item.artifactHash)} tabIndex={-1}><OwnerDeliveredArtifact item={item} feedbackCapacity={4000 - composer.text.length} feedbackDisabled={composer.sending || Boolean(composer.pending) || !editor.view?.manager} onRequestChanges={(excerpt) => { const text = excerpt ? `${composer.text}${composer.text.trim() ? '\n\n' : ''}针对这段内容提出修改：\n“${excerpt}”\n` : composer.text; if (text.length > 4000) return; edit({ subject, text, deliveryReference: { messageId: message.id, artifactHash: item.artifactHash, stepKey: item.stepKey } }); focusReplyComposer() }} /></div>)}
         </section>}
       </article>)}
     </div>}
