@@ -9,7 +9,9 @@ const previous = process.env.PROMA_TEST_CONFIG_DIR
 process.env.PROMA_TEST_CONFIG_DIR = directory
 mock.module('electron', () => buildElectronMock())
 const workflowService = await import('./workflow-service')
-mock.module('./workflow-service', () => ({ ...workflowService, cancelWorkflowRun: () => ({ status: 'cancelled' }) }))
+let workflowStatus = 'running'
+let cancellations = 0
+mock.module('./workflow-service', () => ({ ...workflowService, getWorkflowRun: () => ({ status: workflowStatus }), cancelWorkflowRun: () => { cancellations++; workflowStatus = 'cancelled'; return { status: 'cancelled' } } }))
 const store = await import('./project-sqlite-store')
 const employees = await import('./agent-employee-service')
 beforeAll(async () => { await store.initProjectDb() })
@@ -22,5 +24,7 @@ test('Given Workflow 只记录取消状态 When 停止正在运行的执行 Then
   const execution = store.createAgentExecution({ id: 'execution', projectId: project.id, entityType: 'task', entityId: task.id, agentId: employee.id, sessionId: 'workflow:run-test', prompt: '测试' })
   store.updateAgentExecution(execution.id, { status: 'running' })
   expect(employees.cancelAgentExecution(execution.id)).toMatchObject({ status: 'running', stopped: false, stopRequested: true, processTermination: 'NOT_VERIFIED' })
+  expect(employees.cancelAgentExecution(execution.id)).toMatchObject({ status: 'running', stopped: false, stopRequested: true, processTermination: 'NOT_VERIFIED' })
+  expect(cancellations).toBe(1)
   expect(store.getAgentExecution(execution.id)?.status).toBe('running')
 })

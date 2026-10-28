@@ -311,7 +311,8 @@ function stopRunningExecution(execution: AgentExecution, stopGeneration?: number
     const workflowId = store.getAgentEmployee(execution.agentId)?.workflowId
     if (!workflowId) return { requestAccepted: false, stopped: false, processTermination: 'NOT_VERIFIED' }
     try {
-      const cancelled = cancelWorkflowRun(workflowId, workflowRun[1]!)
+      const existing = getWorkflowRun(workflowId, workflowRun[1]!)
+      const cancelled = existing?.status === 'cancelled' ? existing : cancelWorkflowRun(workflowId, workflowRun[1]!)
       const live = store.getAgentExecution(execution.id)
       const requestAccepted = cancelled.status === 'cancelled' && live?.status === 'running' && live.sessionId === execution.sessionId
       // Workflow 的 cancelled 仅表示节点状态已记录，不是执行器退出回执。
