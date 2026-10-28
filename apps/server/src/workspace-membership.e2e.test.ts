@@ -71,10 +71,15 @@ describe.skipIf(!databaseUrl)('企业工作区成员的真实 Postgres 隔离', 
     await objects.putObject({ key, body, contentType: 'text/html' })
     await members.setMember(owner, 'project', 'reader', 'viewer')
     const app = createPromaWebServerApplication({ databaseUrl: databaseUrl!, redisUrl: 'redis://unused', s3: { bucket: 'unused', region: 'auto', maxUploadBytes: 1024 }, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test', trustedHeaderAuth: false, workspaceRoot: '/tmp/membership-test', workerId: 'test', taskLeaseMs: 30000 }, { postgres: client, objectStore: objects, auth: ({ request }) => ({ tenantId: request.headers.get('x-test-tenant') ?? tenant, userId: request.headers.get('x-test-user') ?? 'reader', roles: [request.headers.get('x-test-user') === 'owner' ? 'operator' : 'viewer'] }) })
+    const ownerList = '/agent/workspaces/project/shared-files'
+    const memberList = '/agent/shared-workspaces/owner/project/files'
     const publish = '/agent/workspaces/project/shared-files/report.html'
     const shared = '/agent/shared-workspaces/owner/project/files/report.html'
     const request = (method: string, user: string, path: string, payload?: string, tenantId = tenant) => new Request(`http://server${path}`, { method, headers: { 'x-test-user': user, 'x-test-tenant': tenantId, ...(payload ? { 'content-type': 'application/json' } : {}) }, ...(payload ? { body: payload } : {}) })
     expect((await app.fetch(request('GET', 'reader', shared))).status).toBe(404)
+    expect(await (await app.fetch(request('GET', 'reader', memberList))).json()).toEqual({ files: [], nextCursor: null })
+    expect((await app.fetch(request('GET', 'outsider', memberList))).status).toBe(404)
+    expect((await app.fetch(request('GET', 'reader', memberList, undefined, `${tenant}-other`))).status).toBe(404)
     const largeKey = createAgentRuntimeWorkspaceObjectKey({ ...owner, workspaceSlug: 'project', relativePath: 'large.bin' })
     const largeBody = new Uint8Array(1025)
     await objects.putObject({ key: largeKey, body: largeBody })
@@ -88,6 +93,10 @@ describe.skipIf(!databaseUrl)('企业工作区成员的真实 Postgres 隔离', 
     const encodedPath = '%E7%9B%AE%E5%BD%95/%E6%8A%A5%E5%91%8A%20%25.txt'
     expect((await app.fetch(request('PUT', 'owner', `/agent/workspaces/project/shared-files/${encodedPath}`, JSON.stringify({ expectedSha256: hash })))).status).toBe(200)
     expect((await app.fetch(request('GET', 'reader', `/agent/shared-workspaces/owner/project/files/${encodedPath}`))).status).toBe(200)
+    const listing = await app.fetch(request('GET', 'reader', memberList))
+    expect(listing.headers.get('cache-control')).toBe('private, no-store')
+    expect(await listing.json()).toMatchObject({ files: [{ path: 'report.html', sha256: hash }, { path: '目录/报告 %.txt', sha256: hash }], nextCursor: null })
+    expect((await app.fetch(request('GET', 'owner', ownerList))).status).toBe(200)
     const download = await app.fetch(request('GET', 'reader', shared))
     expect(download.status).toBe(200)
     expect(download.headers.get('content-disposition')).toBe('attachment')
@@ -121,5 +130,23 @@ describe.skipIf(!databaseUrl)('企业工作区成员的真实 Postgres 隔离', 
     expect((await app.fetch(request('PUT', 'owner', publish, JSON.stringify({ expectedSha256: updatedHash })))).status).toBe(200)
     await members.removeMember(owner, 'project', 'reader')
     expect((await app.fetch(request('GET', 'reader', shared))).status).toBe(404)
+    expect((await app.fetch(request('GET', 'reader', memberList))).status).toBe(404)
   })
+  test('Given 超过一页的发布记录 When 成员分页或撤权 Then 返回准确游标并重新检查权限', async () => {
+    await workspaces.setWorkspace({ ...owner, workspaceSlug: 'pagination', cwd: '/ignored', mcpServers: {} })
+    await members.setMember(owner, 'pagination', 'reader-pages', 'viewer')
+    await sql.unsafe(`INSERT INTO proma_workspace_shared_files (tenant_id, owner_user_id, workspace_slug, relative_path, sha256, size_bytes, published_at) SELECT $1, 'owner', 'pagination', 'file-' || lpad(n::text, 3, '0'), $2, 1, 1 FROM generate_series(1, 101) n`, [tenant, 'a'.repeat(64)])
+    const app = createPromaWebServerApplication({ databaseUrl: databaseUrl!, redisUrl: 'redis://unused', s3: { bucket: 'unused', region: 'auto', maxUploadBytes: 1024 }, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test', trustedHeaderAuth: false, workspaceRoot: '/tmp/membership-test', workerId: 'test', taskLeaseMs: 30000 }, { postgres: client, auth: () => ({ tenantId: tenant, userId: 'reader-pages', roles: ['viewer'] }) })
+    const path = 'http://server/agent/shared-workspaces/owner/pagination/files'
+    const first = await (await app.fetch(new Request(path))).json() as { files: Array<{ path: string }>; nextCursor: string | null }
+    expect(first.files).toHaveLength(100)
+    expect(first.nextCursor).toBe('file-100')
+    const next = await (await app.fetch(new Request(path + '?after=' + encodeURIComponent(first.nextCursor!)))).json() as { files: Array<{ path: string }>; nextCursor: string | null }
+    expect(next.files.map(file => file.path)).toEqual(['file-101'])
+    expect(next.nextCursor).toBeNull()
+    expect((await app.fetch(new Request(path + '?after=a&after=b'))).status).toBe(400)
+    await members.removeMember(owner, 'pagination', 'reader-pages')
+    expect((await app.fetch(new Request(path + '?after=file-100'))).status).toBe(404)
+  })
+
 })

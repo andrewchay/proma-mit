@@ -13,6 +13,7 @@ import {
 } from '@gravitas/shared/utils'
 import { ServerMcpConnectionManager } from '@gravitas/shared/utils/node'
 import { readBoundedObjectBody } from './bounded-object-body.ts'
+import { handleSharedFileList, matchSharedFileListRoute } from './workspace-shared-file-list.ts'
 import type {
   AgentRuntimePostgresClient,
   AgentRuntimeRole,
@@ -520,6 +521,7 @@ export function createPromaWebServerApplication(
       const mcpStatusRoute = matchMcpStatusRoute(request.method, url.pathname)
       const membershipRoute = matchWorkspaceMembershipRoute(request.method, url.pathname)
       const sharedFileRoute = matchSharedFileRoute(request.method, url.pathname)
+      const sharedFileListRoute = matchSharedFileListRoute(request.method, url.pathname)
       let response: Response
       if (cookieOriginError) {
         response = cookieOriginError
@@ -527,6 +529,8 @@ export function createPromaWebServerApplication(
         response = actionAuthorizationError
       } else if (membershipRoute) {
         response = scope ? await handleWorkspaceMembershipRoute(request, scope, membershipRoute, store, workspaceMemberships) : Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+      } else if (sharedFileListRoute) {
+        response = scope ? await handleSharedFileList(request, scope, sharedFileListRoute, postgres) : Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
       } else if (sharedFileRoute) {
         response = scope ? await handleSharedFileRoute(request, scope, sharedFileRoute, sharedFiles, objectStore, config.s3.maxUploadBytes) : Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
       // P3-04：微信第三方平台商家授权（operator/admin）
