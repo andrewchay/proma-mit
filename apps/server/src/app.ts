@@ -13,6 +13,7 @@ import {
 } from '@gravitas/shared/utils'
 import { ServerMcpConnectionManager } from '@gravitas/shared/utils/node'
 import { readBoundedObjectBody } from './bounded-object-body.ts'
+import { csvValue } from './csv.ts'
 import { handleSharedFileList, matchSharedFileListRoute } from './workspace-shared-file-list.ts'
 import type {
   AgentRuntimePostgresClient,
@@ -1174,11 +1175,6 @@ function createBillingExportResponse(records: UsageLedgerRecord[], format: strin
   return new Response([header.join(','), ...rows].join('\n'), {
     headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': 'attachment; filename="proma-billing.csv"' },
   })
-}
-
-function csvValue(value: unknown): string {
-  const raw = value == null ? '' : String(value)
-  return `"${raw.replaceAll('"', '""')}"`
 }
 
 export class PostgresTaskLease {

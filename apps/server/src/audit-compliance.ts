@@ -9,6 +9,7 @@
 
 import type { AgentRuntimeScope } from '@gravitas/shared'
 import type { PostgresAuditLog, AuditChainVerification, AuditLegalHold } from './audit.ts'
+import { csvValue } from './csv.ts'
 
 export interface AuditComplianceService {
   /** 验证审计 hash 链完整性 */
@@ -78,7 +79,7 @@ export function createAuditComplianceService(auditLog: PostgresAuditLog): AuditC
           r.requestId ?? '',
           r.traceId ?? '',
           r.taskId ?? '',
-        ].map((v) => `"${String(v).replace(/"/g, '""')}"`).join(','))
+        ].map(csvValue).join(','))
         return [headers.join(','), ...rows].join('\n')
       }
 
