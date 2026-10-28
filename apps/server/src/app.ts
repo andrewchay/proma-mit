@@ -205,7 +205,7 @@ export function createPromaWebServerApplication(
     : undefined
   // 现有 Bearer/trusted-header 链路（dependencies.auth 来自 index.ts 的 OIDC JWT，或 trustedHeaderAuth）
   // authMode='none' 时：使用无鉴权 resolver，所有请求自动获得默认租户上下文
-  const baseAuth = config.authMode === 'none'
+  const baseAuth = config.authMode === 'none' && !config.trustedHeaderAuth
     ? createNoneAuthResolver()
     : (dependencies.auth ?? createTrustedHeaderAuth(config.trustedHeaderAuth))
   // 复合：cookie 会话优先，回退 Bearer/trusted-header

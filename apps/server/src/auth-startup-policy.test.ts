@@ -1,5 +1,16 @@
 import { describe, expect, test } from 'bun:test'
-import { assertTrustedHeaderAuthStartupPolicy, assertAuthModeStartupPolicy } from './auth-startup-policy.ts'
+import { assertTrustedHeaderAuthStartupPolicy, assertAuthModeStartupPolicy, assertNoneAuthStartupPolicy } from './auth-startup-policy.ts'
+
+describe('无鉴权启动策略', () => {
+  test('Given 生产环境或非本机监听 When 启用无鉴权 Then 拒绝启动', () => {
+    expect(() => assertNoneAuthStartupPolicy({ authMode: 'none', trustedHeaderAuth: false, nodeEnv: 'production', hostname: '127.0.0.1' })).toThrow()
+    expect(() => assertNoneAuthStartupPolicy({ authMode: 'none', trustedHeaderAuth: false, nodeEnv: 'development', hostname: '0.0.0.0' })).toThrow()
+    expect(() => assertNoneAuthStartupPolicy({ authMode: 'none', trustedHeaderAuth: false, hostname: '127.0.0.1' })).toThrow()
+  })
+  test('Given 本机开发环境 When 启用无鉴权 Then 可以启动', () => {
+    expect(() => assertNoneAuthStartupPolicy({ authMode: 'none', trustedHeaderAuth: false, nodeEnv: 'development', hostname: '127.0.0.1' })).not.toThrow()
+  })
+})
 
 describe('可信 Header 启动策略', () => {
   test('given production environment when trusted Header auth is enabled then startup is refused', () => {
@@ -81,7 +92,7 @@ describe('authMode 启动策略', () => {
     })).not.toThrow()
   })
 
-  test('given no authMode then startup is allowed (Bearer only)', () => {
+  test('given no authMode then browser mode validation leaves environment policy to the caller', () => {
     expect(() => assertAuthModeStartupPolicy({
       trustedHeaderAuth: false,
       authMode: undefined,

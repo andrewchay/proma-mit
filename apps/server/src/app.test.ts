@@ -3,6 +3,15 @@ import type { AgentRuntimePostgresClient, AgentRuntimeWebAuthResolver } from '@g
 import { createPromaWebServerApplication } from './app.ts'
 
 describe('Proma Web 服务', () => {
+  test('Given 本机开发显式启用 none When 请求无身份 Then 使用匿名开发会话', async () => {
+    const app = createPromaWebServerApplication({ databaseUrl: 'postgres://unused', redisUrl: 'redis://unused', s3: testS3Config, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test-v1', trustedHeaderAuth: false, authMode: 'none', workspaceRoot: '/private/tmp/proma-web-test', workerId: 'test-worker', taskLeaseMs: 30_000 }, { postgres: new FakePostgresClient() })
+    expect((await app.fetch(new Request('http://localhost/agent/sessions'))).status).toBe(200)
+  })
+  test('Given 可信请求头与 none 同时配置 When 请求缺少身份 Then 不授予匿名管理员', async () => {
+    const app = createPromaWebServerApplication({ databaseUrl: 'postgres://unused', redisUrl: 'redis://unused', s3: testS3Config, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test-v1', trustedHeaderAuth: true, authMode: 'none', workspaceRoot: '/private/tmp/proma-web-test', workerId: 'test-worker', taskLeaseMs: 30_000 }, { postgres: new FakePostgresClient() })
+    expect((await app.fetch(new Request('http://localhost/agent/sessions'))).status).toBe(401)
+    expect((await app.fetch(new Request('http://localhost/agent/sessions', { headers: { 'x-proma-tenant-id': 'tenant-a', 'x-proma-user-id': 'user-a' } }))).status).toBe(200)
+  })
   test('given a W3C traceparent when completing a request then it returns the trace id for client correlation', async () => {
     const app = createPromaWebServerApplication({ databaseUrl: 'postgres://unused', redisUrl: 'redis://unused', s3: testS3Config, envelopeKey: 'MDEyMzQ1Njc4OWFiY2RlZg', envelopeKeyId: 'test-v1', trustedHeaderAuth: false, workspaceRoot: '/private/tmp/proma-web-test', workerId: 'test-worker', taskLeaseMs: 30_000 }, { postgres: new FakePostgresClient(), auth: () => undefined })
     const response = await app.fetch(new Request('http://server/healthz', {

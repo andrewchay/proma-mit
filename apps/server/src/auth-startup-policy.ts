@@ -24,6 +24,14 @@ function isLoopbackHostname(hostname: string): boolean {
   return hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]' || hostname === 'localhost'
 }
 
+/** 无鉴权会授予匿名管理员，仅限本机开发；可信 Header 有自己的启动限制。 */
+export function assertNoneAuthStartupPolicy(input: { authMode: string; trustedHeaderAuth: boolean; hostname: string; nodeEnv?: string }): void {
+  if (input.authMode !== 'none' || input.trustedHeaderAuth) return
+  if (input.nodeEnv !== 'development' || !isLoopbackHostname(input.hostname)) {
+    throw new Error('无鉴权模式仅可在 NODE_ENV=development 且监听本机地址时启用')
+  }
+}
+
 export interface PromaWebAuthModeStartupPolicyInput {
   trustedHeaderAuth: boolean
   authMode?: 'local' | 'oidc' | 'both' | 'none' | string
@@ -41,7 +49,7 @@ export function assertAuthModeStartupPolicy(input: PromaWebAuthModeStartupPolicy
   if (input.trustedHeaderAuth) return // trusted-header 模式不涉及 authMode
 
   const mode = input.authMode ?? 'none'
-  if (mode === 'none') return // 只有 Bearer 认证，无浏览器登录
+  if (mode === 'none') return // 无鉴权模式的环境边界由 assertNoneAuthStartupPolicy 校验。
 
   if (mode !== 'local' && mode !== 'oidc' && mode !== 'both') {
     throw new Error(`PROMA_WEB_AUTH_MODE 必须是 local|oidc|both|none 之一，收到: ${mode}`)

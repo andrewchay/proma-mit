@@ -6,7 +6,7 @@
  * - 所有操作允许（admin 角色）
  * - 数据归入单一默认租户
  *
- * 这是企业版试用/私有部署的降级模式，降低使用门槛。
+ * 仅供本机开发；启动策略禁止生产环境与非 loopback 监听。
  */
 
 import type { AgentRuntimeScope, AgentRuntimeWebAuthResolver } from '@gravitas/shared'
