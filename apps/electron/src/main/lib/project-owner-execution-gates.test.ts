@@ -242,6 +242,16 @@ test('Given Owner 会话未带标记 When 直接读取 MCP 资源 Then 不调用
   expect((await createReadMcpResourceToolDefinition().execute({ uri: 'example:test' }, context)).isError).toBe(true)
   expect(calls).toBe(0)
 })
+test('Given Owner 会话 When 直接请求桌面接管 Then 不弹出用户请求', async () => {
+  const f = fixture(), sessionId = syntheticRunningExecution(f)
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
+  let calls = 0
+  const result = await computer.executeComputerUseRequestTakeoverTool({ reason: '验证', instruction: '请继续' }, { cwd: work, sessionId, abortSignal: new AbortController().signal, onAskUser: async () => { calls++; return { behavior: 'deny', message: '取消' } } })
+  expect(result.isError).toBe(true)
+  expect(calls).toBe(0)
+})
 test('Given Owner 会话未带标记 When 直接调用网络工具 Then 不发送请求', async () => {
   const f = fixture(), sessionId = syntheticRunningExecution(f)
   const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id

@@ -187,7 +187,7 @@ async function executeComputerUseKeyComboUnchecked(input: unknown, ctx: ToolCont
   return result({ message })
 }
 
-export async function executeComputerUseRequestTakeoverTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+async function executeComputerUseRequestTakeoverUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const reason = readString(input, 'reason')
   const instruction = readString(input, 'instruction')
   if (!reason || !instruction || !ctx.onAskUser || !ctx.abortSignal) return error('无法创建用户接管请求')
@@ -267,3 +267,5 @@ export const executeComputerUseScrollTool = guardOwnerTool(COMPUTER_USE_SCROLL_T
 export const executeComputerUseDragTool = guardOwnerTool(COMPUTER_USE_DRAG_TOOL_NAME, executeComputerUseDragUnchecked)
 
 export const executeComputerUseKeyComboTool = guardOwnerTool(COMPUTER_USE_KEY_COMBO_TOOL_NAME, executeComputerUseKeyComboUnchecked)
+
+export const executeComputerUseRequestTakeoverTool = guardOwnerTool(COMPUTER_USE_REQUEST_TAKEOVER_TOOL_NAME, executeComputerUseRequestTakeoverUnchecked)
