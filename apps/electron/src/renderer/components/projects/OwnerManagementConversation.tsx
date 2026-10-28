@@ -12,6 +12,7 @@ import { cn } from '../../lib/utils'
 import { OwnerConversationChanges } from './OwnerConversationChanges'
 import { OwnerDeliveredArtifact } from './OwnerDeliveredArtifact'
 import { OwnerDesignHistory, designDeliveryAnchor } from './OwnerDesignHistory'
+import { OwnerDesignBrief } from './OwnerDesignBrief'
 import { findReferencedDelivery } from './owner-delivery-reference'
 import { OwnerManagementQuestions } from './OwnerManagementQuestions'
 import { isOwnerWaitingForUser } from './project-owner-progress-state'
@@ -177,6 +178,11 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     <section className="space-y-4 rounded-2xl bg-muted/20 p-4 sm:p-5" aria-label="项目历史与事实">
     <div><h3 className="text-base font-semibold">项目记录</h3><p className="mt-1 text-xs text-muted-foreground">已确认的目标、范围、方案和结果，以及之后发生的对话。</p></div>
     {historyFacts}
+    {editor.view?.manager && <OwnerDesignBrief key={JSON.stringify([projectId, taskId ?? null])} disabled={composer.sending || Boolean(composer.pending)} onAdd={text => {
+      const next = composer.text.trim() ? `${composer.text}\n\n${text}` : text
+      if (next.length > 4000) return false
+      edit({ subject, text: next }); focusReplyComposer(); return true
+    }} />}
     <OwnerDesignHistory messages={messages} />
     {messages.length > 0 && <div className="space-y-3 border-t border-border/60 pt-4" role="log" aria-label="Owner历史对话" aria-live="polite" aria-relevant="additions">
       {messages.map(message => <article key={message.id} className={`max-w-3xl rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm ${message.role === 'user' ? 'ml-6 rounded-tr-sm bg-primary/10' : 'mr-6 rounded-tl-sm bg-muted/60'}`}>
