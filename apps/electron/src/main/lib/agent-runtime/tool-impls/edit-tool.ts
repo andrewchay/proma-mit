@@ -4,7 +4,7 @@
  * 通过旧字符串替换新字符串来编辑文件。
  */
 
-import { readFileSync, writeFileSync } from 'node:fs'
+import { closeSync, constants, fstatSync, ftruncateSync, openSync, readFileSync, writeSync } from 'node:fs'
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
 import { resolveToolPath, formatToolError, truncateOutput } from './tool-utils.ts'
@@ -50,27 +50,44 @@ export async function executeEditTool(input: unknown, ctx: ToolContext): Promise
   }
 
   try {
-    const content = readFileSync(path, 'utf-8')
-    const occurrences = content.split(params.old_string).length - 1
-
-    if (occurrences === 0) {
-      return {
-        toolCallId: '',
-        content: `未找到要替换的文本：\n${truncateOutput(params.old_string, 500)}`,
-        isError: true,
-      }
+    if (ctx.ownerWorkspaceWrite) {
+      const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+      gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Edit', { file_path: params.file_path, old_string: params.old_string, new_string: params.new_string })
     }
+    const descriptor = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    try {
+      const stat = fstatSync(descriptor)
+      if (!stat.isFile() || stat.nlink !== 1) throw new Error('Edit拒绝符号链接、硬链接和非普通文件')
+      const recheck = resolveToolPath(params.file_path, ctx.cwd)
+      if (recheck.error) throw new Error(recheck.error)
+      const content = readFileSync(descriptor, 'utf-8')
+      const occurrences = content.split(params.old_string).length - 1
 
-    if (occurrences > 1) {
-      return {
-        toolCallId: '',
-        content: `找到 ${occurrences} 处匹配，old_string 必须唯一。请扩大上下文以精确定位。`,
-        isError: true,
+      if (occurrences === 0) {
+        return {
+          toolCallId: '',
+          content: `未找到要替换的文本：\n${truncateOutput(params.old_string, 500)}`,
+          isError: true,
+        }
       }
-    }
 
-    const newContent = content.replace(params.old_string, params.new_string)
-    writeFileSync(path, newContent, 'utf-8')
+      if (occurrences > 1) {
+        return {
+          toolCallId: '',
+          content: `找到 ${occurrences} 处匹配，old_string 必须唯一。请扩大上下文以精确定位。`,
+          isError: true,
+        }
+      }
+
+      const newContent = content.replace(params.old_string, params.new_string)
+      const bytes = Buffer.from(newContent, 'utf-8')
+      ftruncateSync(descriptor, 0)
+      for (let offset = 0; offset < bytes.length;) {
+        const written = writeSync(descriptor, bytes, offset, bytes.length - offset, offset)
+        if (written === 0) throw new Error('Edit写入未完成')
+        offset += written
+      }
+    } finally { closeSync(descriptor) }
     // PH2-A：文件共享事件流
     try {
       const { recordFileEvent } = await import('../../workspace-file-event-service')

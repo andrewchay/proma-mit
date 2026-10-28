@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, mock, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildElectronMock } from './testing/electron-mock'
@@ -22,6 +22,7 @@ const grants = await import('./project-pilot-grant-issue')
 const policy = await import('./project-pilot-policy')
 const gates = await import('./project-owner-execution-gates')
 const { executeBashToolOnPlatform } = await import('./agent-runtime/tool-impls/bash-tool')
+const { executeEditTool } = await import('./agent-runtime/tool-impls/edit-tool')
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
 function fixture(single = false, textDelivery = false) {
@@ -91,6 +92,19 @@ test('Given 已准入的 Owner 业务会话 When 直接调用 Bash 工具 Then �
     expect(result.isError).toBe(true)
     expect(result.content).toContain('Owner')
     expect(existsSync(marker)).toBe(false)
+  } finally { rmSync(work, { recursive: true, force: true }) }
+})
+test('Given 未经逐次审批的 Owner 业务会话 When 直接调用 Edit Then 工具入口拒绝且内容不变', async () => {
+  const f = fixture(), sessionId = syntheticRunningExecution(f)
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  const work = mkdtempSync(join(tmpdir(), 'owner-edit-work-'))
+  try {
+    writeFileSync(join(work, 'file.txt'), 'original')
+    const result = await executeEditTool({ file_path: 'file.txt', old_string: 'original', new_string: 'changed' }, { cwd: work, sessionId, ownerWorkspaceWrite: true })
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('Owner')
+    expect(readFileSync(join(work, 'file.txt'), 'utf8')).toBe('original')
   } finally { rmSync(work, { recursive: true, force: true }) }
 })
 test('Given 完整文本交付 Owner执行 When 构建工具白名单 Then 不暴露工作区写入工具', () => {
