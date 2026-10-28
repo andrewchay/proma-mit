@@ -1291,6 +1291,11 @@ async function handleWorkspaceFile(
     })
     return Response.json({ object }, { status: 201 })
   }
+  if (objectStore.getObjectStream) {
+    const object = await objectStore.getObjectStream(key)
+    if (!object) return Response.json({ error: '文件不存在或不可访问' }, { status: 404 })
+    return createWorkspaceFileDownloadResponse(object.body, object.contentType)
+  }
   const object = await objectStore.getObject(key)
   if (!object) return Response.json({ error: '文件不存在或不可访问' }, { status: 404 })
   return createWorkspaceFileDownloadResponse(object.body, object.contentType)
@@ -1340,6 +1345,16 @@ export class S3AgentRuntimeObjectStore implements AgentRuntimeObjectStore {
       if (!response.Body) return undefined
       const body = options ? await readBoundedObjectBody(response.Body.transformToWebStream(), options.maxBytes) : new Uint8Array(await response.Body.transformToByteArray())
       return { key, size: body.byteLength, contentType: response.ContentType, updatedAt: Date.now(), body }
+    } catch (error) {
+      if (isS3NotFound(error)) return undefined
+      throw error
+    }
+  }
+
+  async getObjectStream(key: string) {
+    try {
+      const response = await this.client.send(new GetObjectCommand({ Bucket: this.config.bucket, Key: key }))
+      return response.Body ? { body: response.Body.transformToWebStream(), contentType: response.ContentType } : undefined
     } catch (error) {
       if (isS3NotFound(error)) return undefined
       throw error

@@ -30,3 +30,18 @@ test('Given S3 兼容 HTTP 对象 When 请求限额读取 Then 使用真实客�
     expect([...(await store.getObject('item', { maxBytes: 5 }))!.body]).toEqual([1, 2, 3, 4, 5])
   } finally { server.stop(true) }
 })
+
+
+test('Given S3 响应尚未结束 When 读取对象流 Then 不等待完整对象即可获得首块', async () => {
+  const { S3AgentRuntimeObjectStore } = await import('./app.ts')
+  const upstream = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array([1, 2, 3])) } })
+  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response(upstream, { headers: { 'content-type': 'text/plain' } }) })
+  try {
+    const store = new S3AgentRuntimeObjectStore({ bucket: 'fixture', region: 'auto', endpoint: `http://127.0.0.1:${server.port}`, accessKeyId: 'test', secretAccessKey: 'test', maxUploadBytes: 16 })
+    const result = await store.getObjectStream('item')
+    expect(result?.contentType).toBe('text/plain')
+    const reader = result!.body.getReader()
+    expect([...(await reader.read()).value!]).toEqual([1, 2, 3])
+    await reader.cancel()
+  } finally { server.stop(true) }
+})

@@ -51,6 +51,10 @@ describe('Agent runtime object storage', () => {
     fetched.body[1] = 8
 
     expect([...(await store.getObject(key))!.body]).toEqual([1, 2, 3])
+    const stream = await store.getObjectStream(key)
+    const chunk = (await stream!.body.getReader().read()).value!
+    chunk[0] = 7
+    expect([...(await store.getObject(key))!.body]).toEqual([1, 2, 3])
   })
 
   test('given prefix listing then only matching tenant workspace objects are returned', async () => {

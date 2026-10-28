@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test'
 import { createAgentRuntimeWorkspaceObjectKey, InMemoryAgentRuntimeObjectStore, PostgresTenantRuntimeStore } from '@gravitas/shared/utils'
 import { createHash } from 'node:crypto'
 import { PostgresWorkspaceMembershipStore } from './workspace-membership-store.ts'
@@ -105,6 +105,12 @@ describe.skipIf(!databaseUrl)('企业工作区成员的真实 Postgres 隔离', 
     const largeKey = createAgentRuntimeWorkspaceObjectKey({ ...owner, workspaceSlug: 'project', relativePath: 'large.bin' })
     const largeBody = new Uint8Array(1025)
     await objects.putObject({ key: largeKey, body: largeBody })
+    const getObject = spyOn(objects, 'getObject')
+    const ownerDownload = await app.fetch(request('GET', 'owner', '/agent/workspaces/project/files/large.bin'))
+    expect(ownerDownload.status).toBe(200)
+    expect((await ownerDownload.arrayBuffer()).byteLength).toBe(1025)
+    expect(getObject).not.toHaveBeenCalled()
+    getObject.mockRestore()
     expect((await app.fetch(request('PUT', 'owner', '/agent/workspaces/project/shared-files/large.bin', JSON.stringify({ expectedSha256: createHash('sha256').update(largeBody).digest('hex') })))).status).toBe(413)
     expect((await app.fetch(request('GET', 'reader', '/agent/shared-workspaces/owner/project/files/%2e%2e%2Fsecret'))).status).toBe(404)
     expect((await app.fetch(request('PUT', 'outsider', publish, JSON.stringify({ expectedSha256: hash })))).status).toBe(403)

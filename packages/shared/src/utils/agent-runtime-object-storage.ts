@@ -17,6 +17,11 @@ export interface AgentRuntimeStoredObject extends AgentRuntimeObjectRef {
   body: Uint8Array
 }
 
+export interface AgentRuntimeObjectStream {
+  body: ReadableStream<Uint8Array>
+  contentType?: string
+}
+
 export interface AgentRuntimeListObjectsInput {
   prefix: string
   limit?: number
@@ -25,6 +30,7 @@ export interface AgentRuntimeListObjectsInput {
 export interface AgentRuntimeObjectStore {
   putObject(input: AgentRuntimePutObjectInput): Promise<AgentRuntimeObjectRef>
   getObject(key: string, options?: { maxBytes: number }): Promise<AgentRuntimeStoredObject | undefined>
+  getObjectStream?(key: string): Promise<AgentRuntimeObjectStream | undefined>
   deleteObject(key: string): Promise<void>
   listObjects(input: AgentRuntimeListObjectsInput): Promise<AgentRuntimeObjectRef[]>
 }
@@ -62,6 +68,12 @@ export class InMemoryAgentRuntimeObjectStore implements AgentRuntimeObjectStore 
     const object = this.objects.get(key)
     if (object && options && object.body.byteLength > options.maxBytes) throw new AgentRuntimeObjectTooLargeError()
     return object ? { ...objectRef(object), body: cloneBytes(object.body) } : undefined
+  }
+
+  async getObjectStream(key: string): Promise<AgentRuntimeObjectStream | undefined> {
+    const object = this.objects.get(key)
+    if (!object) return undefined
+    return { contentType: object.contentType, body: new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(cloneBytes(object.body)); controller.close() } }) }
   }
 
   async deleteObject(key: string): Promise<void> {
