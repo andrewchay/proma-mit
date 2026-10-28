@@ -75,10 +75,15 @@ export async function executeWebFetchTool(input: unknown, ctx: ToolContext): Pro
     assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_FETCH_TOOL_NAME, { url })
 
     const controller = new AbortController()
+    const abortFromCaller = () => controller.abort()
+    if (ctx.abortSignal?.aborted) controller.abort()
+    else ctx.abortSignal?.addEventListener('abort', abortFromCaller, { once: true })
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-    let response: Response
+    let contentType: string
+    let buffer: Uint8Array
     try {
-      response = await fetchFn(parsed.toString(), {
+      if (controller.signal.aborted) throw new Error('抓取已取消或超时')
+      const response = await fetchFn(parsed.toString(), {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 PromaAgent/1.0',
           'Accept': 'text/html,application/xhtml+xml,text/plain,*/*;q=0.8',
@@ -86,18 +91,15 @@ export async function executeWebFetchTool(input: unknown, ctx: ToolContext): Pro
         redirect: 'follow',
         signal: controller.signal,
       })
+      if (!response.ok) {
+        void response.body?.cancel().catch(() => {})
+        return { toolCallId: '', content: `抓取失败 (${response.status} ${response.statusText})`, isError: true }
+      }
+      contentType = response.headers.get('content-type') ?? ''
+      buffer = await readWebBody(response.body, controller.signal)
     } finally {
       clearTimeout(timer)
-    }
-
-    if (!response.ok) {
-      return { toolCallId: '', content: `抓取失败 (${response.status} ${response.statusText})`, isError: true }
-    }
-
-    const contentType = response.headers.get('content-type') ?? ''
-    const buffer = await response.arrayBuffer()
-    if (buffer.byteLength > MAX_BODY_BYTES) {
-      return { toolCallId: '', content: `页面过大（${buffer.byteLength} bytes），已放弃抓取`, isError: true }
+      ctx.abortSignal?.removeEventListener('abort', abortFromCaller)
     }
 
     const raw = new TextDecoder('utf-8').decode(buffer)
@@ -117,6 +119,34 @@ export async function executeWebFetchTool(input: unknown, ctx: ToolContext): Pro
     const msg = error instanceof Error ? error.message : String(error)
     console.error('[Agent WebFetch] 执行失败:', error)
     return { toolCallId: '', content: `抓取失败: ${msg}`, isError: true }
+  }
+}
+
+/** 限制实际接收字节；超限或中止时取消读取，不能相信 Content-Length。 */
+async function readWebBody(body: ReadableStream<Uint8Array> | null, signal: AbortSignal): Promise<Uint8Array> {
+  if (signal.aborted) throw new Error('抓取已取消或超时')
+  if (!body) return new Uint8Array()
+  const reader = body.getReader()
+  const cancel = () => { void reader.cancel().catch(() => {}) }
+  signal.addEventListener('abort', cancel, { once: true })
+  const chunks: Uint8Array[] = []
+  let size = 0
+  try {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (signal.aborted) throw new Error('抓取已取消或超时')
+      if (done) break
+      size += value.byteLength
+      if (size > MAX_BODY_BYTES) { cancel(); throw new Error('页面过大，已放弃抓取') }
+      chunks.push(value)
+    }
+    const result = new Uint8Array(size)
+    let offset = 0
+    for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength }
+    return result
+  } finally {
+    signal.removeEventListener('abort', cancel)
+    reader.releaseLock()
   }
 }
 

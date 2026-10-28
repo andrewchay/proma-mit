@@ -84,6 +84,44 @@ describe('WebFetch 工具', () => {
     expect(result.content).toContain('{"ok":true')
   })
 
+  test('响应流超出限制时取消读取，不先缓存整页', async () => {
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) { controller.enqueue(new Uint8Array(2_000_001)) },
+      cancel() { cancelled = true },
+    })
+    globalThis.fetch = (async () => new Response(body, { status: 200 })) as unknown as typeof fetch
+    const result = await executeWebFetchTool({ url: 'https://example.invalid' }, ctx)
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('页面过大')
+    expect(cancelled).toBe(true)
+  })
+
+  test('调用方已经取消时不发出网络请求', async () => {
+    let calls = 0
+    globalThis.fetch = (async () => { calls++; return new Response('unexpected') }) as unknown as typeof fetch
+    const abort = new AbortController(); abort.abort()
+    const result = await executeWebFetchTool({ url: 'https://example.invalid' }, { ...ctx, abortSignal: abort.signal })
+    expect(result.isError).toBe(true)
+    expect(calls).toBe(0)
+  })
+
+  test('调用方取消时停止等待未完成的响应体', async () => {
+    let cancelled = false
+    let signalStart = () => {}
+    const started = new Promise<void>(resolve => { signalStart = resolve })
+    const body = new ReadableStream<Uint8Array>({ pull() { signalStart() }, cancel() { cancelled = true } }, { highWaterMark: 0 })
+    globalThis.fetch = (async () => new Response(body, { status: 200 })) as unknown as typeof fetch
+    const abort = new AbortController()
+    const pending = executeWebFetchTool({ url: 'https://example.invalid' }, { ...ctx, abortSignal: abort.signal })
+    await started
+    abort.abort()
+    const result = await pending
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('取消或超时')
+    expect(cancelled).toBe(true)
+  })
+
   test('HTTP 错误时返回失败信息', async () => {
     globalThis.fetch = (async () => new Response('Not Found', { status: 404 })) as unknown as typeof fetch
 
