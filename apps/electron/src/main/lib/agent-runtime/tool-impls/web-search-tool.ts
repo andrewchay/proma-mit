@@ -27,6 +27,13 @@ export interface WebSearchToolInput {
   query: string
 }
 
+export interface WebSearchResultItem {
+  title: string
+  url: string
+  snippet: string
+  publishedAt?: string
+}
+
 /** 搜索后端类型 */
 export type WebSearchProvider = 'tavily' | 'metaso'
 
@@ -89,6 +96,36 @@ async function searchTavily(query: string, apiKey: string, fetchFn: typeof fetch
 
   const data = await response.json() as TavilySearchResponse
   return { toolCallId: '', content: formatTavilyResults(data) }
+}
+
+/** 项目扫描等后台流程使用的结构化搜索入口，沿用同一凭据与代理配置。 */
+export async function searchWebResults(query: string): Promise<WebSearchResultItem[]> {
+  const credentials = getToolCredentials('web-search') as WebSearchCredentials
+  const provider = resolveWebSearchProvider(credentials)
+  const proxyUrl = await getEffectiveProxyUrl()
+  const fetchFn = getFetchFn(proxyUrl)
+  if (provider === 'metaso') {
+    if (!credentials.metasoApiKey) throw new Error('未配置 MetaSo 搜索 API Key')
+    const response = await fetchFn(METASO_SEARCH_URL, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${credentials.metasoApiKey}`, Accept: 'application/json', 'Content-Type': 'application/json' },
+      body: JSON.stringify({ q: query, scope: 'webpage', includeSummary: false, size: '5', includeRawContent: false, conciseSnippet: false }),
+    })
+    if (!response.ok) throw new Error(`搜索请求失败 (${response.status})`)
+    const data = await response.json() as MetasoSearchResponse
+    return (data.webpages ?? []).filter((page) => page.link).map((page) => ({
+      title: page.title || '无标题', url: page.link, snippet: page.snippet?.replace(/\s*\|\|\|\s*/g, ' ').slice(0, 500) ?? '',
+      ...(page.date ? { publishedAt: page.date } : {}),
+    }))
+  }
+  if (!credentials.apiKey) throw new Error('未配置 Tavily 或 MetaSo 搜索 API Key')
+  const response = await fetchFn('https://api.tavily.com/search', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key: credentials.apiKey, query, search_depth: 'basic', max_results: 5, include_answer: false }),
+  })
+  if (!response.ok) throw new Error(`搜索请求失败 (${response.status})`)
+  const data = await response.json() as TavilySearchResponse
+  return (data.results ?? []).filter((item) => item.url).map((item) => ({ title: item.title, url: item.url, snippet: item.content.slice(0, 500) }))
 }
 
 /** 格式化 Tavily 结果为 LLM 可读文本 */
