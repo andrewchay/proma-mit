@@ -3,7 +3,7 @@ import { mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { closeProjectDb, createProject, createTask, createAgentEmployee, createAgentEmployeeLearningSample, createAgentEmployeeCapabilityVersion, adoptAgentEmployeeCapabilityVersion, getAgentEmployeeCapabilityObservations, initProjectDb, listAgentEmployeeCapabilityRollbackAudits, listAgentEmployeeCapabilityVersions, listAgentEmployeeLearningSamples, reviewAgentEmployeeLearningSample, rollbackAgentEmployeeCapabilityVersion } from './project-sqlite-store'
+import { closeProjectDb, createProject, createTask, createAgentEmployee, createAgentEmployeeLearningSample, createAgentEmployeeCapabilityVersion, adoptAgentEmployeeCapabilityVersion, excludeAgentEmployeeLearningSample, getAgentEmployeeCapabilityObservations, initProjectDb, listAgentEmployeeCapabilityRollbackAudits, listAgentEmployeeCapabilityVersions, listAgentEmployeeLearningSamples, reviewAgentEmployeeLearningSample, rollbackAgentEmployeeCapabilityVersion } from './project-sqlite-store'
 import { proposeEmployeeCapabilityAdoption } from './agent-employee-capability-service'
 import { listApprovals } from './approval-service'
 
@@ -80,4 +80,17 @@ test('已脱敏样本达到阈值才创建员工能力推广审批', () => {
   const sampleIds = listAgentEmployeeLearningSamples(employee.id).map((sample) => sample.id)
   const result = proposeEmployeeCapabilityAdoption({ agentId: employee.id, scope: 'role', content: '先核对测试，再交付证据。', trainingScore: 81, heldOutScore: 80, judgeIndependent: true, evidenceSampleIds: sampleIds })
   expect(listApprovals().find((approval) => approval.id === result.approvalId)).toEqual(expect.objectContaining({ sourceType: 'employee_capability', status: 'pending' }))
+})
+
+test('Given 审批证据检查失败 When 激活候选 Then 同一事务不留下能力或部分证据更改', () => {
+  const employee = createAgentEmployee({ name: '事务检查', role: '测试', description: '', channelId: 'channel' })
+  const project = createProject({ title: '事务项目', description: '' })
+  const task = createTask(project.id, { title: '任务', description: '' })
+  const sample = createAgentEmployeeLearningSample({ agentId: employee.id, executionId: randomUUID(), projectId: project.id, taskId: task.id, capabilityVersionIds: [], outcome: 'accepted', evidenceSummary: '已脱敏', privacyStatus: 'sanitized' })
+  expect(() => adoptAgentEmployeeCapabilityVersion({ agentId: employee.id, versionNumber: 1, scope: 'role', content: '候选', contentHash: 'hash', source: 'evolution' }, () => {
+    excludeAgentEmployeeLearningSample(sample.id)
+    throw new Error('证据检查失败')
+  })).toThrow('证据检查失败')
+  expect(listAgentEmployeeCapabilityVersions(employee.id)).toHaveLength(0)
+  expect(listAgentEmployeeLearningSamples(employee.id)[0]?.privacyStatus).toBe('sanitized')
 })

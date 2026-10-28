@@ -3879,12 +3879,13 @@ export function getAgentEmployeeCapabilityDependencyGraph(agentId: string): { no
   return { nodes, blockedBy }
 }
 
-export function adoptAgentEmployeeCapabilityVersion(input: Omit<import('./project-types').AgentEmployeeCapabilityVersion, 'id' | 'createdAt' | 'status' | 'activatedAt'>): import('./project-types').AgentEmployeeCapabilityVersion {
+export function adoptAgentEmployeeCapabilityVersion(input: Omit<import('./project-types').AgentEmployeeCapabilityVersion, 'id' | 'createdAt' | 'status' | 'activatedAt'>, validateEvidence?: () => void): import('./project-types').AgentEmployeeCapabilityVersion {
   const { detectCapabilityConflicts, formatConflictMessage, hasBlockingConflict } = require('./agent-employee-capability-conflict') as typeof import('./agent-employee-capability-conflict')
   const database = getProjectDb()
   let adopted: import('./project-types').AgentEmployeeCapabilityVersion | undefined
 
   database.transaction(() => {
+    validateEvidence?.()
     // 冲突检查必须与 CAS 和写入处于同一事务，避免检查后 peer 被并发替换。
     const activeRows = database.prepare("SELECT * FROM agent_employee_capability_versions WHERE agent_id = ? AND status = 'active'").all(input.agentId) as CapabilityVersionRow[]
     const activeVersions = activeRows.map(rowToCapabilityVersion)
