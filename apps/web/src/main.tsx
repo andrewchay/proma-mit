@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import './styles.css'
 import { SharedFiles } from './SharedFiles'
+import { PublishSharedFile } from './PublishSharedFile'
 import { exportAuditCsv } from './download'
 
 const apiBaseAtom = atom(import.meta.env.VITE_PROMA_API_BASE_URL ?? '')
@@ -227,6 +228,7 @@ function App(): JSX.Element {
       <section className="card conversation"><div className="section-title"><div><h2>{sessions.find((item) => item.sessionId === selected)?.title ?? '选择会话'}</h2><small>连续 SSE：自动重连并携带 Last-Event-ID</small></div></div><div className="messages">{messages.map((message, index) => <article className={`message ${message.type}`} key={message.uuid ?? index}><div>{messageText(message) || '（非文本消息）'}</div>{message.uuid && <button className="quiet" onClick={() => void rewind(message.uuid)}>从此回退</button>}</article>)}{stream.length > 0 && <article className="message streaming">{stream.join('')}</article>}</div><div className="composer"><textarea placeholder="输入任务…" value={prompt} onChange={(event) => setPrompt(event.target.value)} /><button onClick={() => void run()} disabled={!selected || !prompt.trim()}>运行 Agent</button></div></section>
       <aside className="side-stack"><section className="card"><h2>待处理交互</h2>{interactions.length === 0 && <p className="muted">当前会话没有待处理审批。</p>}{interactions.map((item) => <InteractionCard key={item.requestId} item={item} answers={answers} setAnswers={setAnswers} feedback={planFeedback[item.requestId] ?? ''} setFeedback={(value) => setPlanFeedback((state) => ({ ...state, [item.requestId]: value }))} onResolve={resolveInteraction} />)}</section><section className="card"><h2>MCP 连接</h2>{mcpServers.length === 0 && <p className="muted">当前工作区没有可显示的 MCP 服务。</p>}{mcpServers.map((server) => <div className="mcp" key={server.serverName}><b>{server.serverName}</b><small>{server.transport} · {server.authType}</small><span className={server.connected ? 'ok' : 'muted'}>{server.connected ? '已授权' : '未授权'}</span></div>)}</section></aside>
     </section>
+    <PublishSharedFile request={request} />
     <SharedFiles request={request} />
     <section className="card operations"><div className="section-title"><h2>运维与审计</h2><div><button onClick={() => void loadAdmin('/agent/metrics')}>指标</button><button onClick={() => void loadAdmin('/agent/tasks')}>任务树</button></div></div><div className="audit-actions"><input placeholder="按 action 筛选审计" value={auditAction} onChange={(event) => setAuditAction(event.target.value)} /><button onClick={() => void loadAdmin(`/agent/audit${auditAction ? `?action=${encodeURIComponent(auditAction)}` : ''}`)}>查询审计</button><button className="quiet" onClick={() => void exportAudit()}>导出 CSV</button></div>{admin !== undefined && <AdminPanel value={admin} />}</section>
   </main>
