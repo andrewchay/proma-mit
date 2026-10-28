@@ -39,6 +39,7 @@ export function OwnerDeliveredArtifact({ item }: { item: OwnerManagementDelivery
     <div><p className="mb-2 text-xs font-medium text-muted-foreground">成果正文</p><pre className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/50 p-3 font-sans text-sm">{item.content}</pre></div>
     {showPreview && previewHtml && <div className="overflow-hidden rounded-xl bg-muted/40 p-2">
       <p className="px-1 pb-2 text-xs text-muted-foreground">静态预览不运行脚本或加载外部资源；交互效果请在可信环境中验证。</p>
+      <p className="break-all px-1 pb-2 font-mono text-xs text-muted-foreground" title="用于核对当前预览对应的交付内容">成果标识：{item.artifactHash}</p>
       <div className="mb-2 flex gap-2" aria-label="预览宽度">
         <button type="button" aria-pressed={preview.viewport === 'adaptive'} className="rounded-lg bg-background px-2 py-1 text-xs aria-pressed:bg-primary aria-pressed:text-primary-foreground" onClick={() => setPreview({ ...preview, viewport: 'adaptive' })}>自适应宽度</button>
         <button type="button" aria-pressed={preview.viewport === 'mobile'} className="rounded-lg bg-background px-2 py-1 text-xs aria-pressed:bg-primary aria-pressed:text-primary-foreground" onClick={() => setPreview({ ...preview, viewport: 'mobile' })}>手机宽度</button>
