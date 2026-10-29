@@ -262,6 +262,21 @@ export async function terminateProcesses(pids: number[], options: TerminateOptio
 
   for (const pid of aliveTargets()) signal(pid, 'SIGTERM')
   await sleep(graceMs)
+  // 宽限期间原进程可能退出并发生 PID 复用；升级前必须重新核对。
+  if (options.identities && allowed.length > 0) {
+    try {
+      const table = await (options.listProcesses ?? listProcessTable)()
+      allowed = allowed.filter((pid) => {
+        const check = verifyIdentity(table, pid, options.identities?.[pid])
+        if (check === 'reused') skippedReused.push(pid)
+        if (check === 'unverifiable') unverified.push(pid)
+        return check === 'match'
+      })
+    } catch {
+      unverified.push(...allowed)
+      allowed = []
+    }
+  }
   for (const pid of aliveTargets()) signal(pid, 'SIGKILL')
   if (killGraceMs > 0) await sleep(killGraceMs)
 

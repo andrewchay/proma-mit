@@ -50,3 +50,7 @@
 - **`ps` 依赖**：进程表不可用时一律标 `unavailable` 并告警，不会假装已清理。Windows 未验证（当前 `platform !== 'darwin'` 的 Bash 沙箱本身就是默认拒绝，MCP 回收未加平台分支）。
 - **未做真实 Electron 打包应用 + 真实 MCP server 验证**；接线经单测覆盖，未在打包产物里启动真实 `npx` 系 server 观察孤儿进程。
 - Provider 无回执的 unknown 语义、崩溃重启对账仍属受控自主第 3 步的未完成部分。
+
+## SIGKILL 前再次核对
+
+SIGTERM 宽限期后重新读取进程表并核对身份；PID 已复用或身份不可验证时不升级发送 SIGKILL。定向测试模拟宽限期间 PID 复用。`ps` 启动时间仅精确到秒，检查与发送信号仍不具备内核级原子性，不能声称完全消除 PID 复用误伤风险。

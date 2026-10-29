@@ -121,9 +121,10 @@ describe('解除未知动作', () => {
     await seed()
     const ctx = {
       cwd: '/tmp', sessionId: SESSION, abortSignal: new AbortController().signal,
-      onAskUser: async (input: { questions: { question: string }[] }) => {
+      onAskUser: async (input: Record<string, unknown>) => {
+        const questions = (input.questions ?? []) as { question: string }[]
         await recordUnknownAction({ sessionId: SESSION, tool: 'ComputerUseClick', actionKey: ACTION_KEY, reason: 'new failure' })
-        return { behavior: 'allow' as const, answers: { [input.questions[0].question]: '已核对：动作没有生效，允许重试' } }
+        return { behavior: 'allow' as const, answers: { [questions[0]?.question ?? '']: '已核对：动作没有生效，允许重试' } }
       },
     }
     const result = await executeResolveUnknownActionTool({ action_key: ACTION_KEY }, ctx)

@@ -238,6 +238,20 @@ describe('进程身份校验（PID 复用防护）', () => {
     expect(verifyIdentity([{ pid: 101, ppid: 100 }], 101, 'Thu Oct 29 09:00:01 2026')).toBe('unverifiable')
   })
 
+  test('Given SIGTERM 后 PID 被复用 When 升级 SIGKILL Then 不给新进程发信号', async () => {
+    let reads = 0
+    const signals: string[] = []
+    const evidence = await terminateProcesses([101], {
+      identities: { 101: 'original' },
+      listProcesses: async () => [{ pid: 101, ppid: 1, startedAt: reads++ === 0 ? 'original' : 'replacement' }],
+      isAlive: () => true,
+      sendSignal: (_pid, signal) => { signals.push(signal) },
+      sleep: async () => {},
+    })
+    expect(signals).toEqual(['SIGTERM'])
+    expect(evidence.skippedReused).toContain(101)
+  })
+
   test('Given PID 已被复用 When 终止 Then 不发信号并记录跳过', async () => {
     // 快照后 102 退出，pid 被无关进程占用：启动时间不同。
     const replaced = rows.map((row) => (row.pid === 102 ? { ...row, startedAt: 'Thu Oct 29 10:30:00 2026' } : row))
