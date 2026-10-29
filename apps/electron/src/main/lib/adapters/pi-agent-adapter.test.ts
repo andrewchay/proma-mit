@@ -872,6 +872,43 @@ describe('PiAgentAdapter', () => {
     }
   })
 
+  test('Given Pi 旧会话停止后同 ID 新会话启动 When 旧会话随后退出 Then 新会话仍可停止', async () => {
+    let releaseFirst: (() => void) | undefined
+    let releaseSecond: (() => void) | undefined
+    promptGate = new Promise<void>(resolve => { releaseFirst = resolve })
+    sessionActivated = false
+    abortCallCount = 0
+    const adapter = new PiAgentAdapter()
+    const oldCaller = new AbortController()
+    const input = { sessionId: 's-pi-restart', prompt: '运行', agentRuntime: 'pi' as const, provider: 'deepseek' as const,
+      apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp' }
+    const first = adapter.query({ ...input, abortSignal: oldCaller.signal })[Symbol.asyncIterator]()
+    const firstDone = first.next()
+    for (let i = 0; i < 100 && !sessionActivated; i++) await new Promise(resolve => setTimeout(resolve, 1))
+    if (!sessionActivated) throw new Error('首个 Pi 会话未启动')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    adapter.abort(input.sessionId)
+    promptGate = new Promise<void>(resolve => { releaseSecond = resolve })
+    sessionActivated = false
+    const second = adapter.query(input)[Symbol.asyncIterator]()
+    const secondDone = second.next()
+    for (let i = 0; i < 100 && !sessionActivated; i++) await new Promise(resolve => setTimeout(resolve, 1))
+    if (!sessionActivated) throw new Error('第二个 Pi 会话未启动')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    oldCaller.abort()
+    expect(abortCallCount).toBe(1)
+    releaseFirst?.()
+    await firstDone
+    await first.return?.()
+    adapter.abort(input.sessionId)
+    expect(abortCallCount).toBe(2)
+    releaseSecond?.()
+    await secondDone
+    await second.return?.()
+    promptGate = undefined
+    adapter.dispose()
+  })
+
   test('given an active Pi turn when it is cancelled then the Pi session is released', async () => {
     let resolvePrompt: (() => void) | undefined
     promptGate = new Promise<void>((resolve) => { resolvePrompt = resolve })

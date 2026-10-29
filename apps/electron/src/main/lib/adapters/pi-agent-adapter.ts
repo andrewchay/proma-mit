@@ -712,18 +712,21 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         return
       }
     })
-    this.activeSessions.set(sessionId, {
+    const activePiSession: ActivePiSession = {
       session,
       unsubscribe,
       toolAbortController,
       pendingInterruptPrompts: [],
       interrupting: false,
-    })
+    }
+    this.activeSessions.set(sessionId, activePiSession)
 
     // HR09：调用方 abortSignal 此前只在压缩路径生效；主 prompt 链必须同样响应，
     // 否则中止后会话继续发起 Provider 请求与工具调用（真实运行已观测到该缺口）。
     // 语义等价于 adapter.abort(sessionId)：终止流式、清 interrupt 队列、释放会话。
-    const onCallerAbort = (): void => { this.abort(sessionId) }
+    const onCallerAbort = (): void => {
+      if (this.activeSessions.get(sessionId) === activePiSession) this.abort(sessionId)
+    }
     if (abortSignal?.aborted) onCallerAbort()
     else abortSignal?.addEventListener('abort', onCallerAbort, { once: true })
 
@@ -903,7 +906,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       abortSignal?.removeEventListener('abort', onCallerAbort)
       budgetGate?.stop()
       partialAssistantCoalescer.dispose()
-      this.releaseSession(sessionId)
+      this.releaseSession(sessionId, activePiSession)
       mcpRelease?.()
       // task span 收尾：query 抛错时标 error；结束时刻由 sink 补全。
       if (spanSink && taskSpanId) {
@@ -992,9 +995,9 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     }
   }
 
-  private releaseSession(sessionId: string): void {
+  private releaseSession(sessionId: string, expected?: ActivePiSession): void {
     const active = this.activeSessions.get(sessionId)
-    if (!active) return
+    if (!active || (expected && active !== expected)) return
     this.activeSessions.delete(sessionId)
     active.toolAbortController.abort()
     active.unsubscribe()
