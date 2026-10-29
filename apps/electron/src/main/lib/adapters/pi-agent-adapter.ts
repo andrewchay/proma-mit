@@ -423,6 +423,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         baseUrl: baseUrl ?? '',
         model,
         historyMessages: effectiveHistoryMessages,
+        contextWindowOverride: registration.model.contextWindow,
         observedUsage: getAgentSessionMeta(sessionId)?.lastContextUsage,
         currentPrompt: prompt,
         systemPrompt: effectiveSystemPrompt,
@@ -608,6 +609,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     const resetAssistantUuid = (): void => { assistantUuid = undefined }
     const partialAssistantCoalescer = createPartialMessageCoalescer<PiAssistantMessage>((message) => {
       const converted = convertPiMessageToSDKMessage(message, sessionId, model, {
+        contextWindow: registration.model.contextWindow,
         final: false,
         uuid: assistantUuidFor(),
       })
@@ -628,6 +630,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         } else touchActivity()
         partialAssistantCoalescer.flush()
         const message = convertPiMessageToSDKMessage(event.message, sessionId, model, {
+          contextWindow: registration.model.contextWindow,
           final: true,
           ...(isAssistantPiMessage(event.message) ? { uuid: assistantUuidFor() } : {}),
         })

@@ -6,6 +6,7 @@
  * 数据持久化到 ~/.proma/channels.json。
  */
 
+import { enrichModelContexts, modelContextEndpoint } from './model-context-capability'
 import { readFileSync, writeFileSync, existsSync } from 'node:fs'
 import { safeStorage } from 'electron'
 import { randomUUID } from 'node:crypto'
@@ -153,13 +154,13 @@ export function listChannels(): Channel[] {
     config.channels.push(presetChannel)
     writeConfig(config)
     console.log('[渠道管理] 已自动创建 DeepSeek 预设渠道')
-    return config.channels
+    return config.channels.map(withModelContexts)
   }
 
   // 归一化历史/旧版 provider 值（anthropic-compatible / proma → custom），避免渲染层崩溃
   return config.channels.map((c) => {
     const normalized = normalizeProviderType(c.provider as string | undefined | null)
-    return normalized === c.provider ? c : { ...c, provider: normalized as ProviderType }
+    return withModelContexts(normalized === c.provider ? c : { ...c, provider: normalized as ProviderType })
   })
 }
 
@@ -173,7 +174,21 @@ export function getChannelById(id: string): Channel | undefined {
   const channel = config.channels.find((c) => c.id === id)
   if (!channel) return undefined
   const normalized = normalizeProviderType(channel.provider as string | undefined | null)
-  return normalized === channel.provider ? channel : { ...channel, provider: normalized as ProviderType }
+  return withModelContexts(normalized === channel.provider ? channel : { ...channel, provider: normalized as ProviderType })
+}
+
+function withModelContexts(channel: Channel): Channel {
+  return { ...channel, models: enrichModelContexts(channel.provider, channel.models) }
+}
+
+function validateModelWindows(models: ChannelModel[]): void {
+  for (const model of models) {
+    for (const value of [model.contextWindow, model.contextWindowOverride]) {
+      if (value !== undefined && (!Number.isSafeInteger(value) || value <= 0)) {
+        throw new Error(`模型 ${model.id} 的上下文窗口必须为正整数 tokens`)
+      }
+    }
+  }
 }
 
 /**
@@ -183,6 +198,7 @@ export function getChannelById(id: string): Channel | undefined {
  * @returns 创建后的渠道（apiKey 为加密态）
  */
 export function createChannel(input: ChannelCreateInput): Channel {
+  validateModelWindows(input.models)
   const config = readConfig()
   const now = Date.now()
 
@@ -211,7 +227,7 @@ export function createChannel(input: ChannelCreateInput): Channel {
   })
 
   console.log(`[渠道管理] 已创建渠道: ${channel.name} (${channel.id})`)
-  return channel
+  return withModelContexts(channel)
 }
 
 /**
@@ -222,6 +238,7 @@ export function createChannel(input: ChannelCreateInput): Channel {
  * @returns 更新后的渠道
  */
 export function updateChannel(id: string, input: ChannelUpdateInput): Channel {
+  if (input.models) validateModelWindows(input.models)
   const config = readConfig()
   const index = config.channels.findIndex((c) => c.id === id)
 
@@ -237,7 +254,16 @@ export function updateChannel(id: string, input: ChannelUpdateInput): Channel {
     provider: input.provider ?? existing.provider,
     baseUrl: input.baseUrl ?? existing.baseUrl,
     apiKey: input.apiKey ? encryptApiKey(input.apiKey) : existing.apiKey,
-    models: input.models ?? existing.models,
+    models: (input.models ?? existing.models).map((model) => {
+      if ((input.provider !== undefined && input.provider !== existing.provider)
+        || (input.baseUrl !== undefined && input.baseUrl !== existing.baseUrl)) {
+        const endpoint = modelContextEndpoint(input.provider ?? existing.provider, input.baseUrl ?? existing.baseUrl)
+        if (model.contextWindowSource === 'api' && model.contextWindowEndpoint === endpoint) return model
+        const { contextWindow, contextWindowSource, contextWindowEndpoint, ...rest } = model
+        return rest
+      }
+      return model
+    }),
     enabled: input.enabled ?? existing.enabled,
     updatedAt: Date.now(),
   }
@@ -256,7 +282,7 @@ export function updateChannel(id: string, input: ChannelUpdateInput): Channel {
   })
 
   console.log(`[渠道管理] 已更新渠道: ${updated.name} (${updated.id})`)
-  return updated
+  return withModelContexts(updated)
 }
 
 /**
@@ -699,6 +725,17 @@ function createPresetModelsResult(label: string, models: ChannelModel[]): FetchM
 }
 
 export async function fetchModels(input: FetchModelsInput): Promise<FetchModelsResult> {
+  const result = await fetchProviderModels(input)
+  if (!result.success) return result
+  result.models = enrichModelContexts(input.provider, result.models).map((model) =>
+    model.contextWindowSource === 'api'
+      ? { ...model, contextWindowEndpoint: modelContextEndpoint(input.provider, input.baseUrl) }
+      : model)
+
+  return result
+}
+
+async function fetchProviderModels(input: FetchModelsInput): Promise<FetchModelsResult> {
   const proxyUrl = await getEffectiveProxyUrl()
 
   try {
@@ -790,6 +827,7 @@ export async function fetchModels(input: FetchModelsInput): Promise<FetchModelsR
  */
 interface AnthropicModelItem {
   id: string
+  max_input_tokens?: number
   display_name?: string
   type?: string
 }
@@ -848,6 +886,8 @@ async function fetchAnthropicCompatibleModels(
   const models: ChannelModel[] = items.map((item) => ({
     id: item.id,
     name: item.display_name || item.id,
+    ...(typeof item.max_input_tokens === 'number' && Number.isSafeInteger(item.max_input_tokens) && item.max_input_tokens > 0
+      ? { contextWindow: item.max_input_tokens, contextWindowSource: 'api' as const } : {}),
     enabled: true,
   }))
 
@@ -863,6 +903,7 @@ async function fetchAnthropicCompatibleModels(
  */
 interface OpenAIModelItem {
   id: string
+  context_window?: number
   owned_by?: string
 }
 
@@ -898,6 +939,8 @@ async function fetchOpenAICompatibleModels(baseUrl: string, apiKey: string, prox
   const models: ChannelModel[] = items.map((item) => ({
     id: item.id,
     name: item.id,
+    ...(typeof item.context_window === 'number' && Number.isSafeInteger(item.context_window) && item.context_window > 0
+      ? { contextWindow: item.context_window, contextWindowSource: 'api' as const } : {}),
     enabled: true,
   }))
 
@@ -916,6 +959,7 @@ async function fetchOpenAICompatibleModels(baseUrl: string, apiKey: string, prox
  */
 interface GoogleModelItem {
   name: string
+  inputTokenLimit?: number
   displayName?: string
   description?: string
   supportedGenerationMethods?: string[]
@@ -928,7 +972,7 @@ interface GoogleModelItem {
  * 仅返回支持 generateContent 的模型（排除纯 embedding 模型）。
  */
 async function fetchGoogleModels(baseUrl: string, apiKey: string, proxyUrl?: string): Promise<FetchModelsResult> {
-  const url = normalizeBaseUrl(baseUrl)
+  const url = normalizeBaseUrl(baseUrl).replace(/\/v1(?:beta)?$/, '')
   const fetchFn = getFetchFn(proxyUrl)
 
   const response = await fetchFn(`${url}/v1beta/models?key=${apiKey}`, {
@@ -958,6 +1002,8 @@ async function fetchGoogleModels(baseUrl: string, apiKey: string, proxyUrl?: str
     return {
       id,
       name: item.displayName || id,
+      ...(typeof item.inputTokenLimit === 'number' && Number.isSafeInteger(item.inputTokenLimit) && item.inputTokenLimit > 0
+        ? { contextWindow: item.inputTokenLimit, contextWindowSource: 'api' as const } : {}),
       enabled: true,
     }
   })

@@ -155,6 +155,7 @@ function estimateStreamPartTokens(part: unknown): number {
 export interface AISDKAgentTurnInput {
   /** 内部隔离收紧字段，不授予用途权限；adapter 与最终出口独立重读权威来源。 */
   ownerPlanningRequest?: { systemPrompt: string; userPrompt: string; maxOutputTokens: number; reasoningEffort?: 'low'; jsonOutput?: true }
+  contextWindow?: number
   sessionId: string
   prompt: string
   modelId: string
@@ -302,7 +303,12 @@ export class AISDKRuntimeCore {
       })) + 256,
       provider: input.provider,
       modelId: input.modelId,
-      onAgentEvent: owner ? (event) => { if (event.type === 'text_delta') partialText += event.text; input.onAgentEvent?.(event) } : input.onAgentEvent,
+      onAgentEvent: (event) => {
+        if (owner && event.type === 'text_delta') partialText += event.text
+        input.onAgentEvent?.(event.type === 'usage_update'
+          ? { ...event, usage: { ...event.usage, contextWindow: input.contextWindow } }
+          : event)
+      },
       ...(owner ? { maxOutputTokens: owner.maxOutputTokens }
         : pilotRuntime ? { maxOutputTokens: pilotRuntime.maxOutputTokens }
           : ownerExecutionMaxOutputTokens ? { maxOutputTokens: ownerExecutionMaxOutputTokens } : {}),
@@ -344,6 +350,9 @@ export class AISDKRuntimeCore {
       ? streamRun.streamedSteps
       : await streamRun.result.steps
     const sdkMessages = buildAISDKMessagesFromSteps(steps, input.sessionId, input.modelId)
+    for (const message of sdkMessages) {
+      if (message.type === 'assistant') message._contextWindow = input.contextWindow
+    }
     const usage = await streamRun.result.usage
     // 不完整批次已无法撤销已执行调用；这里只持久化观察，供下游拒绝自动续跑/复核。
     const toolCallBatchIntegrity = assessStepsToolCallBatchIntegrity(steps)
@@ -360,6 +369,7 @@ export class AISDKRuntimeCore {
       usage: { ...toAISDKResultUsage(usage),
         input_tokens: (usage.inputTokens ?? 0) + (earlierUsage?.input_tokens ?? 0),
         output_tokens: (usage.outputTokens ?? 0) + (earlierUsage?.output_tokens ?? 0) },
+      _contextWindow: input.contextWindow,
       session_id: input.sessionId,
       toolCallBatchIntegrity,
       ...(ownerExecutionMaxOutputTokens !== undefined ? { finish_reason: ownerFinishReason,

@@ -8,6 +8,7 @@ import { OwnerPlanningRuntimeError } from '../agent-runtime/owner-planning-runti
  * OpenAI-compatible provider，工具执行和权限仍复用 Proma 自己的 runtime 工具层。
  */
 
+import { resolveChannelContextWindow } from '../model-context-capability'
 import type {
   AgentProviderAdapter,
   AgentQueryInput,
@@ -137,6 +138,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       throw new Error(`AI SDK Runtime 暂不支持 ${provider}`)
     }
 
+    const capability = await resolveChannelContextWindow({ provider, modelId: model, channelId: input.channelId })
     const protocol = getAgentProviderProtocol(provider, 'ai-sdk')
     // P01：策略 required 保证不满足时，在普通与Owner路径调用Provider前统一拒绝。
     assertRuntimePolicy('ai-sdk')
@@ -259,6 +261,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       // 压缩后以新历史继续本轮；boundary 摘要已持久化，后续 query 自然读到。
       if (historyMessages.length > 0) {
         const auto = await maybeAutoCompact({
+          contextWindowOverride: capability.contextWindow,
           sessionId,
           provider,
           apiKey,
@@ -292,6 +295,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
             sessionId,
             prompt: currentPrompt,
             modelId: model,
+            contextWindow: capability.contextWindow,
             provider,
             protocol,
             apiKey,
