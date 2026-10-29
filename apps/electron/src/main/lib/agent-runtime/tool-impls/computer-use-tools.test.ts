@@ -17,6 +17,7 @@ const {
   createComputerUseRequestTakeoverToolDefinition,
   executeComputerUseCapabilitiesTool,
   executeComputerUseClickTool,
+  executeComputerUseTypeTool,
   executeComputerUseScrollTool,
   executeComputerUseRequestTakeoverTool,
 } = await import('./computer-use-tools')
@@ -70,5 +71,53 @@ describe('Computer Use 工具', () => {
     )
     expect(result.isError).toBe(true)
     expect(result.content).toContain('取消')
+  })
+})
+
+describe('Computer Use 动作结果分类', () => {
+  const ctx = { cwd: '/tmp', sessionId: 'computer-outcome-test' }
+
+  test('Given 服务超时 When 点击 Then 标记结果未知并禁止自动重试', async () => {
+    const click = spyOn(computerUseService, 'click').mockImplementation(() => {
+      const error = new Error('operation timed out')
+      error.name = 'TimeoutError'
+      return Promise.reject(error)
+    })
+    try {
+      const result = await executeComputerUseClickTool({ x: 10, y: 20 }, ctx)
+      expect(result.isError).toBe(true)
+      expect(result.content).toContain('结果未知')
+      expect(result.content).toContain('禁止自动重试')
+      expect(result.content).toContain('ComputerUseScreenshot')
+    } finally { click.mockRestore() }
+  })
+
+  test('Given 权限被拒绝 When 点击 Then 标记未执行且允许修正后重试', async () => {
+    const click = spyOn(computerUseService, 'click').mockRejectedValue(Object.assign(new Error('not permitted'), { code: 'EPERM' }))
+    try {
+      const result = await executeComputerUseClickTool({ x: 10, y: 20 }, ctx)
+      expect(result.isError).toBe(true)
+      expect(result.content).toContain('未执行')
+      expect(result.content).not.toContain('结果未知')
+    } finally { click.mockRestore() }
+  })
+
+  test('Given 未知异常 When 输入 Then 保守判为结果未知', async () => {
+    const type = spyOn(computerUseService, 'type').mockRejectedValue(new Error('CGEventPost failed'))
+    try {
+      const result = await executeComputerUseTypeTool({ text: 'hello' }, ctx)
+      expect(result.isError).toBe(true)
+      expect(result.content).toContain('结果未知')
+    } finally { type.mockRestore() }
+  })
+
+  test('Given 成功 When 点击 Then 结果标记 applied 且保留原始 message', async () => {
+    const click = spyOn(computerUseService, 'click').mockResolvedValue('已点击 (10, 20)')
+    try {
+      const result = await executeComputerUseClickTool({ x: 10, y: 20 }, ctx)
+      expect(result.isError).toBeFalsy()
+      expect(result.content).toContain('已点击')
+      expect(result.content).toContain('applied')
+    } finally { click.mockRestore() }
   })
 })

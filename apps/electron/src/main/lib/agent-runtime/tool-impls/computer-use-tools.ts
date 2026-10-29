@@ -5,6 +5,7 @@ import { appendComputerUseAudit } from '../../computer-use-audit-service'
 import { computerUseService } from '../../computer-use-service'
 import { webBridgeService } from '../../web-bridge-service'
 import type { ToolContext } from '../types'
+import { describeDesktopActionFailure } from './computer-use-outcome'
 import { guardOwnerTool } from './tool-utils'
 
 export const COMPUTER_USE_STATUS_TOOL_NAME = 'ComputerUseStatus'
@@ -144,9 +145,7 @@ async function executeComputerUseTypeUnchecked(input: unknown, ctx: ToolContext)
   if (fallbackError) return fallbackError
   const text = readString(input, 'text')
   if (!text) return error('text 必须是非空字符串')
-  const message = await computerUseService.type(text)
-  recordAudit(ctx, 'type', { length: text.length })
-  return result({ message })
+  return runDesktopAction('type', ctx, { length: text.length }, () => computerUseService.type(text))
 }
 
 async function executeComputerUseScrollUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
@@ -155,9 +154,7 @@ async function executeComputerUseScrollUnchecked(input: unknown, ctx: ToolContex
   const direction = readString(input, 'direction')
   const amount = readNumber(input, 'amount') ?? 700
   if ((direction !== 'up' && direction !== 'down') || !Number.isFinite(amount) || amount < 1 || amount > 2000) return error('direction 必须为 up 或 down，amount 必须为 1 到 2000 的数字')
-  const message = await computerUseService.scroll(direction, amount)
-  recordAudit(ctx, 'scroll', { direction, amount })
-  return result({ message })
+  return runDesktopAction('scroll', ctx, { direction, amount }, () => computerUseService.scroll(direction, amount))
 }
 
 async function executeComputerUseDragUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
@@ -171,9 +168,9 @@ async function executeComputerUseDragUnchecked(input: unknown, ctx: ToolContext)
   const scale = readCoordinateScale(input)
   if (scale === null) return error('coordinate_scale 必须为大于 0 且不大于 1 的数字')
   const displayId = readString(input, 'display_id')
-  const message = await computerUseService.drag(fromX! / scale, fromY! / scale, toX! / scale, toY! / scale, displayId)
-  recordAudit(ctx, 'drag', { displayId, coordinateScale: scale })
-  return result({ message })
+  return runDesktopAction('drag', ctx, { displayId, coordinateScale: scale }, () =>
+    computerUseService.drag(fromX! / scale, fromY! / scale, toX! / scale, toY! / scale, displayId),
+  )
 }
 
 async function executeComputerUseKeyComboUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
@@ -182,9 +179,7 @@ async function executeComputerUseKeyComboUnchecked(input: unknown, ctx: ToolCont
   const key = readString(input, 'key')
   const modifiers = isRecord(input) && Array.isArray(input.modifiers) && input.modifiers.every((value) => typeof value === 'string') ? input.modifiers as string[] : []
   if (!key) return error('key 必须是字符串')
-  const message = await computerUseService.keyCombo(key, modifiers)
-  recordAudit(ctx, 'key_combo', { key, modifiers })
-  return result({ message })
+  return runDesktopAction('key_combo', ctx, { key, modifiers }, () => computerUseService.keyCombo(key, modifiers))
 }
 
 async function executeComputerUseRequestTakeoverUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
@@ -202,6 +197,30 @@ async function executeComputerUseRequestTakeoverUnchecked(input: unknown, ctx: T
   return completed ? result({ message: '用户已完成接管，可继续执行' }) : error('用户取消接管')
 }
 
+/**
+ * 执行会改变机器状态的桌面动作。
+ *
+ * 成功 → 记 applied；抛错 → 按"未执行/结果未知"分类记账，未知时明确禁止自动重试。
+ * 桌面动作没有 Provider 回执，这里不把"调用返回了"当成"确实生效"，也不把
+ * "抛错"当成"没生效"。
+ */
+async function runDesktopAction(
+  action: string,
+  ctx: ToolContext,
+  detail: Record<string, unknown>,
+  run: () => Promise<string>,
+): Promise<ToolResult> {
+  try {
+    const message = await run()
+    recordAudit(ctx, action, { ...detail, outcome: 'applied' })
+    return result({ message, outcome: 'applied' })
+  } catch (thrown) {
+    const failure = describeDesktopActionFailure(action, thrown)
+    recordAudit(ctx, action, { ...detail, outcome: failure.outcome, error: failure.reason })
+    return error(failure.message)
+  }
+}
+
 function definition(name: string, description: string) { return { name, description, parameters: { type: 'object' as const, properties: {} } } }
 function pointDefinition(name: string, description: string) { return { name, description, parameters: { type: 'object' as const, properties: { x: { type: 'number' }, y: { type: 'number' }, ...DISPLAY_COORDINATE_PROPERTIES }, required: ['x', 'y'] } } }
 
@@ -214,9 +233,9 @@ async function executePoint(input: unknown, ctx: ToolContext, action: 'click' | 
   if (x === undefined || y === undefined) return error('x 和 y 必须是数字')
   if (scale === null) return error('coordinate_scale 必须为大于 0 且不大于 1 的数字')
   const displayId = readString(input, 'display_id')
-  const message = await computerUseService[action](x / scale, y / scale, displayId)
-  recordAudit(ctx, action, { displayId, coordinateScale: scale })
-  return result({ message })
+  return runDesktopAction(action, ctx, { displayId, coordinateScale: scale }, () =>
+    computerUseService[action](x / scale, y / scale, displayId),
+  )
 }
 
 function readCoordinateScale(input: unknown): number | null {
