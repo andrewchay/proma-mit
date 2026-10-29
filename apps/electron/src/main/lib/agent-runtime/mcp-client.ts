@@ -11,7 +11,7 @@ import type { ToolResult } from '@gravitas/core'
 import type { RuntimeToolDefinition, ToolContext } from './types'
 import { McpOAuthProvider } from './mcp-oauth-provider'
 import { registerPendingMcpOAuth } from './mcp-oauth-pending'
-import { readTransportPid, snapshotDescendants, terminateProcesses, type ReapEvidence } from './mcp-process-reaper'
+import { readTransportPid, snapshotProcessTree, terminateProcesses, type ReapEvidence } from './mcp-process-reaper'
 import { describeMcpToolFailure } from './mcp-tool-outcome'
 
 interface ConnectedServer {
@@ -26,6 +26,16 @@ export interface McpToolResult extends ToolResult {}
 export interface McpAuthRequiredPayload {
   workspaceSlug: string
   serverName: string
+}
+
+/** 把回收证据翻译成日志里能看懂的一句话。 */
+function describeReapStatus(evidence: ReapEvidence): string {
+  if (evidence.status === 'unavailable') return '无法核验（进程表不可用）'
+  if (evidence.status === 'unknown') return `身份无法确认，未下发信号（${evidence.unverified.length} 个进程待人工确认）`
+  if (evidence.skippedReused.length > 0) {
+    return `未确认，仍有 ${evidence.survivors.length} 个进程存活（已跳过 ${evidence.skippedReused.length} 个 PID 被复用的目标）`
+  }
+  return `未确认，仍有 ${evidence.survivors.length} 个进程存活`
 }
 
 export class McpClientManager {
@@ -183,7 +193,8 @@ export class McpClientManager {
       // 顺序关键：先在父进程仍存活时快照后代，再 close()。
       // 父进程一旦死掉，后代会被 reparent 到 pid 1，ppid 链断裂后再枚举就找不到了。
       const pid = readTransportPid(server.transport)
-      const descendants = pid ? await snapshotDescendants(pid) : undefined
+      // 快照必须带启动时间：close() 与发信号之间隔着宽限期，pid 可能已被复用。
+      const snapshot = pid ? await snapshotProcessTree(pid) : undefined
       try {
         await server.client.close()
       } catch (err) {
@@ -191,15 +202,25 @@ export class McpClientManager {
       }
       if (pid) {
         // SDK 的 close() 只杀直接子进程，快照里的后代需要单独收口。
-        const evidence = descendants === undefined
-          ? { rootPid: pid, targeted: [], signals: [], survivors: [], status: 'unavailable' as const }
-          : await terminateProcesses([...descendants, pid], { rootPid: pid }).catch(() => undefined)
+        const evidence = snapshot === undefined
+          ? {
+              rootPid: pid,
+              targeted: [],
+              signals: [],
+              survivors: [],
+              skippedReused: [],
+              unverified: [],
+              status: 'unavailable' as const,
+              identity: 'unverified' as const,
+            }
+          : await terminateProcesses([...snapshot.descendants, pid], {
+              rootPid: pid,
+              identities: snapshot.identities,
+            }).catch(() => undefined)
         if (evidence) {
           this.reapEvidence.push(evidence)
           if (evidence.status !== 'confirmed') {
-            console.warn(
-              `[MCP 客户端] 服务器 ${server.name} 进程树回收${evidence.status === 'unavailable' ? '无法核验（进程表不可用）' : `未确认，仍有 ${evidence.survivors.length} 个进程存活`}，pid=${pid}`,
-            )
+            console.warn(`[MCP 客户端] 服务器 ${server.name} 进程树回收${describeReapStatus(evidence)}，pid=${pid}`)
           }
         }
       }
