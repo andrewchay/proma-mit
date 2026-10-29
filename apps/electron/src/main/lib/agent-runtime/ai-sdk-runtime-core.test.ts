@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test'
 import { buildElectronMock } from '../testing/electron-mock'
 import type { RuntimeToolDefinition } from './types'
-import type { AISDKRuntimeSessionState, ExecutedAISDKToolResult } from './ai-sdk-runtime-core'
+import type { AISDKRuntimeSessionState, AISDKToolExecutionState, ExecutedAISDKToolResult } from './ai-sdk-runtime-core'
 
 
 mock.module('electron', () => buildElectronMock())
@@ -34,6 +34,65 @@ function createRuntimeTool(name: string, execute: RuntimeToolDefinition['execute
 }
 
 describe('AI SDK runtime core', () => {
+  test('Given 工具集已绑定会话 When 调用方改写状态 Then 工具仍使用初始身份和工作目录', async () => {
+    const core = new AISDKRuntimeCore()
+    const activeSession: AISDKRuntimeSessionState = { controller: new AbortController(), permissionMode: 'bypassPermissions', planModeEntered: false }
+    const state: AISDKToolExecutionState = { sessionId: 'bound-session', cwd: '/tmp/bound', signal: activeSession.controller.signal, activeSession }
+    let observed: { sessionId: string; cwd: string; frozen: boolean } | undefined
+    const tools = core.createAISDKTools([createRuntimeTool('BoundRead', async (_input, ctx) => {
+      observed = { sessionId: ctx.sessionId, cwd: ctx.cwd, frozen: Object.isFrozen(ctx) }
+      return { toolCallId: '', content: 'ok' }
+    })], state)
+    state.sessionId = 'other-session'
+    state.cwd = '/tmp/other'
+    const tool = tools.BoundRead as unknown as ExecutableAITool
+    const result = await tool.execute({}, { toolCallId: 'x', messages: [], context: {} })
+    expect(result.isError).toBeFalsy()
+    expect(observed).toEqual({ sessionId: 'bound-session', cwd: '/tmp/bound', frozen: true })
+  })
+
+  test('Given 隔离写入标记在绑定后变化 When 执行 Then 失败关闭', async () => {
+    const core = new AISDKRuntimeCore()
+    const activeSession: AISDKRuntimeSessionState = { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false, worktreeScopedWrite: false }
+    let executed = false
+    const tools = core.createAISDKTools([createRuntimeTool('Write', async () => { executed = true; return { toolCallId: '', content: 'ok' } })], {
+      sessionId: 'scoped-session', cwd: '/tmp', signal: activeSession.controller.signal, activeSession,
+    })
+    activeSession.worktreeScopedWrite = true
+    const tool = tools.Write as unknown as ExecutableAITool
+    const result = await tool.execute({ file_path: '/tmp/a' }, { toolCallId: 'x', messages: [], context: {} })
+    expect(result.isError).toBe(true)
+    expect(executed).toBe(false)
+  })
+
+  test('Given 审批等待期间 Owner 标记变化 When 审批返回 Then 不执行工具', async () => {
+    const core = new AISDKRuntimeCore()
+    const activeSession: AISDKRuntimeSessionState = { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false, ownerActionApproval: true }
+    let executed = false
+    const tools = core.createAISDKTools([createRuntimeTool('SendExternalMessage', async () => { executed = true; return { toolCallId: '', content: 'ok' } })], {
+      sessionId: 'owner-approval-drift', cwd: '/tmp', signal: activeSession.controller.signal, activeSession,
+      canUseTool: async () => { activeSession.ownerActionApproval = false; return { allowed: true } },
+    })
+    const tool = tools.SendExternalMessage as unknown as ExecutableAITool
+    const result = await tool.execute({}, { toolCallId: 'x', messages: [], context: {} })
+    expect(result.isError).toBe(true)
+    expect(executed).toBe(false)
+  })
+
+  test('Given Owner 标记在绑定后变化 When 执行 Then 失败关闭', async () => {
+    const core = new AISDKRuntimeCore()
+    const activeSession: AISDKRuntimeSessionState = { controller: new AbortController(), permissionMode: 'bypassPermissions', planModeEntered: false, ownerActionApproval: true }
+    let executed = false
+    const tools = core.createAISDKTools([createRuntimeTool('BoundRead', async () => { executed = true; return { toolCallId: '', content: 'ok' } })], {
+      sessionId: 'owner-session', cwd: '/tmp', signal: activeSession.controller.signal, activeSession,
+    })
+    activeSession.ownerActionApproval = false
+    const tool = tools.BoundRead as unknown as ExecutableAITool
+    const result = await tool.execute({}, { toolCallId: 'x', messages: [], context: {} })
+    expect(result.isError).toBe(true)
+    expect(executed).toBe(false)
+  })
+
   test('given mixed history when building model messages then unsupported roles are filtered', () => {
     const messages = buildAISDKModelMessages([
       { role: 'system', content: 'ignored' },

@@ -83,6 +83,9 @@ export interface AISDKToolExecutionState {
   cwd: string
   signal: AbortSignal
   activeSession: AISDKRuntimeSessionState
+  /** 工具集创建时冻结的 Owner 标记，用于等待和调度后的复核。 */
+  ownerMarkerAtBinding?: boolean
+  worktreeMarkerAtBinding?: boolean
   canUseTool?: AISDKCanUseToolCallback
   onPermissionModeChange?: (mode: PromaPermissionMode) => void
   onEnterPlanMode?: () => void
@@ -112,6 +115,12 @@ export interface AISDKToolExecutionState {
     fetchFn?: typeof globalThis.fetch
     audit?: Omit<import('../context-compaction-audit-service').ContextCompactionAuditInput, 'packetVersion'>
   }
+}
+
+/** 敏感执行标记在工具集创建后不可变；权限模式仍可通过用户交互调整。 */
+function isBoundSessionMarkerValid(state: AISDKToolExecutionState): boolean {
+  return (state.ownerMarkerAtBinding === undefined || Boolean(state.activeSession.ownerActionApproval) === state.ownerMarkerAtBinding)
+    && (state.worktreeMarkerAtBinding === undefined || Boolean(state.activeSession.worktreeScopedWrite) === state.worktreeMarkerAtBinding)
 }
 
 export interface AISDKRuntimeStreamInput {
@@ -502,16 +511,25 @@ export class AISDKRuntimeCore {
   }
 
   createAISDKTools(tools: RuntimeToolDefinition[], state: AISDKToolExecutionState): ToolSet {
+    // 工具集在创建时固定会话与工作目录，权限模式仍从同一活动会话读取。
+    const ownerMarker = Boolean(state.activeSession.ownerActionApproval)
+    const boundState = { ...state, ownerMarkerAtBinding: ownerMarker, worktreeMarkerAtBinding: Boolean(state.activeSession.worktreeScopedWrite) }
     const toolSet: ToolSet = {}
     for (const runtimeTool of tools) {
       toolSet[runtimeTool.name] = tool({
         description: runtimeTool.description,
         inputSchema: jsonSchema<Record<string, unknown>>(runtimeTool.parameters as RuntimeToolJsonSchema),
         execute: async (args: Record<string, unknown>, options): Promise<ExecutedAISDKToolResult> => {
+          if (!isBoundSessionMarkerValid(boundState)) {
+            return { content: '受控会话身份标记已变化，拒绝执行工具', isError: true }
+          }
           // Owner执行：先用等待流式请求结算落库，再重查“用量已确认”门禁；结算失败仍阻断工具。
-          await awaitOwnerExecutionRequestsSettled(state.sessionId)
-          if (state.loadingPlan) {
-            const refusal = guardLoadedToolCall(state.loadingPlan, runtimeTool)
+          await awaitOwnerExecutionRequestsSettled(boundState.sessionId)
+          if (!isBoundSessionMarkerValid(boundState)) {
+            return { content: '受控会话身份标记已变化，拒绝执行工具', isError: true }
+          }
+          if (boundState.loadingPlan) {
+            const refusal = guardLoadedToolCall(boundState.loadingPlan, runtimeTool)
             if (!refusal.ok) {
               return {
                 content: refusal.reason === 'schema_changed'
@@ -522,8 +540,8 @@ export class AISDKRuntimeCore {
             }
           }
           return this.executeRuntimeTool(runtimeTool, args, {
-            ...state,
-            signal: options.abortSignal ?? state.signal,
+            ...boundState,
+            signal: options.abortSignal ?? boundState.signal,
           })
         },
         toModelOutput: ({ output }) => output.imageData?.length
@@ -623,6 +641,9 @@ export class AISDKRuntimeCore {
     }
 
     const permission = await this.checkToolPermission(runtimeTool.name, args, state)
+    if (!isBoundSessionMarkerValid(state)) {
+      return { content: '受控会话身份标记已变化，拒绝执行工具', isError: true }
+    }
     if (!permission.allowed) {
       return { content: permission.message || `权限被拒绝：${runtimeTool.name}`, isError: true }
     }
@@ -641,7 +662,7 @@ export class AISDKRuntimeCore {
 
     try {
       // E05：经共享调度器执行。锁域为本进程内经此调度的调用，不宣称跨进程安全。
-      const toolContext = {
+      const toolContext = Object.freeze({
         ownerWorkspaceWrite: Boolean(state.activeSession.ownerActionApproval),
         cwd: state.cwd,
         sessionId: state.sessionId,
@@ -658,13 +679,18 @@ export class AISDKRuntimeCore {
         onAskUser: state.onAskUser,
         runSubAgent: state.runSubAgent,
         mcpManager: state.mcpManager,
-      }
+      })
       const result = await runGuardedToolCall({
         tool: runtimeTool,
         args,
         ctx: toolContext,
         signal: state.signal,
-        execute: () => runtimeTool.execute(args, toolContext),
+        execute: () => {
+          if (!isBoundSessionMarkerValid(state)) {
+            throw new Error('受控会话身份标记已变化，拒绝执行工具')
+          }
+          return runtimeTool.execute(args, toolContext)
+        },
       })
       return { content: result.content, isError: result.isError, imageData: result.imageData }
     } catch (error) {
