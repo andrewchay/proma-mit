@@ -4,11 +4,11 @@
  * 将内容写入指定文件，若文件所在目录不存在则自动创建。
  */
 
-import { writeFileSync, mkdirSync, existsSync, openSync, closeSync, fstatSync, ftruncateSync, constants } from 'node:fs'
-import { dirname } from 'node:path'
+import { writeFileSync, mkdirSync, existsSync, openSync, closeSync, fstatSync, ftruncateSync, constants, realpathSync, statSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
-import { resolveToolPath, formatToolError } from './tool-utils.ts'
+import { resolveToolPath, assertDescriptorMatchesStat, formatToolError, requiresOwnerToolGate } from './tool-utils.ts'
 
 export interface WriteToolInput {
   file_path: string
@@ -47,10 +47,16 @@ export async function executeWriteTool(input: unknown, ctx: ToolContext): Promis
 
   try {
     let exclusiveCreate = false
-    if (ctx.ownerWorkspaceWrite) {
+    if (requiresOwnerToolGate(ctx.sessionId, ctx.ownerWorkspaceWrite)) {
       const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
-      gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Write', { file_path: params.file_path, content: params.content })
-      exclusiveCreate = gates.isOwnerAutoAllowedWorkspaceWrite(ctx.sessionId, 'Write', { file_path: params.file_path, content: params.content })
+      const toolInput = input as Record<string, unknown>
+      gates.assertOwnerToolWorkingDirectory(ctx.sessionId, ctx.cwd)
+      gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Write', toolInput)
+      exclusiveCreate = gates.isOwnerAutoAllowedWorkspaceWrite(ctx.sessionId, 'Write', toolInput)
+      if (!exclusiveCreate) {
+        const { consumeApprovedOwnerAction } = require('../../project-owner-action-approval') as typeof import('../../project-owner-action-approval')
+        if (!consumeApprovedOwnerAction(ctx.sessionId, { toolName: 'Write', toolInput })) throw new Error('Owner动作批准已使用或失效，请重新审批')
+      }
     }
     const dir = dirname(path)
     if (!existsSync(dir)) {
@@ -68,9 +74,12 @@ export async function executeWriteTool(input: unknown, ctx: ToolContext): Promis
     try {
       const stat = fstatSync(descriptor)
       if (!stat.isFile() || stat.nlink !== 1) throw new Error('Write拒绝符号链接、硬链接和非普通文件')
-      // 打开后再次检查父路径，缩小检查与使用窗口；这不是跨进程文件系统沙箱。
-      const recheck = resolveToolPath(params.file_path, ctx.cwd)
-      if (recheck.error) throw new Error(recheck.error)
+      // 新建文件无法在打开前 stat，组合两道校验：打开后 stat 预期路径比 inode（捕获
+      // "换出去再换回来"），再按规范化路径复核范围（捕获替换后持续指向外部）。
+      const expected = join(realpathSync(dirname(path)), basename(path))
+      assertDescriptorMatchesStat(descriptor, statSync(expected))
+      const scope = resolveToolPath(expected, ctx.cwd)
+      if (scope.error) throw new Error(scope.error)
       ftruncateSync(descriptor, 0)
       writeFileSync(descriptor, params.content, 'utf-8')
     } finally { closeSync(descriptor) }
