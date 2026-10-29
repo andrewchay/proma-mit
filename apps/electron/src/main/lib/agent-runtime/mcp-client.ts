@@ -12,6 +12,7 @@ import type { RuntimeToolDefinition, ToolContext } from './types'
 import { McpOAuthProvider } from './mcp-oauth-provider'
 import { registerPendingMcpOAuth } from './mcp-oauth-pending'
 import { readTransportPid, snapshotDescendants, terminateProcesses, type ReapEvidence } from './mcp-process-reaper'
+import { describeMcpToolFailure } from './mcp-tool-outcome'
 
 interface ConnectedServer {
   name: string
@@ -165,9 +166,12 @@ export class McpClientManager {
         { signal: ctx.abortSignal },
       )
       return { content: this.serializeResult(result), isError: false, toolCallId: '' }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      return { content: `MCP 工具调用失败: ${message}`, isError: true, toolCallId: '' }
+    } catch (thrown) {
+      // 工具可能在服务端已经执行，只是响应在返回途中超时或连接断开。
+      // 统一压成"调用失败"会让模型直接重试，在真实系统上是重复执行。
+      const failure = describeMcpToolFailure(`${serverName}__${toolName}`, thrown)
+      console.warn(`[MCP 客户端] 工具调用${failure.outcome === 'unknown' ? '结果未知' : '未执行'}: ${failure.reason}`)
+      return { content: failure.message, isError: true, toolCallId: '' }
     }
   }
 

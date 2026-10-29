@@ -69,14 +69,18 @@ export function classifyActionFailure(
  *
  * @param action 动作名，用于拼出模型能对应的前缀（如 `WebBridgeClick`）。
  * @param unknownHint 结果未知时的确认手段，必须说明"先做什么才能判断"。
+ * @param classify 可选的归类的实现；需要额外判据（如 JSON-RPC 错误码）时传入，
+ *   保证文案与归类结论一致，而不是各写一套。
  */
 export function describeActionFailure(
   action: string,
   error: unknown,
   rule: ActionFailureRule,
   unknownHint: string,
+  classify: (error: unknown) => { outcome: ActionFailureOutcome; reason: string } = (thrown) =>
+    classifyActionFailure(thrown, rule),
 ): ActionFailure {
-  const { outcome, reason } = classifyActionFailure(error, rule)
+  const { outcome, reason } = classify(error)
   if (outcome === 'not_applied') {
     return { outcome, reason, message: `${action} 未执行（${reason}）：已确认动作没有生效，修正前置条件后可以重试。` }
   }
