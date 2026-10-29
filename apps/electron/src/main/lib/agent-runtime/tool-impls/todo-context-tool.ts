@@ -9,6 +9,7 @@
  */
 
 import type { ToolResult } from '@gravitas/core'
+import { guardOwnerTool } from './tool-utils'
 import type { RuntimeToolDefinition, ToolContext } from '../types.ts'
 import { getTask, listTasks } from '../../project-service'
 
@@ -50,7 +51,7 @@ function renderTodo(task: { id: string; title: string; description?: string; sta
   return lines.join('\n')
 }
 
-export async function executeTodoContextTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+async function executeTodoContextToolUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const params = input as InspectTodoInput
   const todoId = params.todoId?.trim()
   if (!todoId) {
@@ -84,3 +85,5 @@ export async function executeTodoContextTool(input: unknown, ctx: ToolContext): 
     return { toolCallId: '', content: `读取待办失败: ${error instanceof Error ? error.message : String(error)}`, isError: true }
   }
 }
+
+export const executeTodoContextTool = guardOwnerTool(TODO_CONTEXT_TOOL_NAME, executeTodoContextToolUnchecked)

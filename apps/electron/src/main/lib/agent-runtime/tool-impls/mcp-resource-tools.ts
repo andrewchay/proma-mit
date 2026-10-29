@@ -6,7 +6,8 @@
  */
 
 import type { ToolResult } from '@gravitas/core'
-import type { RuntimeToolDefinition } from '../types'
+import type { RuntimeToolDefinition, ToolContext } from '../types'
+import { assertOwnerToolPermission, guardOwnerTool } from './tool-utils'
 
 export const LIST_MCP_RESOURCES_TOOL_NAME = 'ListMcpResourcesTool'
 export const READ_MCP_RESOURCE_TOOL_NAME = 'ReadMcpResourceTool'
@@ -19,7 +20,7 @@ export function createListMcpResourcesToolDefinition(): RuntimeToolDefinition {
       type: 'object',
       properties: {},
     },
-    execute: executeListMcpResourcesTool,
+    execute: guardOwnerTool(LIST_MCP_RESOURCES_TOOL_NAME, executeListMcpResourcesTool),
   }
 }
 
@@ -34,16 +35,17 @@ export function createReadMcpResourceToolDefinition(): RuntimeToolDefinition {
       },
       required: ['uri'],
     },
-    execute: executeReadMcpResourceTool,
+    execute: guardOwnerTool(READ_MCP_RESOURCE_TOOL_NAME, executeReadMcpResourceTool),
   }
 }
 
-async function executeListMcpResourcesTool(_input: unknown, ctx: { mcpManager?: import('../mcp-client').McpClientManager; abortSignal?: AbortSignal }): Promise<ToolResult> {
+async function executeListMcpResourcesTool(_input: unknown, ctx: ToolContext): Promise<ToolResult> {
   if (!ctx.mcpManager) {
     return { content: '当前没有可用的 MCP 客户端', isError: true, toolCallId: '' }
   }
   try {
     const result = await ctx.mcpManager.listAllResources(ctx.abortSignal)
+    assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, LIST_MCP_RESOURCES_TOOL_NAME, {})
     return { content: JSON.stringify(result, null, 2), isError: false, toolCallId: '' }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -51,7 +53,7 @@ async function executeListMcpResourcesTool(_input: unknown, ctx: { mcpManager?: 
   }
 }
 
-async function executeReadMcpResourceTool(input: unknown, ctx: { mcpManager?: import('../mcp-client').McpClientManager; abortSignal?: AbortSignal }): Promise<ToolResult> {
+async function executeReadMcpResourceTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   if (!ctx.mcpManager) {
     return { content: '当前没有可用的 MCP 客户端', isError: true, toolCallId: '' }
   }
@@ -62,6 +64,7 @@ async function executeReadMcpResourceTool(input: unknown, ctx: { mcpManager?: im
   }
   try {
     const result = await ctx.mcpManager.readResource(uri, ctx.abortSignal)
+    assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, READ_MCP_RESOURCE_TOOL_NAME, { uri })
     if (!result) {
       return { content: `未找到可读取的资源: ${uri}`, isError: true, toolCallId: '' }
     }

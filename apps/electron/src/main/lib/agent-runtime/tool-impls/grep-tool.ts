@@ -8,7 +8,7 @@
 import { spawn } from 'node:child_process'
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
-import { resolveToolPath, formatToolError, truncateOutput } from './tool-utils.ts'
+import { resolveToolPath, formatToolError, truncateOutput, assertOwnerToolPermission } from './tool-utils.ts'
 
 export interface GrepToolInput {
   path?: string
@@ -40,6 +40,8 @@ export function createGrepToolDefinition() {
 
 export async function executeGrepTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const params = input as GrepToolInput
+  const assertOwnerGate = (): void => assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, GREP_TOOL_NAME, { path: params.path, regex: params.regex })
+  try { assertOwnerGate() } catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
   const targetPath = params.path ?? '.'
   const { path, error: pathError } = resolveToolPath(targetPath, ctx.cwd)
   if (pathError) {
@@ -53,6 +55,8 @@ export async function executeGrepTool(input: unknown, ctx: ToolContext): Promise
       : ['-rn', '--max-count=50', '--', params.regex, path]
     const command = hasRg ? 'rg' : 'grep'
 
+    // 工具探测是异步操作，启动搜索进程前重新核验会话。
+    try { assertOwnerGate() } catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
     const { stdout, stderr, exitCode } = await runCommand(command, args, { cwd: ctx.cwd, timeout: 30_000 })
 
     if (exitCode !== 0 && !stdout && !stderr) {

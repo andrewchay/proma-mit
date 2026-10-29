@@ -8,6 +8,7 @@
 import type { ToolResult } from '@gravitas/core'
 import type { AskUserQuestion, AskUserQuestionOption } from '@gravitas/shared'
 import type { ToolContext } from '../types'
+import { assertOwnerToolPermission, formatToolError, guardOwnerTool } from './tool-utils'
 
 export const ASK_USER_QUESTION_TOOL_NAME = 'AskUserQuestion'
 
@@ -69,7 +70,7 @@ export function createAskUserQuestionToolDefinition() {
   }
 }
 
-export async function executeAskUserQuestionTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+async function executeAskUserQuestionUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   if (!ctx.onAskUser) {
     return {
       toolCallId: '',
@@ -89,6 +90,8 @@ export async function executeAskUserQuestionTool(input: unknown, ctx: ToolContex
 
   const signal = ctx.abortSignal ?? new AbortController().signal
   const result = await ctx.onAskUser(input as Record<string, unknown>, signal)
+  try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, ASK_USER_QUESTION_TOOL_NAME, input as Record<string, unknown>) }
+  catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
 
   if (result.behavior === 'deny') {
     return {
@@ -139,3 +142,5 @@ function parseQuestions(input: unknown): AskUserQuestion[] {
     }
   })
 }
+
+export const executeAskUserQuestionTool = guardOwnerTool(ASK_USER_QUESTION_TOOL_NAME, executeAskUserQuestionUnchecked)

@@ -15,6 +15,7 @@
 
 import { createRequire } from 'node:module'
 import type { ToolResult } from '@gravitas/core'
+import { guardOwnerTool } from './tool-utils'
 import type { ToolContext } from '../types.ts'
 import type { MemoryItem } from '../../memory-plugin-service'
 
@@ -118,7 +119,7 @@ export function createReadProjectMemoryToolDefinition() {
   }
 }
 
-export async function executeSearchProjectMemoryTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+async function executeSearchProjectMemoryUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const query = (input as SearchProjectMemoryInput | null)?.query?.trim()
   if (!query) return { toolCallId: '', content: '参数缺失: query', isError: true }
   if (!ctx.sessionId) return { toolCallId: '', content: '当前工具上下文缺少 sessionId，无法解析记忆范围。', isError: true }
@@ -157,7 +158,7 @@ export async function executeSearchProjectMemoryTool(input: unknown, ctx: ToolCo
   }
 }
 
-export async function executeReadProjectMemoryTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
+async function executeReadProjectMemoryUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const memoryId = (input as ReadProjectMemoryInput | null)?.memoryId?.trim()
   if (!memoryId) return { toolCallId: '', content: '参数缺失: memoryId', isError: true }
   if (!ctx.sessionId) return { toolCallId: '', content: '当前工具上下文缺少 sessionId，无法校验记忆范围。', isError: true }
@@ -196,3 +197,6 @@ export async function executeReadProjectMemoryTool(input: unknown, ctx: ToolCont
     return { toolCallId: '', content: `项目记忆读取失败: ${message}`, isError: true }
   }
 }
+
+export const executeSearchProjectMemoryTool = guardOwnerTool(SEARCH_PROJECT_MEMORY_TOOL_NAME, executeSearchProjectMemoryUnchecked)
+export const executeReadProjectMemoryTool = guardOwnerTool(READ_PROJECT_MEMORY_TOOL_NAME, executeReadProjectMemoryUnchecked)
