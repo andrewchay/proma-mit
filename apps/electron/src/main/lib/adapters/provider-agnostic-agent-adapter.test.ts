@@ -150,6 +150,40 @@ describe('Provider-Agnostic Agent 适配器', () => {
     }))
   })
 
+  test('Given 已取得 MCP 引用 When 后续提示词初始化失败 Then 释放引用并允许重试', async () => {
+    const promptBuilder = await import('../agent-runtime/prompt-builder')
+    const spy = spyOn(promptBuilder, 'buildAgentSystemPrompt').mockImplementation(() => { throw new Error('提示词初始化失败') })
+    let releases = 0
+    const manager = { listAllTools: async () => [] } as unknown as import('../agent-runtime/mcp-client').McpClientManager
+    const adapter = new ProviderAgnosticAgentAdapter({ acquireClientManager: async () => ({ manager, release: () => { releases++ } }) })
+    const input = { sessionId: 'proma-mcp-init-error', prompt: '运行', model: 'deepseek-chat', provider: 'deepseek' as const,
+      apiKey: 'mock-key', baseUrl: 'http://localhost/mock', cwd: '/tmp', workspaceSlug: 'test',
+      mcpServers: { test: { type: 'stdio' as const, command: 'mock', enabled: true } } }
+    try {
+      await expect(adapter.query(input)[Symbol.asyncIterator]().next()).rejects.toThrow('提示词初始化失败')
+      expect(releases).toBe(1)
+      spy.mockRestore()
+      const retried = adapter.query({ ...input, mcpServers: undefined })[Symbol.asyncIterator]()
+      expect((await retried.next()).done).not.toBe(true)
+      await retried.return?.()
+    } finally { spy.mockRestore(); adapter.dispose() }
+  })
+
+  test('Given Proma 初始化失败 When 使用同一会话重试 Then 不遗留活动占用', async () => {
+    const proxy = await import('../proxy-settings-service')
+    const spy = spyOn(proxy, 'getEffectiveProxyUrl').mockImplementation(async () => { throw new Error('代理初始化失败') })
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const input = { sessionId: 'proma-init-error', prompt: '运行', model: 'deepseek-chat', provider: 'deepseek' as const,
+      apiKey: 'mock-key', baseUrl: 'http://localhost/mock', cwd: '/tmp' }
+    try {
+      await expect(adapter.query(input)[Symbol.asyncIterator]().next()).rejects.toThrow('代理初始化失败')
+      spy.mockRestore()
+      const retried = adapter.query(input)[Symbol.asyncIterator]()
+      expect((await retried.next()).done).not.toBe(true)
+      await retried.return?.()
+    } finally { spy.mockRestore(); adapter.dispose() }
+  })
+
   test('Given Proma 正在初始化 When 直接停止 Then 不发模型请求', async () => {
     const capability = await import('../model-context-capability')
     const original = capability.resolveChannelContextWindow
