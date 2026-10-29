@@ -217,6 +217,28 @@ describe('McpClientManager.disconnect 接线', () => {
   })
 })
 
+describe('MCP 安全降级（真实进程）', () => {
+  test('Given 仍在运行的受控子进程 When 断开 Then 不额外终止并保留未确认状态', async () => {
+    const child = spawn('/bin/sleep', ['30'], { stdio: 'ignore' })
+    await new Promise<void>((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject) })
+    try {
+      const { McpClientManager } = await import('./mcp-client')
+      const manager = new McpClientManager({}, process.cwd())
+      ;(manager as unknown as { servers: unknown[] }).servers = [{
+        name: 'test', client: { close: async () => {} }, transport: { pid: child.pid },
+      }]
+      await manager.disconnect()
+      expect(child.exitCode).toBeNull()
+      expect(child.signalCode).toBeNull()
+      expect(['unknown', 'unavailable']).toContain(manager.getReapEvidence()[0]?.status ?? '')
+      expect(manager.getReapEvidence()[0]?.signals).toEqual([])
+    } finally {
+      child.kill('SIGTERM')
+      await new Promise<void>((resolve) => { if (child.exitCode !== null || child.signalCode !== null) resolve(); else child.once('exit', () => resolve()) })
+    }
+  })
+})
+
 describe('进程身份校验（PID 复用防护）', () => {
   const rows: FakeRow[] = [
     { pid: 100, ppid: 1, startedAt: 'Thu Oct 29 09:00:00 2026' },
