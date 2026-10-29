@@ -91,6 +91,8 @@ describe('Computer Use 动作结果分类', () => {
       expect(result.content).toContain('结果未知')
       expect(result.content).toContain('禁止自动重试')
       expect(result.content).toContain('ComputerUseScreenshot')
+      const { listPendingUnknownActions } = await import('../unknown-action-store')
+      expect((await listPendingUnknownActions(ctx.sessionId))[0]?.reason).toBe('operation timed out')
     } finally { click.mockRestore() }
   })
 

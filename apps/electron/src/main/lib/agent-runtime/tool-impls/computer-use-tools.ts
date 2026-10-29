@@ -246,7 +246,7 @@ async function runDesktopAction(
   } catch (thrown) {
     const failure = describeDispatchedActionFailure(`ComputerUse${action}`, thrown, '请先调用 ComputerUseScreenshot 并由用户核对实际状态。')
     recordAudit(ctx, action, { ...detail, outcome: failure.outcome, error: failure.reason })
-    await finishTrackedAction(tracked, false)
+    await finishTrackedAction(tracked, false, failure.reason)
     return error(failure.message)
   }
 }
