@@ -5,7 +5,7 @@
  * Agent 能够完成"读取文件 → 编辑文件 → 返回结果"的完整循环。
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock, beforeAll, afterAll } from 'bun:test'
+import { describe, test, expect, beforeEach, afterEach, mock, beforeAll, afterAll, spyOn } from 'bun:test'
 import { buildElectronMock } from '../testing/electron-mock'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -148,6 +148,35 @@ describe('Provider-Agnostic Agent 适配器', () => {
         return makeStreamResult('文件编辑完成，任务结束')
       },
     }))
+  })
+
+  test('Given Proma 正在初始化 When 直接停止 Then 不发模型请求', async () => {
+    const capability = await import('../model-context-capability')
+    const original = capability.resolveChannelContextWindow
+    let started!: () => void, release!: () => void
+    const startedPromise = new Promise<void>(resolve => { started = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const spy = spyOn(capability, 'resolveChannelContextWindow').mockImplementation(async input => {
+      started(); await gate; return original(input)
+    })
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const input = { sessionId: 'proma-initializing', prompt: '运行', model: 'deepseek-chat', provider: 'deepseek' as const,
+      apiKey: 'mock-key', baseUrl: 'http://localhost/mock', cwd: '/tmp' }
+    const iterator = adapter.query(input)[Symbol.asyncIterator]()
+    const pending = iterator.next().catch(() => undefined)
+    try {
+      await startedPromise
+      adapter.abort(input.sessionId)
+      await expect(adapter.query(input)[Symbol.asyncIterator]().next()).rejects.toThrow('Proma 会话已有活动运行')
+      release()
+      await pending
+      expect(streamCallCount).toBe(0)
+    } finally {
+      release()
+      await iterator.return?.()
+      adapter.dispose()
+      spy.mockRestore()
+    }
   })
 
   test('Given 父会话在子代理启动前已停止 When 启动 Provider-Agnostic Then 不发模型请求', async () => {
