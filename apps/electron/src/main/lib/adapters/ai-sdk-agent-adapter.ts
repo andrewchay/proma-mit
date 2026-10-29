@@ -1,3 +1,4 @@
+import { bindAISDKSessionIdentity } from '../agent-runtime/ai-sdk-session-identity'
 import { assertNoOwnerBusinessSession } from '../project-owner-task-evidence'
 import { assertToolAllowedForSessionPurpose, getOwnerExecutionToolNames, isOwnerWorkspaceFileActionCandidate } from '../project-owner-execution-gates'
 import { OwnerPlanningRuntimeError } from '../agent-runtime/owner-planning-runtime-error'
@@ -173,6 +174,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       cancelled: false,
       ownerPlanning: Boolean(owner),
     }
+    bindAISDKSessionIdentity(activeSession.state, sessionId, cwd)
     this.activeSessions.set(sessionId, activeSession)
     let mcpRelease: (() => void) | undefined
     try {

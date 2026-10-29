@@ -49,6 +49,7 @@ import {
 import { assessToolCallBatchIntegrity, type ToolCallBatchIntegrity } from '@gravitas/shared'
 import { estimateTokenCount } from '../agent-tool-token-estimator'
 import { runGuardedToolCall } from './tool-scheduler-service'
+import { matchesAISDKSessionIdentity } from './ai-sdk-session-identity'
 import { buildPilotRequestRuntime, type PilotBudgetContext } from '../project-pilot-request-exit'
 import { resolveOwnerExecutionMaxOutputTokens, awaitOwnerExecutionRequestsSettled } from '../project-owner-execution-request-exit'
 import { isOwnerAutoAllowedWorkspaceWrite } from '../project-owner-execution-gates'
@@ -119,7 +120,8 @@ export interface AISDKToolExecutionState {
 
 /** 敏感执行标记在工具集创建后不可变；权限模式仍可通过用户交互调整。 */
 function isBoundSessionMarkerValid(state: AISDKToolExecutionState): boolean {
-  return (state.ownerMarkerAtBinding === undefined || Boolean(state.activeSession.ownerActionApproval) === state.ownerMarkerAtBinding)
+  return matchesAISDKSessionIdentity(state.activeSession, state.sessionId, state.cwd)
+    && (state.ownerMarkerAtBinding === undefined || Boolean(state.activeSession.ownerActionApproval) === state.ownerMarkerAtBinding)
     && (state.worktreeMarkerAtBinding === undefined || Boolean(state.activeSession.worktreeScopedWrite) === state.worktreeMarkerAtBinding)
 }
 

@@ -31,6 +31,6 @@
 
 - Enterprise：临时 Postgres 与 Chromium 已验证成员发布、下载与版本撤销闭环；本地 MinIO 验证对象流和取消。真实身份服务、生产存储和客户环境仍待验证。
 
-- P1：AI SDK 工具集固定初始会话和工作目录，并在等待及调度后复核敏感标记；这只是状态漂移防护，完整身份保证仍待推进（[证据](session-binding-evidence.md)）。
+- P1：AI SDK 适配器将活动会话对象绑定到会话 ID 与工作目录；工具集固定上下文并在等待及调度后复核身份和敏感标记。进程内信任、其他 Runtime 与子 Agent 身份保证仍待推进（[证据](session-binding-evidence.md)）。
 
 - P0 验证基线：`d48e8fc6` 的全仓隔离测试 784 个文件、5524 pass、47 skip、0 fail；同一提交的 quality、executor 和三平台打包 smoke CI 通过。后续 P1 提交需各自验证，真实第三方 MCP 和业务验收仍未完成。
