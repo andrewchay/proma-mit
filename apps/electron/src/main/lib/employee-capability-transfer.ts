@@ -8,7 +8,6 @@
  */
 
 import { getGovernancePolicy } from './employee-capability-governance-policy'
-import { proposeEmployeeCapabilityAdoption } from './agent-employee-capability-service'
 import * as store from './project-sqlite-store'
 import type { AgentEmployeeCapabilityScope } from './project-types'
 
@@ -77,14 +76,14 @@ export function prepareCapabilityTransfer(input: CapabilityTransferInput): Capab
   const outcomeText = Object.entries(sourcePatterns.byOutcome).map(([outcome, count]) => `${outcome}=${count}`).join(' · ')
   return {
     status: 'prepared',
-    message: '已生成迁移摘要；不会复用来源员工的评测分数，目标员工必须自行重新评测。',
+    message: '已生成迁移摘要；目标员工的可追溯评测尚未接入，暂不能创建迁移候选。',
     patternSummary: [
       `来源员工：${source.name}（${sourcePatterns.sanitized} 条已脱敏样本，${sourcePatterns.versionCount} 个版本）`,
       `结果分布：${outcomeText || '无'}`,
       `范围：${input.scope === 'role' ? '角色级' : `工作区级 · ${input.workspaceId ?? '未指定'}`}`,
     ].join('\n'),
     requiredSteps: [
-      '在目标员工的样本上重新运行受控评测',
+      '接入目标员工样本、候选内容和评判来源可追溯的受控评测',
       'held-out 分数不得低于目标员工自身基线',
       '评判者必须独立',
       '通过后在审批页人工确认',
@@ -93,8 +92,8 @@ export function prepareCapabilityTransfer(input: CapabilityTransferInput): Capab
 }
 
 /**
- * 仅当目标员工已自行评测并通过门禁时，才允许创建待审批候选。
- * 调用方必须传入来自目标员工评测的真实分数，本函数不接受来源员工分数。
+ * 暂停创建迁移候选：调用方提供的分数和布尔值不能证明目标员工真实完成评测。
+ * 待实现可追溯到目标员工、样本、候选内容与评判来源的评测记录后再开放。
  */
 export function createTransferCandidate(input: {
   targetAgentId: string
@@ -114,5 +113,5 @@ export function createTransferCandidate(input: {
   }
   const policy = getGovernancePolicy()
   if (targetSamples.length < policy.minSanitizedSamples) throw new Error(`目标员工样本低于治理阈值 ${policy.minSanitizedSamples} 条`)
-  return proposeEmployeeCapabilityAdoption({ agentId: input.targetAgentId, scope: input.scope, workspaceId: input.workspaceId, content: input.content, trainingScore: input.trainingScore, heldOutScore: input.heldOutScore, judgeIndependent: true, evidenceSampleIds: input.evidenceSampleIds })
+  throw new Error('迁移候选尚未接入可追溯的目标员工评测记录，不能仅凭调用方分数创建')
 }

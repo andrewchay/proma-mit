@@ -1,3 +1,4 @@
+import { decideEmployeeEvaluation } from './employee-evaluation-decision'
 import { afterAll, beforeAll, expect, test } from 'bun:test'
 import { mkdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -18,22 +19,17 @@ afterAll(() => {
   delete process.env.PROMA_TEST_CONFIG_DIR
 })
 
-/**
- * 只验证门禁逻辑本身：不触发真实模型。
- * 这里直接复用评测服务内部的判定条件表达，避免为了测试而引入假渠道。
- */
-function decideGate(input: { judgeIndependent: boolean; heldOutBaseline: number | null; heldOutFinal: number | null; acceptedRounds: number; content?: string }): string {
-  if (!input.judgeIndependent) return 'judge_not_independent'
-  if (input.heldOutBaseline !== null && input.heldOutFinal !== null && input.heldOutFinal < input.heldOutBaseline) return 'held_out_regression'
-  if (!input.content || input.acceptedRounds === 0) return 'no_accepted_candidate'
-  return 'candidate_created'
-}
-
-test('不独立评判、held-out 回退与无候选都不得生成可批准候选', () => {
-  expect(decideGate({ judgeIndependent: false, heldOutBaseline: 70, heldOutFinal: 80, acceptedRounds: 2, content: '候选' })).toBe('judge_not_independent')
-  expect(decideGate({ judgeIndependent: true, heldOutBaseline: 80, heldOutFinal: 70, acceptedRounds: 2, content: '候选' })).toBe('held_out_regression')
-  expect(decideGate({ judgeIndependent: true, heldOutBaseline: 70, heldOutFinal: 80, acceptedRounds: 0, content: undefined })).toBe('no_accepted_candidate')
-  expect(decideGate({ judgeIndependent: true, heldOutBaseline: 70, heldOutFinal: 80, acceptedRounds: 1, content: '候选' })).toBe('candidate_created')
+test('Given 评测结果 When held-out 缺失、异常或回退 Then 不得创建推广候选', () => {
+  const valid = { judgeIndependent: true, heldOutBaseline: 70, heldOutFinal: 80, acceptedRounds: 1, content: '候选' }
+  expect(decideEmployeeEvaluation(valid)).toBe('candidate_created')
+  expect(decideEmployeeEvaluation({ ...valid, judgeIndependent: false })).toBe('judge_not_independent')
+  expect(decideEmployeeEvaluation({ ...valid, heldOutBaseline: null })).toBe('held_out_unavailable')
+  expect(decideEmployeeEvaluation({ ...valid, heldOutFinal: null })).toBe('held_out_unavailable')
+  expect(decideEmployeeEvaluation({ ...valid, heldOutFinal: NaN })).toBe('held_out_unavailable')
+  expect(decideEmployeeEvaluation({ ...valid, heldOutFinal: 101 })).toBe('held_out_unavailable')
+  expect(decideEmployeeEvaluation({ ...valid, acceptedRounds: -1 })).toBe('no_accepted_candidate')
+  expect(decideEmployeeEvaluation({ ...valid, heldOutFinal: 69 })).toBe('held_out_regression')
+  expect(decideEmployeeEvaluation({ ...valid, acceptedRounds: 0 })).toBe('no_accepted_candidate')
 })
 
 test('员工缺少窗口信息时不得声明评测完成', async () => {

@@ -6,6 +6,7 @@
  */
 
 import { randomUUID } from 'node:crypto'
+import { decideEmployeeEvaluation } from './employee-evaluation-decision'
 import { createBenchmarkForUI, readBenchmark, readScoreboard } from './agent-runtime/eval/benchmark-store'
 import { runImprove } from './agent-runtime/eval/commands'
 import { buildEvalDelegate, resolveEvalChannel, resolveJudgeChannel } from './agent-runtime/eval/eval-runner'
@@ -40,6 +41,7 @@ export type EmployeeCapabilityEvaluationStatus =
   | 'candidate_created'
   | 'no_accepted_candidate'
   | 'judge_not_independent'
+  | 'held_out_unavailable'
   | 'held_out_regression'
 
 export interface EmployeeCapabilityEvaluationResult {
@@ -180,12 +182,12 @@ export async function runEmployeeCapabilityEvaluation(input: RunEmployeeCapabili
     heldOutSampleCount: material.heldOut.length,
   }
 
-  if (!judge.independent) return { ...base, status: 'judge_not_independent', message: '评判者未与被评方独立；本次仅产出 baseline，不能创建可批准候选。' }
-  if (heldOutBaselineScore !== null && heldOutFinalScore !== null && heldOutFinalScore < heldOutBaselineScore) {
-    return { ...base, status: 'held_out_regression', message: 'held-out 分数下降，候选已被拒绝，不会创建推广建议。' }
-  }
   const content = summary.bestAcceptedPrompt?.trim()
-  if (!content || summary.acceptedRounds === 0) return { ...base, status: 'no_accepted_candidate', message: '没有评分严格提升的候选，未创建推广建议。' }
+  const decision = decideEmployeeEvaluation({ judgeIndependent: judge.independent, heldOutBaseline: heldOutBaselineScore, heldOutFinal: heldOutFinalScore, acceptedRounds: summary.acceptedRounds, content })
+  if (decision === 'judge_not_independent') return { ...base, status: decision, message: '评判模型标识未与被测方区分；本次仅产出 baseline，不能创建可批准候选。' }
+  if (decision === 'held_out_unavailable') return { ...base, status: decision, message: 'held-out 基线或候选分数缺失，无法比较；不会创建推广建议。' }
+  if (decision === 'held_out_regression') return { ...base, status: decision, message: 'held-out 分数下降，候选已被拒绝，不会创建推广建议。' }
+  if (decision === 'no_accepted_candidate' || !content || heldOutFinalScore === null) return { ...base, status: 'no_accepted_candidate', message: '没有评分严格提升的候选，未创建推广建议。' }
 
   const { approvalId } = proposeEmployeeCapabilityAdoption({
     agentId: input.agentId,
@@ -193,7 +195,7 @@ export async function runEmployeeCapabilityEvaluation(input: RunEmployeeCapabili
     workspaceId: input.workspaceId,
     content,
     trainingScore: summary.finalScore,
-    heldOutScore: heldOutFinalScore ?? 0,
+    heldOutScore: heldOutFinalScore,
     judgeIndependent: judge.independent,
     evidenceSampleIds: material.evidenceSampleIds,
     judgeKind: judge.kind,

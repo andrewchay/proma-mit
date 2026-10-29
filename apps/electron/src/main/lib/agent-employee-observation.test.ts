@@ -31,6 +31,16 @@ test('样本量不足时不声称趋势可信，且取消不计入失败率', ()
   expect(health).toEqual(expect.objectContaining({ decidedSampleCount: 1, sampleSufficient: false, reworkRate: 1, failureRate: 0 }))
 })
 
+test('Given 样本被隐私排除 When 计算健康度 Then 不算业务失败或已判定样本', () => {
+  const employee = createAgentEmployee({ name: '隐私排除', role: '开发', description: '', channelId: 'channel' })
+  const version = createAgentEmployeeCapabilityVersion({ agentId: employee.id, versionNumber: 1, scope: 'role', content: '能力', contentHash: 'privacy', status: 'active', source: 'manual' })
+  const project = createProject({ title: '项目', description: '' })
+  const task = createTask(project.id, { title: '任务', description: '' })
+  createAgentEmployeeLearningSample({ agentId: employee.id, executionId: 'excluded-run', projectId: project.id, taskId: task.id, capabilityVersionIds: [version.id], outcome: 'manual_excluded', evidenceSummary: '已排除', privacyStatus: 'excluded' })
+  const health = getAgentEmployeeCapabilityHealth(employee.id).find(item => item.versionId === version.id)
+  expect(health).toMatchObject({ decidedSampleCount: 0, failureRate: null, sampleSufficient: false })
+})
+
 test('同 scope 版本对比标注可比性，样本不足时不制造改善错觉', () => {
   const employee = createAgentEmployee({ name: '对比', role: '开发', description: '', channelId: 'channel' })
   const project = createProject({ title: '对比项目', description: '' })
