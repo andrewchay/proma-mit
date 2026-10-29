@@ -79,6 +79,8 @@ describe('Provider-Agnostic Agent 适配器', () => {
   let requestedAdapterProviders: string[] = []
   let firstResponseTimeouts: number[] = []
   let firstTurnToolCalls: ToolCall[] | undefined
+  let streamGates: Array<Promise<void>> = []
+  let streamSignals: AbortSignal[] = []
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'proma-paa-adapter-test-'))
@@ -87,6 +89,8 @@ describe('Provider-Agnostic Agent 适配器', () => {
     requestedAdapterProviders = []
     firstResponseTimeouts = []
     firstTurnToolCalls = undefined
+    streamGates = []
+    streamSignals = []
 
     // mock @gravitas/core，用回合制逻辑替代真实 SSE 请求
     mock.module('@gravitas/core', () => ({
@@ -122,6 +126,8 @@ describe('Provider-Agnostic Agent 适配器', () => {
       },
       streamSSE: async (options: StreamSSEOptions): Promise<StreamSSEResult> => {
         streamCallCount++
+        if (options.signal) streamSignals.push(options.signal)
+        await streamGates[streamCallCount - 1]
         firstResponseTimeouts.push(options.firstResponseTimeoutMs ?? 0)
         if (streamCallCount === 1 && firstTurnToolCalls) {
           return makeStreamResult('提交 Goal 检查点', firstTurnToolCalls)
@@ -151,6 +157,32 @@ describe('Provider-Agnostic Agent 适配器', () => {
     }).toThrow()
     expect(streamCallCount).toBe(0)
     adapter.dispose()
+  })
+
+  test('Given 旧运行停止后同 ID 新运行启动 When 旧运行随后退出 Then 新运行仍可停止', async () => {
+    let releaseFirst!: () => void
+    let releaseSecond!: () => void
+    streamGates = [new Promise(resolve => { releaseFirst = resolve }), new Promise(resolve => { releaseSecond = resolve })]
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const input = { sessionId: 'proma-restart', prompt: '运行', model: 'deepseek-chat', provider: 'deepseek' as const,
+      apiKey: 'mock-key', baseUrl: 'http://localhost/mock', cwd: '/tmp' }
+    const first = adapter.query(input)[Symbol.asyncIterator]()
+    const firstDone = (async () => { try { while (!(await first.next()).done) {} } catch {} })()
+    for (let i = 0; i < 100 && streamCallCount < 1; i++) await new Promise(resolve => setTimeout(resolve, 1))
+    if (streamCallCount < 1) throw new Error('旧运行未启动')
+    adapter.abort(input.sessionId)
+    const second = adapter.query(input)[Symbol.asyncIterator]()
+    const secondDone = (async () => { try { while (!(await second.next()).done) {} } catch {} })()
+    for (let i = 0; i < 100 && streamCallCount < 2; i++) await new Promise(resolve => setTimeout(resolve, 1))
+    if (streamCallCount < 2) throw new Error('新运行未启动')
+    releaseFirst()
+    await firstDone
+    adapter.abort(input.sessionId)
+    const newAborted = streamSignals[1]?.aborted
+    releaseSecond()
+    await secondDone
+    adapter.dispose()
+    expect(newAborted).toBe(true)
   })
 
   test('手动压缩命令由 Runtime 直接处理，不发送给模型', async () => {

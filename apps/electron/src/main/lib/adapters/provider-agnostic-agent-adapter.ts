@@ -265,7 +265,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           onLifecycle: (event) => input.onAgentEvent?.({ type: 'compaction_status', ...event }),
         })
       } finally {
-        this.activeSessions.delete(sessionId)
+        if (this.activeSessions.get(sessionId) === activeSession) this.activeSessions.delete(sessionId)
       }
       return
     }
@@ -655,7 +655,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       }
       yield resultMessage as unknown as SDKMessage
     } finally {
-      this.activeSessions.delete(sessionId)
+      if (this.activeSessions.get(sessionId) === activeSession) this.activeSessions.delete(sessionId)
       // 释放缓存引用（缓存负责实际断开连接）
       mcpRelease?.()
     }
