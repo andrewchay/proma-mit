@@ -119,6 +119,7 @@ export function guardControlledPiToolContext(
 		...context,
 		runSubAgent: controlled || !context.runSubAgent ? undefined : async (...args) => {
 			assertNoOwnerBusinessSession(sessionId)
+			if (isControlledProviderSession(sessionId)) throw new Error('受控会话不允许委派子代理')
 			return context.runSubAgent!(...args)
 		},
 		setPermissionMode: controlled || context.setPermissionMode ? (mode) => {
