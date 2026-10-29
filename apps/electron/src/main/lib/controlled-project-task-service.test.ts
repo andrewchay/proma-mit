@@ -693,6 +693,25 @@ test('Given 无确认的历史受控queue When 重开并启动 Then 失败暂停
   expect(calls).toBe(before)
 })
 
+test('Given Pi 工具上下文创建后会话变为受控 When 委派子代理 Then 拒绝委派', async () => {
+  const { project, employee, workspace } = fixture()
+  const task = store.createTask(project.id, { title: '受控委派', description: '', workspaceId: workspace.id })
+  const sessionId = randomUUID()
+  let delegated = 0
+  const context = boundary.guardControlledPiToolContext(sessionId, {
+    cwd: directory, sessionId, permissionMode: 'safe',
+    runSubAgent: async () => { delegated++; return 'unexpected' },
+  })
+  const execution = store.createAgentExecution({ id: randomUUID(), projectId: project.id, entityType: 'task', entityId: task.id, agentId: employee.id, sessionId, prompt: '受控执行', status: 'running' })
+  try {
+    if (!context.runSubAgent) throw new Error('普通会话未暴露委派')
+    await expect(context.runSubAgent({ agentName: 'researcher', task: '查询' })).rejects.toThrow()
+    expect(delegated).toBe(0)
+  } finally {
+    store.updateAgentExecution(execution.id, { status: 'failed' })
+  }
+})
+
 test('Given 无确认的历史running When 请求模型或升级权限 Then 按员工身份识别并拒绝', () => {
   const { project, employee, workspace } = fixture()
   const task = store.createTask(project.id, { title: '历史运行', description: '', workspaceId: workspace.id, assignee: { userId: `agent-${employee.id}`, displayName: employee.name } })
