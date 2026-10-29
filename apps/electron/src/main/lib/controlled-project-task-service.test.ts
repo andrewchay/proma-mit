@@ -693,6 +693,42 @@ test('Given 无确认的历史受控queue When 重开并启动 Then 失败暂停
   expect(calls).toBe(before)
 })
 
+test('Given AI SDK 运行启动后会话变为受控 When 委派子代理 Then 拒绝委派', async () => {
+  const { project, employee, workspace } = fixture()
+  const task = store.createTask(project.id, { title: '动态受控委派', description: '', workspaceId: workspace.id })
+  const sessionId = randomUUID()
+  const { AISDKAgentAdapter } = await import('./adapters/ai-sdk-agent-adapter')
+  const { AISDKRuntimeCore } = await import('./agent-runtime/ai-sdk-runtime-core')
+  let release!: () => void
+  let ready!: () => void
+  const blocked = new Promise<void>(resolve => { release = resolve })
+  const started = new Promise<void>(resolve => { ready = resolve })
+  let turn: AISDKAgentTurnInput | undefined
+  const spy = spyOn(AISDKRuntimeCore.prototype, 'runAgentTurn').mockImplementation(async input => {
+    turn = input; ready(); await blocked; return []
+  })
+  let delegated = 0
+  const adapter = new AISDKAgentAdapter()
+  const iterator = adapter.query({ sessionId, agentRuntime: 'ai-sdk', prompt: '测试', model: 'model', provider: 'openai',
+    apiKey: 'fake', baseUrl: 'https://example.invalid', cwd: directory,
+    runSubAgent: async () => { delegated++; return 'unexpected' },
+  })[Symbol.asyncIterator]()
+  const pending = iterator.next()
+  await started
+  const execution = store.createAgentExecution({ id: randomUUID(), projectId: project.id, entityType: 'task', entityId: task.id, agentId: employee.id, sessionId, prompt: '受控执行', status: 'running' })
+  try {
+    if (!turn?.runSubAgent) throw new Error('普通会话未暴露委派')
+    await expect(turn.runSubAgent({ agentName: 'researcher', task: '查询' })).rejects.toThrow()
+    expect(delegated).toBe(0)
+  } finally {
+    release()
+    await pending
+    await iterator.return?.()
+    store.updateAgentExecution(execution.id, { status: 'failed' })
+    spy.mockRestore()
+  }
+})
+
 test('Given Pi 工具上下文创建后会话变为受控 When 委派子代理 Then 拒绝委派', async () => {
   const { project, employee, workspace } = fixture()
   const task = store.createTask(project.id, { title: '受控委派', description: '', workspaceId: workspace.id })
