@@ -5,6 +5,7 @@ import type { ToolContext } from '../types'
 import { webBridgeService, type WebBridgeSnapshot } from '../../web-bridge-service'
 import { appendWebBridgeAudit } from '../../web-bridge-audit-service'
 import { guardOwnerTool } from './tool-utils'
+import { DOWNLOAD_CONFIRM_HINT, describeWebBridgeActionFailure } from './web-bridge-outcome'
 
 export const WEB_BRIDGE_NAVIGATE_TOOL_NAME = 'WebBridgeNavigate'
 export const WEB_BRIDGE_SNAPSHOT_TOOL_NAME = 'WebBridgeSnapshot'
@@ -97,9 +98,13 @@ export function createWebBridgeCloseTabToolDefinition() {
 async function executeWebBridgeNavigateUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const url = readString(input, 'url')
   if (!url) return error('url 必须是非空字符串')
-  const snapshot = await webBridgeService.navigate(ctx.sessionId, url)
-  audit(ctx, 'navigate', { url: snapshot.url })
-  return snapshotResult(snapshot)
+  return runWebBridgeAction({
+    action: 'navigate', display: 'Navigate', ctx, detail: { url },
+    run: async () => {
+      const snapshot = await webBridgeService.navigate(ctx.sessionId, url)
+      return { result: snapshotResult(snapshot), detail: { url: snapshot.url } }
+    },
+  })
 }
 async function executeWebBridgeSnapshotUnchecked(_input: unknown, ctx: ToolContext): Promise<ToolResult> { return snapshotResult(await webBridgeService.snapshot(ctx.sessionId)) }
 async function executeWebBridgeScreenshotUnchecked(_input: unknown, ctx: ToolContext): Promise<ToolResult> {
@@ -110,25 +115,28 @@ async function executeWebBridgeScreenshotUnchecked(_input: unknown, ctx: ToolCon
 async function executeWebBridgeClickUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const target = readTarget(input)
   if (!target) return error('element_id 必须来自最近 WebBridgeSnapshot')
-  const snapshot = await webBridgeService.click(ctx.sessionId, target)
-  audit(ctx, 'click', target)
-  return snapshotResult(snapshot)
+  return runWebBridgeAction({
+    action: 'click', display: 'Click', ctx, detail: target,
+    run: async () => ({ result: snapshotResult(await webBridgeService.click(ctx.sessionId, target)) }),
+  })
 }
 async function executeWebBridgeTypeUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const target = readTarget(input); const text = readString(input, 'text')
   if (!target || text === undefined) return error('element_id 和 text 必须是字符串')
   const submit = isRecord(input) && input.submit === true
-  const snapshot = await webBridgeService.type(ctx.sessionId, target, text, submit)
-  audit(ctx, 'type', { ...target, length: text.length, submit })
-  return snapshotResult(snapshot)
+  return runWebBridgeAction({
+    action: 'type', display: 'Type', ctx, detail: { ...target, length: text.length, submit },
+    run: async () => ({ result: snapshotResult(await webBridgeService.type(ctx.sessionId, target, text, submit)) }),
+  })
 }
 async function executeWebBridgeScrollUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const direction = isRecord(input) && input.direction === 'up' ? 'up' : isRecord(input) && input.direction === 'down' ? 'down' : undefined
   if (!direction) return error('direction 必须为 up 或 down')
   const amount = isRecord(input) && typeof input.amount === 'number' ? input.amount : 700
-  const snapshot = await webBridgeService.scroll(ctx.sessionId, direction, amount)
-  audit(ctx, 'scroll', { direction, amount })
-  return snapshotResult(snapshot)
+  return runWebBridgeAction({
+    action: 'scroll', display: 'Scroll', ctx, detail: { direction, amount },
+    run: async () => ({ result: snapshotResult(await webBridgeService.scroll(ctx.sessionId, direction, amount)) }),
+  })
 }
 async function executeWebBridgeChromeTargetsUnchecked(input: unknown, _ctx: ToolContext): Promise<ToolResult> {
   const port = readPort(input)
@@ -137,23 +145,38 @@ async function executeWebBridgeChromeTargetsUnchecked(input: unknown, _ctx: Tool
 async function executeWebBridgeConnectChromeUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const port = readPort(input)
   const targetId = readString(input, 'target_id')
-  const snapshot = await webBridgeService.connectChrome(ctx.sessionId, port, targetId)
-  audit(ctx, 'connect_chrome', { port, targetId })
-  return snapshotResult(snapshot)
+  return runWebBridgeAction({
+    action: 'connect_chrome', display: 'ConnectChrome', ctx, detail: { port, targetId },
+    run: async () => ({ result: snapshotResult(await webBridgeService.connectChrome(ctx.sessionId, port, targetId)) }),
+  })
 }
 async function executeWebBridgeDownloadUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const url = readString(input, 'url')
   if (!url) return error('url 必须是非空字符串')
-  const download = await webBridgeService.download(ctx.sessionId, url)
-  audit(ctx, 'download', { bytes: download.bytes, contentType: download.contentType })
-  return { toolCallId: '', content: JSON.stringify(download, null, 2) }
+  return runWebBridgeAction({
+    action: 'download', display: 'Download', ctx, detail: { url }, hint: DOWNLOAD_CONFIRM_HINT,
+    run: async () => {
+      const download = await webBridgeService.download(ctx.sessionId, url)
+      return {
+        result: { toolCallId: '', content: JSON.stringify(download, null, 2) },
+        detail: { bytes: download.bytes, contentType: download.contentType },
+      }
+    },
+  })
 }
 async function executeWebBridgeUploadUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const target = readTarget(input)
   if (!target) return error('element_id 必须来自最近 WebBridgeSnapshot')
-  const upload = await webBridgeService.selectAndUpload(ctx.sessionId, target)
-  audit(ctx, 'upload', { ...target, files: upload.files.map(({ name, bytes, contentType }) => ({ name, bytes, contentType })) })
-  return { toolCallId: '', content: JSON.stringify(upload, null, 2) }
+  return runWebBridgeAction({
+    action: 'upload', display: 'Upload', ctx, detail: target,
+    run: async () => {
+      const upload = await webBridgeService.selectAndUpload(ctx.sessionId, target)
+      return {
+        result: { toolCallId: '', content: JSON.stringify(upload, null, 2) },
+        detail: { files: upload.files.map(({ name, bytes, contentType }) => ({ name, bytes, contentType })) },
+      }
+    },
+  })
 }
 async function executeWebBridgeStatusUnchecked(_input: unknown, ctx: ToolContext): Promise<ToolResult> { return { toolCallId: '', content: JSON.stringify(webBridgeService.getStatus(ctx.sessionId), null, 2) } }
 export async function executeWebBridgeStopTool(_input: unknown, ctx: ToolContext): Promise<ToolResult> { webBridgeService.close(ctx.sessionId); audit(ctx, 'stop', {}); return { toolCallId: '', content: JSON.stringify({ stopped: true }) } }
@@ -194,6 +217,33 @@ function readTarget(value: unknown): { elementId?: string; selector?: string } |
 function readPort(value: unknown): number { return isRecord(value) && typeof value.port === 'number' ? value.port : 9222 }
 function error(content: string): ToolResult { return { toolCallId: '', content, isError: true } }
 function audit(ctx: ToolContext, action: string, detail: Record<string, unknown>): void { void appendWebBridgeAudit(ctx.sessionId, action, detail).catch(() => undefined) }
+
+/**
+ * 执行会改变外部状态的 Web Bridge 动作。
+ *
+ * 这类动作没有可核验回执：点击可能已经提交表单、输入可能已经写入、下载可能已经落盘。
+ * 抛错时不再直接把异常抛给模型，而是先判定"未执行 / 结果未知"并写审计——
+ * 结果未知一律禁止自动重试，要求先重新观察页面确认状态。
+ */
+async function runWebBridgeAction(params: {
+  action: string
+  display: string
+  ctx: ToolContext
+  detail: Record<string, unknown>
+  run: () => Promise<{ result: ToolResult; detail?: Record<string, unknown> }>
+  hint?: string
+}): Promise<ToolResult> {
+  const { action, display, ctx, detail, run, hint } = params
+  try {
+    const { result, detail: extra } = await run()
+    audit(ctx, action, { ...detail, ...extra, outcome: 'applied' })
+    return result
+  } catch (thrown) {
+    const failure = describeWebBridgeActionFailure(display, thrown, hint)
+    audit(ctx, action, { ...detail, outcome: failure.outcome, error: failure.reason })
+    return error(failure.message)
+  }
+}
 
 export const executeWebBridgeNavigateTool = guardOwnerTool(WEB_BRIDGE_NAVIGATE_TOOL_NAME, executeWebBridgeNavigateUnchecked)
 

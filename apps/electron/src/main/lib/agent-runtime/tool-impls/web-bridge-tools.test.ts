@@ -1,5 +1,6 @@
 import { describe, expect, mock, test, beforeAll, afterAll, spyOn } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildElectronMock } from '../../testing/electron-mock'
@@ -25,6 +26,8 @@ const {
   executeWebBridgeStatusTool,
   executeWebBridgeNavigateTool,
   executeWebBridgeTypeTool,
+  executeWebBridgeClickTool,
+  executeWebBridgeDownloadTool,
 } = await import('./web-bridge-tools')
 const { normalizeWebUrl, webBridgeService } = await import('../../web-bridge-service')
 const directory = mkdtempSync(join(tmpdir(), 'bridge-tool-db-')), previous = process.env.PROMA_TEST_CONFIG_DIR
@@ -108,5 +111,97 @@ describe('Web Bridge 工具', () => {
     expect(createWebBridgeSelectTabToolDefinition().parameters.required).toEqual(['tab_id'])
     expect(createWebBridgeCloseTabToolDefinition().parameters.required).toEqual(['tab_id'])
     expect(createWebBridgeNewTabToolDefinition().parameters.properties.url).toBeDefined()
+  })
+})
+
+const fakeSnapshot = { url: 'https://example.com/', title: '示例', text: '正文', accessibility: [], accessibilityTree: [] }
+
+describe('Web Bridge 动作结果分类', () => {
+  const ctx = { cwd: '/tmp', sessionId: 'bridge-outcome-session' }
+
+  test('Given 连接在点击后关闭 When 执行 Then 结果未知且禁止自动重试', async () => {
+    const click = spyOn(webBridgeService, 'click').mockRejectedValue(new Error('Target closed'))
+    try {
+      const result = await executeWebBridgeClickTool({ element_id: 'r1-2' }, ctx)
+      expect(result.isError).toBe(true)
+      expect(result.content).toContain('结果未知')
+      expect(result.content).toContain('禁止自动重试')
+      expect(result.content).toContain('WebBridgeObserve')
+    } finally { click.mockRestore() }
+  })
+
+  test('Given ref 已失效 When 点击 Then 判为未执行并允许修正后重试', async () => {
+    const click = spyOn(webBridgeService, 'click').mockRejectedValue(new Error('No node with given id 42'))
+    try {
+      const result = await executeWebBridgeClickTool({ element_id: 'r1-9' }, ctx)
+      expect(result.isError).toBe(true)
+      expect(result.content).toContain('未执行')
+      expect(result.content).toContain('修正前置条件后可以重试')
+      expect(result.content).not.toContain('结果未知')
+    } finally { click.mockRestore() }
+  })
+
+  test('Given 输入时协议报错 When 执行 Then 保守判为未知', async () => {
+    const type = spyOn(webBridgeService, 'type').mockRejectedValue(new Error('Protocol error (Input.insertText)'))
+    try {
+      const result = await executeWebBridgeTypeTool({ element_id: 'r1-3', text: 'hi' }, ctx)
+      expect(result.isError).toBe(true)
+      expect(result.content).toContain('WebBridgeType 结果未知')
+    } finally { type.mockRestore() }
+  })
+
+  test('Given 下载中断 When 执行 Then 指引核对落盘位置', async () => {
+    const download = spyOn(webBridgeService, 'download').mockRejectedValue(new Error('socket hang up'))
+    try {
+      const result = await executeWebBridgeDownloadTool({ url: 'https://example.com/file.pdf' }, ctx)
+      expect(result.isError).toBe(true)
+      expect(result.content).toContain('WebBridgeDownload 结果未知')
+      expect(result.content).toContain('下载目录')
+    } finally { download.mockRestore() }
+  })
+
+  test('Given 点击成功 When 执行 Then 返回快照且不出现未知提示', async () => {
+    const click = spyOn(webBridgeService, 'click').mockResolvedValue(fakeSnapshot)
+    try {
+      const result = await executeWebBridgeClickTool({ element_id: 'r1-2' }, ctx)
+      expect(result.isError).toBeFalsy()
+      expect(result.content).toContain('https://example.com/')
+      expect(result.content).not.toContain('结果未知')
+    } finally { click.mockRestore() }
+  })
+})
+
+describe('Web Bridge 失败动作审计', () => {
+  const auditFile = join(directory, 'web-bridge-audit', 'events.jsonl')
+
+  async function readEvents(): Promise<Array<{ action: string; detail: Record<string, unknown> }>> {
+    try {
+      const text = await readFile(auditFile, 'utf8')
+      return text.trim().split('\n').filter(Boolean).map((line) => JSON.parse(line))
+    } catch { return [] }
+  }
+
+  // 审计是 fire-and-forget：同一文件里其他用例也会写 click 事件（错误文案可能相同），
+  // 因此按本用例独有的 element_id 匹配，而不是取最后一条。
+  async function waitForFailedClick(elementId: string): Promise<Record<string, unknown> | undefined> {
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const events = await readEvents()
+      const hit = events.find((event) => event.action === 'click' && event.detail.elementId === elementId)
+      if (hit) return { ...hit.detail }
+      await Bun.sleep(20)
+    }
+    return undefined
+  }
+
+  test('Given 结果未知 When 点击失败 Then 审计记 outcome 且不写页面正文', async () => {
+    const click = spyOn(webBridgeService, 'click').mockRejectedValue(new Error('Target closed'))
+    try {
+      await executeWebBridgeClickTool({ element_id: 'r1-5' }, { cwd: '/tmp', sessionId: 'bridge-audit-session' })
+      const detail = await waitForFailedClick('r1-5')
+      expect(detail?.outcome).toBe('unknown')
+      expect(String(detail?.error)).toContain('Target closed')
+      expect(detail?.text).toBeUndefined()
+      expect(detail?.elementId).toBe('r1-5')
+    } finally { click.mockRestore() }
   })
 })
