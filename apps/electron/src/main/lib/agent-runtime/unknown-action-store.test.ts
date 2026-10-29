@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -126,6 +126,32 @@ describe('跨进程重建', () => {
     await resolveUnknownAction({ sessionId: 'restart', actionKey: key, resolution: '用户确认已完成' })
     __resetUnknownActionCacheForTest()
     expect(await findPendingUnknownAction('restart', key)).toBeUndefined()
+  })
+})
+
+describe('登记故障与并发', () => {
+  test('Given 已有未知动作 When 同时首次查询 Then 两次均拦截', async () => {
+    await recordUnknownAction({ sessionId: 's1', tool: 'x', actionKey: 'k', reason: 'unknown' })
+    __resetUnknownActionCacheForTest()
+    const results = await Promise.all([
+      findPendingUnknownAction('s1', 'k'),
+      findPendingUnknownAction('s1', 'k'),
+    ])
+    expect(results.every(Boolean)).toBe(true)
+  })
+
+  test('Given 解除事件无法写入 When 解除 Then 已有拦截仍保留', async () => {
+    await recordUnknownAction({ sessionId: 's1', tool: 'x', actionKey: 'k', reason: 'unknown' })
+    rmSync(join(directory, 'unknown-actions.jsonl'))
+    mkdirSync(join(directory, 'unknown-actions.jsonl'))
+    await expect(resolveUnknownAction({ sessionId: 's1', actionKey: 'k', resolution: 'confirmed' })).rejects.toThrow()
+    expect(await findPendingUnknownAction('s1', 'k')).toBeDefined()
+    rmSync(join(directory, 'unknown-actions.jsonl'), { recursive: true })
+  })
+
+  test('Given 登记文件损坏 When 查询 Then 拒绝而不是放行', async () => {
+    writeFileSync(join(directory, 'unknown-actions.jsonl'), '{invalid}\n')
+    await expect(findPendingUnknownAction('s1', 'k')).rejects.toThrow()
   })
 })
 

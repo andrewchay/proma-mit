@@ -108,14 +108,27 @@ describe('解除未知动作', () => {
     expect((await listPendingUnknownActions(SESSION)).length).toBe(0)
   })
 
-  test('Given 用户确认动作已生效 When 解除 Then 解除拦截但标记不要重试', async () => {
+  test('Given 用户确认动作已生效 When 处理 Then 仍拦截重复动作', async () => {
     await seed()
     const { ctx } = ctxWith('已核对：动作已生效，不要重试')
     const result = await executeResolveUnknownActionTool({ action_key: ACTION_KEY }, ctx)
     const payload = JSON.parse(result.content)
     expect(payload.mayRetry).toBe(false)
-    // 解除是为了不留死锁；"已生效"的结论由文案传达给模型。
-    expect((await listPendingUnknownActions(SESSION)).length).toBe(0)
+    expect((await listPendingUnknownActions(SESSION)).length).toBe(1)
+  })
+
+  test('Given 用户确认期间出现新未知动作 When 确认旧动作 Then 不解除新记录', async () => {
+    await seed()
+    const ctx = {
+      cwd: '/tmp', sessionId: SESSION, abortSignal: new AbortController().signal,
+      onAskUser: async (input: { questions: { question: string }[] }) => {
+        await recordUnknownAction({ sessionId: SESSION, tool: 'ComputerUseClick', actionKey: ACTION_KEY, reason: 'new failure' })
+        return { behavior: 'allow' as const, answers: { [input.questions[0].question]: '已核对：动作没有生效，允许重试' } }
+      },
+    }
+    const result = await executeResolveUnknownActionTool({ action_key: ACTION_KEY }, ctx)
+    expect(result.isError).toBe(true)
+    expect((await listPendingUnknownActions(SESSION))[0]?.reason).toBe('new failure')
   })
 
   test('Given 用户选择暂不处理 When 解除 Then 保持拦截', async () => {

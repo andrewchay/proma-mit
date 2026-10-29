@@ -113,9 +113,13 @@ async function executeResolveUnknownActionUnchecked(input: unknown, ctx: ToolCon
     }
   }
 
+  if (answer === APPLIED) {
+    return { toolCallId: '', content: JSON.stringify({ resolved: false, actionKey, resolution: answer, mayRetry: false }) }
+  }
+
   const resolved = await resolveUnknownAction({
     sessionId: ctx.sessionId,
-    actionKey,
+    id: record.id,
     resolution: `${answer}｜用户确认`,
   })
   if (!resolved) return error(`解除失败：${actionKey} 已不在待处理列表`)

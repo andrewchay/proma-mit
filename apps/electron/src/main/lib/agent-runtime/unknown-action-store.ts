@@ -47,7 +47,7 @@ interface StoredEvent {
 
 const FILE_NAME = 'unknown-actions.jsonl'
 let pending = new Map<string, UnknownActionRecord>()
-let loaded = false
+let loadPromise: Promise<void> | undefined
 
 const cacheKey = (sessionId: string, actionKey: string): string => `${sessionId}\u0000${actionKey}`
 const filePath = (): string => join(getConfigDir(), FILE_NAME)
@@ -66,45 +66,46 @@ function toRecord(event: StoredEvent): UnknownActionRecord {
 }
 
 async function readEvents(): Promise<StoredEvent[]> {
+  let text: string
   try {
-    const text = await readFile(filePath(), 'utf8')
-    const events: StoredEvent[] = []
-    for (const line of text.split('\n')) {
-      if (!line.trim()) continue
-      try {
-        const parsed = JSON.parse(line) as StoredEvent
-        if (parsed?.type === 'unknown' || parsed?.type === 'resolved') events.push(parsed)
-      } catch {
-        // 单行损坏不影响其余记录。
-      }
-    }
-    return events
-  } catch {
-    return []
+    text = await readFile(filePath(), 'utf8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
   }
+  return text.split('\n').filter((line) => line.trim()).map((line) => {
+    const event = JSON.parse(line) as StoredEvent
+    if (!event || (event.type !== 'unknown' && event.type !== 'resolved') ||
+      typeof event.id !== 'string' || typeof event.sessionId !== 'string' ||
+      typeof event.actionKey !== 'string' || typeof event.createdAt !== 'string') {
+      throw new Error('未知动作登记文件损坏，不能安全执行动作')
+    }
+    return event
+  })
 }
 
-/** 从磁盘重建内存状态；只保留仍未解除的记录。 */
+/** 所有并发调用等待同一次重建，错误时保持关闭并允许下次重新读取。 */
 async function ensureLoaded(): Promise<void> {
-  if (loaded) return
-  loaded = true
-  const records = new Map<string, UnknownActionRecord>()
-  for (const event of await readEvents()) {
-    const key = cacheKey(event.sessionId, event.actionKey)
-    if (event.type === 'unknown') records.set(key, toRecord(event))
-    else records.delete(key)
+  if (!loadPromise) {
+    loadPromise = (async () => {
+      const records = new Map<string, UnknownActionRecord>()
+      for (const event of await readEvents()) {
+        const key = cacheKey(event.sessionId, event.actionKey)
+        if (event.type === 'unknown') records.set(key, toRecord(event))
+        else if (records.get(key)?.id === event.id) records.delete(key)
+      }
+      pending = records
+    })().catch((error: unknown) => {
+      loadPromise = undefined
+      throw error
+    })
   }
-  pending = records
+  await loadPromise
 }
 
 async function append(event: StoredEvent): Promise<void> {
-  try {
-    await mkdir(getConfigDir(), { recursive: true })
-    await appendFile(filePath(), `${JSON.stringify(event)}\n`, 'utf8')
-  } catch (error) {
-    // 落盘失败不改变内存判定：宁可多拦一次，也不放行重复动作。
-    console.warn('[未知动作] 写入登记失败:', error instanceof Error ? error.message : error)
-  }
+  await mkdir(getConfigDir(), { recursive: true })
+  await appendFile(filePath(), `${JSON.stringify(event)}\n`, 'utf8')
 }
 
 /** 构造动作指纹：同一工具 + 同一目标视为"同一个动作"。 */
@@ -202,7 +203,6 @@ export async function resolveUnknownAction(input: {
   if (!record) return undefined
 
   const resolvedAt = new Date().toISOString()
-  pending.delete(cacheKey(record.sessionId, record.actionKey))
   await append({
     type: 'resolved',
     id: record.id,
@@ -211,6 +211,8 @@ export async function resolveUnknownAction(input: {
     createdAt: resolvedAt,
     resolution: input.resolution,
   })
+  const key = cacheKey(record.sessionId, record.actionKey)
+  if (pending.get(key)?.id === record.id) pending.delete(key)
   return { ...record, status: 'resolved', resolvedAt, resolution: input.resolution }
 }
 
@@ -234,5 +236,5 @@ export async function blockIfUnknownAction(input: {
 /** 仅供测试：清空内存状态，强制下次从磁盘重读。 */
 export function __resetUnknownActionCacheForTest(): void {
   pending = new Map()
-  loaded = false
+  loadPromise = undefined
 }
