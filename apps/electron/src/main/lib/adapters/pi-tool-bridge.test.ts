@@ -115,6 +115,37 @@ describe('Pi Tool Bridge', () => {
     expect(seen).toEqual({ cwd: '/workspace/original', sessionId: 'pi-original', frozen: true })
   })
 
+  test('Given Pi 会话已停止但工具 signal 未取消 When 执行 Then 不调用工具', async () => {
+    const controller = new AbortController()
+    let calls = 0
+    const tools = createPiToolBridge({
+      toolContext: { cwd: '/workspace', sessionId: 'pi-abort', abortSignal: controller.signal },
+      canUseTool: async () => ({ allowed: true }),
+      coreTools: createCoreTools(async () => { calls += 1; return { toolCallId: '', content: 'ok', isError: false } }),
+    })
+    controller.abort()
+    const read = tools.find((item) => item.name === PI_PROMA_READ_TOOL_NAME)
+    if (!read) throw new Error('缺少 Read 工具')
+    const result = await read.execute('call-1', { file_path: 'notes.txt' }, new AbortController().signal, undefined, {} as never)
+    expect(result.details).toMatchObject({ isError: true })
+    expect(calls).toBe(0)
+  })
+
+  test('Given Pi 审批期间会话停止 When 审批返回 Then 不调用工具', async () => {
+    const controller = new AbortController()
+    let calls = 0
+    const tools = createPiToolBridge({
+      toolContext: { cwd: '/workspace', sessionId: 'pi-abort-approval', abortSignal: controller.signal },
+      canUseTool: async () => { controller.abort(); return { allowed: true } },
+      coreTools: createCoreTools(async () => { calls += 1; return { toolCallId: '', content: 'ok', isError: false } }),
+    })
+    const read = tools.find((item) => item.name === PI_PROMA_READ_TOOL_NAME)
+    if (!read) throw new Error('缺少 Read 工具')
+    const result = await read.execute('call-1', { file_path: 'notes.txt' }, new AbortController().signal, undefined, {} as never)
+    expect(result.details).toMatchObject({ isError: true })
+    expect(calls).toBe(0)
+  })
+
   test('given Proma allows read when Pi invokes bridge then it delegates to canonical Read', async () => {
     const calls: string[] = []
     const tools = createPiToolBridge({

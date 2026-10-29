@@ -141,7 +141,11 @@ function createBridgeTool<TSchemaType extends TSchema>(
     promptSnippet: config.promptSnippet,
     parameters: config.parameters,
     async execute(_toolCallId, params, signal) {
-      if (signal?.aborted) return errorResult(config.runtimeName, '操作已中止')
+      const sessionSignal = options.toolContext.abortSignal
+      const effectiveSignal = signal && sessionSignal && signal !== sessionSignal
+        ? AbortSignal.any([signal, sessionSignal])
+        : signal ?? sessionSignal
+      if (effectiveSignal?.aborted) return errorResult(config.runtimeName, '操作已中止')
 
       const input = { ...(params as object) } as Record<string, unknown>
 
@@ -162,14 +166,16 @@ function createBridgeTool<TSchemaType extends TSchema>(
       if (config.runtimeName === ASK_USER_QUESTION_TOOL_NAME) {
         const result = await runtimeTool.execute(input, Object.freeze({
           ...options.toolContext,
-          abortSignal: signal ?? options.toolContext.abortSignal,
+          abortSignal: effectiveSignal,
         }))
+        if (effectiveSignal?.aborted) return errorResult(config.runtimeName, '操作已中止')
         return toolResult(config.runtimeName, result.content, Boolean(result.isError), result.imageData)
       }
 
       const permission = options.canUseTool
-        ? await options.canUseTool(config.runtimeName, input, signal ?? new AbortController().signal)
+        ? await options.canUseTool(config.runtimeName, input, effectiveSignal ?? new AbortController().signal)
         : { allowed: false, message: 'Pi 工具桥未配置 Proma 权限回调' }
+      if (effectiveSignal?.aborted) return errorResult(config.runtimeName, '操作已中止')
       if (!permission.allowed) {
         return errorResult(config.runtimeName, permission.message ?? `Proma 权限策略拒绝了 ${config.runtimeName} 操作`)
       }
@@ -181,7 +187,8 @@ function createBridgeTool<TSchemaType extends TSchema>(
         if (!options.toolContext.onExitPlanMode) {
           return errorResult(config.runtimeName, '当前 Runtime 未配置 Plan 审批回调')
         }
-        const exitResult = await options.toolContext.onExitPlanMode(input, signal ?? new AbortController().signal)
+        const exitResult = await options.toolContext.onExitPlanMode(input, effectiveSignal ?? new AbortController().signal)
+        if (effectiveSignal?.aborted) return errorResult(config.runtimeName, '操作已中止')
         if (exitResult.behavior === 'deny') {
           return errorResult(config.runtimeName, exitResult.message)
         }
@@ -201,15 +208,18 @@ function createBridgeTool<TSchemaType extends TSchema>(
 
       const toolContext = Object.freeze({
         ...options.toolContext,
-        abortSignal: signal ?? options.toolContext.abortSignal,
+        abortSignal: effectiveSignal,
       })
       // E05：经共享调度器执行（锁域为本进程内经此调度的调用）。
       const result = await runGuardedToolCall({
         tool: runtimeTool,
         args: input,
         ctx: toolContext,
-        signal: signal ?? undefined,
-        execute: () => runtimeTool.execute(input, toolContext),
+        signal: effectiveSignal,
+        execute: () => {
+          if (effectiveSignal?.aborted) throw new Error('操作已中止')
+          return runtimeTool.execute(input, toolContext)
+        },
       })
       // 截图必须随 tool result 进入 Pi 的下一轮上下文；只回传文字会让模型看不到页面本体。
       return toolResult(config.runtimeName, result.content, Boolean(result.isError), result.imageData)

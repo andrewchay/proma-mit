@@ -818,6 +818,37 @@ describe('PiAgentAdapter', () => {
     promptEvents = []
   })
 
+  test('Given Pi 会话被直接停止 When 旧工具带未取消的 signal 调用 Then 不进入权限流程', async () => {
+    let resolvePrompt: (() => void) | undefined
+    promptGate = new Promise<void>((resolve) => { resolvePrompt = resolve })
+    sessionActivated = false
+    capturedSessionOptions = undefined
+    let approvals = 0
+    const adapter = new PiAgentAdapter()
+    const iterator = adapter.query({
+      sessionId: 's-pi-direct-abort-tools', prompt: '等待取消', agentRuntime: 'pi',
+      provider: 'deepseek', apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp',
+      canUseTool: async () => { approvals += 1; return { allowed: true } },
+    })[Symbol.asyncIterator]()
+    const nextMessage = iterator.next()
+    try {
+      for (let attempt = 0; attempt < 20 && !sessionActivated; attempt += 1) await Promise.resolve()
+      if (!sessionActivated) throw new Error('Pi session 未进入活动状态')
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      const read = getCapturedSessionOptions()?.customTools?.find((tool) => tool.name === 'Read') as unknown as { execute(id: string, input: Record<string, unknown>, signal: AbortSignal): Promise<{ details?: { isError?: boolean } }> } | undefined
+      if (!read) throw new Error('缺少 Read 工具')
+      adapter.abort('s-pi-direct-abort-tools')
+      const result = await read.execute('test', { file_path: 'not-used.txt' }, new AbortController().signal)
+      expect(result.details?.isError).toBe(true)
+      expect(approvals).toBe(0)
+    } finally {
+      resolvePrompt?.()
+      await nextMessage
+      promptGate = undefined
+      adapter.dispose()
+    }
+  })
+
   test('given an active Pi turn when it is cancelled then the Pi session is released', async () => {
     let resolvePrompt: (() => void) | undefined
     promptGate = new Promise<void>((resolve) => { resolvePrompt = resolve })

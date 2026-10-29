@@ -74,6 +74,7 @@ export interface PiAgentQueryOptions extends AgentQueryInput {
 interface ActivePiSession {
   session: AgentSession
   unsubscribe: () => void
+  toolAbortController: AbortController
   /** interrupt 软中断时等待重发的消息队列（参照上游 pendingInterruptPrompts） */
   pendingInterruptPrompts: Array<{
     content: string
@@ -305,9 +306,13 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       mcpRelease = acquired.release
       mcpTools = await acquired.manager.listAllTools()
     }
+    const toolAbortController = new AbortController()
+    const toolAbortSignal = abortSignal
+      ? AbortSignal.any([abortSignal, toolAbortController.signal])
+      : toolAbortController.signal
     let customTools = createPiToolBridge({
       toolContext: guardControlledPiToolContext(sessionId, {
-        ...toolContextOverrides, cwd, sessionId, permissionMode, ownerWorkspaceWrite: Boolean(ownerCommand),
+        ...toolContextOverrides, cwd, sessionId, permissionMode, abortSignal: toolAbortSignal, ownerWorkspaceWrite: Boolean(ownerCommand),
       }),
       allowSubAgent: !controlled,
       canUseTool: controlled || canUseTool ? async (name, args, signal) => {
@@ -710,6 +715,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     this.activeSessions.set(sessionId, {
       session,
       unsubscribe,
+      toolAbortController,
       pendingInterruptPrompts: [],
       interrupting: false,
     })
@@ -915,6 +921,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     this.activeCompactions.delete(sessionId)
     const active = this.activeSessions.get(sessionId)
     if (!active) return
+    active.toolAbortController.abort()
     // 取消所有等待中的 interrupt 消息，避免悬挂 promise
     for (const pending of active.pendingInterruptPrompts) {
       pending.rejectAccepted(createAbortError())
