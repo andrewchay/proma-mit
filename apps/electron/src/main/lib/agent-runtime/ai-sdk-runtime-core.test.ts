@@ -90,6 +90,60 @@ describe('AI SDK runtime core', () => {
     expect(observed).toEqual({ sessionId: 'bound-session', cwd: '/tmp/bound', frozen: true })
   })
 
+  test('Given 计划审批期间会话停止 When 审批返回 Then 不切换权限模式', async () => {
+    const core = new AISDKRuntimeCore()
+    const activeSession: AISDKRuntimeSessionState = { controller: new AbortController(), permissionMode: 'plan', planModeEntered: true }
+    const tools = createBoundTools(core, [createRuntimeTool('ExitPlanMode', async () => ({ toolCallId: '', content: 'unexpected' }))], {
+      sessionId: 'abort-plan', cwd: '/tmp', signal: activeSession.controller.signal, activeSession,
+      onExitPlanMode: async () => { activeSession.controller.abort(); return { behavior: 'allow', targetMode: 'bypassPermissions' } },
+    })
+    const tool = tools.ExitPlanMode as unknown as ExecutableAITool
+    const result = await tool.execute({}, { toolCallId: 'x', messages: [], context: {}, abortSignal: new AbortController().signal })
+    expect(result.isError).toBe(true)
+    expect(activeSession.permissionMode).toBe('plan')
+  })
+
+  test('Given 问答期间会话停止 When 用户回答 Then 不返回回答内容', async () => {
+    const core = new AISDKRuntimeCore()
+    const activeSession: AISDKRuntimeSessionState = { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false }
+    const tools = createBoundTools(core, [createRuntimeTool('AskUserQuestion', async () => ({ toolCallId: '', content: 'unexpected' }))], {
+      sessionId: 'abort-ask', cwd: '/tmp', signal: activeSession.controller.signal, activeSession,
+      onAskUser: async () => { activeSession.controller.abort(); return { behavior: 'allow', answers: { question: 'private answer' } } },
+    })
+    const tool = tools.AskUserQuestion as unknown as ExecutableAITool
+    const result = await tool.execute({}, { toolCallId: 'x', messages: [], context: {}, abortSignal: new AbortController().signal })
+    expect(result.isError).toBe(true)
+    expect(result.content).not.toContain('private answer')
+  })
+
+  test('Given 会话已停止但工具级 signal 未取消 When 执行 Then 不调用工具', async () => {
+    const core = new AISDKRuntimeCore()
+    const activeSession: AISDKRuntimeSessionState = { controller: new AbortController(), permissionMode: 'bypassPermissions', planModeEntered: false }
+    let calls = 0
+    const tools = createBoundTools(core, [createRuntimeTool('BoundRead', async () => { calls += 1; return { toolCallId: '', content: 'ok' } })], {
+      sessionId: 'aborted-session', cwd: '/tmp', signal: activeSession.controller.signal, activeSession,
+    })
+    activeSession.controller.abort()
+    const tool = tools.BoundRead as unknown as ExecutableAITool
+    const result = await tool.execute({}, { toolCallId: 'x', messages: [], context: {}, abortSignal: new AbortController().signal })
+    expect(result.isError).toBe(true)
+    expect(calls).toBe(0)
+  })
+
+  test('Given 审批期间会话停止 When 工具级 signal 未取消 Then 不调用工具', async () => {
+    const core = new AISDKRuntimeCore()
+    const activeSession: AISDKRuntimeSessionState = { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false, ownerActionApproval: true }
+    let calls = 0
+    const tools = createBoundTools(core, [createRuntimeTool('SendExternalMessage', async () => { calls += 1; return { toolCallId: '', content: 'ok' } })], {
+      sessionId: 'abort-during-approval', cwd: '/tmp', signal: activeSession.controller.signal, activeSession,
+      canUseTool: async () => { activeSession.controller.abort(); return { allowed: true } },
+    })
+    const tool = tools.SendExternalMessage as unknown as ExecutableAITool
+    const result = await tool.execute({}, { toolCallId: 'x', messages: [], context: {}, abortSignal: new AbortController().signal })
+    expect(result.isError).toBe(true)
+    expect(calls).toBe(0)
+  })
+
   test('Given 隔离写入标记在绑定后变化 When 执行 Then 失败关闭', async () => {
     const core = new AISDKRuntimeCore()
     const activeSession: AISDKRuntimeSessionState = { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false, worktreeScopedWrite: false }

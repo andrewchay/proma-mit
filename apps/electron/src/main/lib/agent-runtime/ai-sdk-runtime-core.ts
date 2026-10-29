@@ -522,11 +522,16 @@ export class AISDKRuntimeCore {
         description: runtimeTool.description,
         inputSchema: jsonSchema<Record<string, unknown>>(runtimeTool.parameters as RuntimeToolJsonSchema),
         execute: async (args: Record<string, unknown>, options): Promise<ExecutedAISDKToolResult> => {
+          const signal = options.abortSignal && options.abortSignal !== boundState.signal
+            ? AbortSignal.any([boundState.signal, options.abortSignal])
+            : boundState.signal
+          if (signal.aborted) return { content: '工具调用已取消', isError: true }
           if (!isBoundSessionMarkerValid(boundState)) {
             return { content: '受控会话身份标记已变化，拒绝执行工具', isError: true }
           }
           // Owner执行：先用等待流式请求结算落库，再重查“用量已确认”门禁；结算失败仍阻断工具。
           await awaitOwnerExecutionRequestsSettled(boundState.sessionId)
+          if (signal.aborted) return { content: '工具调用已取消', isError: true }
           if (!isBoundSessionMarkerValid(boundState)) {
             return { content: '受控会话身份标记已变化，拒绝执行工具', isError: true }
           }
@@ -543,7 +548,7 @@ export class AISDKRuntimeCore {
           }
           return this.executeRuntimeTool(runtimeTool, args, {
             ...boundState,
-            signal: options.abortSignal ?? boundState.signal,
+            signal,
           })
         },
         toModelOutput: ({ output }) => output.imageData?.length
@@ -569,6 +574,7 @@ export class AISDKRuntimeCore {
     args: Record<string, unknown>,
     state: AISDKToolExecutionState,
   ): Promise<ExecutedAISDKToolResult> {
+    if (state.signal.aborted) return { content: '工具调用已取消', isError: true }
     if (runtimeTool.name === ENTER_PLAN_MODE_TOOL_NAME) {
       state.activeSession.planModeEntered = true
       state.onEnterPlanMode?.()
@@ -581,6 +587,8 @@ export class AISDKRuntimeCore {
         return { content: '已退出 Plan 模式' }
       }
       const result = await state.onExitPlanMode(args, state.signal)
+      if (state.signal.aborted) return { content: '工具调用已取消', isError: true }
+      if (!isBoundSessionMarkerValid(state)) return { content: '受控会话身份标记已变化，拒绝执行工具', isError: true }
       if (result.behavior === 'deny') {
         return { content: result.message || '用户拒绝了计划', isError: true }
       }
@@ -597,6 +605,8 @@ export class AISDKRuntimeCore {
         return { content: '当前 Runtime 未配置 AskUser 回调', isError: true }
       }
       const result = await state.onAskUser(args, state.signal)
+      if (state.signal.aborted) return { content: '工具调用已取消', isError: true }
+      if (!isBoundSessionMarkerValid(state)) return { content: '受控会话身份标记已变化，拒绝执行工具', isError: true }
       if (result.behavior === 'deny') {
         return { content: result.message || '用户拒绝回答', isError: true }
       }
@@ -643,6 +653,7 @@ export class AISDKRuntimeCore {
     }
 
     const permission = await this.checkToolPermission(runtimeTool.name, args, state)
+    if (state.signal.aborted) return { content: '工具调用已取消', isError: true }
     if (!isBoundSessionMarkerValid(state)) {
       return { content: '受控会话身份标记已变化，拒绝执行工具', isError: true }
     }
@@ -688,6 +699,7 @@ export class AISDKRuntimeCore {
         ctx: toolContext,
         signal: state.signal,
         execute: () => {
+          if (state.signal.aborted) throw new Error('工具调用已取消')
           if (!isBoundSessionMarkerValid(state)) {
             throw new Error('受控会话身份标记已变化，拒绝执行工具')
           }
