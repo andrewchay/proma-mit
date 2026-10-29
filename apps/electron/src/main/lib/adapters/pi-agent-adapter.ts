@@ -71,6 +71,12 @@ export interface PiAgentQueryOptions extends AgentQueryInput {
   spanSink?: RuntimeSpanSink
 }
 
+interface PiQueryResources {
+  release?: () => void
+  pendingSession?: AgentSession
+  pendingTools?: AbortController
+}
+
 interface ActivePiSession {
   session: AgentSession
   unsubscribe: () => void
@@ -233,9 +239,31 @@ function createAsyncQueue<T>(): AsyncQueue<T> {
 export class PiAgentAdapter implements AgentProviderAdapter {
   private readonly activeSessions = new Map<string, ActivePiSession>()
   private readonly activeCompactions = new Map<string, AbortController>()
+  private readonly pendingStarts = new Map<string, AbortController>()
   constructor(private readonly mcpService: RuntimeMcpService = new ElectronRuntimeMcpService()) {}
 
   async *query(input: PiAgentQueryOptions): AsyncIterable<SDKMessage> {
+    if (this.pendingStarts.has(input.sessionId) || this.activeSessions.has(input.sessionId) || this.activeCompactions.has(input.sessionId)) {
+      throw new Error('Pi 会话已有活动运行')
+    }
+    const startController = new AbortController()
+    this.pendingStarts.set(input.sessionId, startController)
+    const abortSignal = input.abortSignal
+      ? AbortSignal.any([input.abortSignal, startController.signal])
+      : startController.signal
+    const resources: PiQueryResources = {}
+    try {
+      yield* this.querySession({ ...input, abortSignal }, startController, resources)
+    } finally {
+      if (this.pendingStarts.get(input.sessionId) === startController) this.pendingStarts.delete(input.sessionId)
+      try {
+        resources.pendingTools?.abort()
+        resources.pendingSession?.dispose()
+      } finally { resources.release?.() }
+    }
+  }
+
+  private async *querySession(input: PiAgentQueryOptions, startController: AbortController, resources: PiQueryResources): AsyncIterable<SDKMessage> {
     assertNoOwnerBusinessSession(input.sessionId)
     const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy, isDelegationSession, thinkingLevel, requestedOperation, abortSignal, runtimeBudgetLimitUsd } = input
     // P01/P03：策略 required 保证不满足时在调用 Provider 前拒绝（fail-closed）。
@@ -298,15 +326,15 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     let effectiveHistoryMessages = historyMessages ?? []
 
     const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } = await loadPiCodingAgent()
-    let mcpRelease: (() => void) | undefined
     const ownerToolNames = getOwnerExecutionToolNames(sessionId)
     let mcpTools: import('../agent-runtime/types').RuntimeToolDefinition[] = []
     if (ownerToolNames === null && mcpServers && workspaceSlug && Object.keys(mcpServers).length > 0) {
       const acquired = await this.mcpService.acquireClientManager({ workspaceSlug, mcpServers, cwd, onMcpAuthRequired })
-      mcpRelease = acquired.release
+      resources.release = acquired.release
       mcpTools = await acquired.manager.listAllTools()
     }
     const toolAbortController = new AbortController()
+    resources.pendingTools = toolAbortController
     const toolAbortSignal = abortSignal
       ? AbortSignal.any([abortSignal, toolAbortController.signal])
       : toolAbortController.signal
@@ -492,6 +520,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       sessionManager,
       settingsManager,
     })
+    resources.pendingSession = session
     // 网页导航、快照与点击必须按模型决策顺序执行，禁止 Pi 并发交叉多个有状态操作。
     session.agent.toolExecution = 'sequential'
     const budgetGate = runtimeBudgetLimitUsd === undefined ? undefined : createPiRequestBudgetGate(runtimeBudgetLimitUsd)
@@ -723,6 +752,9 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       interrupting: false,
     }
     this.activeSessions.set(sessionId, activePiSession)
+    resources.pendingSession = undefined
+    resources.pendingTools = undefined
+    if (this.pendingStarts.get(sessionId) === startController) this.pendingStarts.delete(sessionId)
 
     // HR09：调用方 abortSignal 此前只在压缩路径生效；主 prompt 链必须同样响应，
     // 否则中止后会话继续发起 Provider 请求与工具调用（真实运行已观测到该缺口）。
@@ -910,7 +942,6 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       budgetGate?.stop()
       partialAssistantCoalescer.dispose()
       this.releaseSession(sessionId, activePiSession)
-      mcpRelease?.()
       // task span 收尾：query 抛错时标 error；结束时刻由 sink 补全。
       if (spanSink && taskSpanId) {
         Promise.resolve(spanSink.end(taskSpanId, {
@@ -923,6 +954,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
   }
 
   abort(sessionId: string): void {
+    this.pendingStarts.get(sessionId)?.abort()
     this.activeCompactions.get(sessionId)?.abort()
     this.activeCompactions.delete(sessionId)
     const active = this.activeSessions.get(sessionId)
@@ -991,6 +1023,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
   }
 
   dispose(): void {
+    for (const controller of this.pendingStarts.values()) controller.abort()
     for (const controller of this.activeCompactions.values()) controller.abort()
     this.activeCompactions.clear()
     for (const sessionId of this.activeSessions.keys()) {

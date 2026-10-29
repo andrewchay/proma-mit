@@ -66,6 +66,10 @@ let promptGate: Promise<void> | undefined
 let abortCallCount = 0
 let disposeCallCount = 0
 let sessionActivated = false
+let registrationGate: Promise<void> | undefined
+let registrationStarted = false
+let sessionCreationError: Error | undefined
+let unverifiedExtension = false
 interface MockPiEvent {
   type: string
   message?: unknown
@@ -104,7 +108,7 @@ mock.module('./pi-sdk-loader', () => ({
         capturedSystemPromptOverride = options.systemPromptOverride
       }
       async reload(): Promise<void> {}
-      getExtensions() { return { extensions: [], errors: [] } }
+      getExtensions() { return { extensions: unverifiedExtension ? [{}] : [], errors: [] } }
     },
     SessionManager: { inMemory: () => ({}) },
     SettingsManager: {
@@ -114,6 +118,7 @@ mock.module('./pi-sdk-loader', () => ({
       },
     },
     createAgentSession: async (options: { noTools?: 'builtin'; customTools?: Array<{ name: string }> }) => {
+      if (sessionCreationError) throw sessionCreationError
       capturedSessionOptions = options
       sessionActivated = true
       const listeners: Array<(event: MockPiEvent) => void> = []
@@ -164,11 +169,11 @@ const actualPiModelRegistry = await import('./pi-model-registry')
 
 mock.module('./pi-model-registry', () => ({
   ...actualPiModelRegistry,
-  registerPiModelFromChannel: async () => ({
-    agentDir: '/tmp/pi-agent',
-    modelRuntime: {},
-    model: {},
-  }),
+  registerPiModelFromChannel: async () => {
+    registrationStarted = true
+    await registrationGate
+    return { agentDir: '/tmp/pi-agent', modelRuntime: {}, model: {} }
+  },
 }))
 
 const { PiAgentAdapter, resolveFirstTokenTimeoutMs, resolvePromptIdleTimeoutMs, PI_PROMPT_FIRST_TOKEN_MAX_TIMEOUT_MS } = await import('./pi-agent-adapter')
@@ -194,6 +199,109 @@ describe('resolveFirstTokenTimeoutMs（首 token 宽限自适应）', () => {
 })
 
 describe('PiAgentAdapter', () => {
+  test('Given Pi 会话已创建 When 初始化校验失败 Then 释放会话与 MCP 引用', async () => {
+    let releases = 0
+    const manager = { listAllTools: async () => [] } as unknown as import('../agent-runtime/mcp-client').McpClientManager
+    const adapter = new PiAgentAdapter({ acquireClientManager: async () => ({ manager, release: () => { releases++ } }) })
+    const input = { sessionId: 'pi-session-setup-failure', prompt: '运行', agentRuntime: 'pi' as const, provider: 'deepseek' as const,
+      apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp', workspaceSlug: 'test', runtimeBudgetLimitUsd: 1,
+      mcpServers: { test: { type: 'stdio' as const, command: 'mock', enabled: true } } }
+    disposeCallCount = 0
+    unverifiedExtension = true
+    try {
+      await expect(adapter.query(input)[Symbol.asyncIterator]().next()).rejects.toThrow('Pi 有限费用模式禁止未核验')
+      expect(disposeCallCount).toBe(1)
+      expect(releases).toBe(1)
+      const read = getCapturedSessionOptions()?.customTools?.find(tool => tool.name === 'Read') as unknown as { execute(id: string, input: Record<string, unknown>, signal: AbortSignal): Promise<{ details?: { isError?: boolean } }> } | undefined
+      if (!read) throw new Error('缺少 Read 工具')
+      expect((await read.execute('late', { file_path: 'not-used.txt' }, new AbortController().signal)).details?.isError).toBe(true)
+      unverifiedExtension = false
+      const retried = adapter.query({ ...input, mcpServers: undefined, runtimeBudgetLimitUsd: undefined })[Symbol.asyncIterator]()
+      await retried.next()
+      await retried.return?.()
+    } finally { unverifiedExtension = false; adapter.dispose() }
+  })
+
+  test('Given Pi 已取得 MCP 引用 When 会话创建失败 Then 释放引用且会话可重试', async () => {
+    let releases = 0
+    const manager = { listAllTools: async () => [] } as unknown as import('../agent-runtime/mcp-client').McpClientManager
+    const adapter = new PiAgentAdapter({ acquireClientManager: async () => ({ manager, release: () => { releases++ } }) })
+    const input = { sessionId: 'pi-mcp-session-failure', prompt: '运行', agentRuntime: 'pi' as const, provider: 'deepseek' as const,
+      apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp', workspaceSlug: 'test',
+      mcpServers: { test: { type: 'stdio' as const, command: 'mock', enabled: true } } }
+    try {
+      sessionCreationError = new Error('Pi 会话创建失败')
+      await expect(adapter.query(input)[Symbol.asyncIterator]().next()).rejects.toThrow('Pi 会话创建失败')
+      expect(releases).toBe(1)
+      sessionCreationError = undefined
+      const retried = adapter.query({ ...input, mcpServers: undefined })[Symbol.asyncIterator]()
+      await retried.next()
+      await retried.return?.()
+    } finally { sessionCreationError = undefined; adapter.dispose() }
+  })
+
+  test('Given Pi 已取得 MCP 引用 When 工具列表读取失败 Then 释放引用且会话可重试', async () => {
+    let releases = 0
+    const manager = { listAllTools: async () => { throw new Error('MCP 工具列表读取失败') } } as unknown as import('../agent-runtime/mcp-client').McpClientManager
+    const adapter = new PiAgentAdapter({ acquireClientManager: async () => ({ manager, release: () => { releases++ } }) })
+    const input = { sessionId: 'pi-mcp-list-failure', prompt: '运行', agentRuntime: 'pi' as const, provider: 'deepseek' as const,
+      apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp', workspaceSlug: 'test',
+      mcpServers: { test: { type: 'stdio' as const, command: 'mock', enabled: true } } }
+    try {
+      await expect(adapter.query(input)[Symbol.asyncIterator]().next()).rejects.toThrow('MCP 工具列表读取失败')
+      expect(releases).toBe(1)
+      const retried = adapter.query({ ...input, mcpServers: undefined })[Symbol.asyncIterator]()
+      await retried.next()
+      await retried.return?.()
+    } finally { adapter.dispose() }
+  })
+
+  test('Given Pi 正在初始化 When 同 ID 再次启动 Then 拒绝并保留原运行', async () => {
+    let releaseRegistration: (() => void) | undefined
+    registrationGate = new Promise<void>(resolve => { releaseRegistration = resolve })
+    registrationStarted = false
+    const adapter = new PiAgentAdapter()
+    const input = { sessionId: 's-pi-start-guard', prompt: '运行', agentRuntime: 'pi' as const, provider: 'deepseek' as const,
+      apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp' }
+    const first = adapter.query(input)[Symbol.asyncIterator]()
+    const firstDone = first.next()
+    for (let i = 0; i < 100 && !registrationStarted; i++) await new Promise(resolve => setTimeout(resolve, 1))
+    if (!registrationStarted) throw new Error('Pi 初始化未开始')
+    const second = adapter.query(input)[Symbol.asyncIterator]()
+    const rejected = await Promise.race([
+      second.next().then(() => false, () => true),
+      new Promise<boolean>(resolve => setTimeout(() => resolve(false), 30)),
+    ])
+    releaseRegistration?.()
+    await firstDone
+    await first.return?.()
+    registrationGate = undefined
+    adapter.dispose()
+    expect(rejected).toBe(true)
+  })
+
+  test('Given Pi 初始化中被停止 When 初始化结束 Then 不发送 Provider 请求', async () => {
+    let releaseRegistration: (() => void) | undefined
+    registrationGate = new Promise<void>(resolve => { releaseRegistration = resolve })
+    registrationStarted = false
+    const promptCount = capturedPrompts.length
+    const adapter = new PiAgentAdapter()
+    const input = { sessionId: 's-pi-start-cancel', prompt: '运行', agentRuntime: 'pi' as const, provider: 'deepseek' as const,
+      apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp' }
+    const first = adapter.query(input)[Symbol.asyncIterator]()
+    const firstDone = first.next().catch(() => undefined)
+    for (let i = 0; i < 100 && !registrationStarted; i++) await new Promise(resolve => setTimeout(resolve, 1))
+    if (!registrationStarted) throw new Error('Pi 初始化未开始')
+    adapter.abort(input.sessionId)
+    await expect(adapter.query(input)[Symbol.asyncIterator]().next()).rejects.toThrow('Pi 会话已有活动运行')
+    releaseRegistration?.()
+    await firstDone
+    await first.return?.()
+    expect(capturedPrompts.length).toBe(promptCount)
+    registrationGate = undefined
+    adapter.dispose()
+  })
+
   test('Owner Pi执行只暴露用途白名单并注入边界说明', async () => {
     ownerToolNamesForTest = new Set(['SearchKnowledge', 'ReadKnowledgeSource'])
     capturedSessionOptions = undefined
@@ -870,6 +978,28 @@ describe('PiAgentAdapter', () => {
       promptGate = undefined
       adapter.dispose()
     }
+  })
+
+  test('Given Pi 会话正在运行 When 同 ID 再次启动 Then 原会话仍可停止', async () => {
+    let releasePrompt: (() => void) | undefined
+    promptGate = new Promise<void>(resolve => { releasePrompt = resolve })
+    sessionActivated = false
+    abortCallCount = 0
+    const adapter = new PiAgentAdapter()
+    const input = { sessionId: 's-pi-active-guard', prompt: '运行', agentRuntime: 'pi' as const, provider: 'deepseek' as const,
+      apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp' }
+    const first = adapter.query(input)[Symbol.asyncIterator]()
+    const firstDone = first.next()
+    for (let i = 0; i < 100 && !sessionActivated; i++) await new Promise(resolve => setTimeout(resolve, 1))
+    if (!sessionActivated) throw new Error('Pi 会话未启动')
+    await expect(adapter.query(input)[Symbol.asyncIterator]().next()).rejects.toThrow('Pi 会话已有活动运行')
+    adapter.abort(input.sessionId)
+    expect(abortCallCount).toBe(1)
+    releasePrompt?.()
+    await firstDone
+    await first.return?.()
+    promptGate = undefined
+    adapter.dispose()
   })
 
   test('Given Pi 旧会话停止后同 ID 新会话启动 When 旧会话随后退出 Then 新会话仍可停止', async () => {

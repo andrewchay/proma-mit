@@ -189,11 +189,26 @@ interface ActiveSession {
 
 export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
   private readonly activeSessions = new Map<string, ActiveSession>()
+  private readonly pendingStarts = new Map<string, AbortController>()
 
   constructor(private readonly mcpService: RuntimeMcpService = new ElectronRuntimeMcpService()) {}
 
   /** 发起查询，返回 SDKMessage 异步迭代流 */
   async *query(input: ProviderAgnosticAgentQueryOptions): AsyncIterable<SDKMessage> {
+    if (this.pendingStarts.has(input.sessionId) || this.activeSessions.has(input.sessionId)) throw new Error('Proma 会话已有活动运行')
+    const startController = new AbortController()
+    this.pendingStarts.set(input.sessionId, startController)
+    const abortSignal = input.abortSignal
+      ? AbortSignal.any([input.abortSignal, startController.signal])
+      : startController.signal
+    try {
+      yield* this.querySession({ ...input, abortSignal }, startController)
+    } finally {
+      if (this.pendingStarts.get(input.sessionId) === startController) this.pendingStarts.delete(input.sessionId)
+    }
+  }
+
+  private async *querySession(input: ProviderAgnosticAgentQueryOptions, startController: AbortController): AsyncIterable<SDKMessage> {
     // P01/P03：策略 required 保证不满足时在调用 Provider 前拒绝（fail-closed）。
     assertRuntimePolicy('proma')
     assertNoOwnerBusinessSession(input.sessionId)
@@ -229,7 +244,11 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       throw new Error('Provider-Agnostic Runtime 需要 provider、apiKey、baseUrl、cwd')
     }
 
+    if (this.activeSessions.has(sessionId)) throw new Error('Proma 会话已有活动运行')
+    abortSignal?.throwIfAborted()
     const capability = await resolveChannelContextWindow({ provider, modelId: model ?? '', channelId: input.channelId })
+    abortSignal?.throwIfAborted()
+    if (this.activeSessions.has(sessionId)) throw new Error('Proma 会话已有活动运行')
     const adapter = getAdapter(adapterProvider ?? provider)
     const controller = new AbortController()
     if (abortSignal) {
@@ -240,15 +259,17 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       permissionMode: input.permissionMode ?? 'auto',
     }
     this.activeSessions.set(sessionId, activeSession)
+    if (this.pendingStarts.get(sessionId) === startController) this.pendingStarts.delete(sessionId)
 
-    const baseFetch = getFetchFn(await getEffectiveProxyUrl())
-    assertNoOwnerBusinessSession(sessionId)
-    const ownerFetch = ((...args: Parameters<typeof globalThis.fetch>) => {
+    let mcpRelease: (() => void) | undefined
+    try {
+      const baseFetch = getFetchFn(await getEffectiveProxyUrl())
       assertNoOwnerBusinessSession(sessionId)
-      return baseFetch(...args)
-    }) as typeof globalThis.fetch
-    if (requestedOperation === 'compact') {
-      try {
+      const ownerFetch = ((...args: Parameters<typeof globalThis.fetch>) => {
+        assertNoOwnerBusinessSession(sessionId)
+        return baseFetch(...args)
+      }) as typeof globalThis.fetch
+      if (requestedOperation === 'compact') {
         await compactSessionNow({
           sessionId,
           fetchFn: ownerFetch,
@@ -262,62 +283,57 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           audit: { sessionId, runtime: 'proma', trigger: 'manual' },
           onLifecycle: (event) => input.onAgentEvent?.({ type: 'compaction_status', ...event }),
         })
-      } finally {
-        this.activeSessions.delete(sessionId)
+        return
       }
-      return
-    }
 
-    // 加载 MCP 工具（优先使用跨会话缓存，减少重复连接）
-    let mcpManager: import('../agent-runtime/mcp-client').McpClientManager | undefined
-    let mcpRelease: (() => void) | undefined
-    let mcpTools: RuntimeToolDefinition[] = []
-    if (!disableTools && mcpServers && Object.keys(mcpServers).length > 0 && workspaceSlug) {
-      try {
-        const acquired = await this.mcpService.acquireClientManager({
-          workspaceSlug,
-          mcpServers,
-          cwd,
-          onMcpAuthRequired,
-        })
-        mcpManager = acquired.manager
-        mcpRelease = acquired.release
-        mcpTools = await mcpManager.listAllTools(controller.signal)
-        console.log(`[Agent Runtime] 已加载 ${mcpTools.length} 个 MCP 工具`)
-      } catch (err) {
-        console.error('[Agent Runtime] 加载 MCP 工具失败，将继续使用核心工具:', err)
+      // 加载 MCP 工具（优先使用跨会话缓存，减少重复连接）
+      let mcpManager: import('../agent-runtime/mcp-client').McpClientManager | undefined
+      let mcpTools: RuntimeToolDefinition[] = []
+      if (!disableTools && mcpServers && Object.keys(mcpServers).length > 0 && workspaceSlug) {
+        try {
+          const acquired = await this.mcpService.acquireClientManager({
+            workspaceSlug,
+            mcpServers,
+            cwd,
+            onMcpAuthRequired,
+          })
+          mcpManager = acquired.manager
+          mcpRelease = acquired.release
+          mcpTools = await mcpManager.listAllTools(controller.signal)
+          console.log(`[Agent Runtime] 已加载 ${mcpTools.length} 个 MCP 工具`)
+        } catch (err) {
+          console.error('[Agent Runtime] 加载 MCP 工具失败，将继续使用核心工具:', err)
+        }
       }
-    }
-    const tools: RuntimeToolDefinition[] = disableTools ? [] : [
-      ...createCoreTools({ workspaceSlug }).filter((tool) => tool.name !== GOAL_CHECKPOINT_TOOL_NAME || Boolean(onGoalCheckpoint)),
-      ...mcpTools,
-      ...(runtimeTools ?? []),
-      ...(extraTools ?? []).map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        parameters: { type: 'object' as const, properties: tool.parameters as Record<string, never>, required: [] },
-        async execute(input: unknown): Promise<import('@gravitas/core').ToolResult> {
-          const content = await tool.execute((input ?? {}) as Record<string, unknown>)
-          return { toolCallId: '', content, isError: false }
-        },
-      })),
-    ]
-    const toolMap = new Map(tools.map((t) => [t.name, t]))
-    const effectiveSystemPrompt = buildAgentSystemPrompt(systemPrompt, cwd, buildSkillPromptContext(workspaceSlug))
-    // 用户在消息中显式要求读取的 Skill：注入指令块引导模型先 ReadSkill 再执行
-    const skillRequestedBlock = buildSkillRequestedBlock(skillMentions, prompt)
+      const tools: RuntimeToolDefinition[] = disableTools ? [] : [
+        ...createCoreTools({ workspaceSlug }).filter((tool) => tool.name !== GOAL_CHECKPOINT_TOOL_NAME || Boolean(onGoalCheckpoint)),
+        ...mcpTools,
+        ...(runtimeTools ?? []),
+        ...(extraTools ?? []).map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          parameters: { type: 'object' as const, properties: tool.parameters as Record<string, never>, required: [] },
+          async execute(input: unknown): Promise<import('@gravitas/core').ToolResult> {
+            const content = await tool.execute((input ?? {}) as Record<string, unknown>)
+            return { toolCallId: '', content, isError: false }
+          },
+        })),
+      ]
+      const toolMap = new Map(tools.map((t) => [t.name, t]))
+      const effectiveSystemPrompt = buildAgentSystemPrompt(systemPrompt, cwd, buildSkillPromptContext(workspaceSlug))
+      // 用户在消息中显式要求读取的 Skill：注入指令块引导模型先 ReadSkill 再执行
+      const skillRequestedBlock = buildSkillRequestedBlock(skillMentions, prompt)
 
-    // Plan 模式状态
-    let planModeEntered = activeSession.permissionMode === 'plan'
+      // Plan 模式状态
+      let planModeEntered = activeSession.permissionMode === 'plan'
 
-    // 累积本轮所有消息（用于持久化和事件流）
-    const runtimeMessages: RuntimeMessage[] = []
-    let totalInputTokens = 0
-    let totalOutputTokens = 0
-    let totalCacheReadTokens = 0
-    let totalCacheCreationTokens = 0
+      // 累积本轮所有消息（用于持久化和事件流）
+      const runtimeMessages: RuntimeMessage[] = []
+      let totalInputTokens = 0
+      let totalOutputTokens = 0
+      let totalCacheReadTokens = 0
+      let totalCacheCreationTokens = 0
 
-    try {
       const fetchFn = ownerFetch
 
       // 自动上下文压缩：优先按同模型的已报告 token 与已确认窗口判断；缺少观测时兼容历史条数回退。
@@ -389,6 +405,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
       while (round < maxTurns) {
         assertNoOwnerBusinessSession(sessionId)
+        controller.signal.throwIfAborted()
         round++
 
         const request = adapter.buildStreamRequest({
@@ -652,7 +669,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       }
       yield resultMessage as unknown as SDKMessage
     } finally {
-      this.activeSessions.delete(sessionId)
+      if (this.activeSessions.get(sessionId) === activeSession) this.activeSessions.delete(sessionId)
       // 释放缓存引用（缓存负责实际断开连接）
       mcpRelease?.()
     }
@@ -660,6 +677,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
   /** 中止指定会话 */
   abort(sessionId: string): void {
+    this.pendingStarts.get(sessionId)?.abort()
     const session = this.activeSessions.get(sessionId)
     if (session) {
       session.cancelled = true
@@ -714,6 +732,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
   /** 释放资源 */
   dispose(): void {
+    for (const controller of this.pendingStarts.values()) controller.abort()
     for (const [sessionId, session] of this.activeSessions) {
       session.controller.abort()
       this.activeSessions.delete(sessionId)

@@ -339,6 +339,9 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
             // 会绕过受控出口；未配置 runSubAgent 时 Agent 工具直接报错，零花费。
             runSubAgent: pilotRuntime || controlled || !input.runSubAgent ? undefined : async (args) => {
               assertNoOwnerBusinessSession(sessionId)
+              if (isControlledProviderSession(sessionId) || resolvePilotBudgetForSession(sessionId)) {
+                throw new Error('受控会话不允许委派子代理')
+              }
               return input.runSubAgent!(args)
             },
             onGoalCheckpoint: input.onGoalCheckpoint,

@@ -5,7 +5,7 @@
  * Agent 能够完成"读取文件 → 编辑文件 → 返回结果"的完整循环。
  */
 
-import { describe, test, expect, beforeEach, afterEach, mock, beforeAll, afterAll } from 'bun:test'
+import { describe, test, expect, beforeEach, afterEach, mock, beforeAll, afterAll, spyOn } from 'bun:test'
 import { buildElectronMock } from '../testing/electron-mock'
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -79,6 +79,9 @@ describe('Provider-Agnostic Agent 适配器', () => {
   let requestedAdapterProviders: string[] = []
   let firstResponseTimeouts: number[] = []
   let firstTurnToolCalls: ToolCall[] | undefined
+  let streamGate: Promise<void> | undefined
+  let streamGates: Array<Promise<void>> = []
+  let streamSignals: AbortSignal[] = []
 
   beforeEach(() => {
     tempDir = mkdtempSync(join(tmpdir(), 'proma-paa-adapter-test-'))
@@ -87,6 +90,9 @@ describe('Provider-Agnostic Agent 适配器', () => {
     requestedAdapterProviders = []
     firstResponseTimeouts = []
     firstTurnToolCalls = undefined
+    streamGate = undefined
+    streamGates = []
+    streamSignals = []
 
     // mock @gravitas/core，用回合制逻辑替代真实 SSE 请求
     mock.module('@gravitas/core', () => ({
@@ -122,6 +128,9 @@ describe('Provider-Agnostic Agent 适配器', () => {
       },
       streamSSE: async (options: StreamSSEOptions): Promise<StreamSSEResult> => {
         streamCallCount++
+        await streamGate
+        if (options.signal) streamSignals.push(options.signal)
+        await streamGates[streamCallCount - 1]
         firstResponseTimeouts.push(options.firstResponseTimeoutMs ?? 0)
         if (streamCallCount === 1 && firstTurnToolCalls) {
           return makeStreamResult('提交 Goal 检查点', firstTurnToolCalls)
@@ -139,6 +148,127 @@ describe('Provider-Agnostic Agent 适配器', () => {
         return makeStreamResult('文件编辑完成，任务结束')
       },
     }))
+  })
+
+  test('Given 已取得 MCP 引用 When 后续提示词初始化失败 Then 释放引用并允许重试', async () => {
+    const promptBuilder = await import('../agent-runtime/prompt-builder')
+    const spy = spyOn(promptBuilder, 'buildAgentSystemPrompt').mockImplementation(() => { throw new Error('提示词初始化失败') })
+    let releases = 0
+    const manager = { listAllTools: async () => [] } as unknown as import('../agent-runtime/mcp-client').McpClientManager
+    const adapter = new ProviderAgnosticAgentAdapter({ acquireClientManager: async () => ({ manager, release: () => { releases++ } }) })
+    const input = { sessionId: 'proma-mcp-init-error', prompt: '运行', model: 'deepseek-chat', provider: 'deepseek' as const,
+      apiKey: 'mock-key', baseUrl: 'http://localhost/mock', cwd: '/tmp', workspaceSlug: 'test',
+      mcpServers: { test: { type: 'stdio' as const, command: 'mock', enabled: true } } }
+    try {
+      await expect(adapter.query(input)[Symbol.asyncIterator]().next()).rejects.toThrow('提示词初始化失败')
+      expect(releases).toBe(1)
+      spy.mockRestore()
+      const retried = adapter.query({ ...input, mcpServers: undefined })[Symbol.asyncIterator]()
+      expect((await retried.next()).done).not.toBe(true)
+      await retried.return?.()
+    } finally { spy.mockRestore(); adapter.dispose() }
+  })
+
+  test('Given Proma 初始化失败 When 使用同一会话重试 Then 不遗留活动占用', async () => {
+    const proxy = await import('../proxy-settings-service')
+    const spy = spyOn(proxy, 'getEffectiveProxyUrl').mockImplementation(async () => { throw new Error('代理初始化失败') })
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const input = { sessionId: 'proma-init-error', prompt: '运行', model: 'deepseek-chat', provider: 'deepseek' as const,
+      apiKey: 'mock-key', baseUrl: 'http://localhost/mock', cwd: '/tmp' }
+    try {
+      await expect(adapter.query(input)[Symbol.asyncIterator]().next()).rejects.toThrow('代理初始化失败')
+      spy.mockRestore()
+      const retried = adapter.query(input)[Symbol.asyncIterator]()
+      expect((await retried.next()).done).not.toBe(true)
+      await retried.return?.()
+    } finally { spy.mockRestore(); adapter.dispose() }
+  })
+
+  test('Given Proma 正在初始化 When 直接停止 Then 不发模型请求', async () => {
+    const capability = await import('../model-context-capability')
+    const original = capability.resolveChannelContextWindow
+    let started!: () => void, release!: () => void
+    const startedPromise = new Promise<void>(resolve => { started = resolve })
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const spy = spyOn(capability, 'resolveChannelContextWindow').mockImplementation(async input => {
+      started(); await gate; return original(input)
+    })
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const input = { sessionId: 'proma-initializing', prompt: '运行', model: 'deepseek-chat', provider: 'deepseek' as const,
+      apiKey: 'mock-key', baseUrl: 'http://localhost/mock', cwd: '/tmp' }
+    const iterator = adapter.query(input)[Symbol.asyncIterator]()
+    const pending = iterator.next().catch(() => undefined)
+    try {
+      await startedPromise
+      adapter.abort(input.sessionId)
+      await expect(adapter.query(input)[Symbol.asyncIterator]().next()).rejects.toThrow('Proma 会话已有活动运行')
+      release()
+      await pending
+      expect(streamCallCount).toBe(0)
+    } finally {
+      release()
+      await iterator.return?.()
+      adapter.dispose()
+      spy.mockRestore()
+    }
+  })
+
+  test('Given 父会话在子代理启动前已停止 When 启动 Provider-Agnostic Then 不发模型请求', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const adapter = new ProviderAgnosticAgentAdapter()
+    await expect(async () => {
+      for await (const _message of adapter.query({ sessionId: 'already-stopped', prompt: '运行', model: 'deepseek-chat',
+        provider: 'deepseek', apiKey: 'mock-key', baseUrl: 'http://localhost/mock', cwd: '/tmp', abortSignal: controller.signal })) {}
+    }).toThrow()
+    expect(streamCallCount).toBe(0)
+    adapter.dispose()
+  })
+
+  test('Given 旧运行停止后同 ID 新运行启动 When 旧运行随后退出 Then 新运行仍可停止', async () => {
+    let releaseFirst!: () => void
+    let releaseSecond!: () => void
+    streamGates = [new Promise(resolve => { releaseFirst = resolve }), new Promise(resolve => { releaseSecond = resolve })]
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const input = { sessionId: 'proma-restart', prompt: '运行', model: 'deepseek-chat', provider: 'deepseek' as const,
+      apiKey: 'mock-key', baseUrl: 'http://localhost/mock', cwd: '/tmp' }
+    const first = adapter.query(input)[Symbol.asyncIterator]()
+    const firstDone = (async () => { try { while (!(await first.next()).done) {} } catch {} })()
+    for (let i = 0; i < 100 && streamCallCount < 1; i++) await new Promise(resolve => setTimeout(resolve, 1))
+    if (streamCallCount < 1) throw new Error('旧运行未启动')
+    adapter.abort(input.sessionId)
+    const second = adapter.query(input)[Symbol.asyncIterator]()
+    const secondDone = (async () => { try { while (!(await second.next()).done) {} } catch {} })()
+    for (let i = 0; i < 100 && streamCallCount < 2; i++) await new Promise(resolve => setTimeout(resolve, 1))
+    if (streamCallCount < 2) throw new Error('新运行未启动')
+    releaseFirst()
+    await firstDone
+    adapter.abort(input.sessionId)
+    const newAborted = streamSignals[1]?.aborted
+    releaseSecond()
+    await secondDone
+    adapter.dispose()
+    expect(newAborted).toBe(true)
+  })
+
+  test('Given Proma 会话正在运行 When 同 ID 再次启动 Then 拒绝且原运行仍可停止', async () => {
+    let release!: () => void
+    streamGate = new Promise<void>(resolve => { release = resolve })
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const input = { sessionId: 'proma-concurrent', prompt: '运行', model: 'deepseek-chat', provider: 'deepseek' as const,
+      apiKey: 'mock-key', baseUrl: 'http://localhost/mock', cwd: '/tmp' }
+    const first = adapter.query(input)[Symbol.asyncIterator]()
+    const firstDone = (async () => { try { while (!(await first.next()).done) {} } catch {} })()
+    for (let i = 0; i < 100 && !streamCallCount; i++) await new Promise(resolve => setTimeout(resolve, 1))
+    if (!streamCallCount) throw new Error('原运行未启动')
+    const second = adapter.query(input)[Symbol.asyncIterator]()
+    const rejected = await Promise.race([second.next().then(() => false, () => true),
+      new Promise<boolean>(resolve => setTimeout(() => resolve(false), 30))])
+    adapter.abort(input.sessionId)
+    release()
+    await firstDone
+    adapter.dispose()
+    expect(rejected).toBe(true)
   })
 
   test('手动压缩命令由 Runtime 直接处理，不发送给模型', async () => {
