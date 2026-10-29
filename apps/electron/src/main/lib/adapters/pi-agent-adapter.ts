@@ -245,14 +245,16 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     const abortSignal = input.abortSignal
       ? AbortSignal.any([input.abortSignal, startController.signal])
       : startController.signal
+    const mcpLease: { release?: () => void } = {}
     try {
-      yield* this.querySession({ ...input, abortSignal }, startController)
+      yield* this.querySession({ ...input, abortSignal }, startController, mcpLease)
     } finally {
       if (this.pendingStarts.get(input.sessionId) === startController) this.pendingStarts.delete(input.sessionId)
+      mcpLease.release?.()
     }
   }
 
-  private async *querySession(input: PiAgentQueryOptions, startController: AbortController): AsyncIterable<SDKMessage> {
+  private async *querySession(input: PiAgentQueryOptions, startController: AbortController, mcpLease: { release?: () => void }): AsyncIterable<SDKMessage> {
     assertNoOwnerBusinessSession(input.sessionId)
     const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy, isDelegationSession, thinkingLevel, requestedOperation, abortSignal, runtimeBudgetLimitUsd } = input
     // P01/P03：策略 required 保证不满足时在调用 Provider 前拒绝（fail-closed）。
@@ -315,12 +317,11 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     let effectiveHistoryMessages = historyMessages ?? []
 
     const { createAgentSession, DefaultResourceLoader, SessionManager, SettingsManager } = await loadPiCodingAgent()
-    let mcpRelease: (() => void) | undefined
     const ownerToolNames = getOwnerExecutionToolNames(sessionId)
     let mcpTools: import('../agent-runtime/types').RuntimeToolDefinition[] = []
     if (ownerToolNames === null && mcpServers && workspaceSlug && Object.keys(mcpServers).length > 0) {
       const acquired = await this.mcpService.acquireClientManager({ workspaceSlug, mcpServers, cwd, onMcpAuthRequired })
-      mcpRelease = acquired.release
+      mcpLease.release = acquired.release
       mcpTools = await acquired.manager.listAllTools()
     }
     const toolAbortController = new AbortController()
@@ -928,7 +929,6 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       budgetGate?.stop()
       partialAssistantCoalescer.dispose()
       this.releaseSession(sessionId, activePiSession)
-      mcpRelease?.()
       // task span 收尾：query 抛错时标 error；结束时刻由 sink 补全。
       if (spanSink && taskSpanId) {
         Promise.resolve(spanSink.end(taskSpanId, {
