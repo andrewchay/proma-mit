@@ -229,7 +229,11 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       throw new Error('Provider-Agnostic Runtime 需要 provider、apiKey、baseUrl、cwd')
     }
 
+    if (this.activeSessions.has(sessionId)) throw new Error('Proma 会话已有活动运行')
+    abortSignal?.throwIfAborted()
     const capability = await resolveChannelContextWindow({ provider, modelId: model ?? '', channelId: input.channelId })
+    abortSignal?.throwIfAborted()
+    if (this.activeSessions.has(sessionId)) throw new Error('Proma 会话已有活动运行')
     const adapter = getAdapter(adapterProvider ?? provider)
     const controller = new AbortController()
     if (abortSignal) {
@@ -263,7 +267,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           onLifecycle: (event) => input.onAgentEvent?.({ type: 'compaction_status', ...event }),
         })
       } finally {
-        this.activeSessions.delete(sessionId)
+        if (this.activeSessions.get(sessionId) === activeSession) this.activeSessions.delete(sessionId)
       }
       return
     }
@@ -389,6 +393,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
       while (round < maxTurns) {
         assertNoOwnerBusinessSession(sessionId)
+        controller.signal.throwIfAborted()
         round++
 
         const request = adapter.buildStreamRequest({
@@ -652,7 +657,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       }
       yield resultMessage as unknown as SDKMessage
     } finally {
-      this.activeSessions.delete(sessionId)
+      if (this.activeSessions.get(sessionId) === activeSession) this.activeSessions.delete(sessionId)
       // 释放缓存引用（缓存负责实际断开连接）
       mcpRelease?.()
     }
