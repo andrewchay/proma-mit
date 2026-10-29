@@ -1,0 +1,26 @@
+# 受控自主：现状缺口与推进顺序
+
+基于 `codex/five-track-delivery` 的源码和已有切片证据；这是一份工程推进顺序，不是无人值守验收结论。
+
+## 已有基础
+
+Owner 已有目标、计划和授权版本，主进程确认后签发授权、校验预算并由调度器续派；已有研发快照、技术评审、人工业务判断及恢复对账机制。Write/Edit 中需要逐次审批的动作已在执行前消费批准，旧批准是否已使用无法确认时保留 unknown。停止流程先持久化意图再请求 Runtime 中止，不能证明停止时保留待对账。上述是可复用的基础，不意味着所有 Runtime 和外部动作都受同一保护。
+
+## 依次推进
+
+1. **固定首批支持范围并盘点入口。** 先以 macOS arm64、现有 Owner AI SDK Runtime 及其子 Agent/工具为切片，列出执行身份来源、进程、文件、网络、MCP、Workflow、停止和审批入口；其他未覆盖路径标为未知或拒绝。验收要求绕开普通适配器直接调用工具、切换会话和恢复后调用均不能绕开权限。当前工具上下文的 `ownerWorkspaceWrite` 来源于 `ownerActionApproval`，底层门禁依赖调用方正确携带标记，尚不是不可绕过的身份保证。
+2. **隔离与动作门禁。** Bash 预存跨会话硬链接已通过策略前溶解私有副本关闭；新建 Git 仓库同一命令内的 hooks 已在命令后收口停用，config 可执行载体（core.fsmonitor、core.pager、filter.*.clean、diff.external、credential.helper、include.path、以 ! 开头的别名与 submodule 更新命令；[证据](git-config-carrier-evidence.md)）已在命令后清洗并另存副本，真实 git 验证注入确实执行、清洗后不再执行；GIT_DIR 等环境变量间接布局与命令运行期间的执行仍是窗口，等待基于身份绑定的方案；Read/Write/Edit 已以打开前 inode 基准加打开后比对关闭父目录替换竞态（[证据](path-race-evidence.md)），属二次校验而非 openat 级原子隔离，其他文件入口与 Runtime 仍待覆盖。执行前重新核对授权、范围和动作指纹；逐次批准只消费一次。验收用真实 macOS 进程、预存硬链接、路径替换与受保护配置负向测试，不能把 skip 计为通过。
+3. **停止、撤权和恢复。** Bash 工具已改为独立进程组运行并接入会话中止信号，终止按 SIGTERM→SIGKILL 阶梯对整组下发，并用 `kill(-pgid, 0)` 探测组是否消失：只有组确认消失才写 terminated，否则标 unconfirmed（[证据](termination-evidence.md)）；MCP stdio 服务端在断开时先快照后代再 close，按父进程树 SIGTERM→SIGKILL 回收，进程表不可用即标 unavailable；回收前用 `ps -o lstart=` 的启动时间校验进程身份，PID 被复用或身份不可验证时一律不发信号（[证据](mcp-process-identity-evidence.md)）；Computer Use 写操作抛错时区分「未执行」与「结果未知」，未知即禁止自动重试并要求先截图确认（[证据](desktop-action-outcome-evidence.md)）；Web Bridge 的导航/点击/输入/滚动/上传/下载/连接同样分类，CDP 断连与协议错误归为结果未知并要求先重新观察页面，失败动作一并写入审计（[证据](web-bridge-action-outcome-evidence.md)）；MCP 工具调用按 JSON-RPC 错误码区分「未执行」与「结果未知」，服务端拒绝码才判未执行，其余一律未知并要求先核对目标系统（[证据](mcp-tool-outcome-evidence.md)）；其余执行器（其他 Runtime、SSE/HTTP 服务端、Web Bridge 标签管理）与 Provider 无回执对账仍待建立，Provider 或外部动作没有可核验回执时维持 unknown；未知结果已落盘登记，桌面 / Web Bridge / MCP 三个执行入口会拦住同指纹的重复动作，直到有人给出处理依据后显式解除（[证据](unknown-action-constraint-evidence.md)，解除入口尚无 UI）。验收在执行中停止/撤权、进程退出、超时、崩溃重启和外发结果未知等情况下逐项对账；不得把 Abort 请求或本地状态更新当成终止事实。
+4. **目标、成果与验证闭环。** 复用现有 Goal/计划、命令、源码或产物 hash、验证回执、技术评审和项目链人工判断，补足关联和新鲜度检查。验收包括验证后改动产物、修改冻结标准、零测试、旧回执重放、独立评审缺失和真实人工接受；执行成功、技术评审通过与业务接受分别显示。
+5. **固定构建的真实任务验收。** 在首批支持范围内构造包含越权、撤权、错误恢复、实际 Provider 调用与人工验收的真实任务集；分别记录自动化测试、运行证据、Provider/费用、打包应用与用户签收。通过后才讨论扩大平台、Runtime 和无人值守范围；不能用一次离线测试代替产品验收。
+
+## 当前必须保留的限制
+
+- [沙箱局部证据](sandbox-slice-evidence.md)记录的预存硬链接绕过已通过溶解副本关闭，Git 初始化 hooks 窗口已通过命令后收口缓解（config 载体残留）；[路径竞态证据](path-race-evidence.md)记录的 Read/Write/Edit 目录替换竞态已通过打开前 inode 基准关闭，其他文件入口与 Runtime 尚未覆盖。
+- 停止请求与进程真正退出不同；跨进程和外部 Provider 的状态不能凭本地标志推断。
+- 历史运行、评测及人工事件已有积累；证据质量和关联需审计，不要求从零开始等待采样。
+- 当前范围内的功能切片均在远端分支，尚未合并或经过最终安装包和真实 Provider 验收。
+
+## 知识工具入口复核
+
+受控会话的知识搜索在实际检索时使用当前可检索来源与冻结来源的交集；读取文档前重新核对冻结范围。搜索和读取在等待索引后重新读取会话知识授权，避免沿用撤销前的范围。隔离测试覆盖同一知识库中冻结与未冻结来源、冻结外文档拒绝、等待期间撤权，以及直接读取的审计记录；不代表所有 Runtime 的并发撤权、真实 Provider 或完整生产隔离已验收。已有外层权限预检仍可能记录授权事件，不应把审计行数直接解释为完成读取次数。
