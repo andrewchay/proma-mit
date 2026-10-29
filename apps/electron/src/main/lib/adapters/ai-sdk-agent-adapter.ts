@@ -395,7 +395,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       }
     } finally {
       revokeAISDKSessionIdentity(activeSession.state)
-      this.activeSessions.delete(sessionId)
+      if (this.activeSessions.get(sessionId) === activeSession) this.activeSessions.delete(sessionId)
       mcpRelease?.()
     }
   }
