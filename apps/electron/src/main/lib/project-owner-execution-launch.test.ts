@@ -361,9 +361,12 @@ async function textDeliveryRun(options: { rework?: boolean; oversized?: boolean;
   const calls: Array<{ role: 'executor' | 'reviewer'; ordinal: number; content: string; artifactHash?: string }> = []
   const runtimeCalls: Array<{ role: 'executor' | 'reviewer'; agentRuntime?: string; permissionModeOverride?: string; userMessage: string }> = []
   const completed: Promise<void>[] = [], pendingReviews: Array<() => void> = []
+  let notifyFirstRunner!: () => void
+  const firstRunnerStarted = new Promise<void>(resolve => { notifyFirstRunner = resolve })
   registry.setHeadlessAgentRunner(async (input, callbacks) => {
     let resolve!: () => void
     completed.push(new Promise<void>(done => { resolve = done }))
+    notifyFirstRunner()
     const execution = store.getAgentExecutionBySessionId(input.sessionId)!
     const command = store.getProjectDb().prepare('SELECT role,rework_ordinal FROM project_owner_execution_commands WHERE id=?').get(execution.ownerCommandId!) as { role: 'executor' | 'reviewer'; rework_ordinal: number }
     runtimeCalls.push({ role: command.role, agentRuntime: input.agentRuntime, permissionModeOverride: input.permissionModeOverride, userMessage: input.userMessage })
@@ -403,6 +406,7 @@ async function textDeliveryRun(options: { rework?: boolean; oversized?: boolean;
   })
   const dependencies = { ...a.dependencies, schedule: async (id: string) => { await scheduler.runOwnerAutonomousSchedule(id) } }
   const grant = await launchOwnerPreparedExecution(f.request, dependencies)
+  await firstRunnerStarted
   await completed[0]
   const advance = async () => { const count = completed.length; await scheduler.runOwnerAutonomousSchedule(f.project.id); if (completed.length > count) await completed.at(-1) }
   return { f, grant, calls, runtimeCalls, pendingReviews, advance, artifacts, scheduler }
