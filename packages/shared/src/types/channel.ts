@@ -555,6 +555,13 @@ export function resolveAgentRuntimeBaseUrl(provider: ProviderType, runtime: Agen
  * 渠道中的模型配置
  */
 export interface ChannelModel {
+  /** API 或模型目录返回的窗口；单位为 tokens。 */
+  contextWindow?: number
+  contextWindowSource?: 'api' | 'catalog'
+  /** API 元数据所属的供应商与端点身份。 */
+  contextWindowEndpoint?: string
+  /** 用户为此渠道、此模型设置的窗口；优先于自动识别。 */
+  contextWindowOverride?: number
   /** 模型唯一标识（如 claude-sonnet-4-5-20250929） */
   id: string
   /** 模型显示名称 */

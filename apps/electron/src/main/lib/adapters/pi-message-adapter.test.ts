@@ -38,7 +38,7 @@ describe('pi-message-adapter', () => {
     ])
     expect(assistantMessage.message.usage?.input_tokens).toBe(10)
     expect(assistantMessage._channelModelId).toBe('channel-model')
-    expect(assistantMessage._contextWindow).toBe(256_000)
+    expect(assistantMessage._contextWindow).toBe(400_000)
   })
 
   test('uses Codex model context window rather than the unknown-model fallback', () => {
@@ -53,7 +53,7 @@ describe('pi-message-adapter', () => {
       timestamp: 1,
     }
 
-    const converted = convertPiMessageToSDKMessage(message, 's1')
+    const converted = convertPiMessageToSDKMessage(message, 's1', 'gpt-5.6', { contextWindow: 1_000_000 })
     expect(converted?.type).toBe('assistant')
     expect((converted as SDKAssistantMessage)._contextWindow).toBe(1_000_000)
   })

@@ -244,6 +244,14 @@ bun run generate:icons    # 生成应用图标
 - `openai-adapter.ts` 被 OpenAI、智谱、豆包、通义千问、Custom 等多个 provider 复用。
 - `stream_options.include_usage` 仅在确认支持的 `openai`、`deepseek` 上发送，避免其他 OpenAI 兼容端点因未知参数报错。
 
+#### 模型上下文窗口
+
+- Pi SDK 为 ESM-only，CJS 主进程不得静态加载其 runtime。窗口目录使用随应用打包的纯 JSON；升级 Pi SDK 后运行 `bun scripts/generate-model-context-catalog.ts`，一致性测试必须通过。
+- 主进程统一经 `model-context-capability.ts` 解析窗口，优先级为手动覆盖、API 元数据、厂商精确型号目录、明确标记的未知回退值；禁止按整类厂商模型通配为 1M。
+- `ChannelModel` 的窗口与覆盖值随渠道保存在 JSON 配置中。API 元数据绑定供应商与端点身份；切换端点不能复用旧端点的 API 限制，刷新模型列表必须保留手动覆盖与启用状态。
+- Google `inputTokenLimit`、Anthropic `max_input_tokens`、兼容端点 `context_window` 均需保留；旧配置读出时可补目录元数据，不因此写盘。
+- Pi、Gravitas、AI SDK 的压缩预算与用量显示使用同一解析值。Claude SDK 的自动压缩由 SDK 管理；Codex 订阅继续使用内置模型配置。小窗口需相应限制输出与安全预留。
+
 #### 多模态支持
 - **图片**：各 Provider 格式不同，适配器自动转换
 - **文档**：提取文本后注入 `<file>` XML 标签

@@ -309,6 +309,8 @@ export interface SDKUserMessage {
 
 /** SDK result 消息（查询结束时返回） */
 export interface SDKResultMessage {
+  /** 当前主模型解析出的窗口，用于兼容 runtime 的用量显示。 */
+  _contextWindow?: number
   type: 'result'
   subtype: 'success' | 'error' | 'error_max_turns' | 'error_max_budget_usd' | 'error_during_execution' | (string & {})
   usage: {

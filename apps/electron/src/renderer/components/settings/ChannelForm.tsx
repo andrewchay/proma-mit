@@ -9,6 +9,7 @@
  * 编辑模式下修改即时保存（auto-save），创建模式仍需手动提交。
  */
 
+import { ModelContextWindowField } from './ModelContextWindowField'
 import * as React from 'react'
 import {
   ArrowLeft,
@@ -285,6 +286,7 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
   const handleProviderChange = (newProvider: string): void => {
     const p = newProvider as ProviderType
     setProvider(p)
+    setModels((previous) => previous.map(({ contextWindow, contextWindowSource, contextWindowEndpoint, ...model }) => model))
     setBaseUrl(PROVIDER_DEFAULT_URLS[p])
     setTestResult(null)
     // 预设模型：首次切换到对应 provider 且无模型时自动填充
@@ -359,14 +361,18 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
       setFetchResult(result)
 
       if (result.success && result.models.length > 0) {
-        // 合并拉取的模型：保留已有模型的启用状态，新模型默认不勾选
-        const existingIds = new Set(models.map((m) => m.id))
-        const newModels = result.models
-          .filter((m) => !existingIds.has(m.id))
-          .map((m) => ({ ...m, enabled: false }))
-        if (newModels.length > 0) {
-          setModels((prev) => [...prev, ...newModels])
-        }
+        // 刷新已有模型的 API 元数据，同时保留启用状态和手动窗口。
+        setModels((previous) => {
+          const fetched = new Map(result.models.map((model) => [model.id, model]))
+          const existingIds = new Set(previous.map((model) => model.id))
+          return [
+            ...previous.map((model) => {
+              const fresh = fetched.get(model.id)
+              return fresh ? { ...fresh, name: model.name, enabled: model.enabled, contextWindowOverride: model.contextWindowOverride } : model
+            }),
+            ...result.models.filter((model) => !existingIds.has(model.id)).map((model) => ({ ...model, enabled: false })),
+          ]
+        })
       }
     } catch {
       setFetchResult({ success: false, message: '拉取模型请求失败', models: [] })
@@ -645,7 +651,10 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
           <SettingsInput
             label="Base URL"
             value={baseUrl}
-            onChange={setBaseUrl}
+            onChange={(value) => {
+              setBaseUrl(value)
+              setModels((previous) => previous.map(({ contextWindow, contextWindowSource, contextWindowEndpoint, ...model }) => model))
+            }}
             placeholder="https://api.example.com"
             description={baseUrl.trim() ? `预览：${buildPreviewUrl(baseUrl, provider)}` : undefined}
           />
@@ -763,7 +772,7 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
       {/* 已启用模型 */}
       <SettingsSection
         title="已启用模型"
-        description={enabledModels.length > 0 ? `${enabledModels.length} 个模型` : undefined}
+        description={enabledModels.length > 0 ? `${enabledModels.length} 个模型。窗口设置用于 Gravitas、Pi 和 AI SDK 的预算；Claude SDK 的自动压缩由 SDK 管理。` : undefined}
       >
         <SettingsCard divided={false}>
           {enabledModels.length === 0 ? (
@@ -775,7 +784,7 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
               {enabledModels.map((model) => (
                 <div
                   key={model.id}
-                  className="flex items-center gap-2 px-4 py-2.5 group"
+                  className="flex flex-wrap items-center gap-2 px-4 py-2.5 group"
                 >
                   <CheckCircle2 size={14} className="text-emerald-500 flex-shrink-0" />
                   <span className="text-sm text-foreground flex-1">
@@ -792,6 +801,9 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
                   >
                     <X size={14} />
                   </button>
+                  <ModelContextWindowField model={model} provider={provider} onChange={(contextWindowOverride) => {
+                    setModels((previous) => previous.map((item) => item.id === model.id ? { ...item, contextWindowOverride } : item))
+                  }} />
                 </div>
               ))}
             </div>

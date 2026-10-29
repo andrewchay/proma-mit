@@ -64,6 +64,7 @@ const SUMMARY_USER_PROMPT_PREFIX =
 export interface ContextCompactionOptions {
   sessionId: string
   provider: ProviderType
+  contextWindowOverride?: number
   /** 底层 ProviderAdapter 的供应商；DeepSeek 在 Proma runtime 下使用 OpenAI adapter */
   adapterProvider?: ProviderType
   apiKey: string
@@ -180,6 +181,7 @@ export function resolveAdaptiveCompactionTimeout(sourceChars: number): number {
 export function resolveAutoCompactionTrigger(options: {
   historyMessages: SDKMessage[]
   provider: ProviderType
+  contextWindowOverride?: number
   modelId: string
   observedUsage?: ContextUsageObservation
   keepRecent?: number
@@ -189,7 +191,7 @@ export function resolveAutoCompactionTrigger(options: {
 }): AutoCompactionTrigger {
   const { provider, modelId, observedUsage } = options
   const sameModel = observedUsage?.modelId?.toLowerCase() === modelId.toLowerCase()
-  const capability = resolveModelContextCapability({ provider, modelId })
+  const capability = resolveModelContextCapability({ provider, modelId, contextWindowOverride: options.contextWindowOverride })
   const estimatedInputTokens = estimateOutgoingContextTokens(options)
   const reportedTokens = sameModel
     && Number.isInteger(observedUsage.contextTokens)
@@ -200,8 +202,8 @@ export function resolveAutoCompactionTrigger(options: {
   const budget = calculateContextBudget({
     contextWindow: capability.contextWindow,
     inputTokens,
-    requestedOutputTokens: DEFAULT_CONTEXT_OUTPUT_RESERVE_TOKENS,
-    safetyBufferTokens: DEFAULT_CONTEXT_SAFETY_BUFFER_TOKENS,
+    requestedOutputTokens: Math.min(DEFAULT_CONTEXT_OUTPUT_RESERVE_TOKENS, Math.floor(capability.contextWindow / 4)),
+    safetyBufferTokens: Math.min(DEFAULT_CONTEXT_SAFETY_BUFFER_TOKENS, Math.floor(capability.contextWindow / 16)),
   })
   return {
     shouldCompact: budget.shouldCompact,
@@ -546,6 +548,7 @@ export async function maybeAutoCompact(options: ContextCompactionOptions): Promi
     historyMessages,
     provider: options.provider,
     modelId: options.model,
+    contextWindowOverride: options.contextWindowOverride,
     observedUsage: options.observedUsage,
     keepRecent,
     currentPrompt: options.currentPrompt,
@@ -561,6 +564,7 @@ export async function maybeAutoCompact(options: ContextCompactionOptions): Promi
       historyMessages: pruning.history,
       provider: options.provider,
       modelId: options.model,
+      contextWindowOverride: options.contextWindowOverride,
       currentPrompt: options.currentPrompt,
       systemPrompt: options.systemPrompt,
       tools: options.tools,

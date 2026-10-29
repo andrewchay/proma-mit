@@ -249,6 +249,8 @@ docker compose -f apps/server/docker-compose.p2-test.yml down
 
 订阅制端点（Copilot / Codex 等）通过预设清单做动态模型发现，登录后自动刷新凭据；思考模式按模型推理等级矩阵分级，而非简单布尔开关。
 
+模型上下文窗口按「手动设置 → API 返回值 → 厂商精确型号目录 → 未识别回退值」解析。设置 > 渠道的已启用模型可填写窗口大小（tokens），点击「自动」恢复识别；刷新模型列表更新 API 元数据并保留手动值。Google 的 `inputTokenLimit`、Anthropic 的 `max_input_tokens` 和兼容端点的 `context_window` 会被保留；中转渠道按模型厂商和精确型号识别，未知型号会明确显示回退状态。Gemini 4 Argon 的内置窗口为 1,048,576 tokens。配置用于 Pi、Gravitas 和 AI SDK 的压缩预算与用量显示；Claude SDK 的自动压缩仍由 SDK 管理，Codex 订阅继续使用其内置模型配置。
+
 ## 本地数据
 
 Gravitas 采用本地文件存储，方便备份、迁移和排查问题。

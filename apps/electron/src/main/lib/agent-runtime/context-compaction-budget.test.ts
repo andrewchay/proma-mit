@@ -55,4 +55,18 @@ describe('上下文压缩预算触发', () => {
       observedUsage: { contextTokens: 220_000, modelId: 'kimi-k2.6', recordedAt: 1 },
     })).toMatchObject({ shouldCompact: false, source: 'estimated_payload' })
   })
+  test('Gemini 4 在 400K 输入时不再按 256K 提前压缩，手动下调后生效', () => {
+    const input = {
+      historyMessages: makeHistory(30), provider: 'custom' as const, modelId: 'gemini-4-argon',
+      observedUsage: { contextTokens: 400_000, modelId: 'gemini-4-argon', recordedAt: 1 },
+    }
+    expect(resolveAutoCompactionTrigger(input).shouldCompact).toBe(false)
+    expect(resolveAutoCompactionTrigger({ ...input, contextWindowOverride: 256_000 }).shouldCompact).toBe(true)
+    expect(resolveAutoCompactionTrigger({ ...input, contextWindowOverride: 800_000 }).inputBudgetTokens).toBe(760_000)
+  })
+
+  test('手动设置小窗口时，输出与安全预留不会吞掉全部输入预算', () => {
+    expect(resolveAutoCompactionTrigger({ historyMessages: makeHistory(2), provider: 'custom', modelId: 'small', contextWindowOverride: 32_000 })).toMatchObject({ inputBudgetTokens: 22_000, shouldCompact: false })
+  })
+
 })
