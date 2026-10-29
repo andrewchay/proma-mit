@@ -189,11 +189,26 @@ interface ActiveSession {
 
 export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
   private readonly activeSessions = new Map<string, ActiveSession>()
+  private readonly pendingStarts = new Map<string, AbortController>()
 
   constructor(private readonly mcpService: RuntimeMcpService = new ElectronRuntimeMcpService()) {}
 
   /** 发起查询，返回 SDKMessage 异步迭代流 */
   async *query(input: ProviderAgnosticAgentQueryOptions): AsyncIterable<SDKMessage> {
+    if (this.pendingStarts.has(input.sessionId) || this.activeSessions.has(input.sessionId)) throw new Error('Proma 会话已有活动运行')
+    const startController = new AbortController()
+    this.pendingStarts.set(input.sessionId, startController)
+    const abortSignal = input.abortSignal
+      ? AbortSignal.any([input.abortSignal, startController.signal])
+      : startController.signal
+    try {
+      yield* this.querySession({ ...input, abortSignal }, startController)
+    } finally {
+      if (this.pendingStarts.get(input.sessionId) === startController) this.pendingStarts.delete(input.sessionId)
+    }
+  }
+
+  private async *querySession(input: ProviderAgnosticAgentQueryOptions, startController: AbortController): AsyncIterable<SDKMessage> {
     // P01/P03：策略 required 保证不满足时在调用 Provider 前拒绝（fail-closed）。
     assertRuntimePolicy('proma')
     assertNoOwnerBusinessSession(input.sessionId)
@@ -244,6 +259,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       permissionMode: input.permissionMode ?? 'auto',
     }
     this.activeSessions.set(sessionId, activeSession)
+    if (this.pendingStarts.get(sessionId) === startController) this.pendingStarts.delete(sessionId)
 
     const baseFetch = getFetchFn(await getEffectiveProxyUrl())
     assertNoOwnerBusinessSession(sessionId)
@@ -665,6 +681,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
   /** 中止指定会话 */
   abort(sessionId: string): void {
+    this.pendingStarts.get(sessionId)?.abort()
     const session = this.activeSessions.get(sessionId)
     if (session) {
       session.cancelled = true
@@ -719,6 +736,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
   /** 释放资源 */
   dispose(): void {
+    for (const controller of this.pendingStarts.values()) controller.abort()
     for (const [sessionId, session] of this.activeSessions) {
       session.controller.abort()
       this.activeSessions.delete(sessionId)
