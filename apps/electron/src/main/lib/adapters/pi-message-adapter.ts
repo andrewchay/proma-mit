@@ -129,7 +129,7 @@ function convertPiAssistantMessage(
   message: PiAssistantMessage,
   sessionId: string,
   channelModelId?: string,
-  options: { final?: boolean; uuid?: string } = {},
+  options: { final?: boolean; uuid?: string; contextWindow?: number } = {},
 ): SDKAssistantMessage {
   const final = options.final ?? true
   const content: SDKContentBlock[] = message.content.map((block) => {
@@ -153,7 +153,7 @@ function convertPiAssistantMessage(
     parent_tool_use_id: null,
     session_id: sessionId,
     _channelModelId: channelModelId,
-    _contextWindow: inferPiContextWindow(message.model ?? channelModelId),
+    _contextWindow: options.contextWindow ?? inferPiContextWindow(message.model ?? channelModelId),
     ...(options.uuid ? { uuid: options.uuid } : {}),
     ...(!final ? { _partial: true } : {}),
     // E03观察：Pi toolUse 映射为共享词表 tool-calls；其余停止原因原样交给判定，未知即不完整。
@@ -184,7 +184,7 @@ export function convertPiMessageToSDKMessage(
   message: PiAgentMessage,
   sessionId: string,
   channelModelId?: string,
-  options?: { final?: boolean; uuid?: string },
+  options?: { final?: boolean; uuid?: string; contextWindow?: number },
 ): SDKMessage | null {
   if (message.role === 'assistant') {
     return convertPiAssistantMessage(message, sessionId, channelModelId, options) as SDKMessage

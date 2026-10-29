@@ -38,4 +38,24 @@ describe('模型上下文能力', () => {
       source: 'fallback',
     })
   })
+  test('Gemini 4 Argon 在兼容渠道也可按完整型号识别，不扩大未知型号', () => {
+    expect(resolveModelContextCapability({ provider: 'custom', modelId: 'google/gemini-4-argon' })).toEqual({ contextWindow: 1_048_576, source: 'catalog' })
+    expect(resolveModelContextCapability({ provider: 'google', modelId: 'gemini-unknown' }).source).toBe('fallback')
+  })
+
+  test('手动覆盖优先于 API；无覆盖时使用 API 精确值', () => {
+    const input = { provider: 'custom' as const, modelId: 'gemini-4-argon', contextWindow: 900_000 }
+    expect(resolveModelContextCapability(input)).toEqual({ contextWindow: 900_000, source: 'api' })
+    expect(resolveModelContextCapability({ ...input, contextWindowOverride: 512_000 })).toEqual({ contextWindow: 512_000, source: 'override' })
+    for (const contextWindowOverride of [0, -1, NaN, Infinity, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      expect(resolveModelContextCapability({ ...input, contextWindowOverride }).contextWindow).toBe(900_000)
+    }
+  })
+
+  test('不再把未收录的厂商家族通配为 1M', () => {
+    for (const modelId of ['claude-opus-unknown', 'deepseek-unknown', 'glm-unknown']) {
+      expect(resolveModelContextCapability({ provider: 'custom', modelId }).source).toBe('fallback')
+    }
+  })
+
 })

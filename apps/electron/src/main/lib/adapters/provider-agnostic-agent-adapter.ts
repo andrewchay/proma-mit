@@ -12,6 +12,7 @@ import { assertNoOwnerBusinessSession } from '../project-owner-task-evidence'
  * - 将结果包装为 SDKMessage 格式返回，供 Orchestrator 统一处理
  */
 
+import { resolveChannelContextWindow } from '../model-context-capability'
 import type {
   AgentProviderAdapter,
   AgentQueryInput,
@@ -228,6 +229,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       throw new Error('Provider-Agnostic Runtime 需要 provider、apiKey、baseUrl、cwd')
     }
 
+    const capability = await resolveChannelContextWindow({ provider, modelId: model ?? '', channelId: input.channelId })
     const adapter = getAdapter(adapterProvider ?? provider)
     const controller = new AbortController()
     if (abortSignal) {
@@ -323,6 +325,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       let effectiveHistoryMessages = input.historyMessages ?? []
       if (effectiveHistoryMessages.length > 0 && provider && apiKey && baseUrl) {
         const auto = await maybeAutoCompact({
+          contextWindowOverride: capability.contextWindow,
           sessionId,
           fetchFn: ownerFetch,
           provider,
@@ -484,6 +487,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
         const assistantMessage: SDKAssistantMessage = {
           type: 'assistant',
+          _contextWindow: capability.contextWindow,
           message: {
             content: assistantContentBlocks,
             model,
@@ -637,6 +641,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       const resultMessage: SDKResultMessage = {
         type: 'result',
         subtype: 'success',
+        _contextWindow: capability.contextWindow,
         usage: {
           input_tokens: totalInputTokens,
           output_tokens: totalOutputTokens,

@@ -1,4 +1,11 @@
-import { describe, expect, mock, test } from 'bun:test'
+import { afterAll, describe, expect, mock, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+const configDir = mkdtempSync(join(tmpdir(), 'model-context-fetch-'))
+process.env.PROMA_TEST_CONFIG_DIR = configDir
+afterAll(() => { rmSync(configDir, { recursive: true, force: true }); delete process.env.PROMA_TEST_CONFIG_DIR })
 
 // channel-manager 顶层 import { safeStorage } from 'electron'，bun 环境加载失败；
 // codex-oauth-service 顶层 import { shell }。替身替掉 electron 原生导出。
@@ -65,5 +72,37 @@ describe('fetchModels：订阅制预设清单', () => {
     } as Parameters<typeof fetchModels>[0])
     expect(result.success).toBe(false)
     expect(result.models).toEqual([])
+  })
+})
+
+
+describe('fetchModels：保留窗口元数据', () => {
+  test('Google inputTokenLimit、Anthropic max_input_tokens 与兼容端点 context_window 均可保留', async () => {
+    const originalFetch = globalThis.fetch
+    const requests: string[] = []
+    globalThis.fetch = (async (request: string | URL | Request) => {
+      const url = String(request)
+      requests.push(url)
+      return Response.json(url.includes('google.test')
+        ? { models: [{ name: 'models/gemini-4-argon', inputTokenLimit: 1_048_576, supportedGenerationMethods: ['generateContent'] }] }
+        : url.includes('anthropic.test')
+          ? { data: [{ id: 'claude-test', max_input_tokens: 800_000 }] }
+          : { data: [{ id: 'relay-alias', context_window: 600_000 }] })
+    }) as typeof fetch
+    try {
+      for (const [provider, baseUrl, expected] of [
+        ['google', 'https://google.test/v1beta', 1_048_576],
+        ['anthropic', 'https://anthropic.test', 800_000],
+        ['custom', 'https://relay.test/v1', 600_000],
+      ] as const) {
+        const result = await fetchModels({ provider, baseUrl, apiKey: 'fake-key' })
+        expect(result.success).toBe(true)
+        expect(result.models[0]?.contextWindow).toBe(expected)
+        expect(result.models[0]?.contextWindowSource).toBe('api')
+      }
+      expect(requests[0]).toBe('https://google.test/v1beta/models?key=fake-key')
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 })

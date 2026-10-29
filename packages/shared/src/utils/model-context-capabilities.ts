@@ -1,7 +1,7 @@
 import type { ProviderType } from '../types/channel'
 
 /** 模型上下文窗口的可信来源。 */
-export type ContextWindowSource = 'catalog' | 'override' | 'fallback'
+export type ContextWindowSource = 'api' | 'catalog' | 'override' | 'fallback'
 
 /** 单个模型的上下文窗口能力。 */
 export interface ModelContextCapability {
@@ -14,6 +14,8 @@ export interface ResolveModelContextCapabilityInput {
   provider: ProviderType
   modelId: string | undefined | null
   contextWindowOverride?: number
+  contextWindow?: number
+  contextWindowSource?: ContextWindowSource
 }
 
 /** 未收录模型的保守上下文窗口兜底。 */
@@ -44,15 +46,27 @@ export function resolveModelContextCapability(
     return { contextWindow: input.contextWindowOverride, source: 'override' }
   }
 
+  if (isPositiveInteger(input.contextWindow)) {
+    return { contextWindow: input.contextWindow, source: input.contextWindowSource === 'catalog' ? 'catalog' : 'api' }
+  }
+
   const modelId = input.modelId?.trim().toLowerCase()
   if (modelId && (input.provider === 'kimi-api' || input.provider === 'kimi-coding')) {
     const contextWindow = KIMI_CONTEXT_WINDOWS[modelId]
     if (contextWindow) return { contextWindow, source: 'catalog' }
   }
 
+  // 兼容中转渠道的厂商命名空间，只接受完整型号，避免模糊匹配扩大未知模型窗口。
+  const id = modelId?.split('/').at(-1)
+  if (id === 'gemini-4-argon') {
+    return { contextWindow: 1_048_576, source: 'catalog' }
+  }
+  const kimiWindow = id?.startsWith('kimi-') ? KIMI_CONTEXT_WINDOWS[id] : undefined
+  if (kimiWindow) return { contextWindow: kimiWindow, source: 'catalog' }
+
   return { contextWindow: DEFAULT_UNKNOWN_CONTEXT_WINDOW, source: 'fallback' }
 }
 
 function isPositiveInteger(value: number | undefined): value is number {
-  return value !== undefined && Number.isInteger(value) && value > 0
+  return value !== undefined && Number.isSafeInteger(value) && value > 0
 }

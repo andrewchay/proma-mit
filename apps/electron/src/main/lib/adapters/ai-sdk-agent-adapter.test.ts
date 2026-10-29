@@ -532,6 +532,7 @@ describe('AISDKAgentAdapter', () => {
         type: 'usage_update',
         usage: {
           inputTokens: 10,
+          contextWindow: 256_000,
           outputTokens: 4,
           cacheReadTokens: 0,
           cacheCreationTokens: 0,

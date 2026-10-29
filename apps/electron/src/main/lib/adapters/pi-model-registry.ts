@@ -1,14 +1,14 @@
+import { resolveChannelContextWindow, resolveCatalogContextWindow } from '../model-context-capability'
 import { resolvePiBaseUrl } from './pi-runtime-base-url'
 export { resolvePiBaseUrl } from './pi-runtime-base-url'
 import { join } from 'node:path'
 import type { Api, Model } from '@earendil-works/pi-ai'
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent'
 import type { ProviderType } from '@gravitas/shared'
-import { DEFAULT_UNKNOWN_CONTEXT_WINDOW, PROVIDER_DEFAULT_URLS, resolveModelContextCapability } from '@gravitas/shared'
+import { PROVIDER_DEFAULT_URLS } from '@gravitas/shared'
 import { getConfigDir } from '../config-paths'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
 import { loadPiCodingAgent } from './pi-sdk-loader'
-import { createCodexRuntime } from './codex-runtime'
 
 export interface PiModelRegistrationInput {
   sessionId: string
@@ -78,23 +78,10 @@ export function resolvePiMaxTokens(provider: ProviderType): number {
 /**
  * 按模型 ID 推断 contextWindow（Pi SDK 自动压缩阈值依赖此值）。
  *
- * Kimi 优先走共享目录；其他已验证的模型保留显式规则，未知模型保守回退到 256K。
+ * 按精确型号查询厂商目录；未收录型号回退到 256K。
  */
 export function inferPiContextWindow(modelId: string | undefined | null): number {
-  const kimiCapability = resolveModelContextCapability({ provider: 'kimi-api', modelId })
-  if (kimiCapability.source === 'catalog') return kimiCapability.contextWindow
-
-  if (!modelId) return DEFAULT_UNKNOWN_CONTEXT_WINDOW
-  const m = modelId.toLowerCase()
-  if (m.includes('claude-haiku')) return 200_000
-  if (
-    m.includes('claude-opus')
-    || m.includes('claude-sonnet-4-6')
-    || m.includes('gpt-5.6')
-    || m.includes('deepseek')
-    || m.includes('glm')
-  ) return 1_000_000
-  return DEFAULT_UNKNOWN_CONTEXT_WINDOW
+  return resolveCatalogContextWindow('kimi-api', modelId ?? '').contextWindow
 }
 
 export function resolvePiInputModalities(
@@ -129,7 +116,7 @@ export async function resolvePiModelCost(provider: ProviderType, baseUrl: string
   return { input: cost.input, output: cost.output, cacheRead: cost.cacheRead, cacheWrite: cost.cacheWrite }
 }
 
-function buildPiModelConfig(input: PiModelRegistrationInput, api: Api, baseUrl: string, cost: PiModelCost): NonNullable<PiProviderConfigInput['models']>[number] {
+function buildPiModelConfig(input: PiModelRegistrationInput, api: Api, baseUrl: string, cost: PiModelCost, contextWindow: number): NonNullable<PiProviderConfigInput['models']>[number] {
   const model: NonNullable<PiProviderConfigInput['models']>[number] = {
     id: input.modelId,
     name: input.modelId,
@@ -138,8 +125,8 @@ function buildPiModelConfig(input: PiModelRegistrationInput, api: Api, baseUrl: 
     reasoning: true,
     input: resolvePiInputModalities(input.provider, input.modelId),
     cost,
-    contextWindow: inferPiContextWindow(input.modelId),
-    maxTokens: resolvePiMaxTokens(input.provider),
+    contextWindow,
+    maxTokens: Math.min(resolvePiMaxTokens(input.provider), Math.max(1, Math.floor(contextWindow / 4))),
   }
 
   if (input.provider === 'google') {
@@ -175,11 +162,13 @@ export async function registerPiModelFromChannel(input: PiModelRegistrationInput
   const agentDir = join(getConfigDir(), 'pi-runtime')
   if (input.provider === 'openai-codex') {
     if (!input.channelId) throw new Error('ChatGPT 订阅需要渠道 ID')
+    const { createCodexRuntime } = await import('./codex-runtime')
     const modelRuntime = await createCodexRuntime(input.channelId)
     const model = modelRuntime.getModel('openai-codex', input.modelId)
     if (!model) throw new Error(`ChatGPT 订阅不支持模型 ${input.modelId}，请刷新模型列表`)
     return { modelRuntime, providerId: 'openai-codex', model, agentDir }
   }
+  const capability = await resolveChannelContextWindow(input)
   const providerId = resolvePiProviderId(input.provider, input.sessionId)
   const api = resolvePiApi(input.provider)
   const baseUrl = resolvePiBaseUrl(input.provider, input.baseUrl)
@@ -204,7 +193,7 @@ export async function registerPiModelFromChannel(input: PiModelRegistrationInput
     api,
     apiKey: input.apiKey,
     authHeader: shouldUsePiAuthHeader(input.provider),
-    models: [buildPiModelConfig(input, api, baseUrl, await resolvePiModelCost(input.provider, baseUrl, input.modelId))],
+    models: [buildPiModelConfig(input, api, baseUrl, await resolvePiModelCost(input.provider, baseUrl, input.modelId), capability.contextWindow)],
   }
 
   modelRuntime.registerProvider(providerId, config)
