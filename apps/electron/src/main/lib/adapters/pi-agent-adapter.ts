@@ -233,9 +233,26 @@ function createAsyncQueue<T>(): AsyncQueue<T> {
 export class PiAgentAdapter implements AgentProviderAdapter {
   private readonly activeSessions = new Map<string, ActivePiSession>()
   private readonly activeCompactions = new Map<string, AbortController>()
+  private readonly pendingStarts = new Map<string, AbortController>()
   constructor(private readonly mcpService: RuntimeMcpService = new ElectronRuntimeMcpService()) {}
 
   async *query(input: PiAgentQueryOptions): AsyncIterable<SDKMessage> {
+    if (this.pendingStarts.has(input.sessionId) || this.activeSessions.has(input.sessionId) || this.activeCompactions.has(input.sessionId)) {
+      throw new Error('Pi 会话已有活动运行')
+    }
+    const startController = new AbortController()
+    this.pendingStarts.set(input.sessionId, startController)
+    const abortSignal = input.abortSignal
+      ? AbortSignal.any([input.abortSignal, startController.signal])
+      : startController.signal
+    try {
+      yield* this.querySession({ ...input, abortSignal }, startController)
+    } finally {
+      if (this.pendingStarts.get(input.sessionId) === startController) this.pendingStarts.delete(input.sessionId)
+    }
+  }
+
+  private async *querySession(input: PiAgentQueryOptions, startController: AbortController): AsyncIterable<SDKMessage> {
     assertNoOwnerBusinessSession(input.sessionId)
     const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy, isDelegationSession, thinkingLevel, requestedOperation, abortSignal, runtimeBudgetLimitUsd } = input
     // P01/P03：策略 required 保证不满足时在调用 Provider 前拒绝（fail-closed）。
@@ -723,6 +740,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       interrupting: false,
     }
     this.activeSessions.set(sessionId, activePiSession)
+    if (this.pendingStarts.get(sessionId) === startController) this.pendingStarts.delete(sessionId)
 
     // HR09：调用方 abortSignal 此前只在压缩路径生效；主 prompt 链必须同样响应，
     // 否则中止后会话继续发起 Provider 请求与工具调用（真实运行已观测到该缺口）。
@@ -923,6 +941,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
   }
 
   abort(sessionId: string): void {
+    this.pendingStarts.get(sessionId)?.abort()
     this.activeCompactions.get(sessionId)?.abort()
     this.activeCompactions.delete(sessionId)
     const active = this.activeSessions.get(sessionId)
@@ -991,6 +1010,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
   }
 
   dispose(): void {
+    for (const controller of this.pendingStarts.values()) controller.abort()
     for (const controller of this.activeCompactions.values()) controller.abort()
     this.activeCompactions.clear()
     for (const sessionId of this.activeSessions.keys()) {
