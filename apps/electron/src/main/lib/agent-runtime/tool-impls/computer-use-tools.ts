@@ -5,7 +5,7 @@ import { appendComputerUseAudit } from '../../computer-use-audit-service'
 import { computerUseService } from '../../computer-use-service'
 import { webBridgeService } from '../../web-bridge-service'
 import type { ToolContext } from '../types'
-import { describeDesktopActionFailure } from './computer-use-outcome'
+import { describeDispatchedActionFailure } from './external-action-outcome'
 import {
   blockIfUnknownAction,
   buildActionKey,
@@ -240,7 +240,7 @@ async function runDesktopAction(
     recordAudit(ctx, action, { ...detail, outcome: 'applied' })
     return result({ message, outcome: 'applied' })
   } catch (thrown) {
-    const failure = describeDesktopActionFailure(action, thrown)
+    const failure = describeDispatchedActionFailure(`ComputerUse${action}`, thrown, '请先调用 ComputerUseScreenshot 并由用户核对实际状态。')
     recordAudit(ctx, action, { ...detail, outcome: failure.outcome, error: failure.reason })
     if (failure.outcome === 'unknown') {
       await recordUnknownAction({

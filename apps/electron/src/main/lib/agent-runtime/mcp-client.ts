@@ -12,7 +12,7 @@ import type { RuntimeToolDefinition, ToolContext } from './types'
 import { McpOAuthProvider } from './mcp-oauth-provider'
 import { registerPendingMcpOAuth } from './mcp-oauth-pending'
 import { readTransportPid, snapshotProcessTree, terminateProcesses, type ReapEvidence } from './mcp-process-reaper'
-import { describeMcpToolFailure } from './mcp-tool-outcome'
+import { describeDispatchedActionFailure } from './tool-impls/external-action-outcome'
 import { blockIfUnknownAction, buildActionKey, hashDetail, recordUnknownAction } from './unknown-action-store'
 
 interface ConnectedServer {
@@ -192,7 +192,7 @@ export class McpClientManager {
     } catch (thrown) {
       // 工具可能在服务端已经执行，只是响应在返回途中超时或连接断开。
       // 统一压成"调用失败"会让模型直接重试，在真实系统上是重复执行。
-      const failure = describeMcpToolFailure(`${serverName}__${toolName}`, thrown)
+      const failure = describeDispatchedActionFailure(`MCP 工具 ${serverName}__${toolName}`, thrown, '请先核对目标系统的实际状态，再由用户决定是否继续。')
       console.warn(`[MCP 客户端] 工具调用${failure.outcome === 'unknown' ? '结果未知' : '未执行'}: ${failure.reason}`)
       if (failure.outcome === 'unknown') {
         await recordUnknownAction({

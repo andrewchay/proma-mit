@@ -1,3 +1,4 @@
+import { describeDispatchedActionFailure } from './external-action-outcome'
 /** Web Bridge 工具：受管浏览器的导航、读取和受限 DOM 操作。 */
 
 import type { ToolResult } from '@gravitas/core'
@@ -5,7 +6,7 @@ import type { ToolContext } from '../types'
 import { webBridgeService, type WebBridgeSnapshot } from '../../web-bridge-service'
 import { appendWebBridgeAudit } from '../../web-bridge-audit-service'
 import { guardOwnerTool } from './tool-utils'
-import { DOWNLOAD_CONFIRM_HINT, describeWebBridgeActionFailure } from './web-bridge-outcome'
+import { DOWNLOAD_CONFIRM_HINT } from './web-bridge-outcome'
 import { blockIfUnknownAction, buildActionKey, hashDetail, recordUnknownAction } from '../unknown-action-store'
 
 export const WEB_BRIDGE_NAVIGATE_TOOL_NAME = 'WebBridgeNavigate'
@@ -253,7 +254,7 @@ async function runWebBridgeAction(params: {
     audit(ctx, action, { ...detail, ...extra, outcome: 'applied' })
     return result
   } catch (thrown) {
-    const failure = describeWebBridgeActionFailure(display, thrown, hint)
+    const failure = describeDispatchedActionFailure(`WebBridge${display}`, thrown, hint ?? '请先调用 WebBridgeObserve 或 WebBridgeSnapshot 观察页面并由用户核对实际状态。')
     audit(ctx, action, { ...detail, outcome: failure.outcome, error: failure.reason })
     if (failure.outcome === 'unknown') {
       await recordUnknownAction({

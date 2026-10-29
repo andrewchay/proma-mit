@@ -132,15 +132,15 @@ describe('Web Bridge 动作结果分类', () => {
     } finally { click.mockRestore() }
   })
 
-  test('Given ref 已失效 When 点击 Then 判为未执行并允许修正后重试', async () => {
+  test('Given 服务报 ref 已失效 When 点击 Then 不能推断动作未生效', async () => {
     const ctx = { ...baseCtx, sessionId: 'bw-outcome-stale' }
     const click = spyOn(webBridgeService, 'click').mockRejectedValue(new Error('No node with given id 42'))
     try {
       const result = await executeWebBridgeClickTool({ element_id: 'r1-9' }, ctx)
       expect(result.isError).toBe(true)
-      expect(result.content).toContain('未执行')
-      expect(result.content).toContain('修正前置条件后可以重试')
-      expect(result.content).not.toContain('结果未知')
+      expect(result.content).toContain('结果未知')
+      expect(result.content).toContain('禁止自动重试')
+      expect(result.content).not.toContain('未执行')
     } finally { click.mockRestore() }
   })
 

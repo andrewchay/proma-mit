@@ -94,14 +94,14 @@ describe('Computer Use 动作结果分类', () => {
     } finally { click.mockRestore() }
   })
 
-  test('Given 权限被拒绝 When 点击 Then 标记未执行且允许修正后重试', async () => {
+  test('Given 服务报权限错误 When 点击 Then 不能推断动作未生效', async () => {
     const ctx = { ...baseCtx, sessionId: 'cu-outcome-denied' }
     const click = spyOn(computerUseService, 'click').mockRejectedValue(Object.assign(new Error('not permitted'), { code: 'EPERM' }))
     try {
       const result = await executeComputerUseClickTool({ x: 10, y: 20 }, ctx)
       expect(result.isError).toBe(true)
-      expect(result.content).toContain('未执行')
-      expect(result.content).not.toContain('结果未知')
+      expect(result.content).toContain('结果未知')
+      expect(result.content).not.toContain('未执行')
     } finally { click.mockRestore() }
   })
 

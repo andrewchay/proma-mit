@@ -43,13 +43,13 @@ describe('MCP 工具调用的结果判定', () => {
     expect(result.content).toContain('demo__create_issue')
   })
 
-  test('Given 服务端拒绝参数 When 执行工具 Then 判为未执行并允许修正后重试', async () => {
+  test('Given 服务端报告参数错误 When 执行工具 Then 不能推断动作未生效', async () => {
     const manager = managerWith(() => Promise.reject(Object.assign(new Error('Invalid params: path'), { code: -32602 })))
     const result = await manager.executeTool('demo', 'read_file', {}, ctx)
     expect(result.isError).toBe(true)
-    expect(result.content).toContain('未执行')
-    expect(result.content).toContain('修正前置条件后可以重试')
-    expect(result.content).not.toContain('结果未知')
+    expect(result.content).toContain('结果未知')
+    expect(result.content).toContain('禁止自动重试')
+    expect(result.content).not.toContain('未执行')
   })
 
   test('Given 服务端内部错误 When 执行工具 Then 保守判为结果未知', async () => {
@@ -69,7 +69,7 @@ describe('MCP 工具调用的结果判定', () => {
 
   test('Given 调用成功 When 执行工具 Then 不出现未知提示', async () => {
     const manager = managerWith(() => Promise.resolve({ content: [{ type: 'text', text: 'ok' }] }))
-    const result = await manager.executeTool('demo', 'read_file', {}, ctx)
+    const result = await manager.executeTool('demo', 'read_file', {}, { ...ctx, sessionId: 'mcp-outcome-success' })
     expect(result.isError).toBe(false)
     expect(result.content).toContain('ok')
     expect(result.content).not.toContain('结果未知')

@@ -90,3 +90,9 @@ export function describeActionFailure(
     message: `${action} 结果未知（${reason}）：动作可能已经生效。禁止自动重试；${unknownHint}`,
   }
 }
+
+/** 派发后的异常不能仅凭错误码推断外部副作用未发生。 */
+export function describeDispatchedActionFailure(action: string, error: unknown, hint: string): ActionFailure {
+  const reason = describeActionError(error)
+  return { outcome: 'unknown', reason, message: `${action} 结果未知（${reason}）：动作可能已经生效。禁止自动重试；${hint}` }
+}
