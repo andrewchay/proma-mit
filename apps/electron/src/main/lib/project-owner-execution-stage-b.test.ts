@@ -39,6 +39,9 @@ const requestEvidence = await import('./project-pilot-request-evidence')
 const stopModule = await import('./project-owner-execution-stop')
 const startModule = await import('./project-owner-execution-start')
 const actionApproval = await import('./project-owner-action-approval')
+const executionGates = await import('./project-owner-execution-gates')
+const { executeWriteTool } = await import('./agent-runtime/tool-impls/write-tool')
+const { executeEditTool } = await import('./agent-runtime/tool-impls/edit-tool')
 const { handlePermissionResponse } = await import('./agent-permission-response')
 const { AgentPermissionService } = await import('./agent-permission-service')
 const runnerRegistry = await import('./agent-headless-runner-registry')
@@ -106,7 +109,7 @@ function ackFixture(f: ReturnType<typeof fixture>) {
   return { input, preview, ack }
 }
 
-test('Given真实Owner命令进入运行态 When审批精确工具动作 Then仅保存参数指纹且拒绝可审计', () => {
+test('Given真实Owner命令进入运行态 When审批精确工具动作 Then仅保存参数指纹且拒绝可审计', async () => {
   const f = fixture()
   const { input, ack } = ackFixture(f)
   const commandId = randomUUID(), executionId = randomUUID(), sessionId = randomUUID()
@@ -141,6 +144,25 @@ test('Given真实Owner命令进入运行态 When审批精确工具动作 Then仅
   expect(command.listOwnerExecutionCommands(f.subject).find(item => item.commandId === commandId)?.actionApprovals).toMatchObject([
     { requestId: request.requestId, status: 'denied' }, { requestId: allowedRequest.requestId, toolName: 'SendExternalMessage', status: 'allowed' },
   ])
+  expect(actionApproval.consumeApprovedOwnerAction(sessionId, allowedRequest)).toBe(true)
+  expect(actionApproval.hasApprovedOwnerAction(sessionId, allowedRequest)).toBe(false)
+  expect(actionApproval.consumeApprovedOwnerAction(sessionId, allowedRequest)).toBe(false)
+
+  executionGates.admitOwnerExecutionGateSession(executionId, sessionId)
+  const writeRequest = { ...request, requestId: randomUUID(), toolInput: { content: 'exact approved proposal', file_path: 'result.md' } }
+  actionApproval.recordOwnerActionApprovalRequest({ commandId, executionId, sessionId }, writeRequest)
+  actionApproval.decideOwnerActionApproval(writeRequest, 'allow', { commandId, executionId, sessionId })
+  const cwd = getAgentWorkspaceCwd(f.workspace, sessionId)
+  const firstWrite = await executeWriteTool(writeRequest.toolInput, { cwd, sessionId, ownerWorkspaceWrite: true })
+  expect(firstWrite.isError).toBeFalsy()
+  const replay = await executeWriteTool(writeRequest.toolInput, { cwd, sessionId, ownerWorkspaceWrite: true })
+  expect(replay.isError).toBe(true)
+  expect(command.listOwnerExecutionCommands(f.subject).find(item => item.commandId === commandId)?.actionApprovals?.find(item => item.requestId === writeRequest.requestId)?.consumedAt).toEqual(expect.any(Number))
+  const editRequest = { ...request, requestId: randomUUID(), toolName: 'Edit', toolInput: { file_path: 'result.md', old_string: 'not-present', new_string: 'replacement' } }
+  actionApproval.recordOwnerActionApprovalRequest({ commandId, executionId, sessionId }, editRequest)
+  actionApproval.decideOwnerActionApproval(editRequest, 'allow', { commandId, executionId, sessionId })
+  expect((await executeEditTool(editRequest.toolInput, { cwd, sessionId, ownerWorkspaceWrite: true })).content).toContain('未找到')
+  expect((await executeEditTool(editRequest.toolInput, { cwd, sessionId, ownerWorkspaceWrite: true })).isError).toBe(true)
 
   const staleRequest = { ...request, requestId: randomUUID() }
   actionApproval.recordOwnerActionApprovalRequest({ commandId, executionId, sessionId }, staleRequest)

@@ -4,7 +4,7 @@
  * 抽离为独立文件，避免 project-service.ts / local-project-store.ts / nocobase-project-service.ts 之间循环引用。
  */
 
-import type { DevelopmentTaskScope } from '@gravitas/shared'
+import type { DevelopmentTaskScope, ProjectJudgmentReasonCode } from '@gravitas/shared'
 
 export type ProjectStatus = 'planning' | 'active' | 'completed' | 'cancelled'
 
@@ -540,6 +540,10 @@ export interface AgentEmployeeCapabilityHealth {
   cancellationRate: number | null
   /** 已判定样本量（排除取消与待审核）；用于判断结论可信度。 */
   decidedSampleCount: number
+  /** 观察期内已脱敏样本的最新人工判断，按执行去重。 */
+  humanJudgmentEligibleCount: number
+  humanAcceptedCount: number
+  humanChangesRequestedCount: number
   /** 样本量是否足以支撑趋势结论。 */
   sampleSufficient: boolean
   lastExecutedAt?: number
@@ -578,6 +582,16 @@ export interface AgentEmployeeCapabilityRollbackAudit {
   createdAt: number
 }
 
+export interface AgentEmployeeOwnerJudgment {
+  outcome: 'business_accepted' | 'changes_requested'
+  reasonCode?: ProjectJudgmentReasonCode
+  deliveryId: string
+  deliveryVersion: number
+  actor: string
+  eventId: string
+  at: number
+}
+
 export interface AgentEmployeeLearningSample {
   id: string
   agentId: string
@@ -592,6 +606,8 @@ export interface AgentEmployeeLearningSample {
   privacyStatus: 'pending' | 'sanitized' | 'excluded'
   createdAt: number
   labeledAt?: number
+  /** 由项目链人工判断派生，不改变执行结果或脱敏状态。 */
+  ownerJudgment?: AgentEmployeeOwnerJudgment
 }
 
 export interface CreateAgentExecutionInput {

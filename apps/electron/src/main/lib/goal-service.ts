@@ -5,7 +5,7 @@
  * 追踪目标、todos、gates、evidence、quota。状态权威在本地 JSON 文件。
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type {
@@ -50,10 +50,37 @@ function normalizeTodoStatus(status: string): GoalTodo['status'] {
   return allowed.includes(status as GoalTodo['status']) ? (status as GoalTodo['status']) : 'open'
 }
 
+/** 只允许普通文件；不存在可用于首次写入，链接和目录必须保留并报错。 */
+function regularFileExists(path: string): boolean {
+  try {
+    if (!lstatSync(path).isFile()) throw new Error('Goal 文件不是普通文件')
+    return true
+  } catch (error) {
+    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') return false
+    throw error
+  }
+}
+
+/** 在同一目录创建独占临时文件后替换，避免中断时截断原文件。 */
+function writeJsonAtomically(path: string, value: unknown): void {
+  regularFileExists(path)
+  const temp = `${path}.${randomUUID()}.tmp`
+  let created = false
+  try {
+    const fd = openSync(temp, 'wx', 0o600)
+    created = true
+    try { writeFileSync(fd, JSON.stringify(value, null, 2), 'utf-8') } finally { closeSync(fd) }
+    renameSync(temp, path)
+    created = false
+  } finally {
+    if (created) unlinkSync(temp)
+  }
+}
+
 /** 读取单个 Goal 文件 */
 function readGoal(id: string): Goal | undefined {
   const path = getGoalPath(id)
-  if (!existsSync(path)) return undefined
+  if (!regularFileExists(path)) return undefined
   try {
     return JSON.parse(readFileSync(path, 'utf-8')) as Goal
   } catch {
@@ -65,7 +92,7 @@ function readGoal(id: string): Goal | undefined {
 function writeGoal(goal: Goal): void {
   const path = getGoalPath(goal.id)
   mkdirSync(join(path, '..'), { recursive: true })
-  writeFileSync(path, JSON.stringify(goal, null, 2), 'utf-8')
+  writeJsonAtomically(path, goal)
 }
 
 /** 根据 Goal 内容推导 phase（内部一致性维护） */
@@ -107,7 +134,7 @@ function rebuildIndex(): void {
     }
     goals.sort((a, b) => b.updatedAt - a.updatedAt)
     const index: GoalIndex = { version: 1, goals: goals.slice(0, MAX_INDEX_GOALS), lastUpdatedAt: now() }
-    writeFileSync(getGoalIndexPath(), JSON.stringify(index, null, 2), 'utf-8')
+    writeJsonAtomically(getGoalIndexPath(), index)
   } catch (error) {
     console.error('[Goal] 重建索引失败:', error)
   }
@@ -173,7 +200,7 @@ export function updateGoal(id: string, input: GoalUpdateInput): Goal {
 
 export function deleteGoal(id: string): void {
   const path = getGoalPath(id)
-  if (existsSync(path)) rmSync(path)
+  if (regularFileExists(path)) rmSync(path)
   rebuildIndex()
 }
 
