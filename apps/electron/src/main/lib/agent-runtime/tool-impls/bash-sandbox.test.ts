@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildBashSandboxPolicy, quarantineNewGitHooks, quarantineWritableHardlinks, resolveGitLayout, scratchDirFor } from './bash-sandbox'
+import { assertNoWritableHardlinks, buildBashSandboxPolicy, quarantineNewGitHooks, quarantineWritableHardlinks, resolveGitLayout, sanitizeBashGitEnvironment, scratchDirFor } from './bash-sandbox'
 import { buildSeatbeltProfile } from '../../pinned-verifier-sandbox'
 import { executeBashTool, executeBashToolOnPlatform } from './bash-tool'
 
@@ -471,6 +471,77 @@ describe('quarantineNewGitHooks（纯文件系统）', () => {
     const { root } = makeRepo('nohooksdir')
     rmSync(join(root, '.git', 'hooks'), { recursive: true })
     expect(await quarantineNewGitHooks(root, false)).toBeUndefined()
+  })
+})
+
+describe('Git 间接环境隔离', () => {
+  test('Given 继承环境含目录、config 与执行变量 When 构建沙箱环境 Then 清除并重定向到空配置', () => {
+    const source: NodeJS.ProcessEnv = {
+      PATH: '/usr/bin:/bin',
+      GIT_DIR: '/outside/.git',
+      GIT_WORK_TREE: '/outside',
+      GIT_COMMON_DIR: '/outside/.git',
+      GIT_TEMPLATE_DIR: '/outside/templates',
+      GIT_OBJECT_DIRECTORY: '/outside/objects',
+      GIT_INDEX_FILE: '/outside/index',
+      GIT_EXEC_PATH: '/outside/libexec',
+      GIT_CONFIG_PARAMETERS: "'core.fsmonitor=/outside/pwn'",
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'core.fsmonitor',
+      GIT_CONFIG_VALUE_0: '/outside/pwn',
+      GIT_CONFIG_GLOBAL: '/outside/config',
+      GIT_SSH_COMMAND: '/outside/ssh',
+      GIT_ASKPASS: '/outside/askpass',
+      GIT_EDITOR: '/outside/editor',
+      PAGER: '/outside/pager',
+    }
+    const env = sanitizeBashGitEnvironment(source)
+    expect(env.PATH).toBe(source.PATH)
+    for (const key of [
+      'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_TEMPLATE_DIR', 'GIT_OBJECT_DIRECTORY',
+      'GIT_INDEX_FILE', 'GIT_EXEC_PATH', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT',
+      'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_SSH_COMMAND', 'GIT_ASKPASS', 'GIT_EDITOR', 'PAGER',
+    ]) expect(env[key]).toBeUndefined()
+    expect(env.GIT_CONFIG_GLOBAL).toBe('/dev/null')
+    expect(env.GIT_CONFIG_SYSTEM).toBe('/dev/null')
+    expect(env.GIT_CONFIG_NOSYSTEM).toBe('1')
+    expect(source.GIT_DIR).toBe('/outside/.git')
+  })
+
+  test('Given 进程 GIT_DIR 指向其他仓库 When 解析当前目录布局 Then 忽略继承覆盖', async () => {
+    const actual = join(root, 'layout-actual')
+    const other = join(root, 'layout-other')
+    mkdirSync(actual)
+    mkdirSync(other)
+    git(actual, ['init', '-q'])
+    git(other, ['init', '-q'])
+    const previous = process.env.GIT_DIR
+    process.env.GIT_DIR = join(other, '.git')
+    try {
+      const resolved = await resolveGitLayout(actual)
+      expect(resolved?.ownDir).toBe(resolved?.commonDir)
+      expect(resolved?.ownDir.endsWith(join('layout-actual', '.git'))).toBe(true)
+    } finally {
+      if (previous === undefined) delete process.env.GIT_DIR
+      else process.env.GIT_DIR = previous
+    }
+  })
+})
+
+describe('硬链接启动前复核', () => {
+  test('Given 初次隔离后新增跨边界硬链接 When 启动前复核 Then 失败关闭且不修改目标', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'hardlink-launch-race-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    const target = join(root, 'outside.txt')
+    writeFileSync(target, 'original')
+    const policy = { writableRoots: [workspace], denyRoots: [] }
+    await quarantineWritableHardlinks(policy)
+    linkSync(target, join(workspace, 'raced.txt'))
+
+    await expect(assertNoWritableHardlinks(policy)).rejects.toThrow('可写范围出现硬链接')
+    expect(readFileSync(target, 'utf8')).toBe('original')
+    expect(statSync(target).nlink).toBe(2)
   })
 })
 
