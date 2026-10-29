@@ -137,6 +137,9 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
     if (!isAgentCompatibleProvider(provider, 'ai-sdk')) {
       throw new Error(`AI SDK Runtime 暂不支持 ${provider}`)
     }
+    if (this.activeSessions.has(sessionId)) {
+      throw new Error(owner ? 'Owner规划不允许并发或追加回合' : 'AI SDK 会话已有活动运行')
+    }
 
     const protocol = getAgentProviderProtocol(provider, 'ai-sdk')
     // P01：策略 required 保证不满足时，在普通与Owner路径调用Provider前统一拒绝。
@@ -144,7 +147,6 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
 
     // Pilot 受控执行：按会话反查命令归属；同一受控出口覆盖模型请求与压缩请求。
     if (owner) {
-      if (this.activeSessions.has(sessionId)) throw new Error('Owner规划不允许并发或追加回合')
       if (requestedOperation) throw new Error('Owner规划不允许命令或压缩操作')
       const channel = getChannelById(owner.binding.channelId)
       const workspace = getAgentWorkspace(owner.binding.workspaceId)

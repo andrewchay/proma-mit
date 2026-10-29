@@ -226,6 +226,30 @@ describe('AISDKAgentAdapter', () => {
     adapter.dispose()
   })
 
+  test('Given AI SDK 会话正在运行 When 同 ID 再次启动 Then 拒绝并保留原运行', async () => {
+    streamTextMode = 'held-text'
+    const adapter = new AISDKAgentAdapter()
+    const input = { sessionId: 's-ai-concurrent', prompt: '运行', agentRuntime: 'ai-sdk' as const, provider: 'openai' as const,
+      apiKey: 'key', baseUrl: 'https://api.openai.com/v1', model: 'gpt-test', cwd: '/tmp' }
+    const first = adapter.query(input)[Symbol.asyncIterator]()
+    const firstDone = first.next()
+    for (let i = 0; i < 100 && releaseHeldStreams.length < 1; i++) await new Promise(resolve => setTimeout(resolve, 1))
+    if (!releaseHeldStreams[0]) throw new Error('首个会话未启动')
+    const second = adapter.query(input)[Symbol.asyncIterator]()
+    const rejected = await Promise.race([
+      second.next().then(() => false, () => true),
+      new Promise<boolean>(resolve => setTimeout(() => resolve(false), 30)),
+    ])
+    adapter.abort(input.sessionId)
+    const originalAborted = capturedInputs[0]?.abortSignal?.aborted
+    for (const release of releaseHeldStreams) release()
+    await firstDone
+    await first.return?.()
+    adapter.dispose()
+    expect(rejected).toBe(true)
+    expect(originalAborted).toBe(true)
+  })
+
   test('Given 旧会话停止后同 ID 新会话启动 When 旧会话随后退出 Then 新会话仍可停止', async () => {
     streamTextMode = 'held-text'
     const adapter = new AISDKAgentAdapter()
