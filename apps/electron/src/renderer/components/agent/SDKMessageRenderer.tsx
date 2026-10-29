@@ -20,6 +20,7 @@ import { ContentBlock } from './ContentBlock'
 import { TaskProgressCard } from './TaskProgressCard'
 import { TurnFileChangesSummary } from './TurnFileChangesSummary'
 import { CompletionStatusBar } from './CompletionStatusBar'
+import { hideStatusEmoji } from './status-text'
 import { SaveAsWorkflowButton } from './SaveAsWorkflowButton'
 import { extractToolResultText, parseTaskCreateResult, TASK_TOOL_NAMES } from './task-progress'
 import { extractCompactBoundaryInfo } from './compact-boundary-info'
@@ -739,7 +740,7 @@ export function AssistantTurnRenderer({ turn, sessionId, allMessages, historical
               return (
                 <ContentBlock
                   key={getBlockKey(block, i)}
-                  block={block}
+                  block={block.type === 'text' && 'text' in block && typeof block.text === 'string' ? { ...block, text: hideStatusEmoji(block.text) } : block}
                   allMessages={allMessages}
                   basePath={basePath}
                   animate={!!isStreaming}

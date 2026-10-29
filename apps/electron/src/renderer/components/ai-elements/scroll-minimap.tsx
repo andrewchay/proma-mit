@@ -121,12 +121,13 @@ export function ScrollMinimap({ items }: ScrollMinimapProps): React.ReactElement
     el.addEventListener('scroll', update, { passive: true })
     const observer = new ResizeObserver(update)
     observer.observe(el)
+    if (el.firstElementChild) observer.observe(el.firstElementChild)
 
     return () => {
       el.removeEventListener('scroll', update)
       observer.disconnect()
     }
-  }, [scrollRef])
+  }, [scrollRef, items])
 
   // ── 面板打开时自动聚焦搜索框 ──
 
