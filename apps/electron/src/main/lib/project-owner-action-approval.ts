@@ -108,7 +108,7 @@ export function hasApprovedOwnerAction(sessionId: string, request: Pick<Permissi
   const database = getProjectDb()
   const rows = database.prepare(`SELECT request_id, command_id, execution_id, session_id, action_fingerprint
     FROM project_owner_action_approvals
-    WHERE session_id=? AND tool_name=? AND status='allowed' AND decided_at IS NOT NULL
+    WHERE session_id=? AND tool_name=? AND status='allowed' AND decided_at IS NOT NULL AND consumed_at IS NULL AND consumption_kind IS NULL
     ORDER BY decided_at DESC LIMIT 32`).all(sessionId, request.toolName) as Array<{
       request_id: string; command_id: string; execution_id: string; session_id: string; action_fingerprint: string
     }>
@@ -122,4 +122,23 @@ export function hasApprovedOwnerAction(sessionId: string, request: Pick<Permissi
       return false
     }
   })
+}
+
+/** 原子消费一次已批准动作；即使之后工具失败，也必须重新请求批准。 */
+export function consumeApprovedOwnerAction(sessionId: string, request: Pick<PermissionRequest, 'toolName' | 'toolInput'>): boolean {
+  const database = getProjectDb()
+  let consumed = false
+  database.transaction(() => {
+    const expected = fingerprint(request)
+    const rows = database.prepare(`SELECT request_id, command_id, execution_id, action_fingerprint FROM project_owner_action_approvals
+      WHERE session_id=? AND tool_name=? AND status='allowed' AND decided_at IS NOT NULL AND consumed_at IS NULL AND consumption_kind IS NULL
+      ORDER BY decided_at DESC LIMIT 32`).all(sessionId, request.toolName) as Array<{ request_id: string; command_id: string; execution_id: string; action_fingerprint: string }>
+    for (const row of rows) {
+      if (row.action_fingerprint !== expected) continue
+      try { assertLiveOwnerAction({ commandId: row.command_id, executionId: row.execution_id, sessionId }, database) } catch { continue }
+      consumed = database.prepare("UPDATE project_owner_action_approvals SET consumed_at=?, consumption_kind='claimed' WHERE request_id=? AND status='allowed' AND consumed_at IS NULL AND consumption_kind IS NULL").run(Date.now(), row.request_id).changes === 1
+      if (consumed) break
+    }
+  })()
+  return consumed
 }

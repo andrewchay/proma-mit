@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { rmSync } from 'node:fs'
-import { createBenchmark } from './benchmark-store'
+import { createBenchmark, readScoreboard } from './benchmark-store'
 import { runBaseline, runImprove, type RunImproveOptions } from './commands'
 import type { SubAgentDelegate } from './evaluator'
 import type { StateGuard } from './self-evolver'
@@ -50,6 +50,36 @@ const rubric: Rubric = {
 const delegate = (text: string): SubAgentDelegate => async () => ({ text })
 
 describe('runBaseline', () => {
+  it('Given 多次运行中一次失败 When 建立基线 Then 不写入虚假的零分记录', async () => {
+    for (const failingHeldOut of [false, true]) {
+      const benchmark = { ...config, id: 'baseline-fail-' + String(failingHeldOut), heldOutCases: ['HELD-1'], runsPerCase: 2 }
+      createBenchmark(benchmark, [{ caseId: 'CASE-001', statement: 'train task', rubric }, { caseId: 'HELD-1', statement: 'held task', rubric }])
+      let calls = 0
+      const progress: Array<{ phase: string; score?: number }> = []
+      const delegate: SubAgentDelegate = async ({ task }) => {
+        if (task.includes(failingHeldOut ? 'held task' : 'train task') && ++calls === 2) throw new Error('provider failed')
+        return { text: 'file:line 修复' }
+      }
+      await expect(runBaseline({ benchmark, delegate, agentVersion: 1, includeHeldOut: true, onProgress: value => progress.push(value) })).rejects.toThrow('评测不完整')
+      expect(readScoreboard(benchmark.id).evaluations).toHaveLength(0)
+      if (!failingHeldOut) expect(progress.find(item => item.phase === 'case_complete')?.score).toBeUndefined()
+    }
+  })
+
+  it('Given 指定模型评判失败 When 建立基线 Then 不用规则分冒充模型分', async () => {
+    const benchmark = { ...config, id: 'baseline-judge-unavailable' }
+    createBenchmark(benchmark, [{ caseId: 'CASE-001', statement: 'train task', rubric }])
+    await expect(runBaseline({ benchmark, agentVersion: 1, delegate: delegate('file:line 修复 缺陷'), scoreDelegate: async () => null })).rejects.toThrow('评测不完整')
+    expect(readScoreboard(benchmark.id).evaluations).toHaveLength(0)
+  })
+
+  it('Given 训练和 held-out 重叠 When 评测 Then 不调用模型', async () => {
+    let calls = 0
+    const benchmark = { ...config, heldOutCases: ['CASE-001'] }
+    await expect(runBaseline({ benchmark, agentVersion: 1, includeHeldOut: true, delegate: async () => { calls++; return { text: 'x' } } })).rejects.toThrow('重叠')
+    expect(calls).toBe(0)
+  })
+
   it('对单 Case benchmark 跑出 baseline 分数并写入 scoreboard', async () => {
     const baseline = await runBaseline({
       benchmark: config,
@@ -103,6 +133,21 @@ describe('runImprove', () => {
     expect(out.finalScore).toBeGreaterThan(out.baselineScore)
     expect(phases).toContain("case_start")
     expect(phases).toContain("case_complete")
+  })
+
+  it('Given held-out 实际调用失败 When 训练分数上升 Then 拒绝候选且不伪造零分', async () => {
+    const benchmark = { ...config, id: 'held-out-run-failure', heldOutCases: ['HELD-001'], runsPerCase: 2 }
+    createBenchmark(benchmark, [{ caseId: 'CASE-001', statement: 'train task', rubric }, { caseId: 'HELD-001', statement: 'held task', rubric }])
+    let version = 1
+    let heldCalls = 0
+    const state: StateGuard = { async snapshot() {}, async apply() { version = 2 }, async restore() { version = 1 }, version: () => version }
+    const out = await runImprove({ benchmark, state, includeHeldOut: true, maxRounds: 1,
+      propose: async () => ({ description: 'better', target: 'x', afterState: { prompt: 'new' } }),
+      delegate: async ({ task }) => { if (task.includes('held task') && ++heldCalls === 2) throw new Error('provider failed'); return { text: version === 1 ? 'file:line 修复' : '发现 file:line 缺陷 修复' } },
+    })
+    expect(out.acceptedRounds).toBe(0)
+    expect(version).toBe(1)
+    expect(readScoreboard(benchmark.id).evaluations[0]?.heldOut).toBeNull()
   })
 
   it('propose 保守策略（永不返回候选）时只产出 baseline', async () => {

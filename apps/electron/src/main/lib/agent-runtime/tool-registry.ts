@@ -149,6 +149,14 @@ import {
   COMPUTER_USE_KEY_COMBO_TOOL_NAME,
   COMPUTER_USE_REQUEST_TAKEOVER_TOOL_NAME,
 } from './tool-impls/computer-use-tools.ts'
+import {
+  LIST_UNKNOWN_ACTIONS_TOOL_NAME,
+  RESOLVE_UNKNOWN_ACTION_TOOL_NAME,
+  createListUnknownActionsToolDefinition,
+  createResolveUnknownActionToolDefinition,
+  executeListUnknownActionsTool,
+  executeResolveUnknownActionTool,
+} from './tool-impls/unknown-action-tools.ts'
 import { WEB_SEARCH_TOOL_NAME, createWebSearchToolDefinition, executeWebSearchTool } from './tool-impls/web-search-tool.ts'
 import { WEB_FETCH_TOOL_NAME, createWebFetchToolDefinition, executeWebFetchTool } from './tool-impls/web-fetch-tool.ts'
 import { RECALL_MEMORY_TOOL_NAME, ADD_MEMORY_TOOL_NAME, createRecallMemoryToolDefinition, createAddMemoryToolDefinition, executeRecallMemoryTool, executeAddMemoryTool } from './tool-impls/memory-tool.ts'
@@ -209,6 +217,9 @@ export function createCoreTools(options?: CreateCoreToolsOptions): RuntimeToolDe
     { ...createWebBridgeListTabsToolDefinition(), execute: executeWebBridgeListTabsTool },
     { ...createWebBridgeSelectTabToolDefinition(), execute: executeWebBridgeSelectTabTool },
     { ...createWebBridgeCloseTabToolDefinition(), execute: executeWebBridgeCloseTabTool },
+    // 未知动作的查看与解除：解除必须经用户确认，模型不能自行放行
+    { ...createListUnknownActionsToolDefinition(), execute: executeListUnknownActionsTool },
+    { ...createResolveUnknownActionToolDefinition(), execute: executeResolveUnknownActionTool },
   ]
 
   // 有工作区时才注册 ReadSkill：无工作区会话没有可读的 Skill，避免暴露无用工具

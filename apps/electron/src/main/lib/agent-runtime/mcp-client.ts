@@ -11,6 +11,9 @@ import type { ToolResult } from '@gravitas/core'
 import type { RuntimeToolDefinition, ToolContext } from './types'
 import { McpOAuthProvider } from './mcp-oauth-provider'
 import { registerPendingMcpOAuth } from './mcp-oauth-pending'
+import { readTransportPid, snapshotProcessTree, type ReapEvidence } from './mcp-process-reaper'
+import { describeDispatchedActionFailure } from './tool-impls/external-action-outcome'
+import { beginTrackedAction, finishTrackedAction, blockIfUnknownAction, buildActionKey, hashDetail } from './unknown-action-store'
 
 interface ConnectedServer {
   name: string
@@ -26,10 +29,22 @@ export interface McpAuthRequiredPayload {
   serverName: string
 }
 
+/** 把回收证据翻译成日志里能看懂的一句话。 */
+function describeReapStatus(evidence: ReapEvidence): string {
+  if (evidence.status === 'unavailable') return '无法核验（进程表不可用）'
+  if (evidence.status === 'unknown') return `后代退出状态未知，未额外发送终止信号（${evidence.unverified.length} 个进程待核对）`
+  if (evidence.skippedReused.length > 0) {
+    return `未确认，仍有 ${evidence.survivors.length} 个进程存活（已跳过 ${evidence.skippedReused.length} 个 PID 被复用的目标）`
+  }
+  return `未确认，仍有 ${evidence.survivors.length} 个进程存活`
+}
+
 export class McpClientManager {
   private servers: ConnectedServer[] = []
   private abortSignal?: AbortSignal
   private disconnected = false
+  /** 最近一次 disconnect 的进程树回收证据，供审计与测试读取。 */
+  private reapEvidence: ReapEvidence[] = []
 
   constructor(
     private readonly configs: Record<string, McpServerEntry>,
@@ -155,31 +170,78 @@ export class McpClientManager {
       return { content: `MCP 服务器未连接: ${serverName}`, isError: true, toolCallId: '' }
     }
 
+    // 同一个工具 + 同一组参数在结果确认前不允许重复调用。
+    const actionKey = buildActionKey(`mcp:${serverName}__${toolName}`, hashDetail(args ?? {}))
+    const blocked = await blockIfUnknownAction({
+      sessionId: ctx.sessionId,
+      tool: `MCP 工具 ${serverName}__${toolName}`,
+      actionKey,
+      confirmHint: '请先核对目标系统的实际状态，并由用户决定是否继续。',
+    })
+    if (blocked) {
+      return { content: blocked, isError: true, toolCallId: '' }
+    }
+
+    const tracked = await beginTrackedAction({ sessionId: ctx.sessionId, tool: `MCP 工具 ${serverName}__${toolName}`, actionKey, detail: { server: serverName, tool: toolName }, reason: '动作已登记，结果待确认' })
+    if (!tracked) return { content: '同一动作正在执行或等待核对，禁止重复派发', isError: true, toolCallId: '' }
+
     try {
       const result = await server.client.callTool(
         { name: toolName, arguments: args as Record<string, unknown> },
         undefined,
         { signal: ctx.abortSignal },
       )
+      if (result.isError === true) throw new Error('MCP 服务报告工具执行错误')
+      await finishTrackedAction(tracked, true)
       return { content: this.serializeResult(result), isError: false, toolCallId: '' }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      return { content: `MCP 工具调用失败: ${message}`, isError: true, toolCallId: '' }
+    } catch (thrown) {
+      // 工具可能在服务端已经执行，只是响应在返回途中超时或连接断开。
+      // 统一压成"调用失败"会让模型直接重试，在真实系统上是重复执行。
+      const failure = describeDispatchedActionFailure(`MCP 工具 ${serverName}__${toolName}`, thrown, '请先核对目标系统的实际状态，再由用户决定是否继续。')
+      console.warn(`[MCP 客户端] 工具调用${failure.outcome === 'unknown' ? '结果未知' : '未执行'}: ${failure.reason}`)
+      await finishTrackedAction(tracked, false)
+      return { content: failure.message, isError: true, toolCallId: '' }
     }
   }
 
-  /** 断开所有 MCP 服务器连接 */
+  /** 断开所有 MCP 服务器连接；stdio 服务端额外回收其进程树。 */
   async disconnect(): Promise<void> {
     if (this.disconnected) return
     this.disconnected = true
     for (const server of this.servers) {
+      // 顺序关键：先在父进程仍存活时快照后代，再 close()。
+      // 父进程一旦死掉，后代会被 reparent 到 pid 1，ppid 链断裂后再枚举就找不到了。
+      const pid = readTransportPid(server.transport)
+      // 仅用于提示待核对的后代；快照本身不能证明关闭后的归属或退出。
+      const snapshot = pid ? await snapshotProcessTree(pid) : undefined
       try {
         await server.client.close()
       } catch (err) {
         console.warn(`[MCP 客户端] 断开服务器 ${server.name} 时出错:`, err)
       }
+      if (pid) {
+        // 仅凭 PID 和秒级启动时间无法安全确认进程身份；不向快照进程额外发信号。
+        // close() 由 SDK 处理直接子进程，后代可能已重挂载或在快照后派生，不能声称已清理。
+        const evidence: ReapEvidence = {
+          rootPid: pid,
+          targeted: [],
+          signals: [],
+          survivors: [],
+          skippedReused: [],
+          unverified: snapshot ? [...snapshot.descendants, pid] : [],
+          status: snapshot ? 'unknown' : 'unavailable',
+          identity: 'unverified',
+        }
+        this.reapEvidence.push(evidence)
+        console.warn(`[MCP 客户端] 服务器 ${server.name} 进程树回收${describeReapStatus(evidence)}，pid=${pid}`)
+      }
     }
     this.servers = []
+  }
+
+  /** 读取最近一次断开的进程树回收证据（只读快照）。 */
+  getReapEvidence(): ReapEvidence[] {
+    return [...this.reapEvidence]
   }
 
   /**
@@ -241,7 +303,16 @@ export class McpClientManager {
   ): Promise<import('@modelcontextprotocol/sdk/shared/transport.js').Transport> {
     if (entry.type === 'stdio') {
       if (!entry.command) throw new Error(`MCP 服务器 ${name} 缺少 command`)
-      const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js')
+      const { StdioClientTransport, getDefaultEnvironment } = await import('@modelcontextprotocol/sdk/client/stdio.js')
+      if (process.platform === 'darwin') {
+        const { ManagedMcpStdioTransport } = await import('./mcp-managed-transport')
+        return new ManagedMcpStdioTransport({
+          command: entry.command,
+          args: entry.args,
+          cwd: this.cwd,
+          env: { ...getDefaultEnvironment(), ...entry.env },
+        })
+      }
       return new StdioClientTransport({
         command: entry.command,
         args: entry.args,

@@ -5,7 +5,10 @@
  * 通过 mock.module 隔离 memory-service 与 memos-client，避免真实网络请求。
  */
 
-import { describe, expect, mock, test, beforeEach } from 'bun:test'
+import { describe, expect, mock, test, beforeEach, beforeAll, afterAll } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { MemorySearchResult } from '../../memos-client'
 
 let mockMemoryConfig: { apiKey?: string; userId?: string; baseUrl?: string } = {}
@@ -39,6 +42,16 @@ const {
   RECALL_MEMORY_TOOL_NAME,
   ADD_MEMORY_TOOL_NAME,
 } = await import('./memory-tool')
+
+const directory = mkdtempSync(join(tmpdir(), 'memory-tool-db-'))
+const previous = process.env.PROMA_TEST_CONFIG_DIR
+beforeAll(async () => { process.env.PROMA_TEST_CONFIG_DIR = directory; await (await import('../../project-sqlite-store')).initProjectDb() })
+afterAll(async () => {
+  (await import('../../project-sqlite-store')).closeProjectDb()
+  if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+  else process.env.PROMA_TEST_CONFIG_DIR = previous
+  rmSync(directory, { recursive: true, force: true })
+})
 
 describe('记忆工具（Agent Runtime）', () => {
   const ctx = { cwd: '/tmp/workspace', sessionId: 'test-session' }

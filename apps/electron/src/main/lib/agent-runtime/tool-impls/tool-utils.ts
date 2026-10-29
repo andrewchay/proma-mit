@@ -5,7 +5,9 @@
  */
 
 import { resolve, relative, isAbsolute, dirname } from 'node:path'
-import { realpathSync, existsSync } from 'node:fs'
+import { realpathSync, existsSync, fstatSync, statSync } from 'node:fs'
+import type { ToolResult } from '@gravitas/core'
+import type { ToolContext } from '../types'
 
 /**
  * 将用户提供的相对路径解析为绝对路径
@@ -15,6 +17,21 @@ import { realpathSync, existsSync } from 'node:fs'
  * - 相对路径基于 cwd 解析
  * - 返回路径必须在 cwd 内部（防止路径遍历，包括 symlink 绕过）
  */
+/**
+ * 校验已打开描述符与打开前捕获的 inode 基准一致（dev+ino 比对）。
+ *
+ * 抵御"路径检查通过后、打开前父目录被替换"的竞态：调用方在打开前 stat 目标路径
+ * 固定 dev+ino，描述符被内核固定在打开瞬间的 inode 上，两者不一致即拒绝（失败关闭）。
+ * 基准必须在打开前捕获——打开后再 stat 路径会跟随被替换后的父目录，失去检测能力。
+ * 不用 /dev/fd 反查是因为 write-only 描述符在 macOS 返回 EACCES；dev+ino 与模式无关。
+ */
+export function assertDescriptorMatchesStat(descriptor: number, expected: { dev: number; ino: number }): void {
+  const actual = fstatSync(descriptor)
+  if (actual.dev !== expected.dev || actual.ino !== expected.ino) {
+    throw new Error('文件路径在打开过程中被替换，已拒绝访问')
+  }
+}
+
 export function resolveToolPath(inputPath: string, cwd: string): { path: string; error?: string } {
   if (!inputPath) {
     return { path: '', error: '路径不能为空' }
@@ -89,4 +106,29 @@ export function formatToolError(error: unknown): string {
 export function truncateOutput(output: string, maxLength = 100_000): string {
   if (output.length <= maxLength) return output
   return output.slice(0, maxLength) + `\n...（输出已截断，共 ${output.length} 字符）`
+}
+
+/** 受控身份从项目账本重查，不能只依赖工具调用方提供的标志。账本不可用时拒绝工具操作。 */
+export function requiresOwnerToolGate(sessionId: string, ownerMarker?: boolean): boolean {
+  const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+  const context = gates.resolveOwnerExecutionGateSession(sessionId)
+  if (ownerMarker && context.kind === 'unrestricted') throw new Error('Owner工具标记与权威会话记录不一致')
+  return context.kind !== 'unrestricted'
+}
+
+/** 对当前不在 Owner 工具白名单内的入口执行统一用途检查。 */
+export function assertOwnerToolPermission(sessionId: string, ownerMarker: boolean | undefined, toolName: string, args: Record<string, unknown>, options?: { recordKnowledgeRead?: boolean }): void {
+  if (!requiresOwnerToolGate(sessionId, ownerMarker)) return
+  const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+  gates.assertToolAllowedForSessionPurpose(sessionId, toolName, args, options)
+}
+
+/** 为工具入口提供统一的受控会话检查。 */
+export function guardOwnerTool(toolName: string, execute: (input: unknown, ctx: ToolContext) => Promise<ToolResult>): (input: unknown, ctx: ToolContext) => Promise<ToolResult> {
+  return async (input, ctx) => {
+    const args = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {}
+    try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, toolName, args, { recordKnowledgeRead: false }) }
+    catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
+    return execute(input, ctx)
+  }
 }

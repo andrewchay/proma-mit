@@ -420,6 +420,7 @@ export function applyChainCommand(
         break
       case 'accept':
       case 'reject':
+        if (command.reasonCode !== undefined && (command.kind !== 'reject' || !['wrong_direction', 'missing_context', 'wrong_granularity', 'preference_violation', 'execution_error', 'other'].includes(command.reasonCode))) throw new Error('验收原因标签无效')
         required(command.comment, '验收意见')
         if (draft.status !== 'submitted') throw new Error('只能验收已提交交付物')
         if (command.kind === 'accept') {
@@ -470,6 +471,7 @@ export function applyChainCommand(
     actor,
     at,
     ...('comment' in command ? { comment: command.comment } : {}),
+    ...(command.kind === 'reject' && command.reasonCode ? { reasonCode: command.reasonCode } : {}),
     ...('evidence' in command ? { evidence: command.evidence } : {}),
     ...('changeReason' in command ? { changeReason: command.changeReason } : {}),
   })

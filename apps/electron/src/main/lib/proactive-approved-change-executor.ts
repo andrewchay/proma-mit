@@ -4,8 +4,9 @@ import { createMemoryItem } from './memory-plugin-service'
 import { createApprovedWorkspaceSkill } from './agent-workspace-manager'
 import type { CreateMonitorInput } from './monitor-service'
 import type { MemoryItemKind } from './memory-plugin-service'
-import { adoptAgentEmployeeCapabilityVersion, getAgentEmployee } from './project-sqlite-store'
+import { adoptAgentEmployeeCapabilityVersion, getAgentEmployee, listAgentEmployeeLearningSamples } from './project-sqlite-store'
 import { createHash } from 'node:crypto'
+import { fingerprintCapabilityEvidence } from './employee-capability-evidence'
 
 export interface ApprovedChangeExecutorDependencies {
   createSchedule: (input: CreateProactiveScheduleInput) => void
@@ -62,6 +63,11 @@ export async function executeApprovedChange(
         if (!allowedWorkspaceIds.has(change.workspaceId)) throw new Error('目标工作区不在该员工获准服务的范围内')
       }
       if (createHash('sha256').update(change.content).digest('hex') !== change.contentHash) throw new Error('能力内容 hash 校验失败')
+      const evidenceIds = stringArray(change.evidenceSampleIds)
+      if (!Array.isArray(change.evidenceSampleIds) || evidenceIds.length !== change.evidenceSampleIds.length || evidenceIds.length < 3 || new Set(evidenceIds).size !== evidenceIds.length) {
+        throw new Error('能力推广缺少有效的独立证据引用，请重新生成候选')
+      }
+      const agentId = change.agentId
       adoptAgentEmployeeCapabilityVersion({
         agentId: change.agentId,
         parentVersionId: typeof change.parentVersionId === 'string' ? change.parentVersionId : undefined,
@@ -72,6 +78,17 @@ export async function executeApprovedChange(
         contentHash: change.contentHash,
         source: 'evolution',
         retiredAt: undefined,
+      }, () => {
+        const currentEmployee = getAgentEmployee(agentId)
+        if (!currentEmployee?.enabled) throw new Error('目标 AI 员工已停用或删除，不能推广能力')
+        if (change.scope === 'workspace' && ![currentEmployee.workspaceId, ...(currentEmployee.workspaceIds ?? [])].includes(typeof change.workspaceId === 'string' ? change.workspaceId : undefined)) {
+          throw new Error('目标工作区不在该员工获准服务的范围内')
+        }
+        const evidence = listAgentEmployeeLearningSamples(agentId).filter((sample) => evidenceIds.includes(sample.id))
+        if (evidence.length !== evidenceIds.length || evidence.some((sample) => sample.privacyStatus !== 'sanitized' || sample.outcome === 'manual_excluded' || (change.scope === 'workspace' && sample.workspaceId !== change.workspaceId))) {
+          throw new Error('能力推广证据已删除、排除或不属于目标工作区，请重新生成候选')
+        }
+        if (!isString(change.evidenceFingerprint) || fingerprintCapabilityEvidence(evidence) !== change.evidenceFingerprint) throw new Error('能力推广证据已变更或缺少冻结摘要，请重新生成候选')
       })
       return
     }

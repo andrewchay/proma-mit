@@ -24,11 +24,37 @@ function isLoopbackHostname(hostname: string): boolean {
   return hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]' || hostname === 'localhost'
 }
 
+/** 无鉴权会授予匿名管理员，仅限本机开发；可信 Header 有自己的启动限制。 */
+export function assertNoneAuthStartupPolicy(input: { authMode: string; trustedHeaderAuth: boolean; hostname: string; nodeEnv?: string }): void {
+  if (input.authMode !== 'none' || input.trustedHeaderAuth) return
+  if (input.nodeEnv !== 'development' || !isLoopbackHostname(input.hostname)) {
+    throw new Error('无鉴权模式仅可在 NODE_ENV=development 且监听本机地址时启用')
+  }
+}
+
+/** 以明确配置的公开地址判断，不信任客户端提供的转发头。 */
+export function resolveSecureSessionCookie(input: { publicBaseUrl?: string; hostname: string; nodeEnv?: string }): boolean {
+  const localDevelopment = input.nodeEnv === 'development' && isLoopbackHostname(input.hostname)
+  if (!input.publicBaseUrl) {
+    if (localDevelopment) return false
+    throw new Error('浏览器登录需要配置 HTTPS PROMA_WEB_PUBLIC_BASE_URL')
+  }
+  const url = new URL(input.publicBaseUrl)
+  if (url.username || url.password) throw new Error('PROMA_WEB_PUBLIC_BASE_URL 不得包含凭据')
+  if (url.protocol === 'https:') return true
+  if (url.protocol === 'http:' && localDevelopment && isLoopbackHostname(url.hostname)) return false
+  throw new Error('浏览器登录需要 HTTPS；仅本机开发允许 HTTP')
+}
+
 export interface PromaWebAuthModeStartupPolicyInput {
   trustedHeaderAuth: boolean
   authMode?: 'local' | 'oidc' | 'both' | 'none' | string
   hasLocalAdmin: boolean
   hasOidcClient: boolean
+}
+
+export function resolveDefaultAuthMode(hasOidc: boolean, hasLocalAdmin: boolean): 'local' | 'oidc' | 'both' | 'none' {
+  return hasOidc ? (hasLocalAdmin ? 'both' : 'oidc') : hasLocalAdmin ? 'local' : 'none'
 }
 
 /**
@@ -41,7 +67,7 @@ export function assertAuthModeStartupPolicy(input: PromaWebAuthModeStartupPolicy
   if (input.trustedHeaderAuth) return // trusted-header 模式不涉及 authMode
 
   const mode = input.authMode ?? 'none'
-  if (mode === 'none') return // 只有 Bearer 认证，无浏览器登录
+  if (mode === 'none') return // 无鉴权模式的环境边界由 assertNoneAuthStartupPolicy 校验。
 
   if (mode !== 'local' && mode !== 'oidc' && mode !== 'both') {
     throw new Error(`PROMA_WEB_AUTH_MODE 必须是 local|oidc|both|none 之一，收到: ${mode}`)

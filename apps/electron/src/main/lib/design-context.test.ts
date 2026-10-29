@@ -6,7 +6,7 @@
  * 使用 PROMA_TEST_CONFIG_DIR 隔离配置目录，避免写入真实配置。
  */
 
-import { describe, test, expect, afterAll } from 'bun:test'
+import { describe, test, expect, beforeAll, afterAll } from 'bun:test'
 import { mkdirSync, writeFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -72,7 +72,10 @@ function setupWorkspace(): void {
 
 setupWorkspace()
 
-afterAll(() => {
+beforeAll(async () => { await (await import('./project-sqlite-store')).initProjectDb() })
+
+afterAll(async () => {
+  (await import('./project-sqlite-store')).closeProjectDb()
   if (existsSync(tempHomeDir)) rmSync(tempHomeDir, { recursive: true, force: true })
   delete process.env.PROMA_TEST_CONFIG_DIR
 })
@@ -239,6 +242,7 @@ describe('composeOdDesignContext', () => {
     })
     expect(out).not.toContain('<od_design_system')
     expect(out).toContain('<od_craft')
+    expect(out).toContain('缺少可用的 DESIGN.md')
   })
 
   test('Given craft 目录缺失 When 组合 Then craft 静默缺席不抛错', () => {
@@ -251,6 +255,27 @@ describe('composeOdDesignContext', () => {
 })
 
 describe('ReadSkill 工具接线', () => {
+  test('Given 同一会话切换设计系统 When 再次读取 Skill Then 使用当前品牌与令牌', async () => {
+    const cwd = join(tempHomeDir, 'brand-refresh')
+    mkdirSync(cwd, { recursive: true })
+    writeFileSync(join(cwd, 'DESIGN.md'), '# Brand A\nOld brand')
+    writeFileSync(join(cwd, 'tokens.css'), ':root { --brand: red; }')
+    const ctx = { cwd, sessionId: 'same-session', workspaceSlug: WORKSPACE_SLUG }
+    expect((await executeSkillTool({ skill_slug: 'frontend-design' }, ctx)).content).toContain('Brand A')
+    writeFileSync(join(cwd, 'DESIGN.md'), '# Brand B\nNew brand')
+    writeFileSync(join(cwd, 'tokens.css'), ':root { --brand: blue; }')
+    const updated = await executeSkillTool({ skill_slug: 'frontend-design' }, ctx)
+    expect(updated.content).toContain('Brand B')
+    expect(updated.content).toContain('--brand: blue')
+    expect(updated.content).not.toContain('Brand A')
+  })
+
+  test('Given Skill 要求设计系统而工作区缺少 DESIGN.md When 读取 Then 明确提示缺项', async () => {
+    const cwd = join(tempHomeDir, 'brand-missing')
+    mkdirSync(cwd, { recursive: true })
+    const result = await executeSkillTool({ skill_slug: 'frontend-design' }, { cwd, sessionId: 'missing', workspaceSlug: WORKSPACE_SLUG })
+    expect(result.content).toContain('缺少可用的 DESIGN.md')
+  })
   test('Given 声明 od: 的 Skill When 读取 SKILL.md Then 工具结果附带注入上下文', async () => {
     const cwd = join(tempHomeDir, 'ds-tool')
     mkdirSync(cwd, { recursive: true })

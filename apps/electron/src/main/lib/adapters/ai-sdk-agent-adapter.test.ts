@@ -21,8 +21,9 @@ interface CapturedStreamTextInput {
 }
 
 let capturedInputs: CapturedStreamTextInput[] = []
-let streamTextMode: 'text' | 'streamed-text' | 'stream-error-after-text' | 'write-tool' | 'queued-text' = 'text'
+let streamTextMode: 'text' | 'streamed-text' | 'stream-error-after-text' | 'write-tool' | 'queued-text' | 'held-text' = 'text'
 let _releaseQueuedStream: (() => void) | undefined
+let releaseHeldStreams: Array<() => void> = []
 
 
 function usage(): LanguageModelUsage {
@@ -96,6 +97,11 @@ mock.module('ai', () => ({
   streamText: (input: CapturedStreamTextInput) => {
     capturedInputs.push(input)
     const stream = (async function* () {
+      if (streamTextMode === 'held-text') {
+        await new Promise<void>((resolve) => { releaseHeldStreams.push(resolve) })
+        yield { type: 'text-delta', id: 'held', text: '回复' }
+        yield { type: 'finish-step', finishReason: 'stop', rawFinishReason: 'stop', usage: usage() }
+      }
       if (streamTextMode === 'queued-text') {
         if (capturedInputs.length === 1) {
           await new Promise<void>((resolve, reject) => {
@@ -191,6 +197,7 @@ describe('AISDKAgentAdapter', () => {
     capturedInputs = []
     streamTextMode = 'text'
     _releaseQueuedStream = undefined
+    releaseHeldStreams = []
   })
 
   test('缺少必要渠道字段时返回清晰错误', async () => {
@@ -201,6 +208,71 @@ describe('AISDKAgentAdapter', () => {
         // 配置不完整，不应产出消息。
       }
     }).toThrow('AI SDK Runtime 需要 provider、apiKey、baseUrl、model、cwd')
+  })
+
+  test('Given AI SDK 会话正常结束 When 旧工具被调用 Then 拒绝派发', async () => {
+    const adapter = new AISDKAgentAdapter()
+    let approvals = 0
+    for await (const _message of adapter.query({
+      sessionId: 's-ai-finished-tool', prompt: '完成', agentRuntime: 'ai-sdk', provider: 'openai',
+      apiKey: 'key', baseUrl: 'https://api.openai.com/v1', model: 'gpt-test', cwd: '/tmp',
+      canUseTool: async () => { approvals++; return { allowed: true } },
+    })) { /* mock Provider 不连接网络 */ }
+    const read = capturedInputs[0]?.tools.Read?.execute
+    if (!read) throw new Error('缺少 Read 工具')
+    const result = await read({ file_path: 'not-used.txt' }, { toolCallId: 'late', messages: [], context: {} })
+    expect(result).toMatchObject({ isError: true })
+    expect(approvals).toBe(0)
+    adapter.dispose()
+  })
+
+  test('Given AI SDK 会话正在运行 When 同 ID 再次启动 Then 拒绝并保留原运行', async () => {
+    streamTextMode = 'held-text'
+    const adapter = new AISDKAgentAdapter()
+    const input = { sessionId: 's-ai-concurrent', prompt: '运行', agentRuntime: 'ai-sdk' as const, provider: 'openai' as const,
+      apiKey: 'key', baseUrl: 'https://api.openai.com/v1', model: 'gpt-test', cwd: '/tmp' }
+    const first = adapter.query(input)[Symbol.asyncIterator]()
+    const firstDone = first.next()
+    for (let i = 0; i < 100 && releaseHeldStreams.length < 1; i++) await new Promise(resolve => setTimeout(resolve, 1))
+    if (!releaseHeldStreams[0]) throw new Error('首个会话未启动')
+    const second = adapter.query(input)[Symbol.asyncIterator]()
+    const rejected = await Promise.race([
+      second.next().then(() => false, () => true),
+      new Promise<boolean>(resolve => setTimeout(() => resolve(false), 30)),
+    ])
+    adapter.abort(input.sessionId)
+    const originalAborted = capturedInputs[0]?.abortSignal?.aborted
+    for (const release of releaseHeldStreams) release()
+    await firstDone
+    await first.return?.()
+    adapter.dispose()
+    expect(rejected).toBe(true)
+    expect(originalAborted).toBe(true)
+  })
+
+  test('Given 旧会话停止后同 ID 新会话启动 When 旧会话随后退出 Then 新会话仍可停止', async () => {
+    streamTextMode = 'held-text'
+    const adapter = new AISDKAgentAdapter()
+    const input = { sessionId: 's-ai-restart', prompt: '运行', agentRuntime: 'ai-sdk' as const, provider: 'openai' as const,
+      apiKey: 'key', baseUrl: 'https://api.openai.com/v1', model: 'gpt-test', cwd: '/tmp' }
+    const first = adapter.query(input)[Symbol.asyncIterator]()
+    const firstDone = first.next()
+    for (let i = 0; i < 100 && releaseHeldStreams.length < 1; i++) await new Promise(resolve => setTimeout(resolve, 1))
+    if (!releaseHeldStreams[0]) throw new Error('首个会话未启动')
+    adapter.abort(input.sessionId)
+    const second = adapter.query(input)[Symbol.asyncIterator]()
+    const secondDone = second.next()
+    for (let i = 0; i < 100 && releaseHeldStreams.length < 2; i++) await new Promise(resolve => setTimeout(resolve, 1))
+    if (!releaseHeldStreams[1]) throw new Error('第二个会话未启动')
+    releaseHeldStreams[0]()
+    await firstDone
+    await first.return?.()
+    adapter.abort(input.sessionId)
+    expect(capturedInputs[1]?.abortSignal?.aborted).toBe(true)
+    releaseHeldStreams[1]()
+    await secondDone
+    await second.return?.()
+    adapter.dispose()
   })
 
   test('手动压缩命令由 Runtime 直接处理，不发送给模型', async () => {

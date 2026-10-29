@@ -10,9 +10,10 @@
 
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
-import { truncateOutput } from './tool-utils.ts'
+import { assertOwnerToolPermission, formatToolError, truncateOutput } from './tool-utils.ts'
 import { getFetchFn } from '../../proxy-fetch'
 import { getEffectiveProxyUrl } from '../../proxy-settings-service'
+import { readBoundedWebBody } from './bounded-web-body'
 
 export const WEB_FETCH_TOOL_NAME = 'WebFetch'
 
@@ -47,7 +48,7 @@ export function createWebFetchToolDefinition() {
   }
 }
 
-export async function executeWebFetchTool(input: unknown, _ctx: ToolContext): Promise<ToolResult> {
+export async function executeWebFetchTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const params = input as WebFetchToolInput
   const url = params.url?.trim()
 
@@ -65,16 +66,25 @@ export async function executeWebFetchTool(input: unknown, _ctx: ToolContext): Pr
     return { toolCallId: '', content: `不支持的协议: ${parsed.protocol}（仅允许 http/https）`, isError: true }
   }
 
+  try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_FETCH_TOOL_NAME, { url }) }
+  catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
+
   try {
     // 网络请求统一跟随 Proma 代理设置
     const proxyUrl = await getEffectiveProxyUrl()
     const fetchFn = getFetchFn(proxyUrl)
+    assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_FETCH_TOOL_NAME, { url })
 
     const controller = new AbortController()
+    const abortFromCaller = () => controller.abort()
+    if (ctx.abortSignal?.aborted) controller.abort()
+    else ctx.abortSignal?.addEventListener('abort', abortFromCaller, { once: true })
     const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
-    let response: Response
+    let contentType: string
+    let buffer: Uint8Array
     try {
-      response = await fetchFn(parsed.toString(), {
+      if (controller.signal.aborted) throw new Error('抓取已取消或超时')
+      const response = await fetchFn(parsed.toString(), {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36 PromaAgent/1.0',
           'Accept': 'text/html,application/xhtml+xml,text/plain,*/*;q=0.8',
@@ -82,20 +92,18 @@ export async function executeWebFetchTool(input: unknown, _ctx: ToolContext): Pr
         redirect: 'follow',
         signal: controller.signal,
       })
+      if (!response.ok) {
+        void response.body?.cancel().catch(() => {})
+        return { toolCallId: '', content: `抓取失败 (${response.status} ${response.statusText})`, isError: true }
+      }
+      contentType = response.headers.get('content-type') ?? ''
+      buffer = await readBoundedWebBody(response.body, controller.signal, MAX_BODY_BYTES, '页面')
     } finally {
       clearTimeout(timer)
+      ctx.abortSignal?.removeEventListener('abort', abortFromCaller)
     }
 
-    if (!response.ok) {
-      return { toolCallId: '', content: `抓取失败 (${response.status} ${response.statusText})`, isError: true }
-    }
-
-    const contentType = response.headers.get('content-type') ?? ''
-    const buffer = await response.arrayBuffer()
-    if (buffer.byteLength > MAX_BODY_BYTES) {
-      return { toolCallId: '', content: `页面过大（${buffer.byteLength} bytes），已放弃抓取`, isError: true }
-    }
-
+    assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_FETCH_TOOL_NAME, { url })
     const raw = new TextDecoder('utf-8').decode(buffer)
 
     // 非 HTML 内容（JSON、纯文本等）直接截断返回

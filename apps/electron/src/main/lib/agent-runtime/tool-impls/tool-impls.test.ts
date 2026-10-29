@@ -4,8 +4,8 @@
  * 验证 Read / Write / Edit / Bash / Grep 五个基础工具的正确性。
  */
 
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test'
-import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, mkdirSync } from 'node:fs'
+import { describe, test, expect, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test'
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync, symlinkSync, linkSync, mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { executeReadTool, createReadToolDefinition } from './read-tool'
@@ -14,6 +14,21 @@ import { executeEditTool, createEditToolDefinition } from './edit-tool'
 import { executeBashTool, createBashToolDefinition } from './bash-tool'
 import { executeGrepTool, createGrepToolDefinition } from './grep-tool'
 import { executeAgentTool, createAgentToolDefinition, AGENT_TOOL_NAME } from './agent-tool'
+
+const databaseDir = mkdtempSync(join(tmpdir(), 'gravitas-tool-db-'))
+const previousConfigDir = process.env.PROMA_TEST_CONFIG_DIR
+beforeAll(async () => {
+  process.env.PROMA_TEST_CONFIG_DIR = databaseDir
+  const { initProjectDb } = await import('../../project-sqlite-store')
+  await initProjectDb()
+})
+afterAll(async () => {
+  const { closeProjectDb } = await import('../../project-sqlite-store')
+  closeProjectDb()
+  if (previousConfigDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+  else process.env.PROMA_TEST_CONFIG_DIR = previousConfigDir
+  rmSync(databaseDir, { recursive: true, force: true })
+})
 
 describe('Agent Runtime 核心工具', () => {
   let tempDir: string
@@ -89,6 +104,33 @@ describe('Agent Runtime 核心工具', () => {
 
     expect(result.isError).toBe(true)
     expect(result.content).toContain('必须唯一')
+  })
+
+  test('Given 工作区内文件是其他文件的硬链接 When Edit Then 拒绝且不修改原文件', async () => {
+    const outside = mkdtempSync(join(tmpdir(), 'gravitas-edit-outside-'))
+    try {
+      const original = join(outside, 'original.txt')
+      writeFileSync(original, 'original')
+      linkSync(original, join(tempDir, 'linked.txt'))
+      const result = await executeEditTool({ file_path: 'linked.txt', old_string: 'original', new_string: 'changed' }, { cwd: tempDir, sessionId })
+      expect(result.isError).toBe(true)
+      expect(readFileSync(original, 'utf8')).toBe('original')
+    } finally { rmSync(outside, { recursive: true, force: true }) }
+  })
+
+  test('Given 多字节文本 When Edit 缩短内容 Then 输出完整且没有旧字节残留', async () => {
+    writeFileSync(join(tempDir, 'unicode.txt'), '前缀：一二三四五。')
+    const result = await executeEditTool({ file_path: 'unicode.txt', old_string: '一二三四五', new_string: '新' }, { cwd: tempDir, sessionId })
+    expect(result.isError).toBeFalsy()
+    expect(readFileSync(join(tempDir, 'unicode.txt'), 'utf8')).toBe('前缀：新。')
+  })
+
+  test('Given 工作区内符号链接 When Edit Then 拒绝且原文件不变', async () => {
+    writeFileSync(join(tempDir, 'target.txt'), 'original')
+    symlinkSync('target.txt', join(tempDir, 'alias.txt'))
+    const result = await executeEditTool({ file_path: 'alias.txt', old_string: 'original', new_string: 'changed' }, { cwd: tempDir, sessionId })
+    expect(result.isError).toBe(true)
+    expect(readFileSync(join(tempDir, 'target.txt'), 'utf8')).toBe('original')
   })
 
   test('Bash 工具执行命令', async () => {

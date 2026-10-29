@@ -1433,6 +1433,17 @@ function migrate(database: SqliteCompat): void {
       decision_reason TEXT
     )
   `)
+  database.transaction(() => {
+    if (!readColumnNames(database, 'project_owner_action_approvals').includes('consumed_at')) {
+      database.exec('ALTER TABLE project_owner_action_approvals ADD COLUMN consumed_at INTEGER')
+      // 旧版无法区分已执行与未执行的批准；不把历史批准恢复为可重放的执行权。
+      database.exec("UPDATE project_owner_action_approvals SET consumed_at = COALESCE(decided_at, requested_at) WHERE status = 'allowed'")
+    }
+    if (!readColumnNames(database, 'project_owner_action_approvals').includes('consumption_kind')) {
+      database.exec('ALTER TABLE project_owner_action_approvals ADD COLUMN consumption_kind TEXT')
+      database.exec("UPDATE project_owner_action_approvals SET consumption_kind = 'legacy_unknown' WHERE consumed_at IS NOT NULL")
+    }
+  })()
   // 员工岗位模板 ID 只记录显式选择；旧档案不从角色文本反推。
   const empColumns = readColumnNames(database, 'agent_employees')
   if (!empColumns.includes('role_template_id')) database.exec('ALTER TABLE agent_employees ADD COLUMN role_template_id TEXT')
@@ -3879,12 +3890,13 @@ export function getAgentEmployeeCapabilityDependencyGraph(agentId: string): { no
   return { nodes, blockedBy }
 }
 
-export function adoptAgentEmployeeCapabilityVersion(input: Omit<import('./project-types').AgentEmployeeCapabilityVersion, 'id' | 'createdAt' | 'status' | 'activatedAt'>): import('./project-types').AgentEmployeeCapabilityVersion {
+export function adoptAgentEmployeeCapabilityVersion(input: Omit<import('./project-types').AgentEmployeeCapabilityVersion, 'id' | 'createdAt' | 'status' | 'activatedAt'>, validateEvidence?: () => void): import('./project-types').AgentEmployeeCapabilityVersion {
   const { detectCapabilityConflicts, formatConflictMessage, hasBlockingConflict } = require('./agent-employee-capability-conflict') as typeof import('./agent-employee-capability-conflict')
   const database = getProjectDb()
   let adopted: import('./project-types').AgentEmployeeCapabilityVersion | undefined
 
   database.transaction(() => {
+    validateEvidence?.()
     // 冲突检查必须与 CAS 和写入处于同一事务，避免检查后 peer 被并发替换。
     const activeRows = database.prepare("SELECT * FROM agent_employee_capability_versions WHERE agent_id = ? AND status = 'active'").all(input.agentId) as CapabilityVersionRow[]
     const activeVersions = activeRows.map(rowToCapabilityVersion)
@@ -3973,21 +3985,28 @@ export function getAgentEmployeeCapabilityHealth(agentId: string, windowDays = 3
   const samples = getProjectDb().prepare('SELECT capability_version_ids, outcome, privacy_status, created_at FROM agent_employee_learning_samples WHERE agent_id = ?').all(agentId) as Array<{ capability_version_ids: string; outcome: string; privacy_status: string; created_at: number }>
   const observedExecutions = executions.filter((execution) => (execution.completed_at ?? execution.started_at) >= since)
   const observedSamples = samples.filter((sample) => sample.created_at >= since)
+  // 人工判断来自项目链，执行完成不能代替业务验收；仅纳入已脱敏且未排除的样本。
+  const humanSamples = listAgentEmployeeLearningSamples(agentId).filter((sample) => sample.createdAt >= since && sample.privacyStatus === 'sanitized' && sample.outcome !== 'manual_excluded')
   const versions = listAgentEmployeeCapabilityVersions(agentId)
   const statsFor = (versionId: string) => {
     const matchedExecutions = observedExecutions.filter((execution) => parseJsonArray(execution.capability_version_ids).includes(versionId))
     const matchedSamples = observedSamples.filter((sample) => parseJsonArray(sample.capability_version_ids).includes(versionId))
-    const decided = matchedSamples.filter((sample) => sample.privacy_status !== 'pending' && sample.outcome !== 'cancelled')
+    const eligibleHumanSamples = humanSamples.filter((sample) => sample.capabilityVersionIds.includes(versionId))
+    const eligible = matchedSamples.filter((sample) => sample.privacy_status !== 'excluded' && sample.outcome !== 'manual_excluded')
+    const decided = eligible.filter((sample) => sample.privacy_status === 'sanitized' && sample.outcome !== 'cancelled')
     const rework = decided.filter((sample) => sample.outcome === 'changes_requested').length
-    const failed = decided.filter((sample) => sample.outcome === 'failed' || sample.outcome === 'manual_excluded').length
-    const cancelled = matchedSamples.filter((sample) => sample.outcome === 'cancelled').length
+    const failed = decided.filter((sample) => sample.outcome === 'failed').length
+    const cancelled = eligible.filter((sample) => sample.outcome === 'cancelled').length
     const ratio = (value: number, total: number): number | null => total === 0 ? null : Math.round((value / total) * 1000) / 1000
     return {
       executionCount: matchedExecutions.length,
       reworkRate: ratio(rework, decided.length),
       failureRate: ratio(failed, decided.length),
-      cancellationRate: ratio(cancelled, matchedSamples.length),
+      cancellationRate: ratio(cancelled, eligible.length),
       decidedSampleCount: decided.length,
+      humanJudgmentEligibleCount: eligibleHumanSamples.length,
+      humanAcceptedCount: eligibleHumanSamples.filter((sample) => sample.ownerJudgment?.outcome === 'business_accepted').length,
+      humanChangesRequestedCount: eligibleHumanSamples.filter((sample) => sample.ownerJudgment?.outcome === 'changes_requested').length,
       // 少于 5 条已判定样本时不声称趋势可信。
       sampleSufficient: decided.length >= 5,
       lastExecutedAt: matchedExecutions.length ? Math.max(...matchedExecutions.map((item) => item.completed_at ?? item.started_at)) : undefined,
@@ -4112,7 +4131,28 @@ export function createAgentEmployeeLearningSample(input: Omit<import('./project-
 }
 
 export function listAgentEmployeeLearningSamples(agentId: string): import('./project-types').AgentEmployeeLearningSample[] {
-  return (getProjectDb().prepare('SELECT * FROM agent_employee_learning_samples WHERE agent_id = ? ORDER BY created_at DESC').all(agentId) as LearningSampleRow[]).map((row) => ({ id: row.id, agentId: row.agent_id, executionId: row.execution_id, projectId: row.project_id, taskId: row.task_id, workspaceId: row.workspace_id ?? undefined, capabilityVersionIds: parseJsonArray(row.capability_version_ids), outcome: row.outcome as import('./project-types').AgentEmployeeLearningOutcome, evidenceSummary: row.evidence_summary, privacyStatus: row.privacy_status as 'pending' | 'sanitized' | 'excluded', createdAt: row.created_at, labeledAt: row.labeled_at ?? undefined }))
+  const database = getProjectDb()
+  const rows = database.prepare('SELECT * FROM agent_employee_learning_samples WHERE agent_id = ? ORDER BY created_at DESC').all(agentId) as LearningSampleRow[]
+  const chains = new Map<string, import('@gravitas/shared').ProjectChain | null>()
+  return rows.map((row) => {
+    if (!chains.has(row.project_id)) {
+      const record = database.prepare('SELECT payload FROM project_chain_revisions WHERE project_id = ? ORDER BY revision DESC LIMIT 1').get(row.project_id) as { payload: string } | undefined
+      chains.set(row.project_id, record ? JSON.parse(record.payload) as import('@gravitas/shared').ProjectChain : null)
+    }
+    const chain = chains.get(row.project_id)
+    const matchingDraft = (item: NonNullable<typeof chain>['events'][number]) => chain?.draftHistory?.find((draft) =>
+      draft.id === item.entityId && draft.version === item.version && draft.taskId === row.task_id && draft.executionId === row.execution_id && draft.execution?.id === row.execution_id && draft.execution.agentId === row.agent_id)
+    const event = [...(chain?.events ?? [])].reverse().find((item) =>
+      (item.action === 'accept' || item.action === 'reject' || item.action === 'auto_accept') && matchingDraft(item))
+    // 当前只有本机公共入口固定 local-user；其他身份是否真实由人操作尚无可核验证据。
+    // 先选择最新关联事件，不能跳过未知身份后误用更早的判断。
+    const ownerJudgment = event && event.action !== 'auto_accept' && event.actor === 'local-user' && matchingDraft(event)?.responsibilities?.reviewerId === event.actor ? {
+      outcome: event.action === 'accept' ? 'business_accepted' as const : 'changes_requested' as const,
+      ...(event.reasonCode ? { reasonCode: event.reasonCode } : {}),
+      deliveryId: event.entityId, deliveryVersion: event.version, actor: event.actor, eventId: event.id, at: event.at,
+    } : undefined
+    return { id: row.id, agentId: row.agent_id, executionId: row.execution_id, projectId: row.project_id, taskId: row.task_id, workspaceId: row.workspace_id ?? undefined, capabilityVersionIds: parseJsonArray(row.capability_version_ids), outcome: row.outcome as import('./project-types').AgentEmployeeLearningOutcome, evidenceSummary: row.evidence_summary, privacyStatus: row.privacy_status as 'pending' | 'sanitized' | 'excluded', createdAt: row.created_at, labeledAt: row.labeled_at ?? undefined, ...(ownerJudgment ? { ownerJudgment } : {}) }
+  })
 }
 
 export function reviewAgentEmployeeLearningSample(id: string, evidenceSummary: string): import('./project-types').AgentEmployeeLearningSample | null {

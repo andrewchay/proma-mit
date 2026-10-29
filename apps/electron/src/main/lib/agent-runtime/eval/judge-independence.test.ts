@@ -38,18 +38,22 @@ describe('computeJudgeIndependence', () => {
     )).toBe(false)
   })
 
-  it('同渠道不同模型 → 独立', () => {
+  it('同渠道不同模型 → 记录配置区分，不证明独立性', () => {
     expect(computeJudgeIndependence(
       { channelId: 'ch-1', modelId: 'm-1' },
       { channelId: 'ch-1', modelId: 'm-2' },
     )).toBe(true)
   })
 
-  it('不同渠道同模型 → 独立', () => {
+  it('模型名仅大小写不同 → 不能据此认为独立', () => {
+    expect(computeJudgeIndependence({ channelId: 'a', modelId: 'MODEL' }, { channelId: 'b', modelId: 'model' })).toBe(false)
+  })
+
+  it('不同渠道同模型 → 不能据此认为独立', () => {
     expect(computeJudgeIndependence(
       { channelId: 'ch-1', modelId: 'm-1' },
       { channelId: 'ch-2', modelId: 'm-1' },
-    )).toBe(true)
+    )).toBe(false)
   })
 })
 
@@ -68,9 +72,9 @@ describe('parseJudgeScore', () => {
     expect(parseJudgeScore('评分过程略\n88')).toBe(88)
   })
 
-  it('越界分数 clamp 到 0..100', () => {
-    expect(parseJudgeScore('{"score": 250}')).toBe(100)
-    expect(parseJudgeScore('{"score": -5}')).toBe(0)
+  it('越界分数视为无效而不是折算为边界分', () => {
+    expect(parseJudgeScore('{"score": 250}')).toBeNull()
+    expect(parseJudgeScore('{"score": -5}')).toBeNull()
   })
 
   it('小数四舍五入为整数', () => {

@@ -121,6 +121,14 @@ describe('evaluateCaseRun', () => {
     expect(result.score).toBe(89) // clamp round(88.5)
   })
 
+  it('指定评判者失败或返回无效分数时，不静默回退规则分', async () => {
+    for (const scoreDelegate of [async () => null, async () => 101, async () => NaN, async () => { throw new Error('judge failed') }, () => { throw new Error('synchronous judge failure') }]) {
+      const result = await evaluateCaseRun(config, 'CASE-001', 1, 1, (input) => delegateStub({ text: 'file:line 修复 缺陷', workspaceDir: input.workspaceDir }), { scoreDelegate })
+      expect(result.status).toBe('failed')
+      expect(result.failureCode).toBe('judge_unavailable')
+    }
+  })
+
   it('工具行为 rubric 只根据真实 trace 调用评分，不接受文本冒充', async () => {
     const tracePath = join(testDir, 'tool-behavior-trace.jsonl')
     writeFileSync(tracePath, [

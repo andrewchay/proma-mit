@@ -136,28 +136,20 @@ function buildBuilderProposer(
  * 解析本次评判者身份与打分回调（评估器独立性，综述 arXiv:2607.13104 §8.1.2）。
  *
  * 优先级：
- * 1. 外部注入 scoreDelegate → kind=injected；若同时配置了 judgeRuntime，
- *    用其渠道信息计算独立性，否则 independent=false（无法验证，保守标记）。
+ * 1. 外部注入 scoreDelegate → kind=injected；无法验证函数来源，独立性固定为 false。
  * 2. benchmark.judgeRuntime 存在 → 内置 LLM judge（buildLlmJudgeScoreDelegate），
- *    独立性与评测渠道比较得出；不同源时 console.warn 自我确认风险。
- * 3. 都没有 → 规则打分（kind=rule，无模型耦合，天然独立）。
+ *    按模型标识区分配置；标识未区分时 console.warn 自我确认风险。
+ * 3. 都没有 → 规则打分（kind=rule，不宣称独立性）。
  */
-function resolveJudge(
+export function resolveJudge(
   benchmark: BenchmarkConfig,
   evalChannel: EvalChannelInfo,
   opts: EvalServiceOptions,
 ): { scoreDelegate?: ScoreDelegate; judge: JudgeIdentity } {
   if (opts.scoreDelegate) {
-    const resolved = resolveJudgeChannel(benchmark, evalChannel)
     return {
       scoreDelegate: withJudgeBudget(opts.scoreDelegate, benchmark.judgeBudget),
-      judge: {
-        kind: 'injected',
-        provider: resolved?.channel.provider ?? benchmark.judgeRuntime?.provider,
-        modelId: resolved?.channel.modelId ?? benchmark.judgeRuntime?.modelId,
-        channelId: resolved?.channel.channelId ?? benchmark.judgeRuntime?.channelId,
-        independent: resolved ? resolved.independent : false,
-      },
+      judge: { kind: 'injected', independent: false },
     }
   }
   const resolved = resolveJudgeChannel(benchmark, evalChannel)
@@ -165,7 +157,7 @@ function resolveJudge(
     if (!resolved.independent) {
       console.warn(
         `[Eval] 评判者与评测渠道同源（channelId=${resolved.channel.channelId}, modelId=${resolved.channel.modelId}），` +
-        '存在自我确认风险（综述 §8.1.2）：建议为 benchmark.judgeRuntime 配置不同的渠道或模型',
+        '存在自我确认风险（综述 §8.1.2）：建议为 benchmark.judgeRuntime 配置不同的模型标识；这仍不能证明独立性',
       )
     }
     return {
@@ -179,7 +171,7 @@ function resolveJudge(
       },
     }
   }
-  return { judge: { kind: 'rule', independent: true } }
+  return { judge: { kind: 'rule', independent: false } }
 }
 
 /** 跑一次真实 Baseline 评测。 */

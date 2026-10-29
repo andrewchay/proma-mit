@@ -141,7 +141,11 @@ function createBridgeTool<TSchemaType extends TSchema>(
     promptSnippet: config.promptSnippet,
     parameters: config.parameters,
     async execute(_toolCallId, params, signal) {
-      if (signal?.aborted) return errorResult(config.runtimeName, '操作已中止')
+      const sessionSignal = options.toolContext.abortSignal
+      const effectiveSignal = signal && sessionSignal && signal !== sessionSignal
+        ? AbortSignal.any([signal, sessionSignal])
+        : signal ?? sessionSignal
+      if (effectiveSignal?.aborted) return errorResult(config.runtimeName, '操作已中止')
 
       const input = { ...(params as object) } as Record<string, unknown>
 
@@ -160,16 +164,18 @@ function createBridgeTool<TSchemaType extends TSchema>(
       // 导致用户被重复询问两遍（第一次提交被当作门禁响应，第二次带着空表单再次弹出）。
       // 这里与 ProviderAgnosticAgentAdapter / AI SDK runtime core 一致：直接执行工具（内部走 onAskUser）。
       if (config.runtimeName === ASK_USER_QUESTION_TOOL_NAME) {
-        const result = await runtimeTool.execute(input, {
+        const result = await runtimeTool.execute(input, Object.freeze({
           ...options.toolContext,
-          abortSignal: signal ?? options.toolContext.abortSignal,
-        })
+          abortSignal: effectiveSignal,
+        }))
+        if (effectiveSignal?.aborted) return errorResult(config.runtimeName, '操作已中止')
         return toolResult(config.runtimeName, result.content, Boolean(result.isError), result.imageData)
       }
 
       const permission = options.canUseTool
-        ? await options.canUseTool(config.runtimeName, input, signal ?? new AbortController().signal)
+        ? await options.canUseTool(config.runtimeName, input, effectiveSignal ?? new AbortController().signal)
         : { allowed: false, message: 'Pi 工具桥未配置 Proma 权限回调' }
+      if (effectiveSignal?.aborted) return errorResult(config.runtimeName, '操作已中止')
       if (!permission.allowed) {
         return errorResult(config.runtimeName, permission.message ?? `Proma 权限策略拒绝了 ${config.runtimeName} 操作`)
       }
@@ -181,7 +187,8 @@ function createBridgeTool<TSchemaType extends TSchema>(
         if (!options.toolContext.onExitPlanMode) {
           return errorResult(config.runtimeName, '当前 Runtime 未配置 Plan 审批回调')
         }
-        const exitResult = await options.toolContext.onExitPlanMode(input, signal ?? new AbortController().signal)
+        const exitResult = await options.toolContext.onExitPlanMode(input, effectiveSignal ?? new AbortController().signal)
+        if (effectiveSignal?.aborted) return errorResult(config.runtimeName, '操作已中止')
         if (exitResult.behavior === 'deny') {
           return errorResult(config.runtimeName, exitResult.message)
         }
@@ -199,17 +206,20 @@ function createBridgeTool<TSchemaType extends TSchema>(
         // 采集不可用时静默跳过
       }
 
-      const toolContext = {
+      const toolContext = Object.freeze({
         ...options.toolContext,
-        abortSignal: signal ?? options.toolContext.abortSignal,
-      }
+        abortSignal: effectiveSignal,
+      })
       // E05：经共享调度器执行（锁域为本进程内经此调度的调用）。
       const result = await runGuardedToolCall({
         tool: runtimeTool,
         args: input,
         ctx: toolContext,
-        signal: signal ?? undefined,
-        execute: () => runtimeTool.execute(input, toolContext),
+        signal: effectiveSignal,
+        execute: () => {
+          if (effectiveSignal?.aborted) throw new Error('操作已中止')
+          return runtimeTool.execute(input, toolContext)
+        },
       })
       // 截图必须随 tool result 进入 Pi 的下一轮上下文；只回传文字会让模型看不到页面本体。
       return toolResult(config.runtimeName, result.content, Boolean(result.isError), result.imageData)
@@ -227,7 +237,8 @@ function createBridgeTool<TSchemaType extends TSchema>(
  * 注意：调用方必须把返回值作为 Pi customTools，并用 tools allowlist 仅启用这些名称，
  * 从而保证 Pi 自带 Bash/read/write/edit 等工具不会绕过 Proma。
  */
-export function createPiToolBridge(options: CreatePiToolBridgeOptions): ToolDefinition[] {
+export function createPiToolBridge(inputOptions: CreatePiToolBridgeOptions): ToolDefinition[] {
+  const options = { ...inputOptions, toolContext: Object.freeze({ ...inputOptions.toolContext }) }
   const coreTools = options.coreTools ?? createCoreTools()
   const tools: ToolDefinition[] = []
   if (PI_RUNTIME_TOOL_CAPABILITIES.read) {

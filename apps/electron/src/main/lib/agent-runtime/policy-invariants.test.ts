@@ -18,8 +18,9 @@ const { bindCoreToolEffects } = await import('./tool-effects')
 const { createWriteToolDefinition, executeWriteTool } = await import('./tool-impls/write-tool')
 const { createBashToolDefinition, executeBashTool } = await import('./tool-impls/bash-tool')
 
-beforeAll(() => { mkdirSync(join(dir, 'work')) })
-afterAll(() => {
+beforeAll(async () => { mkdirSync(join(dir, 'work')); await (await import('../project-sqlite-store')).initProjectDb() })
+afterAll(async () => {
+  (await import('../project-sqlite-store')).closeProjectDb()
   if (originalConfig === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
   else process.env.PROMA_TEST_CONFIG_DIR = originalConfig
   rmSync(dir, { recursive: true, force: true })

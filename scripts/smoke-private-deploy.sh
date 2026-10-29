@@ -2,30 +2,32 @@
 # ============================================================
 # smoke-private-deploy.sh — 私有部署一键冒烟
 #
-# 验证「docker compose up 一条命令起全套」后：
+# 验证已配置 TLS 代理、工作区与渠道的私有部署：
 #   1. 所有服务 healthy
 #   2. 浏览器登录闭环可用（本地 authMode）
 #   3. 建会话 → 跑一个 Agent 任务 → 流式响应
 #   4. GET /agent/health 返回贵慢重准
 #
 # 用法：
-#   cp .env.example .env   # 至少填 PROMA_WEB_ENVELOPE_KEY、PROMA_WEB_EXECUTOR_TOKEN
-#   PROMA_AGENT_PROMPT="你好，简单打个招呼" ./scripts/smoke-private-deploy.sh
+#   PROMA_SMOKE_BASE_URL=https://你的域名 PROMA_AGENT_PROMPT="你好" ./scripts/smoke-private-deploy.sh
 # ==== 前置：读 .env ====
 set -euo pipefail
 
-BASE_URL="${PROMA_SMOKE_BASE_URL:-http://localhost:8080}"
-SERVER_URL="${PROMA_SMOKE_SERVER_URL:-http://localhost:3000}"
+BASE_URL="${PROMA_SMOKE_BASE_URL:?请设置已配置 TLS 的公开 HTTPS 地址}"
+BASE_URL="${BASE_URL%/}"
+[[ "$BASE_URL" =~ ^https://[^/]+$ ]] || { echo 'PROMA_SMOKE_BASE_URL 必须是 HTTPS origin，不含路径' >&2; exit 1; }
+SERVER_URL="${PROMA_SMOKE_SERVER_URL:-$BASE_URL}"
 COMPOSE_FILE="${PROMA_SMOKE_COMPOSE:-docker-compose.production.yml}"
 TIMEOUT_SEC="${PROMA_SMOKE_TIMEOUT_SEC:-120}"
 
 # 从 .env 读取登录凭据（若 .env 已配置）
 if [[ -f .env ]]; then
-  ADMIN_LINE=$(grep -E '^PROMA_WEB_ADMIN=' .env | tail -1 | cut -d= -f2-)
+  ADMIN_LINE=$(grep -E '^PROMA_WEB_ADMIN=' .env | tail -1 | cut -d= -f2- || true)
   AUTH_MODE=$(grep -E '^PROMA_WEB_AUTH_MODE=' .env | tail -1 | cut -d= -f2- || true)
 fi
-ADMIN_LINE="${ADMIN_LINE:-admin:default:s3cret-pass}"
+ADMIN_LINE="${ADMIN_LINE:?请在 .env 配置本地管理员}"
 AUTH_MODE="${AUTH_MODE:-local}"
+[[ "$AUTH_MODE" == 'local' || "$AUTH_MODE" == 'both' ]] || { echo '此冒烟脚本需要 local 或 both 登录模式' >&2; exit 1; }
 ADMIN_USER="${ADMIN_LINE%%:*}"
 ADMIN_TENANT="${ADMIN_LINE#*:}"; ADMIN_TENANT="${ADMIN_TENANT%%:*}"
 ADMIN_PASS="${ADMIN_LINE##*:}"
@@ -51,20 +53,22 @@ page_code=$(curl -s -o /dev/null -w "%{http_code}" "$LOGIN_URL")
 [[ "$page_code" == "200" ]] || fail "登录页 $LOGIN_URL 应为 200，实际 $page_code"
 pass "登录页可访问 (HTTP $page_code)"
 
-bad_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H 'content-type: application/json' \
+bad_code=$(curl -s -o /dev/null -w "%{http_code}" -X POST -H "Origin: $BASE_URL" -H 'content-type: application/json' \
   -d "{\"username\":\"$ADMIN_USER\",\"password\":\"wrong-password\"}" "$BASE_URL/auth/login")
 [[ "$bad_code" == "401" ]] || fail "错误密码登录应 401，实际 $bad_code"
 pass "错误密码被拒 (HTTP $bad_code)"
 
 COOKIE_JAR=$(mktemp)
-good_code=$(curl -s -o /dev/null -w "%{http_code}" -c "$COOKIE_JAR" -X POST -H 'content-type: application/json' \
+RUN_LOG=$(mktemp)
+trap 'rm -f "$COOKIE_JAR" "$RUN_LOG"' EXIT
+good_code=$(curl -s -o /dev/null -w "%{http_code}" -c "$COOKIE_JAR" -X POST -H "Origin: $BASE_URL" -H 'content-type: application/json' \
   -d "{\"username\":\"$ADMIN_USER\",\"password\":\"$ADMIN_PASS\"}" "$BASE_URL/auth/login")
 [[ "$good_code" == "302" || "$good_code" == "200" ]] || fail "正确密码登录应 302/200，实际 $good_code"
 grep -q 'proma_session' "$COOKIE_JAR" || fail "登录后未获得会话 cookie"
 pass "登录成功并取得会话 cookie"
 
 echo "=== 4/6 建会话 ==="
-SESSION=$(curl -s -b "$COOKIE_JAR" -X POST -H 'content-type: application/json' \
+SESSION=$(curl -s -b "$COOKIE_JAR" -X POST -H "Origin: $BASE_URL" -H 'content-type: application/json' \
   -d "{\"workspaceSlug\":\"default\",\"channelId\":\"openai\"}" "$BASE_URL/agent/sessions")
 SESSION_ID=$(printf '%s' "$SESSION" | sed -n 's/.*"sessionId":"\([^"]*\)".*/\1/p' | head -1)
 [[ -n "$SESSION_ID" ]] || fail "创建会话失败：$SESSION"
@@ -72,10 +76,10 @@ pass "已创建会话 $SESSION_ID"
 
 echo "=== 5/6 跑一个 Agent 任务 ==="
 PROMPT="${PROMA_AGENT_PROMPT:-请只回复一句话：你好，我是私有部署冒烟测试。}"
-run_code=$(curl -s -o /tmp/proma-smoke-run.txt -w "%{http_code}" -b "$COOKIE_JAR" -X POST \
-  -H 'content-type: application/json' -d "{\"prompt\":\"$PROMPT\"}" \
+run_code=$(curl -s -o "$RUN_LOG" -w "%{http_code}" -b "$COOKIE_JAR" -X POST \
+  -H "Origin: $BASE_URL" -H 'content-type: application/json' -d "{\"prompt\":\"$PROMPT\"}" \
   "$BASE_URL/agent/sessions/$SESSION_ID/run")
-[[ "$run_code" == "200" || "$run_code" == "202" ]] || fail "运行任务失败 (HTTP $run_code): $(cat /tmp/proma-smoke-run.txt)"
+[[ "$run_code" == "200" || "$run_code" == "202" ]] || fail "运行任务失败 (HTTP $run_code): $(cat "$RUN_LOG")"
 pass "任务已提交 (HTTP $run_code)"
 
 echo "=== 6/6 健康看板 + 清理 ==="
@@ -83,7 +87,6 @@ health_code=$(curl -s -o /dev/null -w "%{http_code}" -b "$COOKIE_JAR" "$BASE_URL
 [[ "$health_code" == "200" ]] || fail "GET /agent/health 应 200，实际 $health_code"
 pass "健康看板可访问 (HTTP $health_code)"
 
-rm -f "$COOKIE_JAR" /tmp/proma-smoke-run.txt
 echo
 echo "✅ 私有部署一键冒烟通过（$BASE_URL）"
 echo "   登录：$BASE_URL/auth/login (user=$ADMIN_USER)"

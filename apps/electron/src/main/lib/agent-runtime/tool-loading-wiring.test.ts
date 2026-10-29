@@ -1,3 +1,4 @@
+import { bindAISDKSessionIdentity } from './ai-sdk-session-identity'
 /**
  * D03 接线：ai-sdk runtime 的独立工具加载（opt-in）。
  *
@@ -86,7 +87,7 @@ const readTool = bindCoreToolEffects({ ...createReadToolDefinition(), execute: e
 const writeTool = bindCoreToolEffects({ ...createWriteToolDefinition(), execute: executeWriteTool })
 
 function turnInput(overrides: Record<string, unknown> = {}) {
-  return {
+  const input = {
     sessionId: 'd03-session',
     cwd: testDir,
     provider: 'deepseek' as const,
@@ -102,6 +103,8 @@ function turnInput(overrides: Record<string, unknown> = {}) {
     activeSession: { controller: new AbortController() },
     ...overrides,
   }
+  bindAISDKSessionIdentity(input.activeSession, input.sessionId, input.cwd)
+  return input
 }
 
 describe('D03 ai-sdk 接线（opt-in）', () => {

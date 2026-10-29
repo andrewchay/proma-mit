@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { createApproval } from './approval-service'
 import * as store from './project-sqlite-store'
 import type { AgentEmployeeCapabilityScope } from './project-types'
+import { fingerprintCapabilityEvidence } from './employee-capability-evidence'
 
 /**
  * 基于已经人工脱敏的学习样本创建“候选推广”审批；不运行模型、不直接写生产能力。
@@ -47,7 +48,7 @@ export function proposeEmployeeCapabilityAdoption(input: {
   const approval = createApproval({
     sourceType: 'employee_capability',
     title: `推广 AI 员工能力候选：${employee.name}`,
-    summary: `训练集 ${input.trainingScore.toFixed(1)}；held-out ${input.heldOutScore.toFixed(1)}；${selected.length} 条已脱敏样本；独立评判。批准后才会激活新版本。`,
+    summary: `训练集 ${input.trainingScore.toFixed(1)}；held-out ${input.heldOutScore.toFixed(1)}；${selected.length} 条已脱敏样本；评判配置由本次运行或调用方声明，独立性尚未核验。批准后才会激活新版本。`,
     proposedChange: {
       type: 'employee_capability_adopt',
       agentId: input.agentId,
@@ -60,6 +61,7 @@ export function proposeEmployeeCapabilityAdoption(input: {
       trainingScore: input.trainingScore,
       heldOutScore: input.heldOutScore,
       evidenceSampleIds: selected.map((sample) => sample.id),
+      evidenceFingerprint: fingerprintCapabilityEvidence(selected),
       // 评判者身份与不可演化约束随候选一起冻结，供审批时核对。
       judgeKind: input.judgeKind ?? 'injected',
       judgeIndependent: input.judgeIndependent,

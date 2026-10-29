@@ -6,6 +6,7 @@
  */
 
 import type { ToolResult } from '@gravitas/core'
+import { guardOwnerTool } from './tool-utils'
 import type { RuntimeToolDefinition, ToolContext } from '../types.ts'
 
 export const PROPOSE_ASSET_TOOL_NAME = 'ProposeAssetFromRun'
@@ -29,7 +30,7 @@ export function createProposeAssetToolDefinition(): Omit<RuntimeToolDefinition, 
   }
 }
 
-export async function executeProposeAssetTool(input: unknown, _ctx: ToolContext): Promise<ToolResult> {
+async function executeProposeAssetToolUnchecked(input: unknown, _ctx: ToolContext): Promise<ToolResult> {
   const params = input as { sessionId: string; title?: string }
   if (!params.sessionId) {
     return { toolCallId: '', content: '参数错误：需要 sessionId', isError: true }
@@ -48,3 +49,5 @@ export async function executeProposeAssetTool(input: unknown, _ctx: ToolContext)
     return { toolCallId: '', content: `生成资产提案失败: ${error instanceof Error ? error.message : String(error)}`, isError: true }
   }
 }
+
+export const executeProposeAssetTool = guardOwnerTool(PROPOSE_ASSET_TOOL_NAME, executeProposeAssetToolUnchecked)
