@@ -48,6 +48,7 @@ interface StoredEvent {
 const FILE_NAME = 'unknown-actions.jsonl'
 let pending = new Map<string, UnknownActionRecord>()
 let loadPromise: Promise<void> | undefined
+const inFlight = new Set<string>()
 
 const cacheKey = (sessionId: string, actionKey: string): string => `${sessionId}\u0000${actionKey}`
 const filePath = (): string => join(getConfigDir(), FILE_NAME)
@@ -166,6 +167,32 @@ export async function recordUnknownAction(input: {
   return record
 }
 
+/** 在调用外部服务前登记；并发重复动作不能同时进入。 */
+export async function beginTrackedAction(input: {
+  sessionId: string
+  tool: string
+  actionKey: string
+  detail?: Record<string, unknown>
+  reason: string
+}): Promise<UnknownActionRecord | undefined> {
+  await ensureLoaded()
+  const key = cacheKey(input.sessionId, input.actionKey)
+  if (pending.has(key) || inFlight.has(key)) return undefined
+  inFlight.add(key)
+  try {
+    return await recordUnknownAction(input)
+  } catch (error) {
+    inFlight.delete(key)
+    throw error
+  }
+}
+
+/** 成功响应落盘后解除；失败或结果未知时保留登记。 */
+export async function finishTrackedAction(record: UnknownActionRecord, completed: boolean): Promise<void> {
+  inFlight.delete(cacheKey(record.sessionId, record.actionKey))
+  if (completed) await resolveUnknownAction({ sessionId: record.sessionId, id: record.id, resolution: '服务调用已返回成功' })
+}
+
 /** 查询同会话同指纹是否有未解除的未知结果。 */
 export async function findPendingUnknownAction(
   sessionId: string,
@@ -200,7 +227,7 @@ export async function resolveUnknownAction(input: {
     : input.actionKey
       ? pending.get(cacheKey(input.sessionId, input.actionKey))
       : undefined
-  if (!record) return undefined
+  if (!record || inFlight.has(cacheKey(record.sessionId, record.actionKey))) return undefined
 
   const resolvedAt = new Date().toISOString()
   await append({
@@ -236,5 +263,6 @@ export async function blockIfUnknownAction(input: {
 /** 仅供测试：清空内存状态，强制下次从磁盘重读。 */
 export function __resetUnknownActionCacheForTest(): void {
   pending = new Map()
+  inFlight.clear()
   loadPromise = undefined
 }

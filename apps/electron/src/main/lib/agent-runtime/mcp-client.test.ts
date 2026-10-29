@@ -60,6 +60,15 @@ describe('MCP 工具调用的结果判定', () => {
     expect(result.content).toContain('核对目标系统的实际状态')
   })
 
+  test('Given 服务返回工具错误 When 执行 Then 保持未知并阻止重试', async () => {
+    let calls = 0
+    const manager = managerWith(() => { calls += 1; return Promise.resolve({ isError: true, content: [{ type: 'text', text: 'failed after dispatch' }] }) })
+    const input = { ...ctx, sessionId: 'mcp-outcome-tool-error' }
+    expect((await manager.executeTool('demo', 'do_work', {}, input)).content).toContain('结果未知')
+    expect((await manager.executeTool('demo', 'do_work', {}, input)).isError).toBe(true)
+    expect(calls).toBe(1)
+  })
+
   test('Given 服务器未连接 When 执行工具 Then 保持明确未执行的文案', async () => {
     const manager = new McpClientManager({}, '/tmp')
     const result = await manager.executeTool('missing', 'read_file', {}, ctx)

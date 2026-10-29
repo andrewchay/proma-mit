@@ -13,7 +13,7 @@ import { McpOAuthProvider } from './mcp-oauth-provider'
 import { registerPendingMcpOAuth } from './mcp-oauth-pending'
 import { readTransportPid, snapshotProcessTree, terminateProcesses, type ReapEvidence } from './mcp-process-reaper'
 import { describeDispatchedActionFailure } from './tool-impls/external-action-outcome'
-import { blockIfUnknownAction, buildActionKey, hashDetail, recordUnknownAction } from './unknown-action-store'
+import { beginTrackedAction, finishTrackedAction, blockIfUnknownAction, buildActionKey, hashDetail } from './unknown-action-store'
 
 interface ConnectedServer {
   name: string
@@ -182,27 +182,24 @@ export class McpClientManager {
       return { content: blocked, isError: true, toolCallId: '' }
     }
 
+    const tracked = await beginTrackedAction({ sessionId: ctx.sessionId, tool: `MCP 工具 ${serverName}__${toolName}`, actionKey, detail: { server: serverName, tool: toolName }, reason: '动作已登记，结果待确认' })
+    if (!tracked) return { content: '同一动作正在执行或等待核对，禁止重复派发', isError: true, toolCallId: '' }
+
     try {
       const result = await server.client.callTool(
         { name: toolName, arguments: args as Record<string, unknown> },
         undefined,
         { signal: ctx.abortSignal },
       )
+      if (result.isError === true) throw new Error('MCP 服务报告工具执行错误')
+      await finishTrackedAction(tracked, true)
       return { content: this.serializeResult(result), isError: false, toolCallId: '' }
     } catch (thrown) {
       // 工具可能在服务端已经执行，只是响应在返回途中超时或连接断开。
       // 统一压成"调用失败"会让模型直接重试，在真实系统上是重复执行。
       const failure = describeDispatchedActionFailure(`MCP 工具 ${serverName}__${toolName}`, thrown, '请先核对目标系统的实际状态，再由用户决定是否继续。')
       console.warn(`[MCP 客户端] 工具调用${failure.outcome === 'unknown' ? '结果未知' : '未执行'}: ${failure.reason}`)
-      if (failure.outcome === 'unknown') {
-        await recordUnknownAction({
-          sessionId: ctx.sessionId,
-          tool: `MCP 工具 ${serverName}__${toolName}`,
-          actionKey,
-          detail: { server: serverName, tool: toolName },
-          reason: failure.reason,
-        })
-      }
+      await finishTrackedAction(tracked, false)
       return { content: failure.message, isError: true, toolCallId: '' }
     }
   }

@@ -7,10 +7,11 @@ import { webBridgeService } from '../../web-bridge-service'
 import type { ToolContext } from '../types'
 import { describeDispatchedActionFailure } from './external-action-outcome'
 import {
+  beginTrackedAction,
+  finishTrackedAction,
   blockIfUnknownAction,
   buildActionKey,
   hashDetail,
-  recordUnknownAction,
 } from '../unknown-action-store'
 import { guardOwnerTool } from './tool-utils'
 
@@ -234,23 +235,18 @@ async function runDesktopAction(
     confirmHint: '请先调用 ComputerUseScreenshot 确认屏幕状态，并由用户决定是否继续。',
   })
   if (blocked) return error(blocked)
+  const tracked = await beginTrackedAction({ sessionId: ctx.sessionId, tool: `ComputerUse${action}`, actionKey, detail, reason: '动作已登记，结果待确认' })
+  if (!tracked) return error('同一动作正在执行或等待核对，禁止重复派发')
 
   try {
     const message = await run()
+    await finishTrackedAction(tracked, true)
     recordAudit(ctx, action, { ...detail, outcome: 'applied' })
     return result({ message, outcome: 'applied' })
   } catch (thrown) {
     const failure = describeDispatchedActionFailure(`ComputerUse${action}`, thrown, '请先调用 ComputerUseScreenshot 并由用户核对实际状态。')
     recordAudit(ctx, action, { ...detail, outcome: failure.outcome, error: failure.reason })
-    if (failure.outcome === 'unknown') {
-      await recordUnknownAction({
-        sessionId: ctx.sessionId,
-        tool: `ComputerUse${action}`,
-        actionKey,
-        detail,
-        reason: failure.reason,
-      })
-    }
+    await finishTrackedAction(tracked, false)
     return error(failure.message)
   }
 }

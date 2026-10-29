@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   __resetUnknownActionCacheForTest,
+  beginTrackedAction,
+  finishTrackedAction,
   blockIfUnknownAction,
   buildActionKey,
   findPendingUnknownAction,
@@ -152,6 +154,37 @@ describe('登记故障与并发', () => {
   test('Given 登记文件损坏 When 查询 Then 拒绝而不是放行', async () => {
     writeFileSync(join(directory, 'unknown-actions.jsonl'), '{invalid}\n')
     await expect(findPendingUnknownAction('s1', 'k')).rejects.toThrow()
+  })
+})
+
+describe('派发前登记', () => {
+  test('Given 动作已登记 When 进程重启 Then 在完成对账前拦截重试', async () => {
+    const input = { sessionId: 's1', tool: 'x', actionKey: 'k', reason: '派发结果待确认' }
+    expect(await beginTrackedAction(input)).toBeDefined()
+    __resetUnknownActionCacheForTest()
+    expect(await findPendingUnknownAction('s1', 'k')).toBeDefined()
+  })
+
+  test('Given 同一动作并发派发 When 预登记 Then 只允许一个进入', async () => {
+    const input = { sessionId: 's1', tool: 'x', actionKey: 'k', reason: '派发结果待确认' }
+    const results = await Promise.all([beginTrackedAction(input), beginTrackedAction(input)])
+    expect(results.filter(Boolean)).toHaveLength(1)
+  })
+
+  test('Given 动作仍在执行 When 用户尝试解除 Then 不能解除', async () => {
+    const record = await beginTrackedAction({ sessionId: 's1', tool: 'x', actionKey: 'k', reason: '执行中' })
+    expect(await resolveUnknownAction({ sessionId: 's1', id: record?.id, resolution: '用户确认' })).toBeUndefined()
+    expect(await findPendingUnknownAction('s1', 'k')).toBeDefined()
+    await finishTrackedAction(record!, false)
+  })
+
+  test('Given 派发正常完成 When 持久化完成 Then 可以再次执行', async () => {
+    const input = { sessionId: 's1', tool: 'x', actionKey: 'k', reason: '派发结果待确认' }
+    const record = await beginTrackedAction(input)
+    expect(record).toBeDefined()
+    await finishTrackedAction(record!, true)
+    __resetUnknownActionCacheForTest()
+    expect(await findPendingUnknownAction('s1', 'k')).toBeUndefined()
   })
 })
 

@@ -7,7 +7,7 @@ import { webBridgeService, type WebBridgeSnapshot } from '../../web-bridge-servi
 import { appendWebBridgeAudit } from '../../web-bridge-audit-service'
 import { guardOwnerTool } from './tool-utils'
 import { DOWNLOAD_CONFIRM_HINT } from './web-bridge-outcome'
-import { blockIfUnknownAction, buildActionKey, hashDetail, recordUnknownAction } from '../unknown-action-store'
+import { beginTrackedAction, finishTrackedAction, blockIfUnknownAction, buildActionKey, hashDetail } from '../unknown-action-store'
 
 export const WEB_BRIDGE_NAVIGATE_TOOL_NAME = 'WebBridgeNavigate'
 export const WEB_BRIDGE_SNAPSHOT_TOOL_NAME = 'WebBridgeSnapshot'
@@ -248,23 +248,18 @@ async function runWebBridgeAction(params: {
     confirmHint: '请先重新 WebBridgeObserve 或 WebBridgeSnapshot 确认页面状态，并由用户决定是否继续。',
   })
   if (blocked) return error(blocked)
+  const tracked = await beginTrackedAction({ sessionId: ctx.sessionId, tool: `WebBridge${display}`, actionKey, detail, reason: '动作已登记，结果待确认' })
+  if (!tracked) return error('同一动作正在执行或等待核对，禁止重复派发')
 
   try {
     const { result, detail: extra } = await run()
+    await finishTrackedAction(tracked, true)
     audit(ctx, action, { ...detail, ...extra, outcome: 'applied' })
     return result
   } catch (thrown) {
     const failure = describeDispatchedActionFailure(`WebBridge${display}`, thrown, hint ?? '请先调用 WebBridgeObserve 或 WebBridgeSnapshot 观察页面并由用户核对实际状态。')
     audit(ctx, action, { ...detail, outcome: failure.outcome, error: failure.reason })
-    if (failure.outcome === 'unknown') {
-      await recordUnknownAction({
-        sessionId: ctx.sessionId,
-        tool: `WebBridge${display}`,
-        actionKey,
-        detail,
-        reason: failure.reason,
-      })
-    }
+    await finishTrackedAction(tracked, false)
     return error(failure.message)
   }
 }

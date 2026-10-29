@@ -127,6 +127,24 @@ describe('Computer Use 动作结果分类', () => {
   })
 })
 
+describe('动作派发前登记', () => {
+  test('Given 桌面动作派发 When 服务开始执行 Then 登记已写入且成功后解除', async () => {
+    const { listPendingUnknownActions } = await import('../unknown-action-store')
+    const ctx = { cwd: '/tmp', sessionId: 'cu-predispatch' }
+    let observed = false
+    const click = spyOn(computerUseService, 'click').mockImplementation(async () => {
+      observed = (await listPendingUnknownActions(ctx.sessionId)).length === 1
+      return '已点击'
+    })
+    try {
+      const result = await executeComputerUseClickTool({ x: 5, y: 6 }, ctx)
+      expect(result.isError).toBeFalsy()
+      expect(observed).toBe(true)
+      expect(await listPendingUnknownActions(ctx.sessionId)).toHaveLength(0)
+    } finally { click.mockRestore() }
+  })
+})
+
 describe('未知结果的执行约束', () => {
   test('Given 上次点击结果未知 When 再点同一坐标 Then 入口直接拒绝直到解除', async () => {
     const { resolveUnknownAction } = await import('../unknown-action-store')
