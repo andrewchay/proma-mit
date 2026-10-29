@@ -1,5 +1,22 @@
-import { describe, test, expect } from 'bun:test'
+import { afterAll, beforeAll, describe, test, expect } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { McpClientManager, sanitizeMcpToolName } from './mcp-client'
+import { __resetUnknownActionCacheForTest } from './unknown-action-store'
+
+const testDirectory = mkdtempSync(join(tmpdir(), 'mcp-client-test-'))
+const previousConfigDir = process.env.PROMA_TEST_CONFIG_DIR
+beforeAll(() => {
+  process.env.PROMA_TEST_CONFIG_DIR = testDirectory
+  __resetUnknownActionCacheForTest()
+})
+afterAll(() => {
+  __resetUnknownActionCacheForTest()
+  if (previousConfigDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+  else process.env.PROMA_TEST_CONFIG_DIR = previousConfigDir
+  rmSync(testDirectory, { recursive: true, force: true })
+})
 
 describe('MCP 客户端', () => {
   test('sanitizeMcpToolName 保留合法 ASCII 工具名', () => {
@@ -115,4 +132,33 @@ describe('MCP 未知结果的执行约束', () => {
     expect(other.content).toContain('结果未知')
     expect(calls).toBe(2)
   })
+})
+
+describe('真实 MCP stdio 连接', () => {
+  test('Given 本地 stdio 服务 When 连接并关闭 Then 可读取工具且退出状态保守记录', async () => {
+    const server = `
+      const readline = require('node:readline')
+      const input = readline.createInterface({ input: process.stdin })
+      input.on('line', line => {
+        const request = JSON.parse(line)
+        if (request.id === undefined) return
+        let result
+        if (request.method === 'initialize') result = { protocolVersion: request.params.protocolVersion, capabilities: { tools: {} }, serverInfo: { name: 'test', version: '1' } }
+        else if (request.method === 'tools/list') result = { tools: [{ name: 'echo', description: 'test', inputSchema: { type: 'object', properties: {} } }] }
+        else result = {}
+        process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n')
+      })
+      input.on('close', () => process.exit(0))
+    `
+    const manager = new McpClientManager({ local: { type: 'stdio', command: process.execPath, args: ['-e', server], enabled: true } }, process.cwd())
+    try {
+      await manager.connectAll()
+      expect(manager.isConnected).toBe(true)
+      expect((await manager.listAllTools()).map((item) => item.name)).toContain('mcp__local__echo')
+    } finally {
+      await manager.disconnect()
+    }
+    expect(['unknown', 'unavailable']).toContain(manager.getReapEvidence()[0]?.status ?? '')
+    expect(manager.getReapEvidence()[0]?.signals).toEqual([])
+  }, 15_000)
 })
