@@ -2,16 +2,14 @@ import { describe, expect, test } from 'bun:test'
 import { classifyMcpToolFailure, describeMcpToolFailure } from './mcp-tool-outcome'
 
 describe('classifyMcpToolFailure', () => {
-  test('Given 服务端拒绝请求 When 分类 Then 未执行', () => {
-    for (const code of [-32600, -32601, -32602]) {
-      expect(classifyMcpToolFailure(Object.assign(new Error('rejected'), { code })).outcome).toBe('not_applied')
-    }
+  test('Given 协议明确方法不存在 When 分类 Then 未执行', () => {
+    expect(classifyMcpToolFailure(Object.assign(new Error('method not found'), { code: -32601 })).outcome).toBe('not_applied')
   })
 
-  test('Given 服务端内部错误 When 分类 Then 结果未知', () => {
-    // 服务端报错时可能已经产生部分副作用，不能假设没执行。
-    for (const code of [-32603, -32000, -32001]) {
-      expect(classifyMcpToolFailure(Object.assign(new Error('internal error'), { code })).outcome).toBe('unknown')
+  test('Given 参数或输出校验错误 When 分类 Then 不推断工具未执行', () => {
+    // SDK 也会在工具执行后校验输出，-32600/-32602 不能证明前置拒绝。
+    for (const code of [-32600, -32602, -32603, -32000, -32001]) {
+      expect(classifyMcpToolFailure(Object.assign(new Error('validation or internal error'), { code })).outcome).toBe('unknown')
     }
   })
 
@@ -39,10 +37,11 @@ describe('classifyMcpToolFailure', () => {
     }
   })
 
-  test('Given 连接前的前置失败 When 分类 Then 未执行', () => {
+  test('Given 派发后异常没有数字错误码 When 分类 Then 不按文案推断未执行', () => {
     for (const message of ['未连接', 'MCP 服务器未连接: filesystem', 'Method not found', 'Invalid params: path', '工具不存在']) {
-      expect(classifyMcpToolFailure(new Error(message)).outcome).toBe('not_applied')
+      expect(classifyMcpToolFailure(new Error(message)).outcome).toBe('unknown')
     }
+    expect(classifyMcpToolFailure(Object.assign(new Error('denied'), { code: 'EACCES' })).outcome).toBe('unknown')
   })
 
   test('Given 无法归类的异常 When 分类 Then 保守判为结果未知', () => {
@@ -66,7 +65,7 @@ describe('describeMcpToolFailure', () => {
   })
 
   test('Given 未执行 When 生成文案 Then 允许修正后重试', () => {
-    const failure = describeMcpToolFailure('fs__read', Object.assign(new Error('bad'), { code: -32602 }))
+    const failure = describeMcpToolFailure('fs__read', Object.assign(new Error('bad'), { code: -32601 }))
     expect(failure.outcome).toBe('not_applied')
     expect(failure.message).toContain('未执行')
     expect(failure.message).toContain('修正前置条件后可以重试')

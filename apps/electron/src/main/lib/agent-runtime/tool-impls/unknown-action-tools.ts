@@ -15,6 +15,7 @@
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types'
 import {
+  confirmUnknownActionApplied,
   listPendingUnknownActions,
   resolveUnknownAction,
   type UnknownActionRecord,
@@ -64,6 +65,8 @@ async function executeListUnknownActionsUnchecked(_input: unknown, ctx: ToolCont
           tool: record.tool,
           reason: record.reason,
           createdAt: record.createdAt,
+          resolution: record.resolution,
+          acknowledgedAt: record.acknowledgedAt,
         })),
       },
       null,
@@ -114,7 +117,27 @@ async function executeResolveUnknownActionUnchecked(input: unknown, ctx: ToolCon
   }
 
   if (answer === APPLIED) {
-    return { toolCallId: '', content: JSON.stringify({ resolved: false, actionKey, resolution: answer, mayRetry: false }) }
+    try {
+      const confirmed = await confirmUnknownActionApplied({
+        sessionId: ctx.sessionId,
+        id: record.id,
+        resolution: `${answer}｜用户确认`,
+      })
+      if (!confirmed) return error(`确认失败：${actionKey} 正在执行或已被新记录替换，仍禁止重试`)
+      return {
+        toolCallId: '',
+        content: JSON.stringify({
+          acknowledged: true,
+          resolved: false,
+          actionKey,
+          resolution: answer,
+          acknowledgedAt: confirmed.acknowledgedAt,
+          mayRetry: false,
+        }, null, 2),
+      }
+    } catch (thrown) {
+      return error(`人工结论保存失败：${thrown instanceof Error ? thrown.message : String(thrown)}；${actionKey} 仍禁止重试`)
+    }
   }
 
   const resolved = await resolveUnknownAction({

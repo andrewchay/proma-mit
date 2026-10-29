@@ -7,8 +7,9 @@
  * 模型看到就会重试——在真实系统上是重复执行。
  *
  * 判定骨架与桌面、受管浏览器共用（见 `tool-impls/external-action-outcome.ts`），
- * 这里额外利用 JSON-RPC 错误码：服务端明确拒绝请求（方法不存在、参数非法）可以
- * 判为未执行；其余错误码与传输层失败一律按结果未知处理。
+ * 这里只额外采信 JSON-RPC 的 `-32601 Method not found`：它能明确证明方法不存在。
+ * 参数与输出校验错误也可能在工具执行后由 SDK 抛出，不能据此推断没有副作用；
+ * 其余错误码、系统错误码与错误文案一律不能解除派发后的未知状态。
  */
 
 import {
@@ -19,30 +20,21 @@ import {
   describeActionFailure,
 } from './tool-impls/external-action-outcome'
 
-/** 服务端明确拒绝请求，工具没有执行。 */
-const NOT_APPLIED_RPC_CODES = new Set([
-  -32600, // Invalid Request
-  -32601, // Method not found
-  -32602, // Invalid params
-])
-
 const MCP_RULE: ActionFailureRule = {
-  preActionCodes: ['EPERM', 'EACCES', 'ENOENT', 'ENOTSUP'],
+  preActionCodes: [],
   unknownCodes: ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'EPIPE', 'EAI_AGAIN', 'EAGAIN'],
-  preActionPattern: /未连接|not connected|Method not found|Invalid params|Invalid Request|工具不存在|未知工具|找不到工具|权限|denied|不支持的/,
+  // 派发后的文案不能证明前置拒绝；只有下方的数字错误码 -32601 例外。
+  preActionPattern: /$^/,
   unknownPattern: /超时|timeout|timed out|中断|aborted|abort|Connection closed|socket hang up|连接已关闭|连接中断|unknown|未知/,
 }
 
 const MCP_CONFIRM_HINT =
   '请先核对目标系统的实际状态（重新读取相关资源或查询对应系统），再由用户决定是否继续。'
 
-/** 归类 MCP 工具调用失败：只有服务端明确拒绝时才算"未执行"。 */
+/** 归类 MCP 工具调用失败：只有数字错误码 -32601 能确认方法未执行。 */
 export function classifyMcpToolFailure(error: unknown): Omit<ActionFailure, 'message'> {
   const rpcCode = (error as { code?: unknown } | undefined)?.code
-  if (typeof rpcCode === 'number') {
-    const reason = describeActionError(error)
-    return { outcome: NOT_APPLIED_RPC_CODES.has(rpcCode) ? 'not_applied' : 'unknown', reason }
-  }
+  if (rpcCode === -32601) return { outcome: 'not_applied', reason: describeActionError(error) }
   return classifyActionFailure(error, MCP_RULE)
 }
 

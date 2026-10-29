@@ -8,6 +8,7 @@ import {
   finishTrackedAction,
   blockIfUnknownAction,
   buildActionKey,
+  confirmUnknownActionApplied,
   findPendingUnknownAction,
   hashDetail,
   listPendingUnknownActions,
@@ -185,6 +186,53 @@ describe('派发前登记', () => {
     await finishTrackedAction(record!, true)
     __resetUnknownActionCacheForTest()
     expect(await findPendingUnknownAction('s1', 'k')).toBeUndefined()
+  })
+})
+
+describe('失败留痕与人工确认', () => {
+  test('Given 派发后失败 When 持久化实际原因 Then 重启后仍保留原因和门禁', async () => {
+    const record = await beginTrackedAction({ sessionId: 's1', tool: 'x', actionKey: 'k', reason: '结果待确认' })
+    await finishTrackedAction(record!, false, 'failed after dispatch')
+    __resetUnknownActionCacheForTest()
+    const restored = await findPendingUnknownAction('s1', 'k')
+    expect(restored?.status).toBe('pending')
+    expect(restored?.reason).toBe('failed after dispatch')
+  })
+
+  test('Given 用户确认动作已生效 When 落盘并重启 Then 保留 pending 与人工结论', async () => {
+    const record = await recordUnknownAction({ sessionId: 's1', tool: 'x', actionKey: 'k', reason: 'unknown' })
+    const confirmed = await confirmUnknownActionApplied({
+      sessionId: 's1',
+      id: record.id,
+      resolution: '已核对：动作已生效，不要重试｜用户确认',
+    })
+    expect(confirmed?.acknowledgedAt).toBeString()
+    __resetUnknownActionCacheForTest()
+    const restored = await findPendingUnknownAction('s1', 'k')
+    expect(restored?.status).toBe('pending')
+    expect(restored?.resolution).toBe('已核对：动作已生效，不要重试｜用户确认')
+    expect(restored?.acknowledgedAt).toBe(confirmed?.acknowledgedAt)
+    const blocked = await blockIfUnknownAction({ sessionId: 's1', tool: 'x', actionKey: 'k', confirmHint: '先核对' })
+    expect(blocked).toContain('已确认生效')
+    expect(blocked).toContain('仍禁止重试')
+  })
+
+  test('Given 动作仍在执行 When 用户确认已生效 Then 不改写执行中记录', async () => {
+    const record = await beginTrackedAction({ sessionId: 's1', tool: 'x', actionKey: 'k', reason: '执行中' })
+    expect(await confirmUnknownActionApplied({ sessionId: 's1', id: record!.id, resolution: '用户确认' })).toBeUndefined()
+    expect((await findPendingUnknownAction('s1', 'k'))?.acknowledgedAt).toBeUndefined()
+    await finishTrackedAction(record!, false, 'still unknown')
+  })
+
+  test('Given 确认事件无法写入 When 确认已生效 Then 不伪造人工结论', async () => {
+    const record = await recordUnknownAction({ sessionId: 's1', tool: 'x', actionKey: 'k', reason: 'unknown' })
+    rmSync(join(directory, 'unknown-actions.jsonl'))
+    mkdirSync(join(directory, 'unknown-actions.jsonl'))
+    await expect(confirmUnknownActionApplied({ sessionId: 's1', id: record.id, resolution: '用户确认' })).rejects.toThrow()
+    const current = await findPendingUnknownAction('s1', 'k')
+    expect(current?.status).toBe('pending')
+    expect(current?.acknowledgedAt).toBeUndefined()
+    rmSync(join(directory, 'unknown-actions.jsonl'), { recursive: true })
   })
 })
 
