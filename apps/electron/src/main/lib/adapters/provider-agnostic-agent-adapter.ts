@@ -229,7 +229,9 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       throw new Error('Provider-Agnostic Runtime 需要 provider、apiKey、baseUrl、cwd')
     }
 
+    abortSignal?.throwIfAborted()
     const capability = await resolveChannelContextWindow({ provider, modelId: model ?? '', channelId: input.channelId })
+    abortSignal?.throwIfAborted()
     const adapter = getAdapter(adapterProvider ?? provider)
     const controller = new AbortController()
     if (abortSignal) {
@@ -389,6 +391,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
       while (round < maxTurns) {
         assertNoOwnerBusinessSession(sessionId)
+        controller.signal.throwIfAborted()
         round++
 
         const request = adapter.buildStreamRequest({

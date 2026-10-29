@@ -141,6 +141,18 @@ describe('Provider-Agnostic Agent 适配器', () => {
     }))
   })
 
+  test('Given 父会话在子代理启动前已停止 When 启动 Provider-Agnostic Then 不发模型请求', async () => {
+    const controller = new AbortController()
+    controller.abort()
+    const adapter = new ProviderAgnosticAgentAdapter()
+    await expect(async () => {
+      for await (const _message of adapter.query({ sessionId: 'already-stopped', prompt: '运行', model: 'deepseek-chat',
+        provider: 'deepseek', apiKey: 'mock-key', baseUrl: 'http://localhost/mock', cwd: '/tmp', abortSignal: controller.signal })) {}
+    }).toThrow()
+    expect(streamCallCount).toBe(0)
+    adapter.dispose()
+  })
+
   test('手动压缩命令由 Runtime 直接处理，不发送给模型', async () => {
     const adapter = new ProviderAgnosticAgentAdapter()
     const events: AgentEvent[] = []
