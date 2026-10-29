@@ -2016,6 +2016,10 @@ export interface ElectronAPI {
       getOwnerManagement: import('@gravitas/shared').OwnerManagementApi['getOwnerManagement']
       confirmOwnerTeamWorkspaceAccess: import('@gravitas/shared').OwnerManagementApi['confirmOwnerTeamWorkspaceAccess']
       setOwnerManagementStatus: import('@gravitas/shared').OwnerManagementApi['setOwnerManagementStatus']
+      getWebWatch: (projectId: string) => Promise<unknown>
+      saveWebWatch: (input: { projectId: string; enabled: boolean; topics: string[]; localTime: string }) => Promise<unknown>
+      runWebWatch: (projectId: string) => Promise<unknown>
+      listWebWatchRuns: (projectId: string) => Promise<unknown>
       getOwnerGoalDraft: import('@gravitas/shared').ProjectOwnerGoalApi['getOwnerGoalDraft']
       saveOwnerGoalDraft: import('@gravitas/shared').ProjectOwnerGoalApi['saveOwnerGoalDraft']
       observePilot: (projectId: string) => Promise<import('@gravitas/shared').PilotObservation>
@@ -4833,6 +4837,10 @@ const electronAPI: ElectronAPI = {
       getOwnerManagement: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_MANAGEMENT, request),
       confirmOwnerTeamWorkspaceAccess: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_TEAM_WORKSPACE_ACCESS, request),
       setOwnerManagementStatus: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SET_OWNER_MANAGEMENT_STATUS, request),
+      getWebWatch: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_WEB_WATCH, projectId),
+      saveWebWatch: (input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_WEB_WATCH, input),
+      runWebWatch: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.RUN_WEB_WATCH, projectId),
+      listWebWatchRuns: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_WEB_WATCH_RUNS, projectId),
       getOwnerGoalDraft: (subject) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_GOAL_DRAFT, subject),
       saveOwnerGoalDraft: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_OWNER_GOAL_DRAFT, request),
       observePilot: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.OBSERVE_PILOT, projectId),

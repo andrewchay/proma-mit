@@ -166,6 +166,7 @@ bun run generate:icons    # 生成应用图标
 - `CHAT_TOOL_IPC_CHANNELS` - Chat 工具
 - `FEISHU_IPC_CHANNELS` - 飞书集成
 - `GITHUB_RELEASE_IPC_CHANNELS` - GitHub 发布
+- `PROJECT_IPC_CHANNELS` - 项目管理（含项目级外网扫描设置、手动运行与历史读取）
 
 ### 主进程服务层（`main/lib/`）
 
@@ -183,6 +184,7 @@ bun run generate:icons    # 生成应用图标
 | `chat-service.ts` | Chat 流式调用编排（20KB）：Provider 适配器集成、消息持久化、AbortController |
 | `conversation-manager.ts` | 对话管理（13KB）：对话 CRUD、JSONL 消息存储、置顶、上下文分割 |
 | `channel-manager.ts` | 渠道管理（16KB）：渠道 CRUD、API Key AES-256-GCM 加密（safeStorage）、连接测试、模型获取 |
+| `project-web-watch-service.ts` | 项目级公开网络扫描：按本机每日时间运行 WebSearch、结合项目上下文生成建议，并记录来源与扫描历史 |
 
 #### 集成服务
 
@@ -313,12 +315,14 @@ bun run generate:icons    # 生成应用图标
 ├── user-profile.json       # 用户档案 { userName, avatar }
 ├── settings.json           # 应用设置 { themeMode, themeStyle }
 ├── projects/               # 项目管理：paa.db（SQLite；生产 better-sqlite3 直写 WAL，bun test 用 sql.js）
+│   └── web-watch/           # 项目外网扫描：{projectId}.json 配置 + {projectId}.jsonl 运行历史与来源
 └── sdk-config/             # Agent SDK 配置目录
     └── projects/           # SDK 项目配置
 ```
 
 **关键设计**：
 - JSON 配置 + JSONL 追加日志；业务 SQLite 与 Context Store 索引的备份边界见 docs/storage-contract.md
+- 项目外网扫描不改项目 SQLite schema；Stable 主进程恢复启用的每日扫描，Dev 默认跳过自动调度。启动补扫每项目最多一次，扫描区间从上次成功时间延伸到本次；需要 WebSearch（Tavily 或秘塔）凭据和启用的 AI 渠道。界面读取最近 30 次历史用于查看和来源去重；新来源经模型判断相关后才通知，失败也记录并通知。
 - 默认 Agent 工作区按 slug 隔离，每个会话独立目录；选择已有本地项目时，`AgentWorkspace.rootPath` 保存项目根目录，Agent 的 cwd、文件浏览、`@` 文件引用和变更检测直接使用该目录
 - 本地项目工作区的会话记录、MCP、Skills 和私有运行状态仍保留在 `~/.gravitas/`；删除工作区索引不会删除用户项目目录
 - MCP 配置和 Skills 按工作区管理
