@@ -477,7 +477,7 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
     await page.getByRole('button', { name: '重新核对当前授权', exact: true }).waitFor()
     await page.getByLabel('项目总模型费用上限（美元）').fill('15')
     await page.getByLabel('授权有效时间（小时）').fill('24')
-    await page.getByRole('button', { name: '确认范围，让 Owner 自主推进', exact: true }).waitFor()
+    await page.getByRole('button', { name: '确认范围，让 Owner 自主推进', exact: true }).waitFor().catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
     await page.getByRole('button', { name: '确认范围，让 Owner 自主推进', exact: true }).click()
     const teamScope = page.getByLabel('团队工作区范围建议').last()
     await teamScope.waitFor()
