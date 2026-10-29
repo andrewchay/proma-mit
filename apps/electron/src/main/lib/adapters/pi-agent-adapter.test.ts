@@ -69,6 +69,7 @@ let sessionActivated = false
 let registrationGate: Promise<void> | undefined
 let registrationStarted = false
 let sessionCreationError: Error | undefined
+let unverifiedExtension = false
 interface MockPiEvent {
   type: string
   message?: unknown
@@ -107,7 +108,7 @@ mock.module('./pi-sdk-loader', () => ({
         capturedSystemPromptOverride = options.systemPromptOverride
       }
       async reload(): Promise<void> {}
-      getExtensions() { return { extensions: [], errors: [] } }
+      getExtensions() { return { extensions: unverifiedExtension ? [{}] : [], errors: [] } }
     },
     SessionManager: { inMemory: () => ({}) },
     SettingsManager: {
@@ -198,6 +199,29 @@ describe('resolveFirstTokenTimeoutMs（首 token 宽限自适应）', () => {
 })
 
 describe('PiAgentAdapter', () => {
+  test('Given Pi 会话已创建 When 初始化校验失败 Then 释放会话与 MCP 引用', async () => {
+    let releases = 0
+    const manager = { listAllTools: async () => [] } as unknown as import('../agent-runtime/mcp-client').McpClientManager
+    const adapter = new PiAgentAdapter({ acquireClientManager: async () => ({ manager, release: () => { releases++ } }) })
+    const input = { sessionId: 'pi-session-setup-failure', prompt: '运行', agentRuntime: 'pi' as const, provider: 'deepseek' as const,
+      apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp', workspaceSlug: 'test', runtimeBudgetLimitUsd: 1,
+      mcpServers: { test: { type: 'stdio' as const, command: 'mock', enabled: true } } }
+    disposeCallCount = 0
+    unverifiedExtension = true
+    try {
+      await expect(adapter.query(input)[Symbol.asyncIterator]().next()).rejects.toThrow('Pi 有限费用模式禁止未核验')
+      expect(disposeCallCount).toBe(1)
+      expect(releases).toBe(1)
+      const read = getCapturedSessionOptions()?.customTools?.find(tool => tool.name === 'Read') as unknown as { execute(id: string, input: Record<string, unknown>, signal: AbortSignal): Promise<{ details?: { isError?: boolean } }> } | undefined
+      if (!read) throw new Error('缺少 Read 工具')
+      expect((await read.execute('late', { file_path: 'not-used.txt' }, new AbortController().signal)).details?.isError).toBe(true)
+      unverifiedExtension = false
+      const retried = adapter.query({ ...input, mcpServers: undefined, runtimeBudgetLimitUsd: undefined })[Symbol.asyncIterator]()
+      await retried.next()
+      await retried.return?.()
+    } finally { unverifiedExtension = false; adapter.dispose() }
+  })
+
   test('Given Pi 已取得 MCP 引用 When 会话创建失败 Then 释放引用且会话可重试', async () => {
     let releases = 0
     const manager = { listAllTools: async () => [] } as unknown as import('../agent-runtime/mcp-client').McpClientManager
