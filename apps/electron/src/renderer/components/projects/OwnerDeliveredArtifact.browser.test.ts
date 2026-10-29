@@ -26,7 +26,7 @@ test('Given已交付代码 When直接查看并点击下载HTML Then不执行正�
     await page.getByRole('button', { name: '静态预览', exact: true }).click()
     expect(await page.getByText(`成果标识：${item.artifactHash}`, { exact: true }).isVisible()).toBe(true)
     const frame = page.frameLocator('iframe[title="2048游戏 静态预览"]')
-    expect(await frame.getByText('2048', { exact: true }).isVisible()).toBe(true)
+    await frame.getByText('2048', { exact: true }).waitFor({ state: 'visible' })
     expect(await page.getByRole('button', { name: '手机宽度' }).isVisible()).toBe(true)
     await page.getByRole('button', { name: '手机宽度' }).click()
     expect(await page.locator('iframe').evaluate(element => element.getBoundingClientRect().width)).toBeLessThanOrEqual(390)
