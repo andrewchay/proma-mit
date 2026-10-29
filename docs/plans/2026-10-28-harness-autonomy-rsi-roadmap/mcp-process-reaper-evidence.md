@@ -62,3 +62,7 @@ MCP 断开不再根据 PID 快照向后代追加 SIGTERM/SIGKILL。SDK 仍负责
 安全降级新增真实子进程测试：受控 sleep 持续运行时执行断开，断开保持 unknown/unavailable 且不额外发信号；测试结束由测试自身清理其直接子进程。这验证降级行为，不验证 SDK 的真实 MCP 关闭或后代隔离。
 
 本地真实 MCP stdio 测试以独立临时配置目录运行，连接真实子进程、执行初始化和工具列表后关闭，断开记录 unknown/unavailable 且不额外发送终止信号；不代表打包 Electron 或复杂服务器验收。
+
+## 受管进程组基础切片（尚未接入 MCP）
+
+新增独立监督进程接口：监督者以 detached 进程组组长身份启动目标，透传 stdin/stdout/stderr；停止时由仍存活的组长向自身进程组发送信号，避免主进程依据事后 PID 快照杀后代。真实子进程测试覆盖输入输出、同组后代停止及不存在的命令。返回 unconfirmed，不能证明脱离进程组的后代已退出；仅在本地 Bun 环境测试，尚未接入 MCP transport、Electron 打包路径或其他平台，也不表示 P0 已完成。
