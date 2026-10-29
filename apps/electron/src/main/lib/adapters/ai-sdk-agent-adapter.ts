@@ -1,4 +1,4 @@
-import { bindAISDKSessionIdentity } from '../agent-runtime/ai-sdk-session-identity'
+import { bindAISDKSessionIdentity, revokeAISDKSessionIdentity } from '../agent-runtime/ai-sdk-session-identity'
 import { assertNoOwnerBusinessSession } from '../project-owner-task-evidence'
 import { assertToolAllowedForSessionPurpose, getOwnerExecutionToolNames, isOwnerWorkspaceFileActionCandidate } from '../project-owner-execution-gates'
 import { OwnerPlanningRuntimeError } from '../agent-runtime/owner-planning-runtime-error'
@@ -394,6 +394,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
         currentAttachments = undefined
       }
     } finally {
+      revokeAISDKSessionIdentity(activeSession.state)
       this.activeSessions.delete(sessionId)
       mcpRelease?.()
     }
@@ -402,6 +403,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
   abort(sessionId: string): void {
     const active = this.activeSessions.get(sessionId)
     if (!active) return
+    revokeAISDKSessionIdentity(active.state)
     active.cancelled = true
     active.state.controller.abort()
     active.resolveQueuedMessage?.()
@@ -460,6 +462,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
 
   dispose(): void {
     for (const [sessionId, active] of this.activeSessions) {
+      revokeAISDKSessionIdentity(active.state)
       active.state.controller.abort()
       active.cancelled = true
       active.resolveQueuedMessage?.()

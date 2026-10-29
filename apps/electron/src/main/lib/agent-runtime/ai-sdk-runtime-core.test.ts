@@ -1,7 +1,7 @@
 import { describe, expect, mock, test } from 'bun:test'
 import { buildElectronMock } from '../testing/electron-mock'
 import type { RuntimeToolDefinition } from './types'
-import { bindAISDKSessionIdentity } from './ai-sdk-session-identity'
+import { bindAISDKSessionIdentity, revokeAISDKSessionIdentity } from './ai-sdk-session-identity'
 import type { AISDKRuntimeSessionState, AISDKToolExecutionState, ExecutedAISDKToolResult } from './ai-sdk-runtime-core'
 
 
@@ -40,6 +40,20 @@ function createBoundTools(core: InstanceType<typeof AISDKRuntimeCore>, tools: Ru
 }
 
 describe('AI SDK runtime core', () => {
+  test('Given 会话身份已撤销 When 旧工具调用或重新绑定 Then 拒绝执行', async () => {
+    const core = new AISDKRuntimeCore()
+    const activeSession: AISDKRuntimeSessionState = { controller: new AbortController(), permissionMode: 'bypassPermissions', planModeEntered: false }
+    let calls = 0
+    const tools = createBoundTools(core, [createRuntimeTool('BoundRead', async () => { calls += 1; return { toolCallId: '', content: 'ok' } })], {
+      sessionId: 'revoked-session', cwd: '/tmp', signal: activeSession.controller.signal, activeSession,
+    })
+    revokeAISDKSessionIdentity(activeSession)
+    const tool = tools.BoundRead as unknown as ExecutableAITool
+    expect((await tool.execute({}, { toolCallId: 'x', messages: [], context: {} })).isError).toBe(true)
+    expect(calls).toBe(0)
+    expect(() => bindAISDKSessionIdentity(activeSession, 'revoked-session', '/tmp')).toThrow()
+  })
+
   test('Given 活动会话已绑定 When 使用其他会话或目录创建工具集 Then 执行被拒绝', async () => {
     const core = new AISDKRuntimeCore()
     const activeSession: AISDKRuntimeSessionState = { controller: new AbortController(), permissionMode: 'bypassPermissions', planModeEntered: false }
