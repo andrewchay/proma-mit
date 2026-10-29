@@ -226,7 +226,8 @@ export async function blockIfUnknownAction(input: {
   return (
     `${input.tool} 拒绝执行：同一次动作（${record.actionKey}）在 ${record.createdAt} 的结果未知（${record.reason}），` +
     `动作可能已经生效。${input.confirmHint}` +
-    `确认后由上层的解除接口（resolveUnknownAction）清除该记录才能重试。`
+    `确认后调用 ResolveUnknownAction（action_key=${record.actionKey}）由用户核对并解除，` +
+    `或用 ListUnknownActions 查看本会话全部待处理动作；未经用户确认不会放行（也可调用 resolveUnknownAction）。`
   )
 }
 

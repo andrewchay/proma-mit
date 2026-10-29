@@ -40,11 +40,23 @@
 
 判据收窄的阴性测试：`EINVAL` → unknown；`Invalid state transition`、`invalid event after dispatch`、`无效状态` → unknown。
 
-定向回归：`unknown-action-store` 12 项、`computer-use-tools` 9 项、`web-bridge-tools` 14 项、`mcp-client` 10 项、`computer-use-outcome` 13 项、`web-bridge-outcome` 11 项、`mcp-tool-outcome` 11 项零失败；typecheck=0、biome 通过。
+定向回归：`unknown-action-store` 12 项、`unknown-action-tools` 10 项、`computer-use-tools` 9 项、`web-bridge-tools` 14 项、`mcp-client` 10 项、`computer-use-outcome` 13 项、`web-bridge-outcome` 11 项、`mcp-tool-outcome` 11 项零失败；typecheck=0、biome 通过。
+
+## 解除闭环（补充）
+
+上一版把「解除入口没有 UI」列为最直接的欠账：模型被拦住、人看不到清单、解除只能改代码，形成死锁。本片补两个工具入口：
+
+- `ListUnknownActions`（只读）列出本会话全部待处理未知动作（指纹、工具、理由、时间），让「待处理」在对话里可见；
+- `ResolveUnknownAction`（写）**必须经过用户确认**：工具会把该动作展示给用户，用户在三个选项里选择「已核对：动作没有生效，允许重试」/「已核对：动作已生效，不要重试」/「暂不处理」。前两者才解除并落盘处理依据，第三种保持拦截；用户拒绝确认、确认请求抛错、指纹不存在都保持拦截。
+
+**模型不能自行解除后重试**——没有 `onAskUser` 通道时工具直接拒绝，而不是退化成静默放行。拦截文案也从"调用主进程 API"改为指向这两个工具。
+
+`unknown-action-tools.test.ts`（10 项）：只读列出本会话记录、其他会话不可见；缺 `action_key` 拒绝且不询问用户；无确认通道时拒绝且记录仍 pending；指纹不存在时提示；确认"未生效"后放行并标 `mayRetry: true`；确认"已生效"后解除但标 `mayRetry: false`（解除是为了不留死锁，结论由文案传达）；选择"暂不处理"与用户拒绝都保持拦截；确认请求抛错时保持拦截并回传原因。
 
 ## 边界
 
-- **解除入口没有 UI**：`resolveUnknownAction` 目前只有 API，没有审批流或对话入口调用它。也就是说"用户明确处理"这一步在产品层尚未闭环——模型会被拦住并收到指引，但人没有一键解除的地方。这是本轮之后最直接的欠账。
+- **解除走通用问题卡片，没有专用 UI**：`interactionType: 'unknown_action_resolution'` 目前按普通问题渲染，没有「未知动作清单」面板，也没有批量处理。产品级闭环仍待前端接入。
+- **解除即放行**：用户选「已生效」也会删除 pending 记录，只是返回 `mayRetry: false`。若模型无视提示重试，工具层不会再拦——这是为了让"已生效"的情形不永久死锁而做的取舍。
 - **指纹粒度是启发式**：同坐标两次点击被视为同一动作，但同一个按钮的两次不同意图（例如先取消再确认）如果坐标相同会被误拦。粒度粗于语义。
 - **成功不自动解除**：后续同类动作成功不构成对上一次的核验（可能是另一次点击），因此必须显式解除。
 - **跨进程并发**：JSONL 追加是单行原子写，但多进程同时登记时内存缓存不同步；桌面应用是单主进程，这个限制在打包场景下未被验证。
