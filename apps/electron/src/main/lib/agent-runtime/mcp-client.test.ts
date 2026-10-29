@@ -154,6 +154,11 @@ describe('真实 MCP stdio 连接', () => {
     try {
       await manager.connectAll()
       expect(manager.isConnected).toBe(true)
+      if (process.platform === 'darwin') {
+        const { ManagedMcpStdioTransport } = await import('./mcp-managed-transport')
+        const servers = (manager as unknown as { servers: { transport: unknown }[] }).servers
+        expect(servers[0]?.transport).toBeInstanceOf(ManagedMcpStdioTransport)
+      }
       expect((await manager.listAllTools()).map((item) => item.name)).toContain('mcp__local__echo')
     } finally {
       await manager.disconnect()

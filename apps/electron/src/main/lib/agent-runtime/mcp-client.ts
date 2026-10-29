@@ -303,7 +303,16 @@ export class McpClientManager {
   ): Promise<import('@modelcontextprotocol/sdk/shared/transport.js').Transport> {
     if (entry.type === 'stdio') {
       if (!entry.command) throw new Error(`MCP 服务器 ${name} 缺少 command`)
-      const { StdioClientTransport } = await import('@modelcontextprotocol/sdk/client/stdio.js')
+      const { StdioClientTransport, getDefaultEnvironment } = await import('@modelcontextprotocol/sdk/client/stdio.js')
+      if (process.platform === 'darwin') {
+        const { ManagedMcpStdioTransport } = await import('./mcp-managed-transport')
+        return new ManagedMcpStdioTransport({
+          command: entry.command,
+          args: entry.args,
+          cwd: this.cwd,
+          env: { ...getDefaultEnvironment(), ...entry.env },
+        })
+      }
       return new StdioClientTransport({
         command: entry.command,
         args: entry.args,

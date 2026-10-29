@@ -70,3 +70,7 @@ MCP 断开不再根据 PID 快照向后代追加 SIGTERM/SIGKILL。SDK 仍负责
 ## 受管 stdio 适配基础（尚未启用）
 
 新增受管 stdio transport，测试使用真实 MCP SDK 完成握手和工具查询，覆盖服务立即退出、启动中关闭、大响应发出后退出、大量 stderr。监督者通过同一 stdout 流中的随机令牌结束标识保证读取顺序，目标命令启动超时会请求监督者停止；结果仍标 unconfirmed。Electron 自带二进制的 Node 模式通过本地握手和工具查询；没有在打包后的应用、真实第三方 MCP、脱组后代或异常崩溃下完成验收。该 transport 尚未接入默认启动流程，不能据此宣称 P0 完成。
+
+## macOS MCP 接线切片
+
+macOS 的 MCP stdio 连接使用受管 transport，并沿用 SDK 的安全默认环境与显式服务配置；其他平台继续使用 SDK 原有 transport。真实本地 MCP 连接测试覆盖初始化、工具列表与关闭，受管 transport 另覆盖大响应、异常退出和关闭竞态；定向测试及类型检查通过。停止只覆盖留在受管进程组内的进程，脱组后代和崩溃恢复无法证明，仍标 unknown；打包应用和真实第三方 MCP 验收尚未完成。
