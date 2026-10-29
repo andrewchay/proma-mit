@@ -5,8 +5,11 @@
  * 且每个 case 两侧都有有效分数。缺分、失败、越界一律判为不可比并说明原因——
  * 不把缺失分数当 0，也不用部分 case 的平均值冒充结论。
  *
+ * 分数的结论之外，还会给出成本与延迟的变化比例，并可按配置的门禁判定"更贵/更慢
+ * 到不可接受"。资源数据缺失时不假装通过：门禁状态记为 unverified 并写明原因。
+ *
  * 纯函数，不写任何状态：本模块只负责判定与差值，不激活能力、不落盘、不重跑。
- * 真实影子流量采集、Provider 成本核对与人工验收不在本模块范围内。
+ * 真实影子流量采集、Provider 账单核对与人工验收不在本模块范围内。
  */
 
 export interface ShadowCaseScore {
@@ -21,6 +24,10 @@ export interface ShadowRunResult {
   benchmarkVersion: number
   rubricVersion: number
   cases: ShadowCaseScore[]
+  /** 该侧总成本（美元）；null/缺省表示未记录，不补 0。 */
+  costUsd?: number | null
+  /** 该侧总耗时（毫秒）；null/缺省表示未记录，不补 0。 */
+  durationMs?: number | null
 }
 
 export interface ShadowCaseComparison {
@@ -28,6 +35,20 @@ export interface ShadowCaseComparison {
   baseline: number
   candidate: number
   delta: number
+}
+
+export interface ShadowResourceComparison {
+  baselineCostUsd: number | null
+  candidateCostUsd: number | null
+  costDeltaUsd: number | null
+  /** 相对基线成本的增幅；基线为 0 或缺失时无法计算，记 null。 */
+  costIncreaseRatio: number | null
+  baselineDurationMs: number | null
+  candidateDurationMs: number | null
+  durationIncreaseRatio: number | null
+  /** pass：未超阈值或未配置阈值；unverified：配置了门禁但数据缺失；exceeded 两种为超限。 */
+  gate: 'pass' | 'cost_exceeded' | 'latency_exceeded' | 'unverified'
+  reasons: string[]
 }
 
 export interface ShadowComparison {
@@ -44,15 +65,95 @@ export interface ShadowComparison {
   regressed: number
   unchanged: number
   verdict: 'candidate_better' | 'candidate_worse' | 'no_difference' | 'inconclusive'
+  /** 成本与延迟的变化及门禁结果；分数不可比时不评估，记为 unverified。 */
+  resources: ShadowResourceComparison
 }
 
 export interface ShadowComparisonOptions {
   /** 判定"有差异"的最小均值差；绝对值小于该阈值视为无差异。默认 0.02。 */
   deltaThreshold?: number
+  /** 允许的最大成本增幅（0.2 = 最多贵 20%）；不设置则不做成本门禁。 */
+  maxCostIncreaseRatio?: number
+  /** 允许的最大耗时增幅；不设置则不做延迟门禁。 */
+  maxLatencyIncreaseRatio?: number
 }
 
 const isValidScore = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1
+
+
+const finiteNonNegative = (value: unknown): number | null =>
+  typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
+
+/** 相对增幅；基线为 0 或缺失时无法给出比例（不写成 Infinity 或 100%）。 */
+const increaseRatio = (base: number | null, candidate: number | null): number | null =>
+  base === null || candidate === null || base <= 0 ? null : (candidate - base) / base
+
+/** 计算成本与延迟变化并按需判定门禁；分数不可比时不做资源评估。 */
+function evaluateResources(
+  baseline: ShadowRunResult,
+  candidate: ShadowRunResult,
+  options: ShadowComparisonOptions,
+  comparable: boolean,
+): ShadowResourceComparison {
+  const baselineCostUsd = finiteNonNegative(baseline.costUsd)
+  const candidateCostUsd = finiteNonNegative(candidate.costUsd)
+  const baselineDurationMs = finiteNonNegative(baseline.durationMs)
+  const candidateDurationMs = finiteNonNegative(candidate.durationMs)
+  const costIncreaseRatio = increaseRatio(baselineCostUsd, candidateCostUsd)
+  const durationIncreaseRatio = increaseRatio(baselineDurationMs, candidateDurationMs)
+  const reasons: string[] = []
+
+  if (!comparable) {
+    reasons.push('分数不可比，未评估成本与延迟变化')
+    return {
+      baselineCostUsd,
+      candidateCostUsd,
+      costDeltaUsd: baselineCostUsd === null || candidateCostUsd === null ? null : candidateCostUsd - baselineCostUsd,
+      costIncreaseRatio,
+      baselineDurationMs,
+      candidateDurationMs,
+      durationIncreaseRatio,
+      gate: 'unverified',
+      reasons,
+    }
+  }
+
+  const base = {
+    baselineCostUsd,
+    candidateCostUsd,
+    costDeltaUsd: baselineCostUsd === null || candidateCostUsd === null ? null : candidateCostUsd - baselineCostUsd,
+    costIncreaseRatio,
+    baselineDurationMs,
+    candidateDurationMs,
+    durationIncreaseRatio,
+  }
+
+  const costGate = options.maxCostIncreaseRatio
+  const latencyGate = options.maxLatencyIncreaseRatio
+  if (costGate === undefined && latencyGate === undefined) {
+    return { ...base, gate: 'pass', reasons }
+  }
+
+  // 配置了门禁但数据缺失：明确记为未核验，不当成通过。
+  const missing: string[] = []
+  if (costGate !== undefined && costIncreaseRatio === null) missing.push('成本')
+  if (latencyGate !== undefined && durationIncreaseRatio === null) missing.push('延迟')
+  if (missing.length) {
+    reasons.push(`${missing.join('、')}数据缺失，门禁未核验`)
+    return { ...base, gate: 'unverified', reasons }
+  }
+
+  if (costGate !== undefined && costIncreaseRatio !== null && costIncreaseRatio > costGate) {
+    reasons.push(`成本增幅 ${(costIncreaseRatio * 100).toFixed(1)}% 超过允许的 ${(costGate * 100).toFixed(1)}%`)
+    return { ...base, gate: 'cost_exceeded', reasons }
+  }
+  if (latencyGate !== undefined && durationIncreaseRatio !== null && durationIncreaseRatio > latencyGate) {
+    reasons.push(`耗时增幅 ${(durationIncreaseRatio * 100).toFixed(1)}% 超过允许的 ${(latencyGate * 100).toFixed(1)}%`)
+    return { ...base, gate: 'latency_exceeded', reasons }
+  }
+  return { ...base, gate: 'pass', reasons }
+}
 
 /** 比较两侧评测结果；不可比时明确返回原因与 inconclusive 结论。 */
 export function compareShadowRuns(
@@ -111,6 +212,7 @@ export function compareShadowRuns(
       regressed: 0,
       unchanged: 0,
       verdict: 'inconclusive',
+      resources: evaluateResources(baseline, candidate, options, false),
     }
   }
 
@@ -126,7 +228,19 @@ export function compareShadowRuns(
       ? 'candidate_worse'
       : 'no_difference'
 
-  return { comparable: true, reasons, cases, meanBaseline, meanCandidate, meanDelta, improved, regressed, unchanged, verdict }
+  return {
+    comparable: true,
+    reasons,
+    cases,
+    meanBaseline,
+    meanCandidate,
+    meanDelta,
+    improved,
+    regressed,
+    unchanged,
+    verdict,
+    resources: evaluateResources(baseline, candidate, options, true),
+  }
 }
 
 /** 生成面向人工判断的一句话结论；不可比时明确写出原因，不与"无差异"混同。 */
@@ -144,7 +258,28 @@ export function describeShadowComparison(comparison: ShadowComparison): string {
     : comparison.verdict === 'candidate_worse'
       ? '候选更差'
       : '无显著差异'
-  return `影子对比：${trend}（均值 ${meanBaseline.toFixed(3)} → ${meanCandidate.toFixed(3)}，差值 ${sign}${delta.toFixed(3)}；改善 ${comparison.improved}、退步 ${comparison.regressed}、持平 ${comparison.unchanged}）`
+  const base = `影子对比：${trend}（均值 ${meanBaseline.toFixed(3)} → ${meanCandidate.toFixed(3)}，差值 ${sign}${delta.toFixed(3)}；改善 ${comparison.improved}、退步 ${comparison.regressed}、持平 ${comparison.unchanged}）`
+  const resourceNote = describeShadowResources(comparison.resources)
+  return resourceNote ? `${base}；${resourceNote}` : base
+}
+
+/** 成本与延迟的表述：超限、未核验与"未记录"三种情况分别说清。 */
+export function describeShadowResources(resources: ShadowResourceComparison): string | undefined {
+  const percent = (ratio: number | null): string | null => (ratio === null ? null : `${ratio >= 0 ? '+' : ''}${(ratio * 100).toFixed(1)}%`)
+  const changes: string[] = []
+  const cost = percent(resources.costIncreaseRatio)
+  if (cost) changes.push(`成本 ${cost}`)
+  const latency = percent(resources.durationIncreaseRatio)
+  if (latency) changes.push(`耗时 ${latency}`)
+  const summary = changes.length ? changes.join('、') : undefined
+
+  if (resources.gate === 'cost_exceeded' || resources.gate === 'latency_exceeded') {
+    return `⚠️ 资源门禁未通过：${resources.reasons.join('；')}${summary ? `（${summary}）` : ''}`
+  }
+  if (resources.gate === 'unverified') {
+    return `资源未核验：${resources.reasons.join('；')}`
+  }
+  return summary
 }
 
 /**
@@ -166,6 +301,8 @@ export function shadowRunFromEvaluation(evaluation: import('./types').BenchmarkE
       caseId: item.caseId,
       score: typeof item.score === 'number' && Number.isFinite(item.score) ? item.score / 100 : null,
     })),
+    costUsd: finiteNonNegative(evaluation.costUsd),
+    durationMs: finiteNonNegative(evaluation.durationMs),
   }
 }
 
@@ -174,6 +311,8 @@ export interface ScoreboardShadowInput {
   baseline: import('./types').BenchmarkEvaluation
   candidate: import('./types').BenchmarkEvaluation
   deltaThreshold?: number
+  maxCostIncreaseRatio?: number
+  maxLatencyIncreaseRatio?: number
 }
 
 /**
@@ -188,6 +327,15 @@ export function compareScoreboardEvaluations(input: ScoreboardShadowInput): Shad
   return compareShadowRuns(
     shadowRunFromEvaluation(input.baseline, { label: 'baseline', benchmarkVersion, rubricVersion }),
     shadowRunFromEvaluation(input.candidate, { label: 'candidate', benchmarkVersion, rubricVersion }),
-    input.deltaThreshold === undefined ? {} : { deltaThreshold: input.deltaThreshold },
+    {
+      ...(input.deltaThreshold === undefined ? {} : { deltaThreshold: input.deltaThreshold }),
+      ...(input.maxCostIncreaseRatio === undefined ? {} : { maxCostIncreaseRatio: input.maxCostIncreaseRatio }),
+      ...(input.maxLatencyIncreaseRatio === undefined ? {} : { maxLatencyIncreaseRatio: input.maxLatencyIncreaseRatio }),
+    },
   )
+}
+
+/** 同上，但先按 scoreboard 评测构造两侧输入再比较（供调用方一次写全）。 */
+export function compareScoreboardResources(input: ScoreboardShadowInput): ShadowResourceComparison {
+  return compareScoreboardEvaluations(input).resources
 }
