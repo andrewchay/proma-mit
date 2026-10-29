@@ -1,4 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import type { Readable, Writable } from 'node:stream'
 
 /** 监督者自己作为进程组组长发信号，避免由外部按可能复用的 PID 清理后代。 */
@@ -24,7 +25,13 @@ process.on('message', message => {
     target.on('spawn', () => { if (process.connected) process.send({ type: 'ready' }) })
     target.on('exit', (code, signal) => { if (process.connected) process.send({ type: 'target-exit', code, signal }) })
     process.stdin.pipe(target.stdin)
-    target.stdout.pipe(process.stdout)
+    let endedWithNewline = true
+    target.stdout.on('data', chunk => { if (chunk.length) endedWithNewline = chunk[chunk.length - 1] === 10 })
+    target.stdout.pipe(process.stdout, { end: false })
+    target.stdout.on('end', () => {
+      const marker = JSON.stringify({ jsonrpc: '2.0', method: 'notifications/gravitas-supervisor-eof', params: { token: message.eofToken } })
+      process.stdout.write((endedWithNewline ? '' : '\n') + marker + '\n')
+    })
     target.stderr.pipe(process.stderr)
     target.stdin.on('error', () => {})
   } catch (error) {
@@ -39,6 +46,7 @@ export interface ManagedMcpProcessOptions {
   args?: string[]
   cwd: string
   env: NodeJS.ProcessEnv
+  startupTimeoutMs?: number
 }
 
 export interface ManagedMcpStopResult {
@@ -52,6 +60,7 @@ export interface ManagedMcpProcess {
   stdout: Readable
   stderr: Readable
   process: ChildProcess
+  eofToken: string
   close(): Promise<ManagedMcpStopResult>
 }
 
@@ -78,8 +87,20 @@ export async function startManagedMcpProcess(options: ManagedMcpProcessOptions):
     child.once('error', reject)
     child.once('exit', () => reject(new Error('受管 MCP 监督进程提前退出')))
   })
-  child.send({ type: 'start', ...options }, (error) => { if (error) child.disconnect() })
-  await ready
+  const eofToken = randomUUID()
+  child.send({ type: 'start', ...options, eofToken }, (error) => {
+    if (error && child.connected) child.disconnect()
+  })
+  let startupTimer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      ready,
+      new Promise<void>((_, reject) => { startupTimer = setTimeout(() => reject(new Error('受管 MCP 启动超时')), options.startupTimeoutMs ?? 10_000) }),
+    ])
+  } catch (error) {
+    if (child.connected) child.send({ type: 'stop' }, () => {})
+    throw error
+  } finally { if (startupTimer) clearTimeout(startupTimer) }
   const stdin = child.stdin
   const stdout = child.stdout
   const stderr = child.stderr
@@ -90,6 +111,7 @@ export async function startManagedMcpProcess(options: ManagedMcpProcessOptions):
     stdout,
     stderr,
     process: child,
+    eofToken,
     close() {
       closing ??= (async () => {
         if (child.connected) child.send({ type: 'stop' }, () => {})
