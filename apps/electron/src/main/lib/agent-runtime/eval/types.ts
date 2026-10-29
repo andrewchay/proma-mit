@@ -37,19 +37,19 @@ export interface EvalRuntimeRef {
  *
  * 综述基准（arXiv:2607.13104 §8.1.2）：若同一评判配置既驱动更新又报告终值，
  * 系统会过优化到评判的潜在偏差。因此每条 evaluation 记录本次评判者身份：
- * - kind: rule=规则打分（无模型耦合，天然独立）/ llm=LLM judge / injected=外部注入回调
- * - independent: 评判渠道是否与「被测方/Builder 渠道」不同（channelId 或 modelId 不同）
+ * - kind: rule=规则打分（不宣称独立性）/ llm=LLM judge / injected=外部注入回调
+ * - independent: 历史兼容标记；新记录仅表示模型标识不同，不证明真实独立性
  */
 export interface JudgeIdentity {
   kind: 'rule' | 'llm' | 'injected'
   provider?: string
   modelId?: string
   channelId?: string
-  /** true = 评判者与被测/候选生成方解耦；false = 存在自我确认风险 */
+  /** true 表示配置区分声明，false 表示未确认；历史记录可能采用不同判据 */
   independent: boolean
 }
 
-/** 评判预算（judge 资源隔离，综述 §8.1.2 延伸）：超限后 judge 停用并回退规则打分。 */
+/** 评判预算（judge 资源隔离，综述 §8.1.2 延伸）：超限后该次评判失败，不回退规则打分。 */
 export interface JudgeBudget {
   /** 单次评测闭环内 judge 最大调用次数（独立计费桶的最小形态） */
   maxCalls?: number
@@ -74,9 +74,9 @@ export interface BenchmarkConfig {
   /** 评测运行时（provider + model） */
   runtime: EvalRuntimeRef
   /**
-   * 可选：独立评判运行时（LLM judge）。
+   * 可选：模型评判运行时（LLM judge）。
    * 不配置时回退规则打分；配置后 judge 用该渠道/模型评分，
-   * 与 runtime（被测方/候选生成方）不同即视为独立评判（综述 §8.1.2）。
+   * 与被测模型标识不同仅代表配置区分，不证明真实评判独立性。
    */
   judgeRuntime?: EvalRuntimeRef
 /** 可选：judge 预算隔离（调用次数 / 输入规模上限） */
@@ -151,7 +151,7 @@ export interface EvalRunResult {
   /** 该 run 的决策 trace 文件路径（append-only JSONL，含完整工具序列） */
   tracePath?: string
   /** failed 时的稳定错误码 */
-  failureCode?: 'invalid_request' | 'benchmark_invalid' | 'version_changed' | 'evaluation_failed'
+  failureCode?: 'invalid_request' | 'benchmark_invalid' | 'version_changed' | 'evaluation_failed' | 'judge_unavailable'
 }
 
 /** 单个 Case × run 的分数明细（写入 scoreboard）。 */

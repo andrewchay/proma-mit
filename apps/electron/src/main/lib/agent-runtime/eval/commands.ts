@@ -47,7 +47,7 @@ async function evaluateCaseAcrossRuns(
   agentVersion: number,
   delegate: SubAgentDelegate,
   opts: { scoreDelegate?: ScoreDelegate; abortSignal?: AbortSignal; systemPrompt?: string } = {},
-): Promise<{ score: number; runs: Array<{ score: number; run: number; sessionId?: string; tracePath?: string }> }> {
+): Promise<{ score: number; complete: boolean; runs: Array<{ score: number; run: number; sessionId?: string; tracePath?: string }> }> {
   const runsCount = Math.max(1, benchmark.runsPerCase ?? 1)
   const allRuns = []
   for (let i = 0; i < runsCount; i++) {
@@ -63,11 +63,22 @@ async function evaluateCaseAcrossRuns(
   const caseScore = scored.length === 0
     ? 0
     : scored.reduce((s, r) => s + r.score, 0) / scored.length
-  return { score: Math.round(caseScore * 100) / 100, runs }
+  const complete = scored.length === runsCount && scored.every((item) => Number.isFinite(item.score) && item.score >= 0 && item.score <= 100)
+  return { score: Math.round(caseScore * 100) / 100, complete, runs }
+}
+
+function assertEvaluationCases(benchmark: BenchmarkConfig, includeHeldOut?: boolean): void {
+  if (!benchmark.cases.length || new Set(benchmark.cases).size !== benchmark.cases.length) throw new Error('训练集 case 为空或重复，不能执行评测')
+  if (includeHeldOut) {
+    const heldOut = benchmark.heldOutCases
+    if (!heldOut?.length || new Set(heldOut).size !== heldOut.length) throw new Error('held-out case 为空或重复，不能执行评测')
+    if (heldOut.some(id => benchmark.cases.includes(id))) throw new Error('训练集与 held-out case 重叠，不能执行评测')
+  }
 }
 
 /** 跑一次 Baseline：对 benchmark 内所有 case 各跑 runsPerCase 次，取平均并写入 scoreboard。 */
 export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineSummary> {
+  assertEvaluationCases(opts.benchmark, opts.includeHeldOut)
   const before = readScoreboard(opts.benchmark.id).evaluations.length
   const byCase: Array<{ caseId: string; score: number; runs: Array<{ score: number; run: number; sessionId?: string; tracePath?: string }> }> = []
   for (const [index, caseId] of opts.benchmark.cases.entries()) {
@@ -85,15 +96,16 @@ export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineSum
       opts.delegate,
       { scoreDelegate: opts.scoreDelegate, abortSignal: opts.abortSignal },
     )
-    byCase.push({ caseId, ...result })
     opts.onProgress?.({
       benchmarkId: opts.benchmark.id,
       caseId,
       phase: 'case_complete',
       completedCases: index + 1,
       totalCases: opts.benchmark.cases.length,
-      score: result.score,
+      ...(result.complete ? { score: result.score } : {}),
     })
+    if (!result.complete) throw new Error(`训练集 case ${caseId} 评测不完整，未保存基线`)
+    byCase.push({ caseId, ...result })
   }
   const total = byCase.length === 0
     ? 0
@@ -110,6 +122,7 @@ export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineSum
         opts.delegate,
         { scoreDelegate: opts.scoreDelegate, abortSignal: opts.abortSignal },
       )
+      if (!result.complete) throw new Error(`held-out case ${caseId} 评测不完整，未保存基线`)
       heldOutByCase.push({ caseId, ...result })
     }
     heldOut = {
@@ -182,6 +195,7 @@ export interface ImproveSummary {
 
 /** 跑一次 Improve 闭环。 */
 export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummary> {
+  assertEvaluationCases(opts.benchmark, opts.includeHeldOut)
   // Baseline 由 selfEvolver 内部完成
   // 构造指定 Case 集的评测函数：train 集驱动优化；held-out 集仅在对照启用时评测
   const makeEvaluator = (caseIds: string[]) => async (def: unknown, benchmark: BenchmarkConfig) => {
@@ -199,7 +213,7 @@ export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummar
         const candidatePrompt = def && typeof def === "object"
           ? (def as Record<string, unknown>).prompt as string | undefined
           : undefined
-        const { score, runs } = await evaluateCaseAcrossRuns(
+        const { score, runs, complete } = await evaluateCaseAcrossRuns(
           benchmark,
           caseId,
           version,
@@ -213,11 +227,11 @@ export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummar
           phase: "case_complete",
           completedCases,
           totalCases: caseIds.length,
-          score,
+          ...(complete ? { score } : {}),
         })
         return {
           caseId,
-          score: score >= 0 ? score : null,
+          score: complete ? score : null,
           costUsd: null,
           durationMs: null,
           sessionId: runs[0]?.sessionId,

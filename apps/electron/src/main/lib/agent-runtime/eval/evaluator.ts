@@ -139,7 +139,7 @@ export async function evaluateCaseRun(
     score = await computeScores(rubric, statement, text, opts.scoreDelegate, traceText)
   } catch (error) {
     failed = true
-    failureCode = 'evaluation_failed'
+    failureCode = error instanceof JudgeScoreUnavailableError ? 'judge_unavailable' : 'evaluation_failed'
     text = String(error instanceof Error ? error.message : error)
   }
   const durationMs = Date.now() - startedAt
@@ -191,6 +191,8 @@ function buildEvalPrompt(statement: string): string {
   ].join('\n')
 }
 
+class JudgeScoreUnavailableError extends Error {}
+
 /** 计算得分。 */
 async function computeScores(
   rubric: Rubric,
@@ -201,10 +203,13 @@ async function computeScores(
 ): Promise<number> {
   // 1) 若注入 LLM 打分，优先使用
   if (scoreDelegate) {
-    const llmScore = await scoreDelegate({ rubric, statement, agentOutput }).catch(() => null)
-    if (llmScore !== null) return clamp(llmScore)
+    let llmScore: number | null
+    try { llmScore = await scoreDelegate({ rubric, statement, agentOutput }) }
+    catch { throw new JudgeScoreUnavailableError('指定评判者调用失败') }
+    if (typeof llmScore !== 'number' || !Number.isFinite(llmScore) || llmScore < 0 || llmScore > 100) throw new JudgeScoreUnavailableError('指定评判者未返回有效分数')
+    return Math.round(llmScore)
   }
-  // 2) 否则规则打分逐项加权
+  // 2) 仅在没有指定评判者时使用规则打分
   return clamp(ruleScore(rubric, agentOutput, traceText))
 }
 
