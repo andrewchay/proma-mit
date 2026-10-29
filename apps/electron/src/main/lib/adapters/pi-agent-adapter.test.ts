@@ -68,6 +68,7 @@ let disposeCallCount = 0
 let sessionActivated = false
 let registrationGate: Promise<void> | undefined
 let registrationStarted = false
+let sessionCreationError: Error | undefined
 interface MockPiEvent {
   type: string
   message?: unknown
@@ -116,6 +117,7 @@ mock.module('./pi-sdk-loader', () => ({
       },
     },
     createAgentSession: async (options: { noTools?: 'builtin'; customTools?: Array<{ name: string }> }) => {
+      if (sessionCreationError) throw sessionCreationError
       capturedSessionOptions = options
       sessionActivated = true
       const listeners: Array<(event: MockPiEvent) => void> = []
@@ -196,6 +198,40 @@ describe('resolveFirstTokenTimeoutMs（首 token 宽限自适应）', () => {
 })
 
 describe('PiAgentAdapter', () => {
+  test('Given Pi 已取得 MCP 引用 When 会话创建失败 Then 释放引用且会话可重试', async () => {
+    let releases = 0
+    const manager = { listAllTools: async () => [] } as unknown as import('../agent-runtime/mcp-client').McpClientManager
+    const adapter = new PiAgentAdapter({ acquireClientManager: async () => ({ manager, release: () => { releases++ } }) })
+    const input = { sessionId: 'pi-mcp-session-failure', prompt: '运行', agentRuntime: 'pi' as const, provider: 'deepseek' as const,
+      apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp', workspaceSlug: 'test',
+      mcpServers: { test: { type: 'stdio' as const, command: 'mock', enabled: true } } }
+    try {
+      sessionCreationError = new Error('Pi 会话创建失败')
+      await expect(adapter.query(input)[Symbol.asyncIterator]().next()).rejects.toThrow('Pi 会话创建失败')
+      expect(releases).toBe(1)
+      sessionCreationError = undefined
+      const retried = adapter.query({ ...input, mcpServers: undefined })[Symbol.asyncIterator]()
+      await retried.next()
+      await retried.return?.()
+    } finally { sessionCreationError = undefined; adapter.dispose() }
+  })
+
+  test('Given Pi 已取得 MCP 引用 When 工具列表读取失败 Then 释放引用且会话可重试', async () => {
+    let releases = 0
+    const manager = { listAllTools: async () => { throw new Error('MCP 工具列表读取失败') } } as unknown as import('../agent-runtime/mcp-client').McpClientManager
+    const adapter = new PiAgentAdapter({ acquireClientManager: async () => ({ manager, release: () => { releases++ } }) })
+    const input = { sessionId: 'pi-mcp-list-failure', prompt: '运行', agentRuntime: 'pi' as const, provider: 'deepseek' as const,
+      apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp', workspaceSlug: 'test',
+      mcpServers: { test: { type: 'stdio' as const, command: 'mock', enabled: true } } }
+    try {
+      await expect(adapter.query(input)[Symbol.asyncIterator]().next()).rejects.toThrow('MCP 工具列表读取失败')
+      expect(releases).toBe(1)
+      const retried = adapter.query({ ...input, mcpServers: undefined })[Symbol.asyncIterator]()
+      await retried.next()
+      await retried.return?.()
+    } finally { adapter.dispose() }
+  })
+
   test('Given Pi 正在初始化 When 同 ID 再次启动 Then 拒绝并保留原运行', async () => {
     let releaseRegistration: (() => void) | undefined
     registrationGate = new Promise<void>(resolve => { releaseRegistration = resolve })
