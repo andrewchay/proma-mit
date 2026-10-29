@@ -154,6 +154,7 @@ export function assertRuntimeSatisfiesPolicy(
 export const HARNESS_POLICY_IPC_CHANNELS = {
   /** 读取策略状态（含解析错误与各 runtime 缺口），只读 */
   GET_STATE: 'harness-policy:get-state',
+  SET_SCHEDULING: 'harness-policy:set-scheduling',
 } as const
 
 export interface HarnessRuntimeGap {
@@ -171,6 +172,14 @@ export interface HarnessPolicyState {
   readonly error: string | null
   readonly reasons: readonly string[]
   readonly runtimeGaps: readonly HarnessRuntimeGap[]
+  /** 当前进程启动时应用的调度状态；不是文件的实时视图。 */
+  readonly scheduler?: HarnessSchedulerState
+}
+
+export interface HarnessSchedulerState {
+  readonly status: 'loading' | 'default' | 'configured' | 'invalid'
+  readonly parallel: boolean
+  readonly error?: string
 }
 
 /** 由策略计算各 runtime 的 required 缺口（供主进程与 UI 共用，保持同一份语义）。 */

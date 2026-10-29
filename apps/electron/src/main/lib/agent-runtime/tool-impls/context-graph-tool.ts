@@ -7,6 +7,7 @@
  */
 
 import type { ToolResult } from '@gravitas/core'
+import { guardOwnerTool } from './tool-utils'
 import type { RuntimeToolDefinition, ToolContext } from '../types.ts'
 
 export const EXPLORE_CONTEXT_TOOL_NAME = 'ExploreContext'
@@ -37,7 +38,7 @@ export function createExploreContextToolDefinition(): Omit<RuntimeToolDefinition
   }
 }
 
-export async function executeExploreContextTool(input: unknown, _ctx: ToolContext): Promise<ToolResult> {
+async function executeExploreContextToolUnchecked(input: unknown, _ctx: ToolContext): Promise<ToolResult> {
   const params = input as { entityType: string; entityId: string }
   if (!params.entityId || !params.entityType) {
     return { toolCallId: '', content: '参数错误：需要 entityType + entityId', isError: true }
@@ -53,3 +54,5 @@ export async function executeExploreContextTool(input: unknown, _ctx: ToolContex
     return { toolCallId: '', content: `查询上下文失败: ${error instanceof Error ? error.message : String(error)}`, isError: true }
   }
 }
+
+export const executeExploreContextTool = guardOwnerTool(EXPLORE_CONTEXT_TOOL_NAME, executeExploreContextToolUnchecked)

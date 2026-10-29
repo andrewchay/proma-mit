@@ -4,10 +4,10 @@
  * 读取指定文件内容，支持偏移和行数限制。
  */
 
-import { readFileSync } from 'node:fs'
+import { closeSync, constants, openSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
-import { resolveToolPath, formatToolError, truncateOutput } from './tool-utils.ts'
+import { resolveToolPath, assertDescriptorMatchesStat, formatToolError, truncateOutput, requiresOwnerToolGate } from './tool-utils.ts'
 
 export interface ReadToolInput {
   file_path: string
@@ -50,7 +50,24 @@ export async function executeReadTool(input: unknown, ctx: ToolContext): Promise
   }
 
   try {
-    const content = readFileSync(path, 'utf-8')
+    if (requiresOwnerToolGate(ctx.sessionId, ctx.ownerWorkspaceWrite)) {
+      const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+      gates.assertOwnerToolWorkingDirectory(ctx.sessionId, ctx.cwd)
+      gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Read', { file_path: params.file_path, offset: params.offset, limit: params.limit })
+    }
+    // 打开前重解析真实路径并固定 inode 基准，打开后比对，关闭父目录替换竞态。
+    const expected = realpathSync(path)
+    const before = statSync(expected)
+    const descriptor = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK)
+    let content: string
+    try {
+      assertDescriptorMatchesStat(descriptor, before)
+      const scope = resolveToolPath(expected, ctx.cwd)
+      if (scope.error) throw new Error(scope.error)
+      content = readFileSync(descriptor, 'utf-8')
+    } finally {
+      closeSync(descriptor)
+    }
     const lines = content.split('\n')
     const offset = params.offset ?? 0
     const limit = params.limit ?? lines.length

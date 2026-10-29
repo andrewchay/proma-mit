@@ -883,6 +883,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
     toolMap: Map<string, RuntimeToolDefinition>,
     ctx: ToolCallExecutionCtx,
   ): Promise<ToolResult[]> {
+    const boundCtx = Object.freeze({ ...ctx })
     const results: ToolResult[] = []
     // 可并行执行的工具调用批量缓冲
     let parallelBatch: ToolCall[] = []
@@ -894,7 +895,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       parallelBatch = []
       // 并发放飞所有可并行的单工具执行；各工具通过 tool_use_id 关联，相互独立
       const outcomes = await Promise.all(
-        batch.map(async (tc) => ({ result: await this.executeSingleToolCall(tc, toolMap, ctx) })),
+        batch.map(async (tc) => ({ result: await this.executeSingleToolCall(tc, toolMap, boundCtx) })),
       )
       for (const { result } of outcomes) results.push(result)
     }
@@ -903,7 +904,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       if (SEQUENTIAL_TOOL_NAMES.has(tc.name)) {
         // 遇到必须串行的工具：先按序清空之前累积的并行 batch，再执行本工具
         await flushParallelBatch()
-        results.push(await this.executeSingleToolCall(tc, toolMap, ctx))
+        results.push(await this.executeSingleToolCall(tc, toolMap, boundCtx))
       } else {
         parallelBatch.push(tc)
       }

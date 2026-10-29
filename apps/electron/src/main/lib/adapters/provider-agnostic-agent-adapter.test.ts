@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ProviderAdapter, ProviderRequest, StreamSSEOptions, StreamSSEResult, ToolCall } from '@gravitas/core'
 import type { AgentEvent, SDKMessage, SDKResultMessage } from '@gravitas/shared'
+import type { RuntimeToolDefinition } from '../agent-runtime/types'
 
 
 // 被测模块依赖 attachment-service/document-parser，它们会加载 electron，
@@ -56,6 +57,22 @@ interface CapturedRequest {
 }
 
 describe('Provider-Agnostic Agent 适配器', () => {
+  test('Given 工具批次开始执行 When 来源上下文被改写 Then 工具仍接收初始会话与目录', async () => {
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const context = { cwd: '/tmp/original', sessionId: 'original-session', permissionMode: 'bypassPermissions' as const }
+    let seen: { cwd: string; sessionId: string; frozen: boolean } | undefined
+    const tool: RuntimeToolDefinition = {
+      name: 'BoundRead', description: 'test', parameters: { type: 'object', properties: {} },
+      execute: async (_input, ctx) => { seen = { cwd: ctx.cwd, sessionId: ctx.sessionId, frozen: Object.isFrozen(ctx) }; return { toolCallId: '', content: 'ok' } },
+    }
+    const internal = adapter as unknown as { executeToolCalls: (calls: ToolCall[], tools: Map<string, RuntimeToolDefinition>, ctx: typeof context) => Promise<unknown[]> }
+    const pending = internal.executeToolCalls([{ id: 'one', name: 'BoundRead', arguments: {} }], new Map([['BoundRead', tool]]), context)
+    context.sessionId = 'other-session'
+    context.cwd = '/tmp/other'
+    await pending
+    expect(seen).toEqual({ cwd: '/tmp/original', sessionId: 'original-session', frozen: true })
+  })
+
   let tempDir: string
   let streamCallCount = 0
   let capturedRequests: CapturedRequest[] = []

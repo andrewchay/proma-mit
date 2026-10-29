@@ -6,7 +6,10 @@
  * 本文件通过 mock.module 隔离存储层，避免真实配置目录与文件写入。
  */
 
-import { beforeEach, describe, expect, mock, test } from 'bun:test'
+import { beforeEach, beforeAll, afterAll, describe, expect, mock, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { MemoryItem } from '../../memory-plugin-service'
 
 let mockItems: MemoryItem[] = []
@@ -53,6 +56,14 @@ function mkItem(overrides: Partial<MemoryItem> & { id: string; title: string }):
     ...overrides,
   }
 }
+
+const directory = mkdtempSync(join(tmpdir(), 'project-memory-tool-db-')), previous = process.env.PROMA_TEST_CONFIG_DIR
+beforeAll(async () => { process.env.PROMA_TEST_CONFIG_DIR = directory; await (await import('../../project-sqlite-store')).initProjectDb() })
+afterAll(async () => {
+  (await import('../../project-sqlite-store')).closeProjectDb()
+  if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous
+  rmSync(directory, { recursive: true, force: true })
+})
 
 describe('项目记忆工具（Agent Runtime）', () => {
   const ctx = { cwd: '/tmp/workspace', sessionId: 'session-42' }

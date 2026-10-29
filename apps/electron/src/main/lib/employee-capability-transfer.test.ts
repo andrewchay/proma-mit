@@ -44,6 +44,7 @@ test('跨员工迁移默认关闭，且不复制来源分数', () => {
   const targetIds = seed(target.id, 3)
   const prepared = prepareCapabilityTransfer({ sourceAgentId: source.id, targetAgentId: target.id, scope: 'role', allowTransfer: true })
   expect(prepared.status).toBe('prepared')
+  expect(prepared.message).toContain('暂不能创建迁移候选')
   expect(prepared.patternSummary).toContain('来源员工')
   expect(prepared.patternSummary).not.toContain('脱敏结论')
 
@@ -58,4 +59,12 @@ test('迁移候选必须引用目标员工自己的已脱敏样本', () => {
   seed(target.id, 3)
   expect(() => createTransferCandidate({ targetAgentId: target.id, scope: 'role', content: '迁移能力', trainingScore: 90, heldOutScore: 90, judgeIndependent: true, evidenceSampleIds: sourceIds })).toThrow('目标员工自己')
   expect(listAgentEmployeeLearningSamples(target.id).every((sample) => sample.privacyStatus === 'sanitized')).toBe(true)
+})
+
+
+test('Given 目标员工有足够样本但只有调用方声称的分数 When 创建迁移候选 Then 拒绝', () => {
+  const target = createAgentEmployee({ name: '目标3', role: '开发', description: '', channelId: 'channel' })
+  const targetIds = seed(target.id, 3)
+  resetGovernancePolicyForTests()
+  expect(() => createTransferCandidate({ targetAgentId: target.id, scope: 'role', content: '迁移能力', trainingScore: 90, heldOutScore: 90, judgeIndependent: true, evidenceSampleIds: targetIds })).toThrow('可追溯的目标员工评测记录')
 })

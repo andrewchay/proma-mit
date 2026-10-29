@@ -179,6 +179,7 @@ export function getGoalsDir(): string {
  * @returns ~/.proma-mit/goals/{goalId}.json
  */
 export function getGoalPath(id: string): string {
+  if (!/^[A-Za-z0-9_-]{1,128}$/.test(id) || id.toLowerCase() === 'index') throw new Error('Goal ID 无效')
   return join(getGoalsDir(), `${id}.json`)
 }
 

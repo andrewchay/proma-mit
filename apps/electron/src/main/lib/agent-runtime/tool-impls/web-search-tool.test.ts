@@ -5,11 +5,16 @@
  * 通过 mock.module 隔离凭据配置，避免读取真实 ~/.proma/chat-tools.json。
  */
 
-import { describe, expect, mock, test, beforeEach, afterEach } from 'bun:test'
+import { describe, expect, mock, test, beforeAll, afterAll, beforeEach, afterEach } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { WebSearchCredentials } from './web-search-tool'
 
 let mockCredentials: WebSearchCredentials = {}
+const originalChatConfig = await import('../../chat-tool-config')
 mock.module('../../chat-tool-config', () => ({
+  ...originalChatConfig,
   getToolCredentials: (toolId: string) => (toolId === 'web-search' ? mockCredentials : {}),
 }))
 
@@ -19,6 +24,20 @@ const {
   resolveWebSearchProvider,
   WEB_SEARCH_TOOL_NAME,
 } = await import('./web-search-tool')
+
+const testConfigDir = mkdtempSync(join(tmpdir(), 'gravitas-web-tool-db-'))
+const previousConfigDir = process.env.PROMA_TEST_CONFIG_DIR
+beforeAll(async () => {
+  process.env.PROMA_TEST_CONFIG_DIR = testConfigDir
+  await (await import('../../project-sqlite-store')).initProjectDb()
+})
+afterAll(async () => {
+  const { closeProjectDb } = await import('../../project-sqlite-store')
+  closeProjectDb()
+  if (previousConfigDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+  else process.env.PROMA_TEST_CONFIG_DIR = previousConfigDir
+  rmSync(testConfigDir, { recursive: true, force: true })
+})
 
 describe('WebSearch 工具', () => {
   const ctx = { cwd: '/tmp/workspace', sessionId: 'test-session' }
@@ -169,4 +188,37 @@ describe('WebSearch 工具', () => {
     expect(result.isError).toBeFalsy()
     expect(result.content).toContain('未找到相关结果')
   })
+
+  test('Given 调用已取消 When 发起搜索 Then 不发送请求', async () => {
+    const controller = new AbortController(); controller.abort()
+    let calls = 0
+    globalThis.fetch = (async () => { calls++; return new Response('{}') }) as unknown as typeof fetch
+    const result = await executeWebSearchTool({ query: '测试' }, { ...ctx, abortSignal: controller.signal })
+    expect(result.isError).toBe(true)
+    expect(calls).toBe(0)
+  })
+
+  test('Given 搜索响应超过上限 When 读取流 Then 停止读取并返回错误', async () => {
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({ start(controller) { controller.enqueue(new Uint8Array(2_000_001)) }, cancel() { cancelled = true } })
+    globalThis.fetch = (async () => new Response(body)) as unknown as typeof fetch
+    const result = await executeWebSearchTool({ query: '测试' }, ctx)
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('搜索响应过大')
+    expect(cancelled).toBe(true)
+  })
+
+  test('Given 搜索响应体未结束 When 调用取消 Then 中断等待', async () => {
+    let started!: () => void
+    const ready = new Promise<void>(resolve => { started = resolve })
+    let cancelled = false
+    const body = new ReadableStream<Uint8Array>({ pull() { started() }, cancel() { cancelled = true } }, { highWaterMark: 0 })
+    globalThis.fetch = (async () => new Response(body)) as unknown as typeof fetch
+    const controller = new AbortController()
+    const pending = executeWebSearchTool({ query: '测试' }, { ...ctx, abortSignal: controller.signal })
+    await ready; controller.abort()
+    expect((await pending).isError).toBe(true)
+    expect(cancelled).toBe(true)
+  })
+
 })

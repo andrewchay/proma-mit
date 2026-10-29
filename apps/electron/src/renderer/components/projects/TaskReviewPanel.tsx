@@ -10,6 +10,7 @@ import * as React from 'react'
 import { useAtomValue, useSetAtom, useStore } from 'jotai'
 import type { DevelopmentApplyStatusInfo, DevelopmentValidationResult, TaskReviewSummary } from '@gravitas/shared'
 import { DiffView } from '@/components/diff/DiffView'
+import { JudgmentReasonSelect } from './JudgmentReasonSelect'
 import { activeViewAtom } from '@/atoms/active-view'
 import { appModeAtom } from '@/atoms/app-mode'
 import { agentSessionsAtom, currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
@@ -18,8 +19,8 @@ import { activeTabIdAtom, openTab, tabsAtom } from '@/atoms/tab-atoms'
 type AgentApi = {
   getTaskReview: (taskId: string) => Promise<TaskReviewSummary>
   getSnapshotDiff: (executionId: string, filePath: string) => Promise<{ oldContent: string | null; newContent: string | null }>
-  acceptDelivery: (taskId: string, deliveryId: string, input: { evidence: string; completedCriteria?: string[] }) => Promise<unknown>
-  rejectDelivery: (taskId: string, deliveryId: string, comment: string) => Promise<unknown>
+  acceptDelivery: (taskId: string, deliveryId: string, input: { evidence: string; completedCriteria?: string[]; expectedVersion?: number }) => Promise<unknown>
+  rejectDelivery: (taskId: string, deliveryId: string, comment: string, reasonCode?: import('@gravitas/shared').ProjectJudgmentReasonCode, expectedVersion?: number) => Promise<unknown>
   requestChanges: (taskId: string, comment: string) => Promise<{ taskId: string } | null>
   runValidation: (taskId: string, command: string) => Promise<DevelopmentValidationResult>
   listValidations: (taskId: string) => Promise<DevelopmentValidationResult[]>
@@ -55,6 +56,7 @@ export function TaskReviewPanel({ taskId, onChanged }: { taskId: string; onChang
   const [diff, setDiff] = React.useState<{ oldContent: string | null; newContent: string | null } | null>(null)
   const [viewMode, setViewMode] = React.useState<'split' | 'unified'>('unified')
   const [evidence, setEvidence] = React.useState('')
+  const reasonRef = React.useRef<HTMLSelectElement>(null)
   const [comment, setComment] = React.useState('')
   const [busy, setBusy] = React.useState(false)
   const [validations, setValidations] = React.useState<DevelopmentValidationResult[]>([])
@@ -221,16 +223,17 @@ export function TaskReviewPanel({ taskId, onChanged }: { taskId: string; onChang
           disabled={busy || !latestDelivery || latestDelivery.status !== 'submitted'}
           className="w-full rounded-md bg-background p-2 text-xs"
         />
+        <JudgmentReasonSelect key={`${latestDelivery?.id ?? 'none'}:${latestDelivery?.version ?? 0}`} ref={reasonRef} disabled={busy || !latestDelivery || latestDelivery.status !== 'submitted'} />
         <div className="flex flex-wrap gap-2">
           <button
             className="rounded bg-green-600 px-3 py-1 text-xs text-white disabled:opacity-50"
             disabled={busy || !canAccept || !evidence.trim()}
-            onClick={() => void act(async () => { const api = agentApi(); await api.acceptDelivery(taskId, latestDelivery!.id, { evidence: evidence.trim() }) }, `确认验收通过？验收不可撤销（纠错通过新版本进行）。\n\n验收依据：${evidence.trim().slice(0, 120)}`)}
+            onClick={() => void act(async () => { const api = agentApi(); await api.acceptDelivery(taskId, latestDelivery!.id, { evidence: evidence.trim(), expectedVersion: latestDelivery!.version }) }, `确认验收通过？验收不可撤销（纠错通过新版本进行）。\n\n验收依据：${evidence.trim().slice(0, 120)}`)}
           >验收通过</button>
           <button
             className="rounded bg-destructive px-3 py-1 text-xs text-white disabled:opacity-50"
             disabled={busy || !latestDelivery || latestDelivery.status !== 'submitted' || !isLocalReviewer || !evidence.trim()}
-            onClick={() => void act(async () => { const api = agentApi(); await api.rejectDelivery(taskId, latestDelivery!.id, evidence.trim()) }, '确认退回该交付版本？历史记录保留。')}
+            onClick={() => { const reasonCode = reasonRef.current?.value as import('@gravitas/shared').ProjectJudgmentReasonCode | undefined; if (!reasonCode) { setError('请选择退回原因分类'); return } void act(async () => { const api = agentApi(); await api.rejectDelivery(taskId, latestDelivery!.id, evidence.trim(), reasonCode, latestDelivery!.version) }, '确认退回该交付版本？历史记录保留。') }}
           >退回（以验收依据为退回原因）</button>
           <button
             className="rounded border px-3 py-1 text-xs disabled:opacity-50"

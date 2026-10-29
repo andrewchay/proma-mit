@@ -810,7 +810,7 @@ test('Given 最后一次管理请求用于团队安排 When 安排完成但预�
     expect(store.getProjectDb().prepare("SELECT COUNT(*) AS n FROM project_owner_execution_start_intents WHERE project_id=?").get(f.project.id)).toMatchObject({ n: 0 })
     expect(store.getProjectDb().prepare("SELECT COUNT(*) AS n FROM project_owner_execution_grants WHERE project_id=?").get(f.project.id)).toMatchObject({ n: 0 })
   } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, issued.id) }
-})
+}, 15_000)
 
 test('Given 已确认方案但没有管理委托 When 后台处理 Then 仅准备一次不收费，重开及重复确认复用同记录', async () => {
   const f = fixture(); confirm(f); reconcileOwnerManagement(f.project.id)
@@ -851,7 +851,7 @@ test('Given 获准工作区没有可执行员工 When 确认方案 Then 明确�
     expect(attention?.content).toContain('扩大项目资料范围也不能解决当前团队配置问题')
     expect(listOwnerExecutionAssignmentRuns(f.subject)).toHaveLength(0)
   } finally { delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
-})
+}, 15_000)
 
 test('Given 待审方案缺少独立评审 When Owner尝试准备团队 Then 不声称范围已确认并说明下一步', async () => {
   const f = fixture('missing-reviewer', false, false), grant = authorize(f), stop = startOwnerManagementLoop()

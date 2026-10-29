@@ -538,10 +538,10 @@ function ScoreTrend({ detail }: { detail: EvalDetail }): React.ReactElement {
   }
   const latest = evals[evals.length - 1]
   const judgeLabel = latest?.judge?.kind === "llm"
-    ? `LLM 评判 · ${latest.judge.modelId ?? "未记录模型"}${latest.judge.independent ? " · 独立" : " · 同源"}`
+    ? `LLM 评判 · ${latest.judge.modelId ?? "未记录模型"}${latest.judge.independent ? " · 配置标记不同（独立性未核验）" : " · 独立性未确认"}`
     : latest?.judge?.kind === "injected"
-      ? "外部评判器"
-      : "规则关键词评分"
+      ? "外部评判器（来源未核验）"
+      : latest?.judge?.kind === "rule" ? "规则关键词评分" : "评判来源未记录"
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2 text-xs">

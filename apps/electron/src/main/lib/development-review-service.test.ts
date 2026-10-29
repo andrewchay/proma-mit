@@ -187,6 +187,25 @@ describe('验收 / 退回 / 返工（T12）', () => {
     await expect(review.requestChanges(w.taskId, '   ')).rejects.toThrow('返工意见')
   })
 
+  test('Given 同项目不同任务的交付 When 验收或退回 Then 拒绝跨任务操作', async () => {
+    const w = fixture()
+    submitDevelopmentDelivery(w.executionId)
+    const delivery = (await review.getTaskReview(w.taskId)).deliveries[0]!
+    const other = store.createTask(w.projectId, { title: '其他任务', description: '' })
+    await expect(review.acceptDelivery(other.id, delivery.id, { evidence: '核对', expectedVersion: delivery.version })).rejects.toThrow('不属于当前任务')
+    await expect(review.rejectDelivery(other.id, delivery.id, '需修改', 'wrong_direction', delivery.version)).rejects.toThrow('不属于当前任务')
+    expect((await review.getTaskReview(w.taskId)).deliveries[0]!.status).toBe('submitted')
+  })
+
+  test('Given 审查页面的交付版本过期 When 接受或退回 Then 不能操作当前版本', async () => {
+    const w = fixture()
+    submitDevelopmentDelivery(w.executionId)
+    const delivery = (await review.getTaskReview(w.taskId)).deliveries[0]!
+    await expect(review.acceptDelivery(w.taskId, delivery.id, { evidence: '核对', expectedVersion: delivery.version + 1 })).rejects.toThrow('版本已变化')
+    await expect(review.rejectDelivery(w.taskId, delivery.id, '需修改', 'wrong_direction', delivery.version + 1)).rejects.toThrow('版本已变化')
+    expect((await review.getTaskReview(w.taskId)).deliveries[0]!.status).toBe('submitted')
+  })
+
   test('Given 空证据 When 验收通过 Then 拒绝', async () => {
     const w = fixture()
     submitDevelopmentDelivery(w.executionId)

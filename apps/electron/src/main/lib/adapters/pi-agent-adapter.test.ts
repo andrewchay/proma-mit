@@ -218,15 +218,19 @@ describe('PiAgentAdapter', () => {
     let approvalCalls = 0
     capturedSessionOptions = undefined
     const adapter = new PiAgentAdapter()
-    for await (const _message of adapter.query({
-      sessionId: 's-owner-pi-write-approval', prompt: '写入成果', agentRuntime: 'pi',
-      provider: 'deepseek', apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp',
-      canUseTool: async () => { approvalCalls++; return { allowed: false, message: '等待人工审批' } },
-    })) { /* mock Pi session不连接Provider */ }
-    const write = getCapturedSessionOptions()?.customTools?.find(tool => tool.name === 'Write') as unknown as { execute: (id: string, input: Record<string, unknown>) => Promise<{ details?: { isError?: boolean } }> } | undefined
-    if (!write) throw new Error('Owner Pi工具桥缺少Write候选')
-    await write.execute('write-approval', { file_path: 'result.txt', content: '未获批准不得写入' })
-    expect(approvalCalls).toBe(1)
+    mockBeforePrompt = async () => {
+      const write = getCapturedSessionOptions()?.customTools?.find(tool => tool.name === 'Write') as unknown as { execute: (id: string, input: Record<string, unknown>) => Promise<unknown> } | undefined
+      if (!write) throw new Error('Owner Pi工具桥缺少Write候选')
+      await write.execute('write-approval', { file_path: 'result.txt', content: '未获批准不得写入' })
+    }
+    try {
+      for await (const _message of adapter.query({
+        sessionId: 's-owner-pi-write-approval', prompt: '写入成果', agentRuntime: 'pi',
+        provider: 'deepseek', apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp',
+        canUseTool: async () => { approvalCalls++; return { allowed: false, message: '等待人工审批' } },
+      })) { /* mock Pi session不连接Provider */ }
+      expect(approvalCalls).toBe(1)
+    } finally { mockBeforePrompt = undefined }
     ownerToolNamesForTest = null
     ownerWriteCandidateForTest = false
     adapter.dispose()
@@ -247,22 +251,41 @@ describe('PiAgentAdapter', () => {
     capturedSettings = undefined
     capturedSessionOptions = undefined
     const adapter = new PiAgentAdapter()
-    for await (const _message of adapter.query({
-      sessionId, prompt: '受控执行', agentRuntime: 'pi', provider: 'zhipu', apiKey: 'fake',
-      baseUrl: 'http://127.0.0.1:9/api/paas/v4', model: 'glm-5.3-flash', cwd: '/tmp',
-      canUseTool: async () => ({ allowed: true }),
-    })) { /* mock session不连接Provider */ }
+    mockBeforePrompt = async () => {
+      const readTool = getCapturedSessionOptions()?.customTools?.find(tool => tool.name === 'Read')
+      if (!readTool) throw new Error('Owner Pi工具桥缺少Read工具')
+      const read = readTool as unknown as { execute(toolCallId: string, params: Record<string, unknown>, signal: AbortSignal): Promise<unknown> }
+      await expect(read.execute('owner-pi-read', { path: 'should-not-run.txt' }, new AbortController().signal))
+        .rejects.toThrow('Owner请求费用/用量尚未确认')
+    }
+    try {
+      for await (const _message of adapter.query({
+        sessionId, prompt: '受控执行', agentRuntime: 'pi', provider: 'zhipu', apiKey: 'fake',
+        baseUrl: 'http://127.0.0.1:9/api/paas/v4', model: 'glm-5.3-flash', cwd: '/tmp',
+        canUseTool: async () => ({ allowed: true }),
+      })) { /* mock session不连接Provider */ }
+    } finally { mockBeforePrompt = undefined }
 
     expect(getCapturedSettings()?.retry?.enabled).toBe(false)
     expect(getCapturedSettings()?.retry?.provider?.maxRetries).toBe(0)
     expect(getCapturedSettings()?.cacheWarming).toBe('off')
     expect(getCapturedSettings()?.compaction?.enabled).toBe(false)
-    const readTool = getCapturedSessionOptions()?.customTools?.find(tool => tool.name === 'Read')
-    expect(readTool).toBeDefined()
-    if (!readTool) throw new Error('Owner Pi工具桥缺少Read工具')
-    const read = readTool as unknown as { execute(toolCallId: string, params: Record<string, unknown>, signal: AbortSignal): Promise<unknown> }
-    await expect(read.execute('owner-pi-read', { path: 'should-not-run.txt' }, new AbortController().signal))
-      .rejects.toThrow('Owner请求费用/用量尚未确认')
+  })
+
+  test('Given Pi 会话正常结束 When 旧工具再次调用 Then 不进入权限流程', async () => {
+    let approvalCalls = 0
+    const adapter = new PiAgentAdapter()
+    for await (const _message of adapter.query({
+      sessionId: 's-pi-finished-tool', prompt: '完成', agentRuntime: 'pi', provider: 'deepseek',
+      apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp',
+      canUseTool: async () => { approvalCalls++; return { allowed: true } },
+    })) { /* mock Pi session不连接Provider */ }
+    const read = getCapturedSessionOptions()?.customTools?.find(tool => tool.name === 'Read') as unknown as { execute(id: string, input: Record<string, unknown>, signal: AbortSignal): Promise<{ details?: { isError?: boolean } }> } | undefined
+    if (!read) throw new Error('缺少 Read 工具')
+    const result = await read.execute('finished', { file_path: 'not-used.txt' }, new AbortController().signal)
+    expect(result.details?.isError).toBe(true)
+    expect(approvalCalls).toBe(0)
+    adapter.dispose()
   })
 
   test('given required channel fields are missing then query fails with a helpful error', async () => {
@@ -816,6 +839,74 @@ describe('PiAgentAdapter', () => {
       expect.objectContaining({ type: 'system', subtype: 'compact_boundary' }),
     ]))
     promptEvents = []
+  })
+
+  test('Given Pi 会话被直接停止 When 旧工具带未取消的 signal 调用 Then 不进入权限流程', async () => {
+    let resolvePrompt: (() => void) | undefined
+    promptGate = new Promise<void>((resolve) => { resolvePrompt = resolve })
+    sessionActivated = false
+    capturedSessionOptions = undefined
+    let approvals = 0
+    const adapter = new PiAgentAdapter()
+    const iterator = adapter.query({
+      sessionId: 's-pi-direct-abort-tools', prompt: '等待取消', agentRuntime: 'pi',
+      provider: 'deepseek', apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp',
+      canUseTool: async () => { approvals += 1; return { allowed: true } },
+    })[Symbol.asyncIterator]()
+    const nextMessage = iterator.next()
+    try {
+      for (let attempt = 0; attempt < 20 && !sessionActivated; attempt += 1) await Promise.resolve()
+      if (!sessionActivated) throw new Error('Pi session 未进入活动状态')
+      await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      const read = getCapturedSessionOptions()?.customTools?.find((tool) => tool.name === 'Read') as unknown as { execute(id: string, input: Record<string, unknown>, signal: AbortSignal): Promise<{ details?: { isError?: boolean } }> } | undefined
+      if (!read) throw new Error('缺少 Read 工具')
+      adapter.abort('s-pi-direct-abort-tools')
+      const result = await read.execute('test', { file_path: 'not-used.txt' }, new AbortController().signal)
+      expect(result.details?.isError).toBe(true)
+      expect(approvals).toBe(0)
+    } finally {
+      resolvePrompt?.()
+      await nextMessage
+      promptGate = undefined
+      adapter.dispose()
+    }
+  })
+
+  test('Given Pi 旧会话停止后同 ID 新会话启动 When 旧会话随后退出 Then 新会话仍可停止', async () => {
+    let releaseFirst: (() => void) | undefined
+    let releaseSecond: (() => void) | undefined
+    promptGate = new Promise<void>(resolve => { releaseFirst = resolve })
+    sessionActivated = false
+    abortCallCount = 0
+    const adapter = new PiAgentAdapter()
+    const oldCaller = new AbortController()
+    const input = { sessionId: 's-pi-restart', prompt: '运行', agentRuntime: 'pi' as const, provider: 'deepseek' as const,
+      apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp' }
+    const first = adapter.query({ ...input, abortSignal: oldCaller.signal })[Symbol.asyncIterator]()
+    const firstDone = first.next()
+    for (let i = 0; i < 100 && !sessionActivated; i++) await new Promise(resolve => setTimeout(resolve, 1))
+    if (!sessionActivated) throw new Error('首个 Pi 会话未启动')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    adapter.abort(input.sessionId)
+    promptGate = new Promise<void>(resolve => { releaseSecond = resolve })
+    sessionActivated = false
+    const second = adapter.query(input)[Symbol.asyncIterator]()
+    const secondDone = second.next()
+    for (let i = 0; i < 100 && !sessionActivated; i++) await new Promise(resolve => setTimeout(resolve, 1))
+    if (!sessionActivated) throw new Error('第二个 Pi 会话未启动')
+    await new Promise(resolve => setTimeout(resolve, 0))
+    oldCaller.abort()
+    expect(abortCallCount).toBe(1)
+    releaseFirst?.()
+    await firstDone
+    await first.return?.()
+    adapter.abort(input.sessionId)
+    expect(abortCallCount).toBe(2)
+    releaseSecond?.()
+    await secondDone
+    await second.return?.()
+    promptGate = undefined
+    adapter.dispose()
   })
 
   test('given an active Pi turn when it is cancelled then the Pi session is released', async () => {

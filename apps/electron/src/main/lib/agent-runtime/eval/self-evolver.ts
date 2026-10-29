@@ -76,9 +76,18 @@ function averageCaseScore(cases: CaseEval[]): number | null {
   return scored.reduce((s, c) => s + (c.score as number), 0) / scored.length
 }
 
-/** 由 CaseEval 列表构造 held-out 报告。 */
-function toHeldOutReport(byCase: CaseEval[]): HeldOutReport {
-  const total = averageCaseScore(byCase) ?? 0
+/** 每个预期 case 都必须有有效分数，缺失不能折算为零。 */
+function completeCaseScore(cases: CaseEval[], expected?: string[]): number | null {
+  if (!cases.length || cases.some(item => item.score === null || !Number.isFinite(item.score) || item.score < 0 || item.score > 100)) return null
+  const ids = new Set(cases.map(item => item.caseId))
+  if (ids.size !== cases.length || (expected && (ids.size !== expected.length || expected.some(id => !ids.has(id))))) return null
+  return averageCaseScore(cases)
+}
+
+/** 由完整 CaseEval 列表构造 held-out 报告。 */
+function toHeldOutReport(byCase: CaseEval[], expected?: string[]): HeldOutReport | null {
+  const total = completeCaseScore(byCase, expected)
+  if (total === null) return null
   return {
     score: Math.round(total * 100) / 100,
     scoreStd: meanStd(byCase.filter((c) => c.score !== null).map((c) => c.score as number)).std,
@@ -112,7 +121,7 @@ function buildEvaluation(
     judge: judge ?? null,
     // 方差报告：跨 Case 分数的总体标准差（n<2 → null）
     scoreStd: meanStd(byCase.filter((c) => c.score !== null).map((c) => c.score as number)).std,
-    heldOut: heldOutByCase ? toHeldOutReport(heldOutByCase) : null,
+    heldOut: heldOutByCase ? toHeldOutReport(heldOutByCase, benchmark.heldOutCases) : null,
     cases: byCase.map((c) => ({
       caseId: c.caseId,
       score: c.score ?? 0,
@@ -134,7 +143,8 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
 
   // 1) Baseline
   const baselineByCase = await input.evaluate(undefined, input.benchmark)
-  const baselineScore = averageCaseScore(baselineByCase) ?? 0
+  const baselineScore = completeCaseScore(baselineByCase, input.benchmark.cases)
+  if (baselineScore === null) throw new Error('训练集基线评测不完整，不能生成候选')
   // held-out baseline 同时用于记录与候选门禁，避免同一轮重复消耗评测预算。
   const heldOutBaseline = input.evaluateHeldOut ? await input.evaluateHeldOut(undefined, input.benchmark) : null
   // 记录 baseline 到 scoreboard（若无同版本记录）
@@ -146,7 +156,7 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
   const rounds: SelfEvolveRoundResult[] = []
   let currentVersion = baselineVersion
   let currentScore = baselineScore
-  const baselineHeldOutScore = heldOutBaseline ? averageCaseScore(heldOutBaseline) : null
+  const baselineHeldOutScore = heldOutBaseline ? completeCaseScore(heldOutBaseline, input.benchmark.heldOutCases) : null
 
   for (let round = 1; round <= input.maxRounds; round++) {
     const deficit = baselineByCase.map((c) => ({ caseId: c.caseId, score: c.score }))
@@ -165,7 +175,7 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
 
     try {
       const candidateByCase = await input.evaluate(change.afterState, input.benchmark)
-      const candidateTotal = averageCaseScore(candidateByCase)
+      const candidateTotal = completeCaseScore(candidateByCase, input.benchmark.cases)
       candidateScore = candidateTotal ?? 0
       if (candidateTotal === null) {
         reason = '候选评测无效（无有效分数）'
@@ -175,9 +185,13 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
       } else if (candidateTotal > currentScore) {
         // held-out 是推广门禁而非仅报告：训练分上涨但独立案例下降则回滚。
         const heldOutCandidate = input.evaluateHeldOut ? await input.evaluateHeldOut(change.afterState, input.benchmark) : null
-        const heldOutScore = heldOutCandidate ? averageCaseScore(heldOutCandidate) : null
+        const heldOutScore = heldOutCandidate ? completeCaseScore(heldOutCandidate, input.benchmark.heldOutCases) : null
         const heldOutThreshold = (baselineHeldOutScore ?? -Infinity) - (input.heldOutMaxRegression ?? 0)
-        if (heldOutScore !== null && heldOutScore < heldOutThreshold) {
+        if (input.evaluateHeldOut && (baselineHeldOutScore === null || heldOutScore === null)) {
+          reason = '拒绝：held-out 基线或候选评测不完整'
+          await input.state.restore()
+          rolledBack = true
+        } else if (heldOutScore !== null && heldOutScore < heldOutThreshold) {
           accepted = false
           reason = `拒绝：held-out ${heldOutScore.toFixed(2)} 低于门槛 ${heldOutThreshold.toFixed(2)}`
           await input.state.restore()

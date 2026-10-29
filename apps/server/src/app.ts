@@ -1,5 +1,6 @@
 import {
   AgentRuntimeEventReplayHub,
+  AgentRuntimeObjectTooLargeError,
   createAgentRuntimeWebServer,
   createWebCryptoEnvelopeSecretCodec,
   createCloudKmsEnvelopeSecretCodec,
@@ -12,6 +13,9 @@ import {
   RedisAgentRuntimeEventStore,
 } from '@gravitas/shared/utils'
 import { ServerMcpConnectionManager } from '@gravitas/shared/utils/node'
+import { readBoundedObjectBody } from './bounded-object-body.ts'
+import { csvValue } from './csv.ts'
+import { handleSharedFileList, matchSharedFileListRoute } from './workspace-shared-file-list.ts'
 import type {
   AgentRuntimePostgresClient,
   AgentRuntimeRole,
@@ -64,6 +68,9 @@ import type { UsagePriceEntry } from './billing.ts'
 import type { TenantBudgetPolicy } from './billing.ts'
 import type { UsageLedgerRecord } from './billing.ts'
 import { PostgresAuthSessionStore } from './auth-session-store.ts'
+import { PostgresWorkspaceMembershipStore } from './workspace-membership-store.ts'
+import { handleWorkspaceMembershipRoute, matchWorkspaceMembershipRoute } from './workspace-membership-api.ts'
+import { handleSharedFileRoute, matchSharedFileRoute, PostgresSharedFileStore } from './workspace-shared-file.ts'
 import { createAuthHandler, readLoginCredentials, type AuthRoutesDeps } from './auth-routes.ts'
 import { createCookieSessionAuthResolver, createCompositeAuthResolver } from './auth-resolvers.ts'
 import { hashPassword, verifyPassword } from './local-admin-auth.ts'
@@ -87,6 +94,9 @@ export interface PromaWebServerConfig {
   trustedHeaderAuth: boolean
   /** 浏览器登录：local（本地用户名/密码）/ oidc / both / none（仅 Bearer/trusted-header） */
   authMode?: 'local' | 'oidc' | 'both' | 'none'
+  secureSessionCookie?: boolean
+  /** 浏览器对外访问地址；生产由启动策略要求为 HTTPS。 */
+  publicBaseUrl?: string
   /** OIDC Authorization Code 客户端配置（authMode=oidc|both 时需要） */
   oidc?: { authorizationEndpoint: string; tokenEndpoint: string; clientId: string; clientSecret?: string; redirectUri: string; scope?: string }
   /** 本地 bootstrap 管理员（authMode=local|both 时需要） */
@@ -178,6 +188,8 @@ export function createPromaWebServerApplication(
   const logger = dependencies.logger ?? consolePromaWebLogger
   const agentTurnRunner = dependencies.agentTurnRunner ?? runAISDKWebAgentTurn
   const store = new PostgresTenantRuntimeStore(postgres)
+  const workspaceMemberships = new PostgresWorkspaceMembershipStore(postgres)
+  const sharedFiles = new PostgresSharedFileStore(postgres)
   const taskLease = new PostgresTaskLease(postgres, config.workerId, config.taskLeaseMs)
   const usageLedger = new PostgresUsageLedger(postgres, config.priceCatalog ?? [])
   const auditLog = new PostgresAuditLog(postgres)
@@ -205,7 +217,7 @@ export function createPromaWebServerApplication(
     : undefined
   // 现有 Bearer/trusted-header 链路（dependencies.auth 来自 index.ts 的 OIDC JWT，或 trustedHeaderAuth）
   // authMode='none' 时：使用无鉴权 resolver，所有请求自动获得默认租户上下文
-  const baseAuth = config.authMode === 'none'
+  const baseAuth = config.authMode === 'none' && !config.trustedHeaderAuth
     ? createNoneAuthResolver()
     : (dependencies.auth ?? createTrustedHeaderAuth(config.trustedHeaderAuth))
   // 复合：cookie 会话优先，回退 Bearer/trusted-header
@@ -223,6 +235,7 @@ export function createPromaWebServerApplication(
       destroy: (sessionId) => authSessionStore.destroy(sessionId),
     },
     sessionCookieName: cookieAuthCookieName,
+    secureSessionCookie: config.secureSessionCookie,
     verifyAdmin: localAdmin
       ? async (username, password) => {
           if (username !== localAdmin.username) return null
@@ -477,31 +490,51 @@ export function createPromaWebServerApplication(
       if (url.pathname === '/auth/login') {
         if (request.method === 'GET') return authHandler.loginPage()
         if (request.method === 'POST') {
+          if (!isAllowedCookieOrigin(request, config.publicBaseUrl, config.secureSessionCookie)) return Response.json({ error: '登录请求需要可信同源 Origin' }, { status: 403 })
           const parsed = await readLoginCredentials(request)
           if (parsed.error || !parsed.credentials) return Response.json({ error: parsed.error ?? '请求体无效' }, { status: 400 })
           return authHandler.loginForm(parsed.credentials)
         }
       }
-      if (url.pathname === '/auth/logout') return authHandler.logout()
+      if (url.pathname === '/auth/logout') {
+        if (request.method !== 'POST') return new Response(null, { status: 405, headers: { allow: 'POST' } })
+        if (!isAllowedCookieOrigin(request, config.publicBaseUrl, config.secureSessionCookie)) return Response.json({ error: '登出请求需要可信同源 Origin' }, { status: 403 })
+        return authHandler.logout(request.headers.get('cookie'))
+      }
       if (url.pathname === '/auth/oidc/start') return authHandler.oidcStart()
       if (url.pathname === '/auth/oidc/callback') {
         const code = url.searchParams.get('code') ?? ''
         const state = url.searchParams.get('state') ?? ''
-        return authHandler.oidcCallback({ code, state })
+        return authHandler.oidcCallback({ code, state }, request.headers.get('cookie'))
       }
       // 认证元信息（供工作台按 authMode 呈现 UI，公开、不含敏感信息）
       if (url.pathname === '/auth/status') {
         const normalized = (config.authMode ?? 'none') === 'local' || (config.authMode ?? 'none') === 'both' || (config.authMode ?? 'none') === 'oidc' ? config.authMode : 'none'
         return Response.json({ authMode: normalized, hasOidc: Boolean(config.oidc) })
       }
-      const scope = await auth({ request, url })
+      const cookieScope = cookieAuthResolver ? await cookieAuthResolver({ request, url }) : undefined
+      const scope = cookieScope ?? await baseAuth({ request, url })
+      const cookieOriginError = cookieScope && !isAllowedCookieOrigin(request, config.publicBaseUrl, config.secureSessionCookie)
+        ? Response.json({ error: 'Cookie 会话的修改请求需要可信同源 Origin' }, { status: 403 })
+        : undefined
       const actionAuthorizationError = scope ? requireAgentActionRole(scope, request) : undefined
       const fileRoute = matchWorkspaceFileRoute(request.method, url.pathname)
       const oauthStartRoute = matchMcpOAuthStartRoute(request.method, url.pathname)
       const mcpStatusRoute = matchMcpStatusRoute(request.method, url.pathname)
+      const membershipRoute = matchWorkspaceMembershipRoute(request.method, url.pathname)
+      const sharedFileRoute = matchSharedFileRoute(request.method, url.pathname)
+      const sharedFileListRoute = matchSharedFileListRoute(request.method, url.pathname)
       let response: Response
-      if (actionAuthorizationError) {
+      if (cookieOriginError) {
+        response = cookieOriginError
+      } else if (actionAuthorizationError) {
         response = actionAuthorizationError
+      } else if (membershipRoute) {
+        response = scope ? await handleWorkspaceMembershipRoute(request, scope, membershipRoute, store, workspaceMemberships) : Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+      } else if (sharedFileListRoute) {
+        response = scope ? await handleSharedFileList(request, scope, sharedFileListRoute, postgres) : Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+      } else if (sharedFileRoute) {
+        response = scope ? await handleSharedFileRoute(request, scope, sharedFileRoute, sharedFiles, objectStore, config.s3.maxUploadBytes) : Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
       // P3-04：微信第三方平台商家授权（operator/admin）
       } else if (request.method === 'GET' && url.pathname === '/wechat/authorization-url') {
         response = !scope
@@ -804,6 +837,8 @@ export function createPromaWebServerApplication(
     async initialize() {
       if (redis instanceof NodeRedisClient) await redis.connect()
       await store.initializeSchema()
+      await workspaceMemberships.initializeSchema()
+      await sharedFiles.initializeSchema()
       await taskLease.initializeSchema()
       await usageLedger.initializeSchema()
       await auditLog.initializeSchema()
@@ -924,6 +959,12 @@ function parseAuditResult(value: string | null): 'success' | 'failure' | undefin
 
 function hasAnyRole(scope: AgentRuntimeScope, required: readonly AgentRuntimeRole[]): boolean {
   return scope.roles?.some((role) => required.includes(role)) ?? false
+}
+
+function isAllowedCookieOrigin(request: Request, publicBaseUrl?: string, secureCookie?: boolean): boolean {
+  if (request.method === 'GET' || request.method === 'HEAD' || request.method === 'OPTIONS') return true
+  if (secureCookie && !publicBaseUrl) return false
+  try { return request.headers.get('origin') === new URL(publicBaseUrl ?? request.url).origin } catch { return false }
 }
 
 /** 普通 Agent 写操作只允许 operator 或 admin；viewer 与 security-auditor 保持只读。 */
@@ -1137,11 +1178,6 @@ function createBillingExportResponse(records: UsageLedgerRecord[], format: strin
   })
 }
 
-function csvValue(value: unknown): string {
-  const raw = value == null ? '' : String(value)
-  return `"${raw.replaceAll('"', '""')}"`
-}
-
 export class PostgresTaskLease {
   constructor(
     private readonly client: AgentRuntimePostgresClient,
@@ -1244,15 +1280,21 @@ async function handleWorkspaceFile(
   const key = createAgentRuntimeWorkspaceObjectKey({ ...scope, ...route })
   if (request.method === 'PUT') {
     const contentLength = Number.parseInt(request.headers.get('content-length') ?? '0', 10)
-    if (contentLength > maxUploadBytes) return Response.json({ error: '文件超过上传大小限制' }, { status: 413 })
-    const body = new Uint8Array(await request.arrayBuffer())
-    if (body.byteLength > maxUploadBytes) return Response.json({ error: '文件超过上传大小限制' }, { status: 413 })
+    if (contentLength > maxUploadBytes) { void request.body?.cancel().catch(() => {}); return Response.json({ error: '文件超过上传大小限制' }, { status: 413 }) }
+    let body: Uint8Array
+    try { body = request.body ? await readBoundedObjectBody(request.body, maxUploadBytes) : new Uint8Array() }
+    catch (error) { if (error instanceof AgentRuntimeObjectTooLargeError) return Response.json({ error: '文件超过上传大小限制' }, { status: 413 }); throw error }
     const object = await objectStore.putObject({
       key,
       body,
       contentType: request.headers.get('content-type') ?? undefined,
     })
     return Response.json({ object }, { status: 201 })
+  }
+  if (objectStore.getObjectStream) {
+    const object = await objectStore.getObjectStream(key)
+    if (!object) return Response.json({ error: '文件不存在或不可访问' }, { status: 404 })
+    return createWorkspaceFileDownloadResponse(object.body, object.contentType)
   }
   const object = await objectStore.getObject(key)
   if (!object) return Response.json({ error: '文件不存在或不可访问' }, { status: 404 })
@@ -1277,7 +1319,7 @@ function matchWorkspaceFileRoute(method: string, pathname: string): { workspaceS
   }
 }
 
-class S3AgentRuntimeObjectStore implements AgentRuntimeObjectStore {
+export class S3AgentRuntimeObjectStore implements AgentRuntimeObjectStore {
   private readonly client: S3Client
 
   constructor(private readonly config: PromaWebS3Config) {
@@ -1296,11 +1338,23 @@ class S3AgentRuntimeObjectStore implements AgentRuntimeObjectStore {
     return { key: input.key, size: input.body.byteLength, contentType: input.contentType, updatedAt: Date.now() }
   }
 
-  async getObject(key: string) {
+  async getObject(key: string, options?: { maxBytes: number }) {
+    if (options && (!Number.isSafeInteger(options.maxBytes) || options.maxBytes < 0)) throw new Error('读取大小限制无效')
     try {
       const response = await this.client.send(new GetObjectCommand({ Bucket: this.config.bucket, Key: key }))
       if (!response.Body) return undefined
-      return { key, size: Number(response.ContentLength ?? 0), contentType: response.ContentType, updatedAt: Date.now(), body: new Uint8Array(await response.Body.transformToByteArray()) }
+      const body = options ? await readBoundedObjectBody(response.Body.transformToWebStream(), options.maxBytes) : new Uint8Array(await response.Body.transformToByteArray())
+      return { key, size: body.byteLength, contentType: response.ContentType, updatedAt: Date.now(), body }
+    } catch (error) {
+      if (isS3NotFound(error)) return undefined
+      throw error
+    }
+  }
+
+  async getObjectStream(key: string) {
+    try {
+      const response = await this.client.send(new GetObjectCommand({ Bucket: this.config.bucket, Key: key }))
+      return response.Body ? { body: response.Body.transformToWebStream(), contentType: response.ContentType } : undefined
     } catch (error) {
       if (isS3NotFound(error)) return undefined
       throw error
@@ -1399,6 +1453,12 @@ class BunPostgresClient implements AgentRuntimePostgresClient {
   async query<Row extends Record<string, unknown>>(sql: string, params: readonly unknown[] = []): Promise<{ rows: Row[] }> {
     const rows = await this.sql.unsafe<Row[]>(sql, [...params])
     return { rows }
+  }
+
+  async transaction(run: (client: AgentRuntimePostgresClient) => Promise<void>): Promise<void> {
+    await this.sql.begin(async (transaction) => {
+      await run({ query: async <Row extends Record<string, unknown>>(sql: string, params: readonly unknown[] = []) => ({ rows: await transaction.unsafe<Row[]>(sql, [...params]) }) })
+    })
   }
 }
 

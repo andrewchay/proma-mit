@@ -14,9 +14,11 @@ const { bindCoreToolEffects, getRegisteredToolEffects, assessCapabilityToolEffec
 const { createCoreTools } = await import('./tool-registry')
 const { executeReadTool } = await import('./tool-impls/read-tool')
 let tools: RuntimeToolDefinition[]
-beforeAll(() => { tools = createCoreTools() })
+beforeAll(async () => { await (await import('../project-sqlite-store')).initProjectDb(); tools = createCoreTools() })
 afterAll(async () => {
   await Bun.sleep(20)
+  const { closeProjectDb } = await import('../project-sqlite-store')
+  closeProjectDb()
   if (oldConfig === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
   else process.env.PROMA_TEST_CONFIG_DIR = oldConfig
   rmSync(dir, { recursive: true, force: true })

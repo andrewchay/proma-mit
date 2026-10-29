@@ -11,6 +11,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import initSqlJs from 'sql.js'
 import {
   closeProjectDb,
+  getProjectDb,
   getKanbanBoard,
   getTask,
   initProjectDb,
@@ -42,6 +43,13 @@ beforeAll(async () => {
       completion_notes TEXT, risk_level TEXT, external_sync TEXT,
       created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
     );
+    CREATE TABLE project_owner_action_approvals (
+      request_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, command_id TEXT NOT NULL,
+      execution_id TEXT NOT NULL, session_id TEXT NOT NULL, tool_name TEXT NOT NULL,
+      action_fingerprint TEXT NOT NULL, status TEXT NOT NULL,
+      requested_at INTEGER NOT NULL, decided_at INTEGER, decided_by TEXT, decision_reason TEXT
+    );
+    INSERT INTO project_owner_action_approvals VALUES ('old-request', 'p-fix', 'command', 'execution', 'session', 'Write', 'fingerprint', 'allowed', 1, 2, 'local-user', NULL);
   `)
   db.run(
     `INSERT INTO projects (id, title, description, status, created_at, updated_at)
@@ -70,6 +78,10 @@ describe('旧库 fixture 迁移', () => {
     const statuses = listTaskStatuses('p-fix')
     expect(statuses.map((s) => s.id)).toEqual(['draft', 'pending', 'in_progress', 'paused', 'completed'])
     expect(statuses.every((s) => s.isBuiltin)).toBe(true)
+  })
+
+  test('Given 旧审批无法证明是否已使用 When 迁移 Then 保留审计且不恢复为可重放批准', () => {
+    expect(getProjectDb().prepare('SELECT status, consumed_at, consumption_kind FROM project_owner_action_approvals WHERE request_id=?').get('old-request')).toEqual({ status: 'allowed', consumed_at: 2, consumption_kind: 'legacy_unknown' })
   })
 
   test('Given 迁移前任务 When 读取 Then 数据零丢失且 sort_order 回填为 -created_at', () => {

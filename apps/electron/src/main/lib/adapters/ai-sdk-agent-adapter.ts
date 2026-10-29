@@ -1,3 +1,4 @@
+import { bindAISDKSessionIdentity, revokeAISDKSessionIdentity } from '../agent-runtime/ai-sdk-session-identity'
 import { assertNoOwnerBusinessSession } from '../project-owner-task-evidence'
 import { assertToolAllowedForSessionPurpose, getOwnerExecutionToolNames, isOwnerWorkspaceFileActionCandidate } from '../project-owner-execution-gates'
 import { OwnerPlanningRuntimeError } from '../agent-runtime/owner-planning-runtime-error'
@@ -137,6 +138,9 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
     if (!isAgentCompatibleProvider(provider, 'ai-sdk')) {
       throw new Error(`AI SDK Runtime 暂不支持 ${provider}`)
     }
+    if (this.activeSessions.has(sessionId)) {
+      throw new Error(owner ? 'Owner规划不允许并发或追加回合' : 'AI SDK 会话已有活动运行')
+    }
 
     const capability = await resolveChannelContextWindow({ provider, modelId: model, channelId: input.channelId })
     const protocol = getAgentProviderProtocol(provider, 'ai-sdk')
@@ -145,7 +149,6 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
 
     // Pilot 受控执行：按会话反查命令归属；同一受控出口覆盖模型请求与压缩请求。
     if (owner) {
-      if (this.activeSessions.has(sessionId)) throw new Error('Owner规划不允许并发或追加回合')
       if (requestedOperation) throw new Error('Owner规划不允许命令或压缩操作')
       const channel = getChannelById(owner.binding.channelId)
       const workspace = getAgentWorkspace(owner.binding.workspaceId)
@@ -175,6 +178,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       cancelled: false,
       ownerPlanning: Boolean(owner),
     }
+    bindAISDKSessionIdentity(activeSession.state, sessionId, cwd)
     this.activeSessions.set(sessionId, activeSession)
     let mcpRelease: (() => void) | undefined
     try {
@@ -396,7 +400,8 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
         currentAttachments = undefined
       }
     } finally {
-      this.activeSessions.delete(sessionId)
+      revokeAISDKSessionIdentity(activeSession.state)
+      if (this.activeSessions.get(sessionId) === activeSession) this.activeSessions.delete(sessionId)
       mcpRelease?.()
     }
   }
@@ -404,6 +409,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
   abort(sessionId: string): void {
     const active = this.activeSessions.get(sessionId)
     if (!active) return
+    revokeAISDKSessionIdentity(active.state)
     active.cancelled = true
     active.state.controller.abort()
     active.resolveQueuedMessage?.()
@@ -462,6 +468,7 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
 
   dispose(): void {
     for (const [sessionId, active] of this.activeSessions) {
+      revokeAISDKSessionIdentity(active.state)
       active.state.controller.abort()
       active.cancelled = true
       active.resolveQueuedMessage?.()

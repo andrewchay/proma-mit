@@ -38,12 +38,17 @@ function fixture(profile: 'controlled' | 'general' | 'development' = 'controlled
   const owner = employees.createAgentEmployee({ name: 'Owner', role: '项目管理者', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId, workspaceIds: [workspace.id] })
   const executor = employee('执行者'), reviewer = employee('独立评审')
   const knowledgeSourceIds: string[] = []
+  let extraKnowledgeSourceId: string | undefined
   if (withKnowledge) {
     const catalog = require('./knowledge-catalog-service') as typeof import('./knowledge-catalog-service')
     const locator = mkdtempSync(join(directory, 'knowledge-'))
     writeFileSync(join(locator, 'evidence.md'), '## 第1页\n冻结项目资料与原文证据。')
     const source = catalog.createSource({ type: 'vault', name: '项目原文', locator })
-    const base = catalog.createKnowledgeBase({ name: '项目资料', sourceIds: [source.id] })
+    const extraLocator = mkdtempSync(join(directory, 'knowledge-extra-'))
+    writeFileSync(join(extraLocator, 'other.md'), '## 第1页\n未冻结资料和原文证据。')
+    const extra = catalog.createSource({ type: 'vault', name: '未冻结资料', locator: extraLocator })
+    extraKnowledgeSourceId = extra.id
+    const base = catalog.createKnowledgeBase({ name: '项目资料', sourceIds: [source.id, extra.id] })
     catalog.bindProject({ projectId: project.id, knowledgeBaseId: base.id })
     knowledgeSourceIds.push(source.id)
   }
@@ -62,7 +67,7 @@ function fixture(profile: 'controlled' | 'general' | 'development' = 'controlled
   const pv = prep.previewOwnerExecutionPreparation(subject, preparationInput), preparation = prep.saveOwnerExecutionPreparation(subject, preparationInput, pv.previewFingerprint)
   const input = { requestId: randomUUID(), expectedMaterializationRevision: 0, expectedPreparationId: preparation.id, expectedPreparationRevision: preparation.revision, expectedPreparationHash: preparation.integrityHash, expectedPolicyRevision: preparation.policyRevision }
   const preview = materialization.previewOwnerTaskMaterialization(subject, input)
-  return { project, subject, preparation, workspace, channel, reviewerChannel, executor, reviewer, knowledgeSourceIds, request: { ...subject, input, previewFingerprint: preview.previewFingerprint } }
+  return { project, subject, preparation, workspace, channel, reviewerChannel, executor, reviewer, knowledgeSourceIds, extraKnowledgeSourceId, request: { ...subject, input, previewFingerprint: preview.previewFingerprint } }
 }
 function adapters() {
   const calls = { schedules: 0 }
@@ -556,6 +561,7 @@ test('Given项目资料已索引但应用重开句柄为空 When自主启动员�
   const f = fixture('controlled', 'safe', false, true, 'ai-sdk', true), a = adapters()
   const index = await import('./knowledge-index-service')
   expect((await index.indexSource({ sourceId: f.knowledgeSourceIds[0]!, sourceType: 'vault' })).ok).toBe(true)
+  expect((await index.indexSource({ sourceId: f.extraKnowledgeSourceId!, sourceType: 'vault' })).ok).toBe(true)
   await launchOwnerPreparedExecution(f.request, a.dependencies)
   await index.closeKnowledgeIndexStore()
   expect(index.getStoreHandle()).toBeNull()
@@ -569,6 +575,22 @@ test('Given项目资料已索引但应用重开句柄为空 When自主启动员�
     expect(getAgentSessionMeta(input.sessionId)).toMatchObject({ knowledgeScopeMode: 'explicit', explicitKnowledgeBaseIds: expect.arrayContaining([expect.any(String)]) })
     expect(gates.resolveOwnerExecutionGateSession(input.sessionId).kind).toBe('owner_business')
     expect(() => gates.assertToolAllowedForSessionPurpose(input.sessionId, 'SearchKnowledge', { query: '原文证据' })).not.toThrow()
+    const knowledge = await import('./agent-runtime/tool-impls/knowledge-tool')
+    const search = await knowledge.executeSearchKnowledgeTool({ query: '原文证据' }, { cwd: directory, sessionId: input.sessionId })
+    expect(search.isError).toBeFalsy()
+    expect(search.content).toContain('冻结项目资料')
+    expect(search.content).not.toContain('未冻结资料')
+    const countReads = () => (store.getProjectDb().prepare('SELECT COUNT(*) AS n FROM project_owner_execution_knowledge_reads WHERE session_id = ?').get(input.sessionId) as { n: number }).n
+    const beforeReads = countReads()
+    const allowedId = /documentId: (\S+)/.exec(search.content)![1]!
+    const allowedRead = await knowledge.executeReadKnowledgeSourceTool({ documentId: allowedId }, { cwd: directory, sessionId: input.sessionId })
+    expect(allowedRead.content).toContain('冻结项目资料')
+    expect(countReads()).toBe(beforeReads + 1)
+    const extraDocument = index.getStoreHandle()!.knowledge.listDocumentsBySource(f.extraKnowledgeSourceId!)[0]!
+    const denied = await knowledge.executeReadKnowledgeSourceTool({ documentId: extraDocument.id }, { cwd: directory, sessionId: input.sessionId })
+    expect(denied.isError).toBe(true)
+    expect(denied.content).not.toContain('未冻结资料')
+    expect(countReads()).toBe(beforeReads + 1)
     callbacks.onError('隔离Runtime替身结束；未发送Provider请求')
   })
   await scheduler.runOwnerAutonomousSchedule(f.project.id)
