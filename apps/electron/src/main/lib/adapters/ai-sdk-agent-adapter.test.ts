@@ -203,6 +203,22 @@ describe('AISDKAgentAdapter', () => {
     }).toThrow('AI SDK Runtime 需要 provider、apiKey、baseUrl、model、cwd')
   })
 
+  test('Given AI SDK 会话正常结束 When 旧工具被调用 Then 拒绝派发', async () => {
+    const adapter = new AISDKAgentAdapter()
+    let approvals = 0
+    for await (const _message of adapter.query({
+      sessionId: 's-ai-finished-tool', prompt: '完成', agentRuntime: 'ai-sdk', provider: 'openai',
+      apiKey: 'key', baseUrl: 'https://api.openai.com/v1', model: 'gpt-test', cwd: '/tmp',
+      canUseTool: async () => { approvals++; return { allowed: true } },
+    })) { /* mock Provider 不连接网络 */ }
+    const read = capturedInputs[0]?.tools.Read?.execute
+    if (!read) throw new Error('缺少 Read 工具')
+    const result = await read({ file_path: 'not-used.txt' }, { toolCallId: 'late', messages: [], context: {} })
+    expect(result).toMatchObject({ isError: true })
+    expect(approvals).toBe(0)
+    adapter.dispose()
+  })
+
   test('手动压缩命令由 Runtime 直接处理，不发送给模型', async () => {
     const adapter = new AISDKAgentAdapter()
     const events: AgentEvent[] = []
