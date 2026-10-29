@@ -71,6 +71,12 @@ export interface PiAgentQueryOptions extends AgentQueryInput {
   spanSink?: RuntimeSpanSink
 }
 
+interface PiQueryResources {
+  release?: () => void
+  pendingSession?: AgentSession
+  pendingTools?: AbortController
+}
+
 interface ActivePiSession {
   session: AgentSession
   unsubscribe: () => void
@@ -245,16 +251,19 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     const abortSignal = input.abortSignal
       ? AbortSignal.any([input.abortSignal, startController.signal])
       : startController.signal
-    const mcpLease: { release?: () => void } = {}
+    const resources: PiQueryResources = {}
     try {
-      yield* this.querySession({ ...input, abortSignal }, startController, mcpLease)
+      yield* this.querySession({ ...input, abortSignal }, startController, resources)
     } finally {
       if (this.pendingStarts.get(input.sessionId) === startController) this.pendingStarts.delete(input.sessionId)
-      mcpLease.release?.()
+      try {
+        resources.pendingTools?.abort()
+        resources.pendingSession?.dispose()
+      } finally { resources.release?.() }
     }
   }
 
-  private async *querySession(input: PiAgentQueryOptions, startController: AbortController, mcpLease: { release?: () => void }): AsyncIterable<SDKMessage> {
+  private async *querySession(input: PiAgentQueryOptions, startController: AbortController, resources: PiQueryResources): AsyncIterable<SDKMessage> {
     assertNoOwnerBusinessSession(input.sessionId)
     const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy, isDelegationSession, thinkingLevel, requestedOperation, abortSignal, runtimeBudgetLimitUsd } = input
     // P01/P03：策略 required 保证不满足时在调用 Provider 前拒绝（fail-closed）。
@@ -321,10 +330,11 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     let mcpTools: import('../agent-runtime/types').RuntimeToolDefinition[] = []
     if (ownerToolNames === null && mcpServers && workspaceSlug && Object.keys(mcpServers).length > 0) {
       const acquired = await this.mcpService.acquireClientManager({ workspaceSlug, mcpServers, cwd, onMcpAuthRequired })
-      mcpLease.release = acquired.release
+      resources.release = acquired.release
       mcpTools = await acquired.manager.listAllTools()
     }
     const toolAbortController = new AbortController()
+    resources.pendingTools = toolAbortController
     const toolAbortSignal = abortSignal
       ? AbortSignal.any([abortSignal, toolAbortController.signal])
       : toolAbortController.signal
@@ -510,6 +520,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       sessionManager,
       settingsManager,
     })
+    resources.pendingSession = session
     // 网页导航、快照与点击必须按模型决策顺序执行，禁止 Pi 并发交叉多个有状态操作。
     session.agent.toolExecution = 'sequential'
     const budgetGate = runtimeBudgetLimitUsd === undefined ? undefined : createPiRequestBudgetGate(runtimeBudgetLimitUsd)
@@ -741,6 +752,8 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       interrupting: false,
     }
     this.activeSessions.set(sessionId, activePiSession)
+    resources.pendingSession = undefined
+    resources.pendingTools = undefined
     if (this.pendingStarts.get(sessionId) === startController) this.pendingStarts.delete(sessionId)
 
     // HR09：调用方 abortSignal 此前只在压缩路径生效；主 prompt 链必须同样响应，
