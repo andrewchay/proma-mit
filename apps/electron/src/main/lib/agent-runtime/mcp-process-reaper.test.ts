@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, test, spyOn } from 'bun:test'
 import { spawn } from 'node:child_process'
 import {
   collectDescendants,
@@ -204,12 +204,15 @@ describe('McpClientManager.disconnect 接线', () => {
         transport: { pid: 999_999 },
       },
     ]
-    await manager.disconnect()
+    const kill = spyOn(process, 'kill')
+    try { await manager.disconnect() } finally { kill.mockRestore() }
+    expect(kill).not.toHaveBeenCalled()
     expect(closed).toBe(true)
     const evidence = manager.getReapEvidence()
     expect(evidence.length).toBe(1)
-    // 受限会话拿不到进程表 → unavailable；宿主上该 pid 不存在 → confirmed。
-    expect(['unavailable', 'confirmed']).toContain(evidence[0]?.status ?? '')
+    // 事后无法可靠证明全部后代退出，不能标记为 confirmed。
+    expect(['unavailable', 'unknown']).toContain(evidence[0]?.status ?? '')
+    expect(evidence[0]?.signals).toEqual([])
     expect(evidence[0]?.rootPid).toBe(999_999)
   })
 })
