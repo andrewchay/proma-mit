@@ -1,0 +1,237 @@
+/**
+ * 未知结果动作的持久化登记。
+ *
+ * 桌面动作、受管浏览器、MCP 工具调用在失败时会被判为「结果未知」——动作可能已经
+ * 生效。此前这只是一个返回给模型的提示：模型完全可以在下一轮直接再调一次同一个
+ * 动作，造成重复点击、重复提交、重复下单。提示不具备约束力。
+ *
+ * 这里把未知结果落盘，并在执行入口拦住"同一个动作的重复调用"，直到有人明确处理：
+ * - 记录：动作指纹（工具 + 目标）、理由、时间；
+ * - 拦截：同会话同指纹存在 pending 记录时，执行入口直接拒绝；
+ * - 解除：`resolveUnknownAction` 由上层在取得可核验结果或用户明确确认后调用。
+ *
+ * 未知状态本身是事实，不会因为"下一个动作成功了"自动消失——成功的动作可能是
+ * 另一次点击，不构成对上一次的核验。
+ */
+
+import { appendFile, mkdir, readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { getConfigDir } from '../config-paths'
+
+export interface UnknownActionRecord {
+  id: string
+  sessionId: string
+  /** 动作指纹（工具 + 目标），用于判断"是不是同一个动作"。 */
+  actionKey: string
+  tool: string
+  detail: Record<string, unknown>
+  /** 判定为未知的依据。 */
+  reason: string
+  createdAt: string
+  status: 'pending' | 'resolved'
+  resolvedAt?: string
+  resolution?: string
+}
+
+interface StoredEvent {
+  type: 'unknown' | 'resolved'
+  id: string
+  sessionId: string
+  actionKey: string
+  tool?: string
+  detail?: Record<string, unknown>
+  reason?: string
+  createdAt: string
+  resolution?: string
+}
+
+const FILE_NAME = 'unknown-actions.jsonl'
+let pending = new Map<string, UnknownActionRecord>()
+let loaded = false
+
+const cacheKey = (sessionId: string, actionKey: string): string => `${sessionId}\u0000${actionKey}`
+const filePath = (): string => join(getConfigDir(), FILE_NAME)
+
+function toRecord(event: StoredEvent): UnknownActionRecord {
+  return {
+    id: event.id,
+    sessionId: event.sessionId,
+    actionKey: event.actionKey,
+    tool: event.tool ?? '',
+    detail: event.detail ?? {},
+    reason: event.reason ?? '',
+    createdAt: event.createdAt,
+    status: 'pending',
+  }
+}
+
+async function readEvents(): Promise<StoredEvent[]> {
+  try {
+    const text = await readFile(filePath(), 'utf8')
+    const events: StoredEvent[] = []
+    for (const line of text.split('\n')) {
+      if (!line.trim()) continue
+      try {
+        const parsed = JSON.parse(line) as StoredEvent
+        if (parsed?.type === 'unknown' || parsed?.type === 'resolved') events.push(parsed)
+      } catch {
+        // 单行损坏不影响其余记录。
+      }
+    }
+    return events
+  } catch {
+    return []
+  }
+}
+
+/** 从磁盘重建内存状态；只保留仍未解除的记录。 */
+async function ensureLoaded(): Promise<void> {
+  if (loaded) return
+  loaded = true
+  const records = new Map<string, UnknownActionRecord>()
+  for (const event of await readEvents()) {
+    const key = cacheKey(event.sessionId, event.actionKey)
+    if (event.type === 'unknown') records.set(key, toRecord(event))
+    else records.delete(key)
+  }
+  pending = records
+}
+
+async function append(event: StoredEvent): Promise<void> {
+  try {
+    await mkdir(getConfigDir(), { recursive: true })
+    await appendFile(filePath(), `${JSON.stringify(event)}\n`, 'utf8')
+  } catch (error) {
+    // 落盘失败不改变内存判定：宁可多拦一次，也不放行重复动作。
+    console.warn('[未知动作] 写入登记失败:', error instanceof Error ? error.message : error)
+  }
+}
+
+/** 构造动作指纹：同一工具 + 同一目标视为"同一个动作"。 */
+export function buildActionKey(tool: string, target: string): string {
+  return `${tool}:${target}`
+}
+
+/** 稳定序列化：对象键排序，保证同参数不同书写顺序得到同一指纹。 */
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value ?? null)
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
+  const entries = Object.entries(value as Record<string, unknown>)
+    .filter(([, item]) => item !== undefined)
+    .sort(([left], [right]) => (left < right ? -1 : left > right ? 1 : 0))
+  return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${stableStringify(item)}`).join(',')}}`
+}
+
+/** 稳定的短哈希，用于把长参数压进指纹（不追求密码学强度）。 */
+export function hashDetail(value: unknown): string {
+  let hash = 5381
+  const text = typeof value === 'string' ? value : stableStringify(value ?? null)
+  for (let index = 0; index < text.length; index += 1) {
+    hash = ((hash << 5) + hash + text.charCodeAt(index)) | 0
+  }
+  return Math.abs(hash).toString(36)
+}
+
+/** 登记一次结果未知的动作。 */
+export async function recordUnknownAction(input: {
+  sessionId: string
+  tool: string
+  actionKey: string
+  detail?: Record<string, unknown>
+  reason: string
+}): Promise<UnknownActionRecord> {
+  await ensureLoaded()
+  const record: UnknownActionRecord = {
+    id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+    sessionId: input.sessionId,
+    actionKey: input.actionKey,
+    tool: input.tool,
+    detail: input.detail ?? {},
+    reason: input.reason,
+    createdAt: new Date().toISOString(),
+    status: 'pending',
+  }
+  pending.set(cacheKey(record.sessionId, record.actionKey), record)
+  await append({
+    type: 'unknown',
+    id: record.id,
+    sessionId: record.sessionId,
+    actionKey: record.actionKey,
+    tool: record.tool,
+    detail: record.detail,
+    reason: record.reason,
+    createdAt: record.createdAt,
+  })
+  return record
+}
+
+/** 查询同会话同指纹是否有未解除的未知结果。 */
+export async function findPendingUnknownAction(
+  sessionId: string,
+  actionKey: string,
+): Promise<UnknownActionRecord | undefined> {
+  await ensureLoaded()
+  return pending.get(cacheKey(sessionId, actionKey))
+}
+
+/** 列出会话内所有未解除的未知结果。 */
+export async function listPendingUnknownActions(sessionId: string): Promise<UnknownActionRecord[]> {
+  await ensureLoaded()
+  return [...pending.values()].filter((record) => record.sessionId === sessionId)
+}
+
+/**
+ * 解除未知状态。
+ *
+ * 只能在取得可核验结果或用户明确处理后调用；调用方必须给出处理依据，
+ * 便于事后审计"为什么允许继续"。
+ */
+export async function resolveUnknownAction(input: {
+  sessionId: string
+  /** 按 id 或指纹解除，二选一。 */
+  id?: string
+  actionKey?: string
+  resolution: string
+}): Promise<UnknownActionRecord | undefined> {
+  await ensureLoaded()
+  const record = input.id
+    ? [...pending.values()].find((item) => item.id === input.id && item.sessionId === input.sessionId)
+    : input.actionKey
+      ? pending.get(cacheKey(input.sessionId, input.actionKey))
+      : undefined
+  if (!record) return undefined
+
+  const resolvedAt = new Date().toISOString()
+  pending.delete(cacheKey(record.sessionId, record.actionKey))
+  await append({
+    type: 'resolved',
+    id: record.id,
+    sessionId: record.sessionId,
+    actionKey: record.actionKey,
+    createdAt: resolvedAt,
+    resolution: input.resolution,
+  })
+  return { ...record, status: 'resolved', resolvedAt, resolution: input.resolution }
+}
+
+/** 执行入口的拦截判定：返回拦截文案，未登记时返回 undefined。 */
+export async function blockIfUnknownAction(input: {
+  sessionId: string
+  tool: string
+  actionKey: string
+  confirmHint: string
+}): Promise<string | undefined> {
+  const record = await findPendingUnknownAction(input.sessionId, input.actionKey)
+  if (!record) return undefined
+  return (
+    `${input.tool} 拒绝执行：同一次动作（${record.actionKey}）在 ${record.createdAt} 的结果未知（${record.reason}），` +
+    `动作可能已经生效。${input.confirmHint}` +
+    `确认后由上层的解除接口（resolveUnknownAction）清除该记录才能重试。`
+  )
+}
+
+/** 仅供测试：清空内存状态，强制下次从磁盘重读。 */
+export function __resetUnknownActionCacheForTest(): void {
+  pending = new Map()
+  loaded = false
+}

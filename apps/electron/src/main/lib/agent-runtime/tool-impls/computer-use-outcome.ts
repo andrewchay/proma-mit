@@ -25,9 +25,13 @@ export type DesktopActionOutcome = 'applied' | 'not_applied' | 'unknown'
 export type DesktopActionFailure = ActionFailure
 
 const DESKTOP_RULE: ActionFailureRule = {
-  preActionCodes: ['EPERM', 'EACCES', 'ENOTSUP', 'ENODEV', 'EINVAL', 'ENOENT'],
+  // EINVAL 故意不在列表里：它既可能是派发前的参数拒绝，也可能是内核在动作
+  // 已经部分提交后报的错。判成"未执行"会让模型重试一个已经生效的动作。
+  preActionCodes: ['EPERM', 'EACCES', 'ENOTSUP', 'ENODEV', 'ENOENT'],
   unknownCodes: ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'EPIPE', 'EAI_AGAIN', 'EAGAIN'],
-  preActionPattern: /未授权|无权限|没有权限|permission|denied|not permitted|不支持|不可用|unavailable|越界|out of range|invalid|无效/,
+  // 只认"派发前就能确定"的措辞；裸 invalid/无效 太宽，收窄到参数与坐标上下文。
+  preActionPattern:
+    /未授权|无权限|没有权限|permission|denied|not permitted|不支持|不可用|unavailable|越界|out of range|坐标|invalid (parameter|argument|coordinate)|参数无效/,
   unknownPattern: /超时|timeout|timed out|中断|aborted|abort|未知|unknown|信号|signal/,
 }
 

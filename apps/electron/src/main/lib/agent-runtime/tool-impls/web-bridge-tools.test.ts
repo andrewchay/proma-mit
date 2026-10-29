@@ -117,9 +117,11 @@ describe('Web Bridge 工具', () => {
 const fakeSnapshot = { url: 'https://example.com/', title: '示例', text: '正文', accessibility: [], accessibilityTree: [] }
 
 describe('Web Bridge 动作结果分类', () => {
-  const ctx = { cwd: '/tmp', sessionId: 'bridge-outcome-session' }
+  // 每个用例独立 sessionId：结果未知会在执行入口拦截同指纹的重复动作。
+  const baseCtx = { cwd: '/tmp' }
 
   test('Given 连接在点击后关闭 When 执行 Then 结果未知且禁止自动重试', async () => {
+    const ctx = { ...baseCtx, sessionId: 'bw-outcome-closed' }
     const click = spyOn(webBridgeService, 'click').mockRejectedValue(new Error('Target closed'))
     try {
       const result = await executeWebBridgeClickTool({ element_id: 'r1-2' }, ctx)
@@ -131,6 +133,7 @@ describe('Web Bridge 动作结果分类', () => {
   })
 
   test('Given ref 已失效 When 点击 Then 判为未执行并允许修正后重试', async () => {
+    const ctx = { ...baseCtx, sessionId: 'bw-outcome-stale' }
     const click = spyOn(webBridgeService, 'click').mockRejectedValue(new Error('No node with given id 42'))
     try {
       const result = await executeWebBridgeClickTool({ element_id: 'r1-9' }, ctx)
@@ -142,6 +145,7 @@ describe('Web Bridge 动作结果分类', () => {
   })
 
   test('Given 输入时协议报错 When 执行 Then 保守判为未知', async () => {
+    const ctx = { ...baseCtx, sessionId: 'bw-outcome-type' }
     const type = spyOn(webBridgeService, 'type').mockRejectedValue(new Error('Protocol error (Input.insertText)'))
     try {
       const result = await executeWebBridgeTypeTool({ element_id: 'r1-3', text: 'hi' }, ctx)
@@ -151,6 +155,7 @@ describe('Web Bridge 动作结果分类', () => {
   })
 
   test('Given 下载中断 When 执行 Then 指引核对落盘位置', async () => {
+    const ctx = { ...baseCtx, sessionId: 'bw-outcome-download' }
     const download = spyOn(webBridgeService, 'download').mockRejectedValue(new Error('socket hang up'))
     try {
       const result = await executeWebBridgeDownloadTool({ url: 'https://example.com/file.pdf' }, ctx)
@@ -161,6 +166,7 @@ describe('Web Bridge 动作结果分类', () => {
   })
 
   test('Given 点击成功 When 执行 Then 返回快照且不出现未知提示', async () => {
+    const ctx = { ...baseCtx, sessionId: 'bw-outcome-success' }
     const click = spyOn(webBridgeService, 'click').mockResolvedValue(fakeSnapshot)
     try {
       const result = await executeWebBridgeClickTool({ element_id: 'r1-2' }, ctx)
@@ -202,6 +208,23 @@ describe('Web Bridge 失败动作审计', () => {
       expect(String(detail?.error)).toContain('Target closed')
       expect(detail?.text).toBeUndefined()
       expect(detail?.elementId).toBe('r1-5')
+    } finally { click.mockRestore() }
+  })
+})
+
+describe('Web Bridge 未知结果的执行约束', () => {
+  test('Given 上次点击结果未知 When 点同一元素 Then 不触达浏览器服务', async () => {
+    const ctx = { cwd: '/tmp', sessionId: 'bw-block-e2e' }
+    const click = spyOn(webBridgeService, 'click').mockRejectedValue(new Error('Target closed'))
+    try {
+      const first = await executeWebBridgeClickTool({ element_id: 'r2-1' }, ctx)
+      expect(first.content).toContain('结果未知')
+      click.mockClear()
+
+      const second = await executeWebBridgeClickTool({ element_id: 'r2-1' }, ctx)
+      expect(second.content).toContain('拒绝执行')
+      expect(second.content).toContain('WebBridgeObserve')
+      expect(click).not.toHaveBeenCalled()
     } finally { click.mockRestore() }
   })
 })

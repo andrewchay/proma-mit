@@ -21,8 +21,19 @@ describe('classifyDesktopActionFailure', () => {
   })
 
   test('Given 权限类错误码 When 分类 Then 未执行', () => {
-    for (const code of ['EPERM', 'EACCES', 'ENOTSUP', 'EINVAL']) {
+    for (const code of ['EPERM', 'EACCES', 'ENOTSUP', 'ENODEV', 'ENOENT']) {
       expect(classifyDesktopActionFailure(Object.assign(new Error('x'), { code })).outcome).toBe('not_applied')
+    }
+  })
+
+  test('Given EINVAL When 分类 Then 结果未知而不是未执行', () => {
+    // EINVAL 可能在动作已部分提交后由内核返回；判成未执行会让模型重试已生效的动作。
+    expect(classifyDesktopActionFailure(Object.assign(new Error('x'), { code: 'EINVAL' })).outcome).toBe('unknown')
+  })
+
+  test('Given 派发后才出现的失败措辞 When 分类 Then 不误判为未执行', () => {
+    for (const message of ['Invalid state transition', 'invalid event after dispatch', '无效状态']) {
+      expect(classifyDesktopActionFailure(new Error(message)).outcome).toBe('unknown')
     }
   })
 

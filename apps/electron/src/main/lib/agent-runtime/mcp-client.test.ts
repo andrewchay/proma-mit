@@ -75,3 +75,35 @@ describe('MCP 工具调用的结果判定', () => {
     expect(result.content).not.toContain('结果未知')
   })
 })
+
+describe('MCP 未知结果的执行约束', () => {
+  test('Given 上次调用结果未知 When 同参数再调 Then 不触达服务端', async () => {
+    let calls = 0
+    const manager = new McpClientManager({}, '/tmp')
+    ;(manager as unknown as { servers: unknown[] }).servers = [
+      {
+        name: 'demo',
+        client: {
+          callTool: () => {
+            calls += 1
+            return Promise.reject(new Error('Connection closed'))
+          },
+        },
+        transport: {},
+      },
+    ]
+    const ctx = { cwd: '/tmp', sessionId: 'mcp-block-e2e' }
+    const first = await manager.executeTool('demo', 'create_issue', { title: 'x' }, ctx)
+    expect(first.content).toContain('结果未知')
+    expect(calls).toBe(1)
+
+    const second = await manager.executeTool('demo', 'create_issue', { title: 'x' }, ctx)
+    expect(second.content).toContain('拒绝执行')
+    expect(calls).toBe(1)
+
+    // 参数不同是另一次调用，可以继续（它自己的结果也可能未知）。
+    const other = await manager.executeTool('demo', 'create_issue', { title: 'y' }, ctx)
+    expect(other.content).toContain('结果未知')
+    expect(calls).toBe(2)
+  })
+})

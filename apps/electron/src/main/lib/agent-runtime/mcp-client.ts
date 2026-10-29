@@ -13,6 +13,7 @@ import { McpOAuthProvider } from './mcp-oauth-provider'
 import { registerPendingMcpOAuth } from './mcp-oauth-pending'
 import { readTransportPid, snapshotProcessTree, terminateProcesses, type ReapEvidence } from './mcp-process-reaper'
 import { describeMcpToolFailure } from './mcp-tool-outcome'
+import { blockIfUnknownAction, buildActionKey, hashDetail, recordUnknownAction } from './unknown-action-store'
 
 interface ConnectedServer {
   name: string
@@ -169,6 +170,18 @@ export class McpClientManager {
       return { content: `MCP 服务器未连接: ${serverName}`, isError: true, toolCallId: '' }
     }
 
+    // 同一个工具 + 同一组参数在结果确认前不允许重复调用。
+    const actionKey = buildActionKey(`mcp:${serverName}__${toolName}`, hashDetail(args ?? {}))
+    const blocked = await blockIfUnknownAction({
+      sessionId: ctx.sessionId,
+      tool: `MCP 工具 ${serverName}__${toolName}`,
+      actionKey,
+      confirmHint: '请先核对目标系统的实际状态，并由用户决定是否继续。',
+    })
+    if (blocked) {
+      return { content: blocked, isError: true, toolCallId: '' }
+    }
+
     try {
       const result = await server.client.callTool(
         { name: toolName, arguments: args as Record<string, unknown> },
@@ -181,6 +194,15 @@ export class McpClientManager {
       // 统一压成"调用失败"会让模型直接重试，在真实系统上是重复执行。
       const failure = describeMcpToolFailure(`${serverName}__${toolName}`, thrown)
       console.warn(`[MCP 客户端] 工具调用${failure.outcome === 'unknown' ? '结果未知' : '未执行'}: ${failure.reason}`)
+      if (failure.outcome === 'unknown') {
+        await recordUnknownAction({
+          sessionId: ctx.sessionId,
+          tool: `MCP 工具 ${serverName}__${toolName}`,
+          actionKey,
+          detail: { server: serverName, tool: toolName },
+          reason: failure.reason,
+        })
+      }
       return { content: failure.message, isError: true, toolCallId: '' }
     }
   }

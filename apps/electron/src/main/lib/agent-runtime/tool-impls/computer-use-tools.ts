@@ -6,6 +6,12 @@ import { computerUseService } from '../../computer-use-service'
 import { webBridgeService } from '../../web-bridge-service'
 import type { ToolContext } from '../types'
 import { describeDesktopActionFailure } from './computer-use-outcome'
+import {
+  blockIfUnknownAction,
+  buildActionKey,
+  hashDetail,
+  recordUnknownAction,
+} from '../unknown-action-store'
 import { guardOwnerTool } from './tool-utils'
 
 export const COMPUTER_USE_STATUS_TOOL_NAME = 'ComputerUseStatus'
@@ -145,7 +151,9 @@ async function executeComputerUseTypeUnchecked(input: unknown, ctx: ToolContext)
   if (fallbackError) return fallbackError
   const text = readString(input, 'text')
   if (!text) return error('text 必须是非空字符串')
-  return runDesktopAction('type', ctx, { length: text.length }, () => computerUseService.type(text))
+  return runDesktopAction(
+    'type', ctx, { length: text.length }, () => computerUseService.type(text), `text:${hashDetail(text)}`,
+  )
 }
 
 async function executeComputerUseScrollUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
@@ -154,7 +162,9 @@ async function executeComputerUseScrollUnchecked(input: unknown, ctx: ToolContex
   const direction = readString(input, 'direction')
   const amount = readNumber(input, 'amount') ?? 700
   if ((direction !== 'up' && direction !== 'down') || !Number.isFinite(amount) || amount < 1 || amount > 2000) return error('direction 必须为 up 或 down，amount 必须为 1 到 2000 的数字')
-  return runDesktopAction('scroll', ctx, { direction, amount }, () => computerUseService.scroll(direction, amount))
+  return runDesktopAction(
+    'scroll', ctx, { direction, amount }, () => computerUseService.scroll(direction, amount), `${direction}:${amount}`,
+  )
 }
 
 async function executeComputerUseDragUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
@@ -168,8 +178,10 @@ async function executeComputerUseDragUnchecked(input: unknown, ctx: ToolContext)
   const scale = readCoordinateScale(input)
   if (scale === null) return error('coordinate_scale 必须为大于 0 且不大于 1 的数字')
   const displayId = readString(input, 'display_id')
-  return runDesktopAction('drag', ctx, { displayId, coordinateScale: scale }, () =>
-    computerUseService.drag(fromX! / scale, fromY! / scale, toX! / scale, toY! / scale, displayId),
+  return runDesktopAction(
+    'drag', ctx, { displayId, coordinateScale: scale },
+    () => computerUseService.drag(fromX! / scale, fromY! / scale, toX! / scale, toY! / scale, displayId),
+    `${fromX},${fromY}->${toX},${toY}@${displayId ?? 'primary'}`,
   )
 }
 
@@ -179,7 +191,9 @@ async function executeComputerUseKeyComboUnchecked(input: unknown, ctx: ToolCont
   const key = readString(input, 'key')
   const modifiers = isRecord(input) && Array.isArray(input.modifiers) && input.modifiers.every((value) => typeof value === 'string') ? input.modifiers as string[] : []
   if (!key) return error('key 必须是字符串')
-  return runDesktopAction('key_combo', ctx, { key, modifiers }, () => computerUseService.keyCombo(key, modifiers))
+  return runDesktopAction(
+    'key_combo', ctx, { key, modifiers }, () => computerUseService.keyCombo(key, modifiers), `${key}+${modifiers.join('+')}`,
+  )
 }
 
 async function executeComputerUseRequestTakeoverUnchecked(input: unknown, ctx: ToolContext): Promise<ToolResult> {
@@ -209,7 +223,18 @@ async function runDesktopAction(
   ctx: ToolContext,
   detail: Record<string, unknown>,
   run: () => Promise<string>,
+  target?: string,
 ): Promise<ToolResult> {
+  // 未知结果不能只写在提示里：同一次动作在结果确认前不允许再发一遍。
+  const actionKey = buildActionKey(`computer-use:${action}`, target ?? hashDetail(detail))
+  const blocked = await blockIfUnknownAction({
+    sessionId: ctx.sessionId,
+    tool: `ComputerUse${action}`,
+    actionKey,
+    confirmHint: '请先调用 ComputerUseScreenshot 确认屏幕状态，并由用户决定是否继续。',
+  })
+  if (blocked) return error(blocked)
+
   try {
     const message = await run()
     recordAudit(ctx, action, { ...detail, outcome: 'applied' })
@@ -217,6 +242,15 @@ async function runDesktopAction(
   } catch (thrown) {
     const failure = describeDesktopActionFailure(action, thrown)
     recordAudit(ctx, action, { ...detail, outcome: failure.outcome, error: failure.reason })
+    if (failure.outcome === 'unknown') {
+      await recordUnknownAction({
+        sessionId: ctx.sessionId,
+        tool: `ComputerUse${action}`,
+        actionKey,
+        detail,
+        reason: failure.reason,
+      })
+    }
     return error(failure.message)
   }
 }
@@ -233,8 +267,10 @@ async function executePoint(input: unknown, ctx: ToolContext, action: 'click' | 
   if (x === undefined || y === undefined) return error('x 和 y 必须是数字')
   if (scale === null) return error('coordinate_scale 必须为大于 0 且不大于 1 的数字')
   const displayId = readString(input, 'display_id')
-  return runDesktopAction(action, ctx, { displayId, coordinateScale: scale }, () =>
-    computerUseService[action](x / scale, y / scale, displayId),
+  return runDesktopAction(
+    action, ctx, { displayId, coordinateScale: scale },
+    () => computerUseService[action](x / scale, y / scale, displayId),
+    `${x},${y}@${displayId ?? 'primary'}`,
   )
 }
 

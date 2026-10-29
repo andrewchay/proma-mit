@@ -6,6 +6,7 @@ import { webBridgeService, type WebBridgeSnapshot } from '../../web-bridge-servi
 import { appendWebBridgeAudit } from '../../web-bridge-audit-service'
 import { guardOwnerTool } from './tool-utils'
 import { DOWNLOAD_CONFIRM_HINT, describeWebBridgeActionFailure } from './web-bridge-outcome'
+import { blockIfUnknownAction, buildActionKey, hashDetail, recordUnknownAction } from '../unknown-action-store'
 
 export const WEB_BRIDGE_NAVIGATE_TOOL_NAME = 'WebBridgeNavigate'
 export const WEB_BRIDGE_SNAPSHOT_TOOL_NAME = 'WebBridgeSnapshot'
@@ -234,6 +235,19 @@ async function runWebBridgeAction(params: {
   hint?: string
 }): Promise<ToolResult> {
   const { action, display, ctx, detail, run, hint } = params
+  // 未知结果必须拦住同一动作的重复调用，而不是只提示模型"别重试"。
+  const actionKey = buildActionKey(
+    `web-bridge:${action}`,
+    String(detail.elementId ?? detail.url ?? hashDetail(detail)),
+  )
+  const blocked = await blockIfUnknownAction({
+    sessionId: ctx.sessionId,
+    tool: `WebBridge${display}`,
+    actionKey,
+    confirmHint: '请先重新 WebBridgeObserve 或 WebBridgeSnapshot 确认页面状态，并由用户决定是否继续。',
+  })
+  if (blocked) return error(blocked)
+
   try {
     const { result, detail: extra } = await run()
     audit(ctx, action, { ...detail, ...extra, outcome: 'applied' })
@@ -241,6 +255,15 @@ async function runWebBridgeAction(params: {
   } catch (thrown) {
     const failure = describeWebBridgeActionFailure(display, thrown, hint)
     audit(ctx, action, { ...detail, outcome: failure.outcome, error: failure.reason })
+    if (failure.outcome === 'unknown') {
+      await recordUnknownAction({
+        sessionId: ctx.sessionId,
+        tool: `WebBridge${display}`,
+        actionKey,
+        detail,
+        reason: failure.reason,
+      })
+    }
     return error(failure.message)
   }
 }

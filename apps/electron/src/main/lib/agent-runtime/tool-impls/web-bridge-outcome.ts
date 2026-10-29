@@ -22,8 +22,9 @@ const WEB_BRIDGE_RULE: ActionFailureRule = {
   preActionCodes: ['EPERM', 'EACCES', 'ENOENT', 'EINVAL', 'ENOTSUP', 'ENOTFOUND'],
   unknownCodes: ['ETIMEDOUT', 'ECONNRESET', 'ECONNREFUSED', 'ECONNABORTED', 'EPIPE', 'EAI_AGAIN', 'EAGAIN'],
   // 前置条件不成立或目标不存在：动作没有派发出去。
+  // 裸 invalid/无效 太宽——CDP 也会在事件已经派发后才报 invalid，因此收窄到参数上下文。
   preActionPattern:
-    /未导航|尚未导航|未连接|没有连接|未开启|没有开启|必须先|请先|失效|过期|stale|不存在|找不到|not found|No node with given id|No target with given id|element_id|无效|invalid|未授权|denied|not authorized|unsupported|不支持/,
+    /未导航|尚未导航|未连接|没有连接|未开启|没有开启|必须先|失效|过期|stale|不存在|找不到|not found|No node with given id|No target with given id|element_id|Invalid parameter|Invalid argument|参数无效|未授权|denied|not authorized|unsupported|不支持/,
   // 连接与协议层面的失败：动作可能已经发出。
   unknownPattern:
     /Target closed|Session closed|session closed|WebSocket|socket hang up|socket closed|Protocol error|detached|disconnected|连接已关闭|连接中断|通道关闭|超时|timeout|timed out|中断|aborted|abort|interrupted|未知|unknown/,
