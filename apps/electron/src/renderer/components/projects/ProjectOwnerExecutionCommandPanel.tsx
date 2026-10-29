@@ -98,6 +98,7 @@ export function OwnerExecutionReviewDetails({ command, onSubmitFeedback }: {
           <p>动作指纹：{item.actionFingerprint}</p>
           <p>请求时间：{new Date(item.requestedAt).toLocaleString()} · 裁决人：{item.decidedBy ?? '尚无'}</p>
           {item.reason && <p>原因：{item.reason}</p>}
+          {item.consumedAt != null && <p>{item.consumptionKind === 'legacy_unknown' ? '旧版批准是否使用未知，需重新审批。' : '批准已用于一次执行（不代表动作成功）。'}</p>}
         </li>)}</ul>
         <p className="text-muted-foreground">此处不保存或展示工具参数正文；动作指纹用于对应审批记录。</p>
       </section>}

@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test'
+import type { AgentRuntimeObjectStream } from './index'
 import {
   createAgentRuntimeSessionArtifactObjectKey,
   createAgentRuntimeWorkspaceObjectKey,
@@ -50,6 +51,10 @@ describe('Agent runtime object storage', () => {
     if (!fetched) throw new Error('expected object')
     fetched.body[1] = 8
 
+    expect([...(await store.getObject(key))!.body]).toEqual([1, 2, 3])
+    const stream: AgentRuntimeObjectStream | undefined = await store.getObjectStream(key)
+    const chunk = (await stream!.body.getReader().read()).value!
+    chunk[0] = 7
     expect([...(await store.getObject(key))!.body]).toEqual([1, 2, 3])
   })
 

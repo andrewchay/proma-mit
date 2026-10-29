@@ -6,6 +6,7 @@
  */
 
 import * as React from 'react'
+import { atom, useAtom } from 'jotai'
 import { RefreshCw, ShieldAlert, ShieldCheck } from 'lucide-react'
 import type { HarnessPolicyState } from '@gravitas/shared'
 import { HARNESS_GUARANTEE_LABELS, type GuaranteeStrength, type HarnessGuaranteeKey } from '@gravitas/shared'
@@ -30,9 +31,22 @@ const STATUS_LABELS: Record<HarnessPolicyState['status'], string> = {
   invalid: '配置无效，已保留原件并拒绝受控运行',
 }
 
+const schedulerSaveAtom = atom<{ saving: boolean; message: string | null; error: string | null }>({ saving: false, message: null, error: null })
+
 export function HarnessPolicyPanel(): React.JSX.Element {
   const [state, setState] = React.useState<HarnessPolicyState | null>(null)
   const [loadError, setLoadError] = React.useState<string | null>(null)
+  const [schedulerSave, setSchedulerSave] = useAtom(schedulerSaveAtom)
+
+  const scheduleNextStartup = async (parallel: boolean): Promise<void> => {
+    setSchedulerSave({ saving: true, message: null, error: null })
+    try {
+      await window.electronAPI.setHarnessSchedulingOnRestart(parallel)
+      setSchedulerSave({ saving: false, message: `已保存：下次启动使用${parallel ? '并行' : '串行'}调度。`, error: null })
+    } catch (error) {
+      setSchedulerSave({ saving: false, message: null, error: error instanceof Error ? error.message : String(error) })
+    }
+  }
 
   const reload = React.useCallback(async () => {
     try {
@@ -67,6 +81,16 @@ export function HarnessPolicyPanel(): React.JSX.Element {
               {state.policy && <span className="text-muted-foreground">revision {state.policy.revision}</span>}
             </div>
             <p className="text-xs text-muted-foreground break-all">作用域：{state.path}</p>
+            {state.scheduler && <div className="rounded-md bg-muted/60 px-3 py-2 text-sm">
+              <p className="font-medium">本进程工具调度：{state.scheduler.status === 'loading' ? '正在初始化' : state.scheduler.parallel ? '并行' : '串行'}</p>
+              <p className="text-xs text-muted-foreground">{state.scheduler.status === 'invalid' ? `配置无效，已切换保守串行：${state.scheduler.error ?? '未知错误'}` : state.scheduler.status === 'default' ? '使用默认配置。' : state.scheduler.status === 'configured' ? '已应用本地配置。' : '请稍候。'} 修改本地配置后需重启；资源锁仍保留，跨进程不共享。</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" disabled={schedulerSave.saving || state.scheduler.status === 'invalid' || state.scheduler.status === 'loading'} onClick={() => void scheduleNextStartup(false)}>下次启动使用串行</Button>
+                <Button variant="outline" size="sm" disabled={schedulerSave.saving || state.scheduler.status === 'invalid' || state.scheduler.status === 'loading'} onClick={() => void scheduleNextStartup(true)}>下次启动使用并行</Button>
+              </div>
+              {schedulerSave.message && <p className="mt-2 text-xs text-muted-foreground">{schedulerSave.message}</p>}
+              {schedulerSave.error && <p className="mt-2 text-xs text-destructive">保存失败：{schedulerSave.error}</p>}
+            </div>}
             {state.error && (
               <div className="rounded-md bg-destructive/10 p-2 text-xs text-destructive">
                 <p>{state.error}</p>

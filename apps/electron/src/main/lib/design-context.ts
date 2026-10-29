@@ -280,6 +280,8 @@ export function composeOdDesignContext(input: ComposeOdDesignContextInput): stri
           '</od_design_system>',
         ].filter(Boolean).join('\n'),
       )
+    } else {
+      parts.push('<od_missing_resource type="design_system">当前任务要求设计系统，但工作区缺少可用的 DESIGN.md；请向用户说明缺项，不要声称成果符合品牌规范。</od_missing_resource>')
     }
   }
 

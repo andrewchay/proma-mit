@@ -732,6 +732,9 @@ export interface AgentEmployeeCapabilityHealthResult {
   failureRate: number | null
   cancellationRate: number | null
   decidedSampleCount: number
+  humanJudgmentEligibleCount: number
+  humanAcceptedCount: number
+  humanChangesRequestedCount: number
   sampleSufficient: boolean
   lastExecutedAt?: number
   comparisonVersionId?: string
@@ -885,7 +888,7 @@ export interface AgentEmployeeCapabilityEvaluationResult {
   trainingSampleCount: number
   heldOutSampleCount: number
   approvalId?: string
-  status: 'candidate_created' | 'no_accepted_candidate' | 'judge_not_independent' | 'held_out_regression'
+  status: 'candidate_created' | 'no_accepted_candidate' | 'judge_not_independent' | 'held_out_unavailable' | 'held_out_regression'
   message: string
 }
 

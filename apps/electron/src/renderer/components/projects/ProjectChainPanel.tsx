@@ -4,6 +4,7 @@ import type {
   ProjectChain,
   ProjectChainCommand,
   ProjectChainEvent,
+  ProjectJudgmentReasonCode,
   ProjectDecisionSourceRef,
   ProjectDecisionSourceType,
   ProjectDodAutomationRule,
@@ -11,6 +12,7 @@ import type {
   ProjectDeliverable,
 } from '@gravitas/shared'
 import { TaskExecutionEvidence } from './TaskExecutionEvidence'
+import { JUDGMENT_REASON_LABELS, JudgmentReasonSelect } from './JudgmentReasonSelect'
 import { ProjectCollaborationTasks } from './ProjectCollaborationTasks'
 import { ProjectChainOverview } from './ProjectChainOverview'
 import { ProjectFlowHealth } from './ProjectFlowHealth'
@@ -1188,6 +1190,8 @@ export function ProjectChainPanel({
                       const submitter = (event.nativeEvent as SubmitEvent)
                         .submitter as HTMLButtonElement | null
                       const kind = submitter?.value
+                      const reasonCode = text(data, 'reasonCode') as ProjectJudgmentReasonCode
+                      if (kind === 'reject' && !reasonCode) { setState((current) => ({ ...current, error: '请选择退回原因分类' })); return }
                       if (
                         kind === 'accept' ||
                         kind === 'reject' ||
@@ -1198,6 +1202,7 @@ export function ProjectChainPanel({
                         void execute({
                           kind,
                           draftId: item.id,
+                          ...(kind === 'reject' && reasonCode ? { reasonCode } : {}),
                           comment: text(data, 'comment'),
                           evidence: text(data, 'evidence'),
                           completedCriteria: data.getAll('completedCriteria').map(String),
@@ -1219,6 +1224,7 @@ export function ProjectChainPanel({
                     />
                     {item.status === 'submitted' ? (
                       <>
+                        <JudgmentReasonSelect name="reasonCode" disabled={busy} />
                         <input
                           aria-label={`${item.title}的验收依据`}
                           name="evidence"
@@ -1297,6 +1303,7 @@ export function ProjectChainPanel({
                       (item) => item.id === event.entityId && item.version === event.version,
                     )?.title}{' '}
                   v{event.version} · {event.actor}
+                  {event.reasonCode && <p>退回原因：{JUDGMENT_REASON_LABELS[event.reasonCode] ?? '未知'}</p>}
                   {event.evidence && <p className="whitespace-pre-wrap">依据：{event.evidence}</p>}
                   {event.changeReason && (
                     <p className="whitespace-pre-wrap">变更原因：{event.changeReason}</p>
