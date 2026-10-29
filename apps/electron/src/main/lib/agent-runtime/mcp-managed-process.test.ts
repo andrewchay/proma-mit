@@ -56,6 +56,22 @@ describe('受管 MCP 进程组', () => {
     }
   }, 15_000)
 
+  test.skipIf(process.platform === 'win32')('Given 应用侧 stdout 管道断开 When 服务继续输出 Then 监督者停止同组后代', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'mcp-managed-pipe-'))
+    const marker = join(directory, 'marker')
+    const script = `const { spawn } = require('node:child_process'); spawn('/bin/sh', ['-c', 'sleep 2; touch "$1"', 'sh', ${JSON.stringify(marker)}]); process.stdout.write('ready\\n'); setInterval(() => process.stdout.write('data\\n'), 20)`
+    const managed = await startManagedMcpProcess({ command: process.execPath, args: ['-e', script], cwd: directory, env: { ...process.env } })
+    try {
+      await once(managed.stdout, 'data')
+      managed.stdout.destroy()
+      await new Promise((resolve) => setTimeout(resolve, 2500))
+      expect(existsSync(marker)).toBe(false)
+    } finally {
+      await managed.close()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  }, 15_000)
+
   test.skipIf(process.platform === 'win32')('Given 目标命令不存在 When 启动 Then 返回错误而不声称连接成功', async () => {
     await expect(startManagedMcpProcess({ command: '/not-a-real-mcp-command', cwd: process.cwd(), env: { ...process.env } })).rejects.toThrow()
   }, 10_000)

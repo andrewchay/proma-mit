@@ -15,6 +15,8 @@ function stop() {
   try { process.kill(-process.pid, 'SIGTERM') } catch {}
   setTimeout(() => { try { process.kill(-process.pid, 'SIGKILL') } catch { process.exit(1) } }, 500)
 }
+process.stdout.on('error', stop)
+process.stderr.on('error', stop)
 process.on('disconnect', stop)
 process.on('message', message => {
   if (message && message.type === 'stop') return stop()
@@ -26,6 +28,8 @@ process.on('message', message => {
     target.on('exit', (code, signal) => { if (process.connected) process.send({ type: 'target-exit', code, signal }) })
     process.stdin.pipe(target.stdin)
     let endedWithNewline = true
+    target.stdout.on('error', stop)
+    target.stderr.on('error', stop)
     target.stdout.on('data', chunk => { if (chunk.length) endedWithNewline = chunk[chunk.length - 1] === 10 })
     target.stdout.pipe(process.stdout, { end: false })
     target.stdout.on('end', () => {
