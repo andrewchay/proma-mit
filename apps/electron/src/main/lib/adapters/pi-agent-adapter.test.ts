@@ -218,15 +218,19 @@ describe('PiAgentAdapter', () => {
     let approvalCalls = 0
     capturedSessionOptions = undefined
     const adapter = new PiAgentAdapter()
-    for await (const _message of adapter.query({
-      sessionId: 's-owner-pi-write-approval', prompt: '写入成果', agentRuntime: 'pi',
-      provider: 'deepseek', apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp',
-      canUseTool: async () => { approvalCalls++; return { allowed: false, message: '等待人工审批' } },
-    })) { /* mock Pi session不连接Provider */ }
-    const write = getCapturedSessionOptions()?.customTools?.find(tool => tool.name === 'Write') as unknown as { execute: (id: string, input: Record<string, unknown>) => Promise<{ details?: { isError?: boolean } }> } | undefined
-    if (!write) throw new Error('Owner Pi工具桥缺少Write候选')
-    await write.execute('write-approval', { file_path: 'result.txt', content: '未获批准不得写入' })
-    expect(approvalCalls).toBe(1)
+    mockBeforePrompt = async () => {
+      const write = getCapturedSessionOptions()?.customTools?.find(tool => tool.name === 'Write') as unknown as { execute: (id: string, input: Record<string, unknown>) => Promise<unknown> } | undefined
+      if (!write) throw new Error('Owner Pi工具桥缺少Write候选')
+      await write.execute('write-approval', { file_path: 'result.txt', content: '未获批准不得写入' })
+    }
+    try {
+      for await (const _message of adapter.query({
+        sessionId: 's-owner-pi-write-approval', prompt: '写入成果', agentRuntime: 'pi',
+        provider: 'deepseek', apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp',
+        canUseTool: async () => { approvalCalls++; return { allowed: false, message: '等待人工审批' } },
+      })) { /* mock Pi session不连接Provider */ }
+      expect(approvalCalls).toBe(1)
+    } finally { mockBeforePrompt = undefined }
     ownerToolNamesForTest = null
     ownerWriteCandidateForTest = false
     adapter.dispose()
@@ -247,22 +251,41 @@ describe('PiAgentAdapter', () => {
     capturedSettings = undefined
     capturedSessionOptions = undefined
     const adapter = new PiAgentAdapter()
-    for await (const _message of adapter.query({
-      sessionId, prompt: '受控执行', agentRuntime: 'pi', provider: 'zhipu', apiKey: 'fake',
-      baseUrl: 'http://127.0.0.1:9/api/paas/v4', model: 'glm-5.3-flash', cwd: '/tmp',
-      canUseTool: async () => ({ allowed: true }),
-    })) { /* mock session不连接Provider */ }
+    mockBeforePrompt = async () => {
+      const readTool = getCapturedSessionOptions()?.customTools?.find(tool => tool.name === 'Read')
+      if (!readTool) throw new Error('Owner Pi工具桥缺少Read工具')
+      const read = readTool as unknown as { execute(toolCallId: string, params: Record<string, unknown>, signal: AbortSignal): Promise<unknown> }
+      await expect(read.execute('owner-pi-read', { path: 'should-not-run.txt' }, new AbortController().signal))
+        .rejects.toThrow('Owner请求费用/用量尚未确认')
+    }
+    try {
+      for await (const _message of adapter.query({
+        sessionId, prompt: '受控执行', agentRuntime: 'pi', provider: 'zhipu', apiKey: 'fake',
+        baseUrl: 'http://127.0.0.1:9/api/paas/v4', model: 'glm-5.3-flash', cwd: '/tmp',
+        canUseTool: async () => ({ allowed: true }),
+      })) { /* mock session不连接Provider */ }
+    } finally { mockBeforePrompt = undefined }
 
     expect(getCapturedSettings()?.retry?.enabled).toBe(false)
     expect(getCapturedSettings()?.retry?.provider?.maxRetries).toBe(0)
     expect(getCapturedSettings()?.cacheWarming).toBe('off')
     expect(getCapturedSettings()?.compaction?.enabled).toBe(false)
-    const readTool = getCapturedSessionOptions()?.customTools?.find(tool => tool.name === 'Read')
-    expect(readTool).toBeDefined()
-    if (!readTool) throw new Error('Owner Pi工具桥缺少Read工具')
-    const read = readTool as unknown as { execute(toolCallId: string, params: Record<string, unknown>, signal: AbortSignal): Promise<unknown> }
-    await expect(read.execute('owner-pi-read', { path: 'should-not-run.txt' }, new AbortController().signal))
-      .rejects.toThrow('Owner请求费用/用量尚未确认')
+  })
+
+  test('Given Pi 会话正常结束 When 旧工具再次调用 Then 不进入权限流程', async () => {
+    let approvalCalls = 0
+    const adapter = new PiAgentAdapter()
+    for await (const _message of adapter.query({
+      sessionId: 's-pi-finished-tool', prompt: '完成', agentRuntime: 'pi', provider: 'deepseek',
+      apiKey: 'test-key', baseUrl: 'https://example.test', model: 'test-model', cwd: '/tmp',
+      canUseTool: async () => { approvalCalls++; return { allowed: true } },
+    })) { /* mock Pi session不连接Provider */ }
+    const read = getCapturedSessionOptions()?.customTools?.find(tool => tool.name === 'Read') as unknown as { execute(id: string, input: Record<string, unknown>, signal: AbortSignal): Promise<{ details?: { isError?: boolean } }> } | undefined
+    if (!read) throw new Error('缺少 Read 工具')
+    const result = await read.execute('finished', { file_path: 'not-used.txt' }, new AbortController().signal)
+    expect(result.details?.isError).toBe(true)
+    expect(approvalCalls).toBe(0)
+    adapter.dispose()
   })
 
   test('given required channel fields are missing then query fails with a helpful error', async () => {

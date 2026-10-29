@@ -996,6 +996,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     const active = this.activeSessions.get(sessionId)
     if (!active) return
     this.activeSessions.delete(sessionId)
+    active.toolAbortController.abort()
     active.unsubscribe()
     active.session.dispose()
   }
