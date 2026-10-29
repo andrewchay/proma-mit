@@ -246,6 +246,7 @@ bun run generate:icons    # 生成应用图标
 
 #### 模型上下文窗口
 
+- Pi SDK 为 ESM-only，CJS 主进程不得静态加载其 runtime。窗口目录使用随应用打包的纯 JSON；升级 Pi SDK 后运行 `bun scripts/generate-model-context-catalog.ts`，一致性测试必须通过。
 - 主进程统一经 `model-context-capability.ts` 解析窗口，优先级为手动覆盖、API 元数据、厂商精确型号目录、明确标记的未知回退值；禁止按整类厂商模型通配为 1M。
 - `ChannelModel` 的窗口与覆盖值随渠道保存在 JSON 配置中。API 元数据绑定供应商与端点身份；切换端点不能复用旧端点的 API 限制，刷新模型列表必须保留手动覆盖与启用状态。
 - Google `inputTokenLimit`、Anthropic `max_input_tokens`、兼容端点 `context_window` 均需保留；旧配置读出时可补目录元数据，不因此写盘。

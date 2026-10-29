@@ -1,3 +1,5 @@
+import { getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
+import catalog from './model-context-catalog.generated.json'
 import { describe, expect, mock, test } from 'bun:test'
 import type { ChannelModel } from '@gravitas/shared'
 
@@ -23,4 +25,13 @@ describe('渠道上下文窗口', () => {
     expect(resolveCatalogContextWindow('custom', 'minimax-m3')).toEqual({ contextWindow: 1_000_000, source: 'catalog' })
     expect(resolveCatalogContextWindow('custom', 'claude-opus-made-up').source).toBe('fallback')
   })
+})
+
+
+test('打包窗口目录与已锁定的 SDK 一致，升级依赖后必须重新生成', () => {
+  const listModels = getBuiltinModels as unknown as (provider: string) => { id: string; contextWindow: number }[]
+  const directories: Record<string, Record<string, number>> = catalog.windows
+  for (const [provider, windows] of Object.entries(directories)) {
+    expect(windows).toEqual(Object.fromEntries(listModels(provider).map((model) => [model.id, model.contextWindow])))
+  }
 })

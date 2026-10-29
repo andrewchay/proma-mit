@@ -1,10 +1,10 @@
-import { getBuiltinModel, getBuiltinModels } from '@earendil-works/pi-ai/providers/all'
+import catalog from './model-context-catalog.generated.json'
 import type { ChannelModel, ModelContextCapability, ProviderType } from '@gravitas/shared'
 import { resolveModelContextCapability } from '@gravitas/shared'
 
 /** 精确查询厂商目录；协议类型与模型厂商可以不同。 */
 export function resolveCatalogContextWindow(provider: ProviderType, modelId: string): ModelContextCapability {
-  const lookup = getBuiltinModel as unknown as (provider: string, id: string) => { contextWindow?: number } | undefined
+  const windows: Readonly<Record<string, Readonly<Record<string, number>>>> = catalog.windows
   const originalId = modelId.trim().replace(/^models\//i, '').split('/').at(-1) ?? ''
   const vendorId = originalId.toLowerCase()
   const vendor = vendorId.startsWith('gemini-') ? 'google'
@@ -16,11 +16,11 @@ export function resolveCatalogContextWindow(provider: ProviderType, modelId: str
     : provider === 'zhipu' ? 'zai'
     : provider === 'deepseek-openai' ? 'deepseek' : undefined
   const catalogProvider = vendor ?? provider
-  const listModels = getBuiltinModels as unknown as (provider: string) => { id: string; contextWindow: number }[]
-  const model = lookup(catalogProvider, originalId) ?? lookup(catalogProvider, vendorId)
-    ?? listModels(catalogProvider).find((entry) => entry.id.toLowerCase() === vendorId)
-  if (model?.contextWindow && Number.isSafeInteger(model.contextWindow) && model.contextWindow > 0) {
-    return { contextWindow: model.contextWindow, source: 'catalog' }
+  const models = windows[catalogProvider] ?? {}
+  const contextWindow = models[originalId] ?? models[vendorId]
+    ?? Object.entries(models).find(([id]) => id.toLowerCase() === vendorId)?.[1]
+  if (contextWindow && Number.isSafeInteger(contextWindow) && contextWindow > 0) {
+    return { contextWindow, source: 'catalog' }
   }
   return resolveModelContextCapability({ provider, modelId })
 }
