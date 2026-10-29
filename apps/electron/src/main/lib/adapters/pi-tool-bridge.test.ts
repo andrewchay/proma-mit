@@ -96,6 +96,25 @@ describe('Pi Tool Bridge', () => {
     expect(tools.some((tool) => tool.name === 'bash')).toBe(false)
   })
 
+  test('Given Pi 工具集已创建 When 来源上下文被改写 Then 仍使用初始会话与目录', async () => {
+    const context = { cwd: '/workspace/original', sessionId: 'pi-original' }
+    let seen: { cwd: string; sessionId: string; frozen: boolean } | undefined
+    const tools = createPiToolBridge({
+      toolContext: context,
+      canUseTool: async () => ({ allowed: true }),
+      coreTools: createCoreTools(async (_input, ctx) => {
+        seen = { cwd: ctx.cwd, sessionId: ctx.sessionId, frozen: Object.isFrozen(ctx) }
+        return { toolCallId: '', content: 'ok', isError: false }
+      }),
+    })
+    context.cwd = '/workspace/other'
+    context.sessionId = 'pi-other'
+    const read = tools.find((item) => item.name === PI_PROMA_READ_TOOL_NAME)
+    if (!read) throw new Error('缺少 Read 工具')
+    await read.execute('call-1', { file_path: 'notes.txt' }, undefined, undefined, {} as never)
+    expect(seen).toEqual({ cwd: '/workspace/original', sessionId: 'pi-original', frozen: true })
+  })
+
   test('given Proma allows read when Pi invokes bridge then it delegates to canonical Read', async () => {
     const calls: string[] = []
     const tools = createPiToolBridge({

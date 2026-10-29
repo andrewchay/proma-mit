@@ -160,10 +160,10 @@ function createBridgeTool<TSchemaType extends TSchema>(
       // 导致用户被重复询问两遍（第一次提交被当作门禁响应，第二次带着空表单再次弹出）。
       // 这里与 ProviderAgnosticAgentAdapter / AI SDK runtime core 一致：直接执行工具（内部走 onAskUser）。
       if (config.runtimeName === ASK_USER_QUESTION_TOOL_NAME) {
-        const result = await runtimeTool.execute(input, {
+        const result = await runtimeTool.execute(input, Object.freeze({
           ...options.toolContext,
           abortSignal: signal ?? options.toolContext.abortSignal,
-        })
+        }))
         return toolResult(config.runtimeName, result.content, Boolean(result.isError), result.imageData)
       }
 
@@ -199,10 +199,10 @@ function createBridgeTool<TSchemaType extends TSchema>(
         // 采集不可用时静默跳过
       }
 
-      const toolContext = {
+      const toolContext = Object.freeze({
         ...options.toolContext,
         abortSignal: signal ?? options.toolContext.abortSignal,
-      }
+      })
       // E05：经共享调度器执行（锁域为本进程内经此调度的调用）。
       const result = await runGuardedToolCall({
         tool: runtimeTool,
@@ -227,7 +227,8 @@ function createBridgeTool<TSchemaType extends TSchema>(
  * 注意：调用方必须把返回值作为 Pi customTools，并用 tools allowlist 仅启用这些名称，
  * 从而保证 Pi 自带 Bash/read/write/edit 等工具不会绕过 Proma。
  */
-export function createPiToolBridge(options: CreatePiToolBridgeOptions): ToolDefinition[] {
+export function createPiToolBridge(inputOptions: CreatePiToolBridgeOptions): ToolDefinition[] {
+  const options = { ...inputOptions, toolContext: Object.freeze({ ...inputOptions.toolContext }) }
   const coreTools = options.coreTools ?? createCoreTools()
   const tools: ToolDefinition[] = []
   if (PI_RUNTIME_TOOL_CAPABILITIES.read) {
