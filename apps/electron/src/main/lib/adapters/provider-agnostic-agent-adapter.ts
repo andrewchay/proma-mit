@@ -229,9 +229,11 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       throw new Error('Provider-Agnostic Runtime 需要 provider、apiKey、baseUrl、cwd')
     }
 
+    if (this.activeSessions.has(sessionId)) throw new Error('Proma 会话已有活动运行')
     abortSignal?.throwIfAborted()
     const capability = await resolveChannelContextWindow({ provider, modelId: model ?? '', channelId: input.channelId })
     abortSignal?.throwIfAborted()
+    if (this.activeSessions.has(sessionId)) throw new Error('Proma 会话已有活动运行')
     const adapter = getAdapter(adapterProvider ?? provider)
     const controller = new AbortController()
     if (abortSignal) {

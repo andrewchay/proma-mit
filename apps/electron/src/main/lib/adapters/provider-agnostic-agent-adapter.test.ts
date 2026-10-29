@@ -79,6 +79,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
   let requestedAdapterProviders: string[] = []
   let firstResponseTimeouts: number[] = []
   let firstTurnToolCalls: ToolCall[] | undefined
+  let streamGate: Promise<void> | undefined
   let streamGates: Array<Promise<void>> = []
   let streamSignals: AbortSignal[] = []
 
@@ -89,6 +90,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
     requestedAdapterProviders = []
     firstResponseTimeouts = []
     firstTurnToolCalls = undefined
+    streamGate = undefined
     streamGates = []
     streamSignals = []
 
@@ -126,6 +128,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
       },
       streamSSE: async (options: StreamSSEOptions): Promise<StreamSSEResult> => {
         streamCallCount++
+        await streamGate
         if (options.signal) streamSignals.push(options.signal)
         await streamGates[streamCallCount - 1]
         firstResponseTimeouts.push(options.firstResponseTimeoutMs ?? 0)
@@ -183,6 +186,26 @@ describe('Provider-Agnostic Agent 适配器', () => {
     await secondDone
     adapter.dispose()
     expect(newAborted).toBe(true)
+  })
+
+  test('Given Proma 会话正在运行 When 同 ID 再次启动 Then 拒绝且原运行仍可停止', async () => {
+    let release!: () => void
+    streamGate = new Promise<void>(resolve => { release = resolve })
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const input = { sessionId: 'proma-concurrent', prompt: '运行', model: 'deepseek-chat', provider: 'deepseek' as const,
+      apiKey: 'mock-key', baseUrl: 'http://localhost/mock', cwd: '/tmp' }
+    const first = adapter.query(input)[Symbol.asyncIterator]()
+    const firstDone = (async () => { try { while (!(await first.next()).done) {} } catch {} })()
+    for (let i = 0; i < 100 && !streamCallCount; i++) await new Promise(resolve => setTimeout(resolve, 1))
+    if (!streamCallCount) throw new Error('原运行未启动')
+    const second = adapter.query(input)[Symbol.asyncIterator]()
+    const rejected = await Promise.race([second.next().then(() => false, () => true),
+      new Promise<boolean>(resolve => setTimeout(() => resolve(false), 30))])
+    adapter.abort(input.sessionId)
+    release()
+    await firstDone
+    adapter.dispose()
+    expect(rejected).toBe(true)
   })
 
   test('手动压缩命令由 Runtime 直接处理，不发送给模型', async () => {
