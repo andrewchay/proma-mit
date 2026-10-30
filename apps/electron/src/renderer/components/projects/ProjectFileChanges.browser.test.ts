@@ -18,7 +18,7 @@ import {ProjectWorkspacesPanel} from ${JSON.stringify(join(renderer, 'components
 import {editOwnerMessageAtom, ownerMessageComposersAtom, getOwnerMessageComposer, ownerConversationNavigationAtom} from ${JSON.stringify(join(renderer, 'atoms/project-owner-management-atoms.ts'))};
 const store=createStore(), subject={projectId:'p'}; store.set(editOwnerMessageAtom,{subject,text:'已有草稿'});
 let calls=0, sends=0;
-window.electronAPI={listAgentWorkspaces:async()=>[{id:'w',name:'研发',slug:'dev',rootPath:'/project'}],paa:{projectWorkspace:{listByProject:async()=>[{projectId:'p',workspaceId:'w',createdAt:1}],bind:async()=>null,unbind:async()=>true,listFileChanges:async()=>{calls++;return {changes:[{path:'src/file.ts',kind:'modified',observedAt:1000}],lastScannedAt:1000,scanError:null,watching:true}}},project:{sendOwnerManagementMessage:async()=>{sends++}}}};
+window.electronAPI={listAgentWorkspaces:async()=>[{id:'w',name:'研发',slug:'dev',rootPath:'/project'}],paa:{projectWorkspace:{listByProject:async()=>[{projectId:'p',workspaceId:'w',createdAt:1}],bind:async()=>null,unbind:async()=>true,listFileChanges:async()=>{calls++;return {changes:[{path:'src/file.ts',kind:'modified',observedAt:1000}],lastScannedAt:1000,scanError:null,watching:true}},getGitDiff:async()=>({status:'available',text:'+updated'})},project:{sendOwnerManagementMessage:async()=>{sends++}}}};
 window.fixture={facts:()=>({calls,sends,composer:getOwnerMessageComposer(store.get(ownerMessageComposersAtom),subject),navigation:store.get(ownerConversationNavigationAtom)})};
 createRoot(document.getElementById('root')).render(<Provider store={store}><ProjectWorkspacesPanel projectId="p"/></Provider>);
 `)
@@ -30,6 +30,8 @@ createRoot(document.getElementById('root')).render(<Provider store={store}><Proj
     await page.goto(`http://127.0.0.1:${server.port}`)
     await page.getByRole('button', { name: '查看文件变化' }).click()
     await page.getByText(/src\/file.ts/).waitFor()
+    await page.getByRole('button', { name: '查看当前 Git 差异' }).click()
+    await page.getByText('+updated', { exact: true }).waitFor()
     await page.getByRole('button', { name: '将最近 20 条加入 Owner 消息草稿' }).click()
     const facts = await page.evaluate<{ calls: number; sends: number; composer: { text: string }; navigation: { projectId: string } }>('window.fixture.facts()')
     expect(facts.calls).toBe(1)

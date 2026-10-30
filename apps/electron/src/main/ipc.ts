@@ -4879,6 +4879,11 @@ export async function registerIpcHandlers(): Promise<void> {
     return getProjectWorkspaceFileChanges(projectId, workspaceId)
   })
 
+  ipcMain.handle(PROJECT_IPC_CHANNELS.GET_WORKSPACE_GIT_DIFF, async (_, projectId: string, workspaceId: string, path: string) => {
+    const { getProjectWorkspaceGitDiff } = await import('./lib/project-file-git-diff')
+    return getProjectWorkspaceGitDiff(projectId, workspaceId, path)
+  })
+
   // ===== 智能提醒系统 =====
   const { registerReminderIpcHandlers } = require('./lib/reminder-ipc-handlers') as { registerReminderIpcHandlers: () => void }
   registerReminderIpcHandlers()

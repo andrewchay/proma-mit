@@ -2129,6 +2129,7 @@ export interface ElectronAPI {
       listByProject: (projectId: string) => Promise<import('@gravitas/shared').ProjectWorkspaceBinding[]>
       listByWorkspace: (workspaceId: string) => Promise<import('@gravitas/shared').ProjectWorkspaceBinding[]>
       listFileChanges: (projectId: string, workspaceId: string) => Promise<import('@gravitas/shared').ProjectWorkspaceFileChangesView>
+      getGitDiff: (projectId: string, workspaceId: string, path: string) => Promise<import('@gravitas/shared').ProjectWorkspaceGitDiff>
     }
     // --- AI 员工（Agent Employee） ---
     agentEmployees: {
@@ -4956,6 +4957,7 @@ const electronAPI: ElectronAPI = {
       listByProject: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECT_WORKSPACES, projectId),
       listByWorkspace: (workspaceId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_WORKSPACE_PROJECTS, workspaceId),
       listFileChanges: (projectId, workspaceId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_WORKSPACE_FILE_CHANGES, projectId, workspaceId),
+      getGitDiff: (projectId, workspaceId, path) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_WORKSPACE_GIT_DIFF, projectId, workspaceId, path),
     },
     // --- AI 员工（Agent Employee） ---
     agentEmployees: {
