@@ -61,10 +61,12 @@ export function hasProjectWorkspaceBinding(projectId: string, workspaceId: strin
 /** 解绑；返回是否有实际删除（未绑定时返回 false） */
 export function unbindWorkspaceFromProject(projectId: string, workspaceId: string): boolean {
   const database = getProjectDb()
-  const result = database
-    .prepare(`DELETE FROM project_workspace_bindings WHERE project_id = ? AND workspace_id = ?`)
-    .run(projectId, workspaceId)
-  return result.changes > 0
+  let deleted = false
+  database.transaction(() => {
+    database.prepare(`DELETE FROM project_file_change_policies WHERE project_id = ? AND workspace_id = ?`).run(projectId, workspaceId)
+    deleted = database.prepare(`DELETE FROM project_workspace_bindings WHERE project_id = ? AND workspace_id = ?`).run(projectId, workspaceId).changes > 0
+  })()
+  return deleted
 }
 
 /** 按项目列出全部绑定（按创建时间升序） */
