@@ -1,6 +1,8 @@
 import * as React from 'react'
-import { atom, useAtom } from 'jotai'
+import { atom, useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { editOwnerMessageAtom, getOwnerMessageComposer, ownerConversationNavigationAtom, ownerMessageComposersAtom } from '../../atoms/project-owner-management-atoms'
 import type { AgentWorkspace, ProjectWorkspaceBinding, ProjectWorkspaceFileChange } from '@gravitas/shared'
+import { prepareProjectChangeMessage } from './project-file-change-message'
 
 /**
  * ProjectWorkspacesPanel - 项目「工作空间」面板
@@ -38,6 +40,9 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
   const [error, setError] = React.useState<string | null>(null)
   const changesAtom = React.useMemo(() => atom<Record<string, ProjectWorkspaceFileChange[]>>({}), [])
   const [changes, setChanges] = useAtom(changesAtom)
+  const composers = useAtomValue(ownerMessageComposersAtom)
+  const editOwnerMessage = useSetAtom(editOwnerMessageAtom)
+  const navigateOwner = useSetAtom(ownerConversationNavigationAtom)
 
   const load = React.useCallback(async () => {
     setError(null)
@@ -123,6 +128,18 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
     }
   }
 
+  const prepareOwnerAnalysis = (workspaceId: string): void => {
+    const events = changes[workspaceId]?.slice(0, 20) ?? []
+    if (!events.length) return
+    const subject = { projectId }
+    const composer = getOwnerMessageComposer(composers, subject)
+    if (composer.pending || composer.sending) { setError('当前 Owner 消息正在处理，请稍后再添加变化记录。'); return }
+    const text = prepareProjectChangeMessage(composer.text, events)
+    if (text === null) { setError('Owner 消息草稿空间不足，请先整理现有草稿。'); return }
+    editOwnerMessage({ subject, text })
+    navigateOwner({ projectId, at: Date.now() })
+  }
+
   return (
     <div className="space-y-4 p-1">
       <div className="text-xs text-muted-foreground">
@@ -175,6 +192,7 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
                 </div>
                 {changes[binding.workspaceId] && <div className="mt-3 rounded-lg bg-muted/40 p-3 text-xs">
                   <p className="text-muted-foreground">最近最多 100 条记录，仅供查看；首次扫描建立基线，未包含文件正文，也未发送给 Owner。</p>
+                  {changes[binding.workspaceId]!.length > 0 && <button type="button" className="mt-2 text-primary underline" onClick={() => prepareOwnerAnalysis(binding.workspaceId)}>将最近 20 条加入 Owner 消息草稿</button>}
                   {changes[binding.workspaceId]!.length === 0 ? <p className="mt-2">暂无已记录变化。</p> : <ul className="mt-2 max-h-64 space-y-1 overflow-auto">{changes[binding.workspaceId]!.map((change, index) => <li key={`${change.observedAt}-${index}`} className="break-all">{new Date(change.observedAt).toLocaleString()} · {change.kind === 'added' ? '新增' : change.kind === 'deleted' ? '删除' : '修改'} · {change.path}</li>)}</ul>}
                 </div>}
               </div>
