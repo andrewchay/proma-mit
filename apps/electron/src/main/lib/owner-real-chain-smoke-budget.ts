@@ -13,9 +13,9 @@ export function ensureSmokeBudget(maxCostMicros: number): void {
   }
 }
 
-/** 已获用户确认的累计60笔上限；在规划准入与员工预留的同一事务内核对。 */
+/** 已获用户确认的累计100笔上限；在规划准入与员工预留的同一事务内核对。 */
 export function assertSmokeRequestAllowance(count: number, limit: number): void {
-  if (!Number.isSafeInteger(count) || count < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 60) throw new Error('真实冒烟请求次数边界无效')
+  if (!Number.isSafeInteger(count) || count < 0 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('真实冒烟请求次数边界无效')
   if (count >= limit) throw new Error(`真实冒烟已达到 ${limit} 次请求上限，拒绝新增请求`)
 }
 
