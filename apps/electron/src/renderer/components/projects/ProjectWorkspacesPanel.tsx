@@ -79,7 +79,7 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
-  }, [projectId])
+  }, [projectId, setPolicies])
 
   React.useEffect(() => { void load() }, [load])
 

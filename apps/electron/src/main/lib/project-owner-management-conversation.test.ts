@@ -467,7 +467,7 @@ test('Given 已开启文件分析和有效管理预算 When 变化进入 Owner T
   bindWorkspaceToProject(f.project.id, workspace.id)
   await scanProjectFileChanges(workspace.id, workspace.rootPath!)
   setProjectFileChangePolicy(f.project.id, workspace.id, true)
-  const grant = f.issue()
+  f.issue()
   await new Promise(resolve => setTimeout(resolve, 5))
   writeFileSync(join(root, 'change.txt'), 'content')
   await scanProjectFileChanges(workspace.id, workspace.rootPath!)
