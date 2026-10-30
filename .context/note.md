@@ -1,5 +1,68 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-10-29 项目整体理解（首次通读）
+
+### 一句话定位
+Gravitas 是开源项目 Proma 的衍生版，一个本地优先的 AI Agent 桌面工作台（Electron + React + TypeScript + Bun），把 Chat / Agent / Workflow / 项目管理 / AI 员工 / 领域能力包 / 订阅商业化 / 企业私有化放在同一个客户端。当前版本 `@gravitas/electron` 0.13.460，License BUSL-1.1。
+
+### 仓库规模（实测，2026-10-29）
+| 区域 | 文件数 | 源码行数（不含测试） |
+| --- | ---: | ---: |
+| apps/electron/src/main（主进程 + 服务层） | 1203 | 165,532 |
+| apps/electron/src/renderer（React UI） | 618 | 113,436 |
+| packages/shared | 152 | 21,364 |
+| packages/core | 72 | 9,977 |
+| apps/server（Bun 服务端） | 104 | 8,821 |
+| apps/subscription-service | 32 | 3,956 |
+| apps/web / apps/executor | 6 / 4 | 549 / 150 |
+
+测试文件 767+（`docs/generated/repository-facts.md` 自动生成）。`main/lib/` 是**扁平结构**，706 个条目按文件名前缀分域：`project-owner-*` 77 个、`project-pilot-*` 30 个、`agent-*`、`workflow-*`、`marketing-*` 等。
+
+### 六个可运行体
+- `apps/electron`：桌面应用主体，唯一主线。主进程 `main/`（index / ipc / menu / tray / main-window + lib/），preload 单文件桥接，renderer 为 Vite + Tailwind + Radix。
+- `packages/shared`：类型、IPC 通道常量、`AgentEvent` 转换、权限规则。
+- `packages/core`：Provider 适配器注册表（Anthropic / OpenAI 兼容 / Google / 自定义）+ Shiki 高亮。
+- `packages/ui`：共享 React 组件（CodeBlock、MermaidBlock）。
+- `apps/server`：独立 Bun 服务端，Postgres 多租户、Redis Stream、S3 兼容存储、审计与可观测（私有化路线）。
+- `apps/executor`：Linux bubblewrap 沙箱执行器；`apps/subscription-service`：微信/支付宝订阅；`apps/web`：轻量 Web 前端。
+
+### 必须记住的架构模式
+1. **IPC 四段式**：`shared` 定义通道常量与类型 → `main/ipc.ts` 注册 handler → `preload/index.ts` contextBridge → renderer 经 `window.electronAPI.*` 调用。新增通道必须四处同步。
+2. **状态全部 Jotai**（`renderer/atoms/`），不用其他状态库。Agent IPC 全局监听在 `main.tsx` 顶层挂载（`useGlobalAgentListeners`），永不销毁，保证后台会话流式与权限请求不丢。
+3. **本地优先存储**：JSON / JSONL 追加写在 `~/.gravitas/`（channels / conversations / agent-sessions / agent-workspaces / attachments），项目与营销用本地 SQLite（`projects/paa.db`），Context Store 是可重建索引。不得无迁移方案替换权威数据。
+4. **多 Agent Runtime 并存**：Pi（默认推荐）、AI SDK、Proma、Claude（已软下线）。运行时策略、预算停止阈值、MCP 工具统一在 `main/lib/agent-runtime/`。
+5. **两道正交门禁**：开发阶段门禁 `feature-gate.ts`（功能做完没有）与权益门禁 `entitlement-gate.ts`（用户买没买）。最终可见 = 两者同时放行，禁止合并。
+6. **证据与验收文化**：文档反复强调"测试通过 ≠ 生产验收"。真实 Provider、打包产物、用户签收分别留证；unknown 必须保持 unknown，不得用本地估价或标志位冒充事实。
+
+### 当前工程主线（2026-10）
+`docs/plans/2026-10-28-harness-autonomy-rsi-roadmap/` 是活跃路线图「受控自主」，五个推进序：
+1. 固定首批支持范围（macOS arm64 + Owner AI SDK Runtime）并盘点全部入口；
+2. 隔离与动作门禁（Bash 硬链接、Git config 载体、路径竞态已关闭；GIT_DIR 窗口仍在）；
+3. 停止、撤权与恢复（进程组终止、MCP 受管进程、unknown action 登记）；
+4. 目标—成果—验证闭环；
+5. 固定构建的真实任务验收。
+
+配套重镇：`project-owner-*`（目标/授权/命令账本/研发验收）与 `project-pilot-*`（受控自动派发、readiness、预算预留）。Pilot 当前仍**没有通过 readiness 的真实 Runtime**，被 readiness 阻塞，不能宣称自主闭环。
+
+### 工作区未提交改动（2026-10-29）
+`agent-runtime` 的 unknown-action 门禁加固：`UnknownActionRecord` 新增 `acknowledgedAt`，事件类型扩为 `unknown / unknown_failed / confirmed_applied / resolved`；用户确认"动作已生效"后记录**仍保持 pending**，继续拦截同一指纹重试；失败追加实际原因而不是解除登记。同批改动涉及 `mcp-client`、`mcp-tool-outcome` 及 computer-use / web-bridge 工具的 outcome 上报。对应路线图第 3 条。
+
+### 工程约定（改代码前必读）
+- Bun 替代 npm。全量测试必须 `bun run test`（逐文件独立进程）；裸跑 `bun test` 全量会因跨文件 mock 污染出现假失败；单文件用 `bun test <file>`。
+- 提交前门禁：`bun run typecheck`、`bun run test`、`bun run lint`（Biome）、`bun run docs:check`。
+- 注释和日志优先中文；依赖版本先调研再定；组件化和可读性优先，不过度设计。
+- **修改 `AGENTS.md` / `README.md` 必须先获得用户许可**。
+- 打包必须包含 `default-tools`、`default-skills`、工作流模板；`scripts/package-smoke.ts` 校验。
+- 新共享 Node 工具从 `packages/shared/src/utils/node.ts` 导出。
+
+### 上手命令
+```bash
+bun run dev                     # Vite + Electron 热重载
+bun run electron:build          # 仅构建
+bun run typecheck && bun run test && bun run lint
+cd apps/electron && bun run dist:mac-dev-zip   # 本地打包并存
+```
+
 ## 2026-10-06 主题预览视觉统一（艺术系定稿方向）
 - 用户反馈：界面背景纹样"太丑"→ 已移除 ThemeTextureLayer 及 theme-texture-layer.tsx，运行界面恢复纯净；预览卡图案保留。
 - 用户反馈：简笔 SVG 预览"太简陋"，与青花瓷/青绿山水不一致 → 用户选定**艺术系**：全部主题卡改画作预览，卡片只留图与名称。

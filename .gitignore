@@ -66,3 +66,8 @@ apps/electron/resources/dynamic-island/macos/island.node
 
 # rebase/session scratch tooling
 .context/tmp/
+
+# 本地验收证据：解压后的 .app、SQLite 数据库、渠道配置与日志，体积达数 GB，
+# 且可能含凭据。只保留摘要与结论到受版本控制的文档，原始证据留在本地。
+.context/glm-real-acceptance/
+.context/package-smoke-evidence/
