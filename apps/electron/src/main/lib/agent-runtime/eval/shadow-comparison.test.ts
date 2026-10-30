@@ -188,17 +188,19 @@ describe('compareScoreboardEvaluations（scoreboard 适配）', () => {
     cases: scores.map(([caseId, score]) => ({ caseId, score, runs: [] })),
   }) as unknown as import('./types').BenchmarkEvaluation
 
-  test('Given 两条同定义评测 When 比较 Then 百分制换算为 0..1 并给出结论', async () => {
+  test('Given 历史评测未记录基准来源 When 当前定义匹配 Then 不推断可比', async () => {
     const { compareScoreboardEvaluations } = await import('./shadow-comparison')
     const result = compareScoreboardEvaluations({
       benchmark,
       baseline: evaluation(1, [['c1', 60], ['c2', 70]]),
       candidate: evaluation(2, [['c1', 80], ['c2', 90]]),
     })
-    expect(result.comparable).toBe(true)
-    expect(result.meanBaseline).toBeCloseTo(0.65, 5)
-    expect(result.meanCandidate).toBeCloseTo(0.85, 5)
-    expect(result.verdict).toBe('candidate_better')
+    expect(result.comparable).toBe(false)
+    expect(result.meanBaseline).toBeNull()
+    expect(result.meanCandidate).toBeNull()
+    expect(result.verdict).toBe('inconclusive')
+    expect(result.reasons.join()).toContain('基准版本来源未核验')
+    expect(result.cases[0]?.baseline).toBeCloseTo(0.6, 5)
   })
 
   test('Given 两侧同时缺少同一基准 case When 比较 Then 不可比', async () => {
@@ -373,7 +375,7 @@ describe('compareScoreboardEvaluations（成本透传）', () => {
     cases: [{ caseId: 'c1', score: 80, runs: [] }],
   }) as unknown as import('./types').BenchmarkEvaluation
 
-  test('Given 评测带成本与耗时 When 比较 Then 直接进入资源判定', async () => {
+  test('Given 评测带成本与耗时但来源未知 When 比较 Then 保留数值且门禁未核验', async () => {
     const { compareScoreboardEvaluations } = await import('./shadow-comparison')
     const result = compareScoreboardEvaluations({
       benchmark,
@@ -384,7 +386,7 @@ describe('compareScoreboardEvaluations（成本透传）', () => {
     })
     expect(result.resources.baselineCostUsd).toBeCloseTo(0.02, 6)
     expect(result.resources.costIncreaseRatio).toBeCloseTo(1.5, 5)
-    expect(result.resources.gate).toBe('cost_exceeded')
+    expect(result.resources.gate).toBe('unverified')
   })
 
   test('Given 评测未记录成本 When 配置门禁 Then 门禁不可核验', async () => {
@@ -396,6 +398,6 @@ describe('compareScoreboardEvaluations（成本透传）', () => {
       maxCostIncreaseRatio: 0.2,
     })
     expect(result.resources.gate).toBe('unverified')
-    expect(result.resources.reasons.join()).toContain('成本')
+    expect(result.resources.reasons.join()).toContain('分数不可比')
   })
 })
