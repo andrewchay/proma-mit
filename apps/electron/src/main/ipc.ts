@@ -358,7 +358,7 @@ import {
   getReleaseByTag,
 } from './lib/github-release-service'
 import { listLocalReleases, mergeReleases } from './lib/local-release-notes'
-import { watchAttachedDirectory, unwatchAttachedDirectory, syncProjectRootWatchers, isProjectRootWatched } from './lib/workspace-watcher'
+import { watchAttachedDirectory, unwatchAttachedDirectory, syncProjectRootWatchers } from './lib/workspace-watcher'
 import {
   getFeishuConfig,
   saveFeishuConfig,
@@ -4875,12 +4875,8 @@ export async function registerIpcHandlers(): Promise<void> {
   )
 
   ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_WORKSPACE_FILE_CHANGES, async (_, projectId: string, workspaceId: string) => {
-    if (!listProjectWorkspaceBindings(projectId).some(binding => binding.workspaceId === workspaceId)) throw new Error('工作区未绑定到项目')
-    const workspace = getAgentWorkspace(workspaceId)
-    if (!workspace?.rootPath) throw new Error('工作区没有本地项目目录')
-    const { readProjectFileChanges } = await import('./lib/project-file-changes')
-    const result = await readProjectFileChanges(workspaceId, workspace.rootPath)
-    return { ...result, watching: isProjectRootWatched(workspace.rootPath) }
+    const { getProjectWorkspaceFileChanges } = await import('./lib/project-file-changes-access')
+    return getProjectWorkspaceFileChanges(projectId, workspaceId)
   })
 
   // ===== 智能提醒系统 =====
