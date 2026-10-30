@@ -194,8 +194,8 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
           await input.state.restore()
           rolledBack = true
         } else {
-          accepted = true
           appendEvaluation(input.benchmark.id, buildEvaluation(input.benchmark, candidateVersion, candidateByCase, new Date().toISOString(), input.judge, heldOutCandidate))
+          accepted = true
           reason = `接受：${candidateTotal.toFixed(2)} > Reference ${currentScore.toFixed(2)}；held-out 门禁通过`
           currentScore = candidateTotal
           currentVersion = candidateVersion

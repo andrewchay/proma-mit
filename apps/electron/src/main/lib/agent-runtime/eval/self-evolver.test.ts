@@ -1,7 +1,8 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { rmSync } from 'node:fs'
+import { mkdirSync, rmSync } from 'node:fs'
+import { getBenchmarkScoreboardPath } from '../../config-paths'
 import { selfEvolve, type CaseEval, type StateGuard } from './self-evolver'
 import type { BenchmarkConfig, SelfEvolveChange } from './types'
 import { readScoreboard } from './benchmark-store'
@@ -189,6 +190,26 @@ describe('selfEvolve', () => {
     })
     expect(out.rounds[0]!.accepted).toBe(true)
     expect(readScoreboard(benchmark.id).evaluations.map(item => item.heldOut?.score)).toEqual([80, 85])
+  })
+
+  it('Given 候选评测通过但历史写入失败 When 回滚 Then 不报告接受', async () => {
+    const benchmark = { ...config, id: 'candidate-write-failure' }
+    const state = mkState(() => 1)
+    const out = await selfEvolve({
+      benchmark, maxRounds: 1, state,
+      propose: async () => ({ description: 'candidate', target: 'x', afterState: 2 }),
+      evaluate: async (def) => {
+        if (def !== undefined) mkdirSync(`${getBenchmarkScoreboardPath(benchmark.id)}.tmp`)
+        return [{ caseId: 'CASE-001', score: def === undefined ? 60 : 90 }]
+      },
+    })
+    expect(out.rounds[0]!.accepted).toBe(false)
+    expect(out.rounds[0]!.rolledBack).toBe(true)
+    expect(out.rounds[0]!.reason).toContain('异常')
+    expect(out.finalAcceptedVersion).toBe(1)
+    expect(out.finalScore).toBe(60)
+    expect(state.version()).toBe(1)
+    expect(readScoreboard(benchmark.id).evaluations.map(item => item.score)).toEqual([60])
   })
 
   it('候选评测异常时回滚并在 round 中记录失败', async () => {
