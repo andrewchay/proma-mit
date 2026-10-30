@@ -25,7 +25,8 @@ import { SaveAsWorkflowButton } from './SaveAsWorkflowButton'
 import { extractToolResultText, parseTaskCreateResult, TASK_TOOL_NAMES } from './task-progress'
 import { extractCompactBoundaryInfo } from './compact-boundary-info'
 import { getBlockKey } from './tool-utils'
-import { DurationBadge, formatDuration } from './AgentMessages'
+import { DurationBadge, buildUsageTooltip, formatDuration } from './AgentMessages'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
   Message,
   MessageHeader,
@@ -662,15 +663,10 @@ export function AssistantTurnRenderer({ turn, sessionId, allMessages, historical
     const content = (message as SDKUserMessage).message?.content
     return Array.isArray(content) && content.some((block) => block.type === 'tool_result' && (block as unknown as SDKToolResultBlock).is_error === true)
   })
-  const lastRunningToolUse = isStreaming
-    ? [...topLevelBlocks].reverse().find((block) => {
-      if (block.type !== 'tool_use' || TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name)) return false
-      const toolUseId = (block as SDKToolUseBlock).id
-      return !turn.turnMessages.some((message) => message.type === 'user' && Array.isArray((message as SDKUserMessage).message?.content)
-        && ((message as SDKUserMessage).message!.content as SDKContentBlock[]).some((result) => result.type === 'tool_result' && (result as unknown as SDKToolResultBlock).tool_use_id === toolUseId))
-    }) as SDKToolUseBlock | undefined
-    : undefined
-  const lastRunningToolUseId = lastRunningToolUse?.id
+  const thinkingCount = topLevelBlocks.filter((block) => block.type === 'thinking' && 'thinking' in block && !!block.thinking).length
+  const lastTraceIndex = topLevelBlocks.reduce((last, block, index) =>
+    block.type === 'thinking' || (block.type === 'tool_use' && !TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name)) ? index : last, -1)
+  const hasTrace = lastTraceIndex >= 0
 
   // 如果只有错误消息
   if (enrichedBlocks.length === 0 && hasError && errorContent) {
@@ -696,33 +692,46 @@ export function AssistantTurnRenderer({ turn, sessionId, allMessages, historical
       />
       <MessageContent>
         <div className={cn('space-y-2')}>
-          {toolTraceCount > 0 && (
-            <div className="space-y-1">
-              <button
-                type="button"
-                aria-expanded={traceExpanded}
-                onClick={() => setTraceExpanded((expanded) => !expanded)}
-                className={cn(
-                  'flex w-full items-center gap-2 py-0.5 text-left text-[13px] transition-colors hover:text-foreground',
-                  hasToolTraceError ? 'text-destructive/80' : 'text-muted-foreground/75',
+          {hasTrace && (
+            <div className="space-y-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-expanded={traceExpanded}
+                    onClick={() => setTraceExpanded((expanded) => !expanded)}
+                    className={cn(
+                      'inline-flex items-center gap-1.5 py-0.5 text-left text-[13px] font-medium transition-colors hover:text-foreground',
+                      hasToolTraceError ? 'text-destructive/80' : 'text-muted-foreground/75',
+                    )}
+                  >
+                    <span>{[
+                      thinkingCount > 0 ? `${isStreaming ? '思考' : '已思考'} ${thinkingCount} 次` : null,
+                      toolTraceCount > 0 ? `${isStreaming ? '执行中' : '执行'} ${toolTraceCount} 次工具` : null,
+                      durationMs != null ? `耗时 ${formatDuration(durationMs)}` : null,
+                      hasToolTraceError ? '有失败调用' : null,
+                    ].filter(Boolean).join('、')}</span>
+                    <ChevronDown className={cn('size-3.5 shrink-0 transition-transform', !traceExpanded && '-rotate-90')} />
+                  </button>
+                </TooltipTrigger>
+                {(durationMs != null || usage) && (
+                  <TooltipContent side="top"><p className="whitespace-pre-line text-left">{buildUsageTooltip(durationMs, usage)}</p></TooltipContent>
                 )}
-              >
-                <ChevronDown className={cn('size-3.5 shrink-0 transition-transform', !traceExpanded && '-rotate-90')} />
-                <span>{isStreaming ? '执行中' : '执行'} {toolTraceCount} 次工具</span>
-                {durationMs != null && <span>· 耗时 {formatDuration(durationMs)}</span>}
-                {hasToolTraceError && <span className="text-destructive">· 有失败调用</span>}
-              </button>
-              {(traceExpanded || lastRunningToolUseId !== undefined) && topLevelBlocks.map((block, i) => {
-                if (block.type !== 'tool_use' || TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name)) return null
-                const toolUseId = (block as SDKToolUseBlock).id
-                if (!traceExpanded && toolUseId !== lastRunningToolUseId) return null
-                return <ContentBlock key={getBlockKey(block, i)} block={block} allMessages={allMessages} basePath={basePath} animate={!!isStreaming} index={i} dimmed={hasTextContent} isStreaming={isStreaming} />
-              })}
+              </Tooltip>
+              {traceExpanded && (
+                <div className="ml-1.5 space-y-2 border-l border-border/60 pl-4">
+                  {topLevelBlocks.map((block, i) => {
+                    if (i > lastTraceIndex || (block.type === 'tool_use' && TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name))) return null
+                    const childBlocks = block.type === 'tool_use' ? childBlocksMap.get((block as SDKToolUseBlock).id) : undefined
+                    return <ContentBlock key={getBlockKey(block, i)} block={block.type === 'text' && 'text' in block && typeof block.text === 'string' ? { ...block, text: hideStatusEmoji(block.text) } : block} allMessages={allMessages} basePath={basePath} animate={!!isStreaming} index={i} dimmed={hasTextContent && block.type !== 'text'} childBlocks={childBlocks} isStreaming={isStreaming} />
+                  })}
+                </div>
+              )}
             </div>
           )}
           {topLevelBlocks.map((block, i) => {
-              // 非任务工具调用统一进入默认折叠的执行 trace 区
-              if (block.type === 'tool_use' && !TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name)) return null
+              // 过程内容按原始顺序进入默认收起的执行记录。
+              if (hasTrace && i <= lastTraceIndex && !(block.type === 'tool_use' && TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name))) return null
               // Task 工具块：聚合为卡片，此处用索引定位首个任务工具
               if (block.type === 'tool_use' && TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name)) {
                 if (i === firstTaskIndex) {
@@ -791,7 +800,7 @@ export function AssistantTurnRenderer({ turn, sessionId, allMessages, historical
         const turnSucceeded = !hasError && turn.turnMessages.some((m) => m.type === 'result' && (m as SDKResultMessage).subtype === 'success')
         return (
           <MessageActions className="pl-[46px] mt-0.5 min-h-[28px] justify-start">
-            {hasDuration && <DurationBadge durationMs={durationMs!} usage={usage} />}
+            {hasDuration && !hasTrace && <DurationBadge durationMs={durationMs!} usage={usage} />}
             {textContent && <CopyButton content={textContent} />}
             {turnSucceeded && sessionId && (
               <SaveAsWorkflowButton sessionId={sessionId} sessionTitle={sessionTitleForAction} />
