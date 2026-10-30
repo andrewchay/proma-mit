@@ -1,5 +1,8 @@
 import * as React from 'react'
-import type { AgentWorkspace, ProjectWorkspaceBinding } from '@gravitas/shared'
+import { atom, useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { editOwnerMessageAtom, getOwnerMessageComposer, ownerConversationNavigationAtom, ownerMessageComposersAtom } from '../../atoms/project-owner-management-atoms'
+import type { AgentWorkspace, ProjectWorkspaceBinding, ProjectWorkspaceFileChangesView, ProjectWorkspaceGitDiff, ProjectFileChangePolicy } from '@gravitas/shared'
+import { prepareProjectChangeMessage } from './project-file-change-message'
 
 /**
  * ProjectWorkspacesPanel - 项目「工作空间」面板
@@ -35,6 +38,16 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
   const [apiMissing, setApiMissing] = React.useState(false)
   const [message, setMessage] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
+  const changesAtom = React.useMemo(() => atom<Record<string, ProjectWorkspaceFileChangesView>>({}), [])
+  const [changes, setChanges] = useAtom(changesAtom)
+  const policiesAtom = React.useMemo(() => atom<Record<string, ProjectFileChangePolicy | null>>({}), [])
+  const [policies, setPolicies] = useAtom(policiesAtom)
+  const diffAtom = React.useMemo(() => atom<{ workspaceId: string; path: string; result: ProjectWorkspaceGitDiff | null } | null>(null), [])
+  const [diff, setDiff] = useAtom(diffAtom)
+  const diffRequest = React.useRef(0)
+  const composers = useAtomValue(ownerMessageComposersAtom)
+  const editOwnerMessage = useSetAtom(editOwnerMessageAtom)
+  const navigateOwner = useSetAtom(ownerConversationNavigationAtom)
 
   const load = React.useCallback(async () => {
     setError(null)
@@ -56,12 +69,17 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
         window.electronAPI.listAgentWorkspaces().catch(() => [] as AgentWorkspace[]),
       ])
       setBindings(Array.isArray(bindingList) ? bindingList : [])
+      const policyApi = window.electronAPI.paa.projectWorkspace.getFileChangePolicy
+      if (policyApi) {
+        const entries = await Promise.all(bindingList.map(async binding => [binding.workspaceId, await policyApi(projectId, binding.workspaceId)] as const))
+        setPolicies(Object.fromEntries(entries))
+      }
       setWorkspaces(workspaceList)
       setApiMissing(false)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
-  }, [projectId])
+  }, [projectId, setPolicies])
 
   React.useEffect(() => { void load() }, [load])
 
@@ -100,6 +118,9 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
     setMessage(null)
     try {
       await api.unbind(projectId, workspaceId)
+      diffRequest.current++
+      setDiff(null)
+      setChanges(previous => { const next = { ...previous }; delete next[workspaceId]; return next })
       setMessage(`已解除「${name}」的绑定。`)
       await load()
     } catch (err) {
@@ -107,6 +128,48 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
     } finally {
       setBusy(false)
     }
+  }
+
+  const showChanges = async (workspaceId: string): Promise<void> => {
+    setError(null)
+    try {
+      const events = await window.electronAPI.paa.projectWorkspace.listFileChanges(projectId, workspaceId)
+      setChanges(previous => ({ ...previous, [workspaceId]: events }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const changePolicy = async (workspaceId: string, enabled: boolean): Promise<void> => {
+    setBusy(true); setError(null)
+    try {
+      const policy = await window.electronAPI.paa.projectWorkspace.setFileChangePolicy(projectId, workspaceId, enabled)
+      setPolicies(previous => ({ ...previous, [workspaceId]: policy }))
+    } catch (error) { setError(error instanceof Error ? error.message : String(error)) }
+    finally { setBusy(false) }
+  }
+
+  const showGitDiff = async (workspaceId: string, path: string): Promise<void> => {
+    const request = ++diffRequest.current
+    setDiff({ workspaceId, path, result: null })
+    try {
+      const result = await window.electronAPI.paa.projectWorkspace.getGitDiff(projectId, workspaceId, path)
+      if (request === diffRequest.current) setDiff({ workspaceId, path, result })
+    } catch (error) {
+      if (request === diffRequest.current) setDiff({ workspaceId, path, result: { status: 'unavailable', reason: error instanceof Error ? error.message : String(error) } })
+    }
+  }
+
+  const prepareOwnerAnalysis = (workspaceId: string): void => {
+    const events = changes[workspaceId]?.changes.slice(0, 20) ?? []
+    if (!events.length) return
+    const subject = { projectId }
+    const composer = getOwnerMessageComposer(composers, subject)
+    if (composer.pending || composer.sending) { setError('当前 Owner 消息正在处理，请稍后再添加变化记录。'); return }
+    const text = prepareProjectChangeMessage(composer.text, events)
+    if (text === null) { setError('Owner 消息草稿空间不足，请先整理现有草稿。'); return }
+    editOwnerMessage({ subject, text })
+    navigateOwner({ projectId, at: Date.now() })
   }
 
   return (
@@ -140,7 +203,8 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
         ) : (
           <div className="space-y-2">
             {bindings.map((binding) => (
-              <div key={binding.workspaceId} className="flex items-center gap-3 rounded border p-3">
+              <div key={binding.workspaceId} className="rounded border p-3">
+                <div className="flex items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium">{resolveName(binding)}</div>
                   <div className="text-xs text-muted-foreground">
@@ -148,11 +212,33 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
                     {binding.createdAt ? ` · 绑定于 ${new Date(binding.createdAt).toLocaleString()}` : ''}
                   </div>
                 </div>
+                {workspaces.find(workspace => workspace.id === binding.workspaceId)?.rootPath && <button
+                  type="button" onClick={() => void showChanges(binding.workspaceId)}
+                  className="rounded px-2 py-1 text-xs text-primary hover:bg-muted"
+                >查看文件变化</button>}
                 <button
                   onClick={() => void unbind(binding.workspaceId, resolveName(binding))}
                   disabled={busy || apiMissing}
                   className="rounded border px-2 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
                 >解绑</button>
+                </div>
+                {workspaces.find(workspace => workspace.id === binding.workspaceId)?.rootPath && Object.hasOwn(policies, binding.workspaceId) && <label className="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
+                  <input type="checkbox" checked={Boolean(policies[binding.workspaceId])} disabled={busy} onChange={event => void changePolicy(binding.workspaceId, event.target.checked)} />
+                  <span>允许 Owner 自动分析之后的文件变化。路径及变化摘要会用于模型分析；需已有有效管理授权和预算，不会自动修改任务或派工。关闭或解绑后不再启动旧观察。</span>
+                </label>}
+                {Object.hasOwn(changes, binding.workspaceId) && <div className="mt-3 rounded-lg bg-muted/40 p-3 text-xs">
+                  <p className="text-muted-foreground">最近最多 100 条记录，仅供查看；首次扫描建立基线，未包含文件正文，也未发送给 Owner。</p>
+                  {(changes[binding.workspaceId]?.changes.length ?? 0) > 0 && <button type="button" className="mt-2 text-primary underline" onClick={() => prepareOwnerAnalysis(binding.workspaceId)}>将最近 20 条加入 Owner 消息草稿</button>}
+                  {!changes[binding.workspaceId]!.watching && <p role="alert" className="mt-2 text-destructive">目录监听未运行，新的变化可能无法及时记录。</p>}
+                  {changes[binding.workspaceId]!.scanError && <p role="alert" className="mt-2 text-destructive">最近扫描失败，记录可能过期：{changes[binding.workspaceId]!.scanError}</p>}
+                  <p className="mt-2 text-muted-foreground">{changes[binding.workspaceId]!.lastScannedAt ? `上次成功扫描：${new Date(changes[binding.workspaceId]!.lastScannedAt!).toLocaleString()}` : '尚无可确认的成功扫描时间。'}</p>
+                  {changes[binding.workspaceId]!.changes.length === 0 ? <p className="mt-2">暂无已记录变化。</p> : <ul className="mt-2 max-h-64 space-y-1 overflow-auto">{changes[binding.workspaceId]!.changes.map((change, index) => <li key={`${change.observedAt}-${index}`} className="break-all">{new Date(change.observedAt).toLocaleString()} · {change.kind === 'added' ? '新增' : change.kind === 'deleted' ? '删除' : change.kind === 'renamed' ? '疑似重命名' : '修改'} · {change.previousPath ? `${change.previousPath} → ` : ''}{change.path} · {change.evidence === 'content' ? '内容摘要' : change.evidence === 'matching_digest' ? '摘要匹配推测' : '元数据'} <button type="button" className="text-primary underline" onClick={() => void showGitDiff(binding.workspaceId, change.path)}>查看当前 Git 差异</button></li>)}</ul>}
+                  {diff?.workspaceId === binding.workspaceId && <section className="mt-3 rounded bg-background p-3" aria-label="当前 Git 差异">
+                    <p className="font-medium">{diff.path} · 当前工作区相对 HEAD</p>
+                    <p className="mt-1 text-muted-foreground">这不是上述历史事件的精确差异，也不会自动发送给 Owner。</p>
+                    {!diff.result ? <p className="mt-2">正在读取…</p> : diff.result.status === 'unavailable' ? <p className="mt-2">{diff.result.reason}</p> : <pre className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap break-all">{diff.result.text}</pre>}
+                  </section>}
+                </div>}
               </div>
             ))}
           </div>

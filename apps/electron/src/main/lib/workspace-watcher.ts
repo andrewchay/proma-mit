@@ -16,9 +16,13 @@ import type { FSWatcher } from 'node:fs'
 import type { BrowserWindow } from 'electron'
 import { AGENT_IPC_CHANNELS } from '@gravitas/shared'
 import { getAgentWorkspacesDir } from './config-paths'
+import { listAgentWorkspaces } from './agent-workspace-manager'
+import { scanProjectFileChanges } from './project-file-changes'
 
 /** debounce 延迟（ms） */
 const DEBOUNCE_MS = 300
+const PROJECT_SCAN_DEBOUNCE_MS = 2000
+const PROJECT_SCAN_RETRY_MS = 30000
 
 /** watcher 'error' 事件后的自愈重启延迟（ms），避免对持续故障状态紧密重试 */
 const WATCHER_RESTART_DELAY_MS = 5000
@@ -34,6 +38,97 @@ function isHighNoisePath(normalizedPath: string): boolean {
 }
 
 let watcher: FSWatcher | null = null
+const projectRootWatchers = new Map<string, FSWatcher>()
+let projectRootRetryTimer: ReturnType<typeof setInterval> | null = null
+const projectScanTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const projectScans = new Map<string, Promise<void>>()
+const projectScanDirty = new Map<string, string>()
+
+function scheduleProjectScan(workspaceId: string, root: string, delay = PROJECT_SCAN_DEBOUNCE_MS): void {
+  const timer = projectScanTimers.get(workspaceId)
+  if (timer) clearTimeout(timer)
+  projectScanTimers.set(workspaceId, setTimeout(() => {
+    projectScanTimers.delete(workspaceId)
+    if (projectScans.has(workspaceId)) {
+      projectScanDirty.set(workspaceId, root)
+      return
+    }
+    const next = (async () => {
+      if (!mainWin || !listAgentWorkspaces().some(item => item.id === workspaceId && item.rootPath === root)) return
+      await scanProjectFileChanges(workspaceId, root)
+      const { reconcileProjectFileChangeObservations } = await import('./project-file-change-observations')
+      await reconcileProjectFileChangeObservations(workspaceId, root)
+    })().catch(error => {
+      console.error('[项目变化扫描] 失败，将稍后重试:', error)
+      if (mainWin) scheduleProjectScan(workspaceId, root, PROJECT_SCAN_RETRY_MS)
+    })
+    projectScans.set(workspaceId, next)
+    void next.finally(() => {
+      projectScans.delete(workspaceId)
+      const dirtyRoot = projectScanDirty.get(workspaceId)
+      projectScanDirty.delete(workspaceId)
+      if (dirtyRoot && mainWin) scheduleProjectScan(workspaceId, dirtyRoot)
+    })
+  }, delay))
+}
+
+/** 同步本地项目根目录监听，独立于会话附加目录的生命周期。 */
+export function syncProjectRootWatchers(): void {
+  if (!mainWin || mainWin.isDestroyed()) return
+  const workspaces = listAgentWorkspaces()
+  const roots = new Set(workspaces.flatMap((workspace) => workspace.rootPath ? [workspace.rootPath] : []))
+  for (const [path, existing] of projectRootWatchers) {
+    if (!roots.has(path)) {
+      existing.close()
+      projectRootWatchers.delete(path)
+    }
+  }
+  for (const path of roots) {
+    if (projectRootWatchers.has(path) || !existsSync(path)) continue
+    try {
+      const rootWatcher = watch(path, { recursive: true }, (_eventType, filename) => {
+        if (filename && isHighNoisePath(filename.replace(/\\/g, '/'))) return
+        scheduleAttachedFilesRefresh()
+        for (const workspace of listAgentWorkspaces()) {
+          if (workspace.rootPath === path) scheduleProjectScan(workspace.id, path)
+        }
+      })
+      rootWatcher.on('error', (error) => {
+        console.error('[项目目录监听] 运行时错误:', path, error)
+        rootWatcher.close()
+        projectRootWatchers.delete(path)
+      })
+      projectRootWatchers.set(path, rootWatcher)
+      for (const workspace of workspaces) {
+        if (workspace.rootPath === path) scheduleProjectScan(workspace.id, path)
+      }
+    } catch (error) {
+      console.error('[项目目录监听] 启动失败:', path, error)
+    }
+  }
+}
+
+export function isProjectRootWatched(root: string): boolean {
+  return projectRootWatchers.has(root)
+}
+
+/** 系统唤醒后补扫，覆盖休眠期间可能漏掉的事件。 */
+export function rescanProjectRoots(): void {
+  for (const workspace of listAgentWorkspaces()) {
+    if (workspace.rootPath) scheduleProjectScan(workspace.id, workspace.rootPath)
+  }
+}
+
+function scheduleAttachedFilesRefresh(): void {
+  if (!mainWin || mainWin.isDestroyed()) return
+  if (attachedFilesTimer) clearTimeout(attachedFilesTimer)
+  attachedFilesTimer = setTimeout(() => {
+    if (mainWin && !mainWin.isDestroyed()) {
+      mainWin.webContents.send(AGENT_IPC_CHANNELS.WORKSPACE_FILES_CHANGED)
+    }
+    attachedFilesTimer = null
+  }, DEBOUNCE_MS)
+}
 
 /** 附加目录监听器：路径 → FSWatcher */
 const attachedWatchers = new Map<string, FSWatcher>()
@@ -49,6 +144,9 @@ let mainWin: BrowserWindow | null = null
  */
 export function startWorkspaceWatcher(win: BrowserWindow): void {
   mainWin = win
+  syncProjectRootWatchers()
+  rescanProjectRoots()
+  if (!projectRootRetryTimer) projectRootRetryTimer = setInterval(syncProjectRootWatchers, WATCHER_RESTART_DELAY_MS)
   const watchDir = getAgentWorkspacesDir()
 
   if (!existsSync(watchDir)) {
@@ -128,6 +226,15 @@ export function stopWorkspaceWatcher(): void {
     watcher = null
     console.log('[工作区监听] 已停止')
   }
+  for (const timer of projectScanTimers.values()) clearTimeout(timer)
+  projectScanTimers.clear()
+  projectScanDirty.clear()
+  if (projectRootRetryTimer) clearInterval(projectRootRetryTimer)
+  projectRootRetryTimer = null
+  for (const rootWatcher of projectRootWatchers.values()) rootWatcher.close()
+  projectRootWatchers.clear()
+  if (attachedFilesTimer) clearTimeout(attachedFilesTimer)
+  attachedFilesTimer = null
   // 同时清理所有附加目录监听器
   for (const [dirPath, w] of attachedWatchers) {
     w.close()
@@ -150,16 +257,7 @@ export function watchAttachedDirectory(dirPath: string): void {
 
   try {
     const w = watch(dirPath, { recursive: true }, () => {
-      if (!mainWin || mainWin.isDestroyed()) return
-
-      // 统一防抖：所有附加目录变化合并为一次刷新
-      if (attachedFilesTimer) clearTimeout(attachedFilesTimer)
-      attachedFilesTimer = setTimeout(() => {
-        if (mainWin && !mainWin.isDestroyed()) {
-          mainWin.webContents.send(AGENT_IPC_CHANNELS.WORKSPACE_FILES_CHANGED)
-        }
-        attachedFilesTimer = null
-      }, DEBOUNCE_MS)
+      scheduleAttachedFilesRefresh()
     })
 
     // 同主 watcher：监听 'error' 防止运行时异常拖死主进程。
