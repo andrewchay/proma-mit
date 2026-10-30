@@ -13,7 +13,7 @@
  *   （机器可读契约，要求 verbatim 粘贴进产物首个 <style> 块）。
  *
  * 注入顺序对齐 OD prompt 组装：设计系统正文 → tokens.css → craft 各节。
- * 缺失文件静默跳过（OD 同款语义：skill 可前向引用尚未发布的 craft 节）。
+ * craft 节缺失时保留可用内容，并明确提示所声明的缺项。
  *
  * 激活设计系统约定：工作区 cwd 根目录存在 `DESIGN.md` 即视为激活
  * （本地项目=项目根；隔离工作区=会话目录），同级 `tokens.css` 一并注入。
@@ -241,7 +241,7 @@ export function resolveActiveDesignSystem(cwd: string | undefined): ActiveDesign
 export interface ComposeOdDesignContextInput {
   /** Skill 的 od: 需求（调用方先经 parseOdRequirements 得到） */
   requirements: OdSkillRequirements
-  /** craft 参考目录（resolveDesignCraftDir 的结果；undefined 时 craft 静默降级） */
+  /** craft 参考目录（resolveDesignCraftDir 的结果；undefined 时报告所需资料缺失） */
   craftDir?: string
   /** 工作区 cwd（激活设计系统探测根） */
   cwd?: string
@@ -300,6 +300,10 @@ export function composeOdDesignContext(input: ComposeOdDesignContextInput): stri
           '</od_craft>',
         ].join('\n'),
       )
+    }
+    const missing = normalizeCraftSlugs(requirements.craftRequires).filter(slug => !sections.includes(slug))
+    if (missing.length) {
+      parts.push(`<od_missing_resource type="craft" sections="${escapeAttr(missing.join(','))}">当前任务要求的工艺参考缺失：${missing.join('、')}；请向用户说明缺项，不要声称已遵循缺失的参考。</od_missing_resource>`)
     }
   }
 
