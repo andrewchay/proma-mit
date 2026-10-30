@@ -72,13 +72,13 @@ export async function scanProjectFileChanges(workspaceId: string, root: string):
 }
 
 /** 用户主动查看工作区记录；不读取文件正文。 */
-export async function readProjectFileChanges(workspaceId: string, root: string): Promise<ProjectFileChange[]> {
+export async function readProjectFileChanges(workspaceId: string, root: string): Promise<ProjectFileChange[] | null> {
   try {
     const snapshot: Snapshot = JSON.parse(await readFile(snapshotPath(workspaceId), 'utf8'))
     if (snapshot.version !== 1 || snapshot.root !== root || !Array.isArray(snapshot.events) || snapshot.events.some(event => !event || typeof event.path !== 'string' || !['added', 'modified', 'deleted'].includes(event.kind) || !Number.isFinite(event.observedAt))) throw new Error('项目文件快照无效')
     return snapshot.events.slice(-100).reverse()
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
     throw error
   }
 }

@@ -2128,7 +2128,7 @@ export interface ElectronAPI {
       unbind: (projectId: string, workspaceId: string) => Promise<boolean>
       listByProject: (projectId: string) => Promise<import('@gravitas/shared').ProjectWorkspaceBinding[]>
       listByWorkspace: (workspaceId: string) => Promise<import('@gravitas/shared').ProjectWorkspaceBinding[]>
-      listFileChanges: (projectId: string, workspaceId: string) => Promise<import('@gravitas/shared').ProjectWorkspaceFileChange[]>
+      listFileChanges: (projectId: string, workspaceId: string) => Promise<import('@gravitas/shared').ProjectWorkspaceFileChange[] | null>
     }
     // --- AI 员工（Agent Employee） ---
     agentEmployees: {

@@ -38,7 +38,7 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
   const [apiMissing, setApiMissing] = React.useState(false)
   const [message, setMessage] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
-  const changesAtom = React.useMemo(() => atom<Record<string, ProjectWorkspaceFileChange[]>>({}), [])
+  const changesAtom = React.useMemo(() => atom<Record<string, ProjectWorkspaceFileChange[] | null>>({}), [])
   const [changes, setChanges] = useAtom(changesAtom)
   const composers = useAtomValue(ownerMessageComposersAtom)
   const editOwnerMessage = useSetAtom(editOwnerMessageAtom)
@@ -190,10 +190,10 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
                   className="rounded border px-2 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
                 >解绑</button>
                 </div>
-                {changes[binding.workspaceId] && <div className="mt-3 rounded-lg bg-muted/40 p-3 text-xs">
+                {Object.hasOwn(changes, binding.workspaceId) && <div className="mt-3 rounded-lg bg-muted/40 p-3 text-xs">
                   <p className="text-muted-foreground">最近最多 100 条记录，仅供查看；首次扫描建立基线，未包含文件正文，也未发送给 Owner。</p>
-                  {changes[binding.workspaceId]!.length > 0 && <button type="button" className="mt-2 text-primary underline" onClick={() => prepareOwnerAnalysis(binding.workspaceId)}>将最近 20 条加入 Owner 消息草稿</button>}
-                  {changes[binding.workspaceId]!.length === 0 ? <p className="mt-2">暂无已记录变化。</p> : <ul className="mt-2 max-h-64 space-y-1 overflow-auto">{changes[binding.workspaceId]!.map((change, index) => <li key={`${change.observedAt}-${index}`} className="break-all">{new Date(change.observedAt).toLocaleString()} · {change.kind === 'added' ? '新增' : change.kind === 'deleted' ? '删除' : '修改'} · {change.path}</li>)}</ul>}
+                  {(changes[binding.workspaceId]?.length ?? 0) > 0 && <button type="button" className="mt-2 text-primary underline" onClick={() => prepareOwnerAnalysis(binding.workspaceId)}>将最近 20 条加入 Owner 消息草稿</button>}
+                  {changes[binding.workspaceId] === null ? <p className="mt-2">尚未建立扫描基线，或项目目录当前不可用。</p> : changes[binding.workspaceId]!.length === 0 ? <p className="mt-2">暂无已记录变化。</p> : <ul className="mt-2 max-h-64 space-y-1 overflow-auto">{changes[binding.workspaceId]!.map((change, index) => <li key={`${change.observedAt}-${index}`} className="break-all">{new Date(change.observedAt).toLocaleString()} · {change.kind === 'added' ? '新增' : change.kind === 'deleted' ? '删除' : '修改'} · {change.path}</li>)}</ul>}
                 </div>}
               </div>
             ))}
