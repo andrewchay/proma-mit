@@ -9,6 +9,7 @@ import type { ToolContext } from '../types.ts'
 import { formatToolError, truncateOutput, requiresOwnerToolGate } from './tool-utils.ts'
 import { prepareBashSandbox, quarantineNewGitArtifacts } from './bash-sandbox.ts'
 import { describeBashTermination, runBashCommand } from './bash-termination.ts'
+import { findGitCommandBoundaryViolation } from './git-command-boundary.ts'
 
 export interface BashToolInput {
   command: string
@@ -51,6 +52,11 @@ export async function executeBashToolOnPlatform(input: unknown, ctx: ToolContext
   }
   if (platform !== 'darwin') {
     return { toolCallId: '', content: '当前平台尚未提供 Bash 沙箱，已拒绝执行 shell 命令（默认拒绝）', isError: true }
+  }
+
+  const gitBoundaryViolation = findGitCommandBoundaryViolation(command)
+  if (gitBoundaryViolation) {
+    return { toolCallId: '', content: gitBoundaryViolation, isError: true }
   }
 
   const timeout = params.timeout ?? 30_000
