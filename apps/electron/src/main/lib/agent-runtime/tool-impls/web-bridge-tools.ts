@@ -259,7 +259,7 @@ async function runWebBridgeAction(params: {
   } catch (thrown) {
     const failure = describeDispatchedActionFailure(`WebBridge${display}`, thrown, hint ?? '请先调用 WebBridgeObserve 或 WebBridgeSnapshot 观察页面并由用户核对实际状态。')
     audit(ctx, action, { ...detail, outcome: failure.outcome, error: failure.reason })
-    await finishTrackedAction(tracked, false)
+    await finishTrackedAction(tracked, false, failure.reason)
     return error(failure.message)
   }
 }

@@ -9,6 +9,7 @@ import type { ToolContext } from '../types.ts'
 import { formatToolError, truncateOutput, requiresOwnerToolGate } from './tool-utils.ts'
 import { prepareBashSandbox, quarantineNewGitArtifacts } from './bash-sandbox.ts'
 import { describeBashTermination, runBashCommand } from './bash-termination.ts'
+import { findGitCommandBoundaryViolation } from './git-command-boundary.ts'
 
 export interface BashToolInput {
   command: string
@@ -53,6 +54,11 @@ export async function executeBashToolOnPlatform(input: unknown, ctx: ToolContext
     return { toolCallId: '', content: '当前平台尚未提供 Bash 沙箱，已拒绝执行 shell 命令（默认拒绝）', isError: true }
   }
 
+  const gitBoundaryViolation = findGitCommandBoundaryViolation(command)
+  if (gitBoundaryViolation) {
+    return { toolCallId: '', content: gitBoundaryViolation, isError: true }
+  }
+
   const timeout = params.timeout ?? 30_000
 
   // 沙箱准备结果提升到 try 外，使命令失败路径也能按同一份 gitWasPresent 收口。
@@ -65,8 +71,9 @@ export async function executeBashToolOnPlatform(input: unknown, ctx: ToolContext
     }
     assertOwnerGate()
     sandbox = await prepareBashSandbox(ctx.cwd, ctx.sessionId)
-    // 准备沙箱包含异步操作，启动子进程前再次核验会话授权。
+    // 准备沙箱包含异步操作，启动子进程前再次核验会话授权与可写 inode 边界。
     assertOwnerGate()
+    await sandbox.assertLaunchSafe()
     // 以独立进程组运行并接入会话中止信号：终止对整组下发，且只有在进程组确认消失后
     // 才把结果写成"已终止"，否则标记 unconfirmed。
     const run = await runBashCommand({

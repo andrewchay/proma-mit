@@ -12,8 +12,15 @@ import type { RuntimeToolDefinition, ToolContext } from './types'
 import { McpOAuthProvider } from './mcp-oauth-provider'
 import { registerPendingMcpOAuth } from './mcp-oauth-pending'
 import { readTransportPid, snapshotProcessTree, type ReapEvidence } from './mcp-process-reaper'
-import { describeDispatchedActionFailure } from './tool-impls/external-action-outcome'
-import { beginTrackedAction, finishTrackedAction, blockIfUnknownAction, buildActionKey, hashDetail } from './unknown-action-store'
+import { describeMcpToolFailure } from './mcp-tool-outcome'
+import {
+  beginTrackedAction,
+  finishTrackedAction,
+  blockIfUnknownAction,
+  buildActionKey,
+  hashDetail,
+  resolveUnknownAction,
+} from './unknown-action-store'
 
 interface ConnectedServer {
   name: string
@@ -182,6 +189,17 @@ export class McpClientManager {
       return { content: blocked, isError: true, toolCallId: '' }
     }
 
+    // SDK 会在 callTool 发送请求前执行同一只读守卫；提前复用可避免产生假的未知动作。
+    // 该运行时方法在 SDK 类型中标为 private，因此这里只声明实际读取的最小接口。
+    const clientTaskGuard = server.client as unknown as { isToolTaskRequired?: (name: string) => boolean }
+    if (clientTaskGuard.isToolTaskRequired?.(toolName) === true) {
+      return {
+        content: `MCP 工具 ${serverName}__${toolName} 未执行：该工具要求任务式执行，本次未发送请求；请改用支持任务的 MCP 调用方式。`,
+        isError: true,
+        toolCallId: '',
+      }
+    }
+
     const tracked = await beginTrackedAction({ sessionId: ctx.sessionId, tool: `MCP 工具 ${serverName}__${toolName}`, actionKey, detail: { server: serverName, tool: toolName }, reason: '动作已登记，结果待确认' })
     if (!tracked) return { content: '同一动作正在执行或等待核对，禁止重复派发', isError: true, toolCallId: '' }
 
@@ -191,15 +209,21 @@ export class McpClientManager {
         undefined,
         { signal: ctx.abortSignal },
       )
-      if (result.isError === true) throw new Error('MCP 服务报告工具执行错误')
+      if (result.isError === true) throw new Error(`MCP 服务报告工具执行错误：${this.serializeResult(result)}`)
       await finishTrackedAction(tracked, true)
       return { content: this.serializeResult(result), isError: false, toolCallId: '' }
     } catch (thrown) {
-      // 工具可能在服务端已经执行，只是响应在返回途中超时或连接断开。
-      // 统一压成"调用失败"会让模型直接重试，在真实系统上是重复执行。
-      const failure = describeDispatchedActionFailure(`MCP 工具 ${serverName}__${toolName}`, thrown, '请先核对目标系统的实际状态，再由用户决定是否继续。')
+      // 除明确的 Method not found 外，派发后的异常都不能证明没有副作用。
+      const failure = describeMcpToolFailure(`${serverName}__${toolName}`, thrown)
       console.warn(`[MCP 客户端] 工具调用${failure.outcome === 'unknown' ? '结果未知' : '未执行'}: ${failure.reason}`)
-      await finishTrackedAction(tracked, false)
+      await finishTrackedAction(tracked, false, failure.reason)
+      if (failure.outcome === 'not_applied') {
+        await resolveUnknownAction({
+          sessionId: ctx.sessionId,
+          id: tracked.id,
+          resolution: `MCP 服务端明确返回 Method not found，本次未执行：${failure.reason}`,
+        })
+      }
       return { content: failure.message, isError: true, toolCallId: '' }
     }
   }

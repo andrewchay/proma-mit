@@ -33,10 +33,11 @@ function fail(message: string): never {
   throw new Error(`Owner重验证：${message}`)
 }
 export function parseOwnerExecutionRevalidationInput(raw: unknown): OwnerExecutionRevalidationInput {
-  const value = ownerExecutionObject(raw, ['requestId', 'expectedRevalidationRevision', 'expectedMaterializationId', 'expectedMaterializationRevision', 'expectedMaterializationHash', 'expectedPolicyRevision', 'changeReason'])
+  const value = ownerExecutionObject(raw, ['requestId', 'expectedRevalidationRevision', 'expectedMaterializationId', 'expectedMaterializationRevision', 'expectedMaterializationHash', 'expectedPolicyRevision', 'renewalExpiresAt', 'changeReason'])
   for (const key of ['requestId', 'expectedMaterializationId'] as const) if (typeof value[key] !== 'string' || !value[key].trim() || (value[key] as string).length > 200) fail('请求或材料化ID无效')
   if (typeof value.changeReason !== 'string' || !value.changeReason.trim()) fail('变更原因无效')
   for (const key of ['expectedRevalidationRevision', 'expectedMaterializationRevision', 'expectedPolicyRevision'] as const) if (!Number.isSafeInteger(value[key]) || Number(value[key]) < (key === 'expectedRevalidationRevision' ? 0 : 1)) fail('版本无效')
+  if (value.renewalExpiresAt !== undefined && !Number.isSafeInteger(value.renewalExpiresAt)) fail('续期期限无效')
   if (typeof value.expectedMaterializationHash !== 'string' || !/^[a-f0-9]{64}$/.test(value.expectedMaterializationHash)) fail('材料化摘要无效')
   return value as unknown as OwnerExecutionRevalidationInput
 }
@@ -46,7 +47,8 @@ function edgesFor(taskId: string, projectId: string) {
 /** 实时重建v2来源；v1 plan/人员/资料/配置任何漂移都会让重建hash与冻结值不一致。 */
 function buildRevalidationSource(subject: ProjectOwnerGoalSubject, input: OwnerExecutionRevalidationInput, materialization: ReturnType<typeof getOwnerTaskMaterializationRecord>): OwnerExecutionRevalidationSource {
   const frozenPreparation = materialization.preview.preparation
-  const v1 = buildOwnerExecutionSource(subject, frozenPreparation.input)
+  const effectiveInput = input.renewalExpiresAt === undefined ? frozenPreparation.input : { ...frozenPreparation.input, expiresAt: input.renewalExpiresAt }
+  const v1 = buildOwnerExecutionSource(subject, effectiveInput)
   const tasks: OwnerExecutionRevalidationTask[] = materialization.links.map(link => {
     const task = store.getTask(link.taskId)
     const statusRemainsInScope = task && (task.status === 'paused' || isCompletedStatus(task.status, store.listTaskStatuses(subject.projectId)))
@@ -91,11 +93,11 @@ function buildRevalidationSource(subject: ProjectOwnerGoalSubject, input: OwnerE
     ownerBindingProvenance: v1.ownerBindingProvenance,
     knowledgeSources: v1.knowledgeSources,
     budget: {
-      maxCostMicros: frozenPreparation.input.maxCostMicros,
-      maxRuns: frozenPreparation.input.maxRuns,
-      maxRework: frozenPreparation.input.maxRework,
-      expiresAt: frozenPreparation.input.expiresAt,
-      ...(frozenPreparation.input.roleBudgetCaps?.length ? { roleBudgetCaps: frozenPreparation.input.roleBudgetCaps } : {}),
+      maxCostMicros: effectiveInput.maxCostMicros,
+      maxRuns: effectiveInput.maxRuns,
+      maxRework: effectiveInput.maxRework,
+      expiresAt: effectiveInput.expiresAt,
+      ...(effectiveInput.roleBudgetCaps?.length ? { roleBudgetCaps: effectiveInput.roleBudgetCaps } : {}),
     },
     executionKind: frozenPreparation.input.executionKind,
     blockers: [...v1.blockers],
@@ -147,7 +149,7 @@ function currentPreview(subject: ProjectOwnerGoalSubject, input: OwnerExecutionR
   assertLocalActorEnabled()
   const history = readHistory(subject.projectId)
   if ((history.at(-1)?.revision ?? 0) !== input.expectedRevalidationRevision) fail('重验证版本已更新')
-  const materializationView = getOwnerTaskMaterialization(subject)
+  const materializationView = getOwnerTaskMaterialization(subject, input.renewalExpiresAt)
   if (materializationView.status !== 'needs_revalidation' || !materializationView.materialization) fail('材料化来源已漂移或缺失，请先核查')
   if (materializationView.materialization.id !== input.expectedMaterializationId || materializationView.materialization.revision !== input.expectedMaterializationRevision || materializationView.materialization.integrityHash !== input.expectedMaterializationHash) fail('材料化记录已修订')
   const materialization = getOwnerTaskMaterializationRecord(subject.projectId, input.expectedMaterializationId)
@@ -156,8 +158,18 @@ function currentPreview(subject: ProjectOwnerGoalSubject, input: OwnerExecutionR
   // v1视图状态可能是current（project主体）或自然stale（单任务合法patch）；只要求身份与materialization冻结准备精确一致。
   if (!preparation || preparation.id !== materialization.preview.preparation.id || ownerExecutionHash(preparation) !== ownerExecutionHash(materialization.preview.preparation)) fail('v1准备来源不可用，请先核查')
   if (!policy || policy.state !== 'paused' || policy.revision !== input.expectedPolicyRevision || policy.ownerExecutionPreparation?.id !== preparation.id || policy.ownerExecutionPreparation.revision !== preparation.revision || policy.ownerExecutionPreparation.integrityHash !== preparation.integrityHash) fail('策略引用已更新，请重新预览')
-  if (preparation.input.expiresAt <= Date.now()) fail('v1执行准备期限已过期，不能顺延重验证')
-  assertOwnerExecutionBoundaryIdle(subject.projectId)
+  if (input.renewalExpiresAt !== undefined) {
+    if (process.env.GRAVITAS_PACKAGE_SMOKE !== '1' || !process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID) fail('普通产品路径不允许顺延过期准备')
+    if (input.renewalExpiresAt <= Date.now() || input.renewalExpiresAt <= preparation.input.expiresAt || input.renewalExpiresAt > Date.now() + 7 * 86400000) fail('续期期限须晚于原期限且在未来七天内')
+  } else if (preparation.input.expiresAt <= Date.now()) fail('v1执行准备期限已过期，不能顺延重验证')
+  if (input.renewalExpiresAt === undefined) assertOwnerExecutionBoundaryIdle(subject.projectId)
+  else {
+    // 续期必须迁移同一条已结算授权；普通新再验证仍要求完全空闲边界。
+    const grants = store.getProjectDb().prepare("SELECT id FROM project_owner_execution_grants WHERE project_id=? AND task_id IS ? AND state='active'").all(subject.projectId, subject.taskId ?? null) as Array<{ id: string }>
+    if (grants.length !== 1) fail('续期授权存在其他活动授权')
+    const pending = store.getProjectDb().prepare("SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE grant_id=? AND (state NOT IN ('settled','released') OR actual_cost_micros IS NULL OR usage_evidence IS NULL)").get(grants[0]!.id) as { count: number }
+    if (pending.count !== 0) fail('续期授权存在未结算命令或未知用量')
+  }
   const source = buildRevalidationSource(subject, input, materialization)
   const body = { ...subject, input, source }
   return { ...body, previewFingerprint: ownerExecutionHash(body) }

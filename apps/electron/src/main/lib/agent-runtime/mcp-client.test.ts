@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { McpClientManager, sanitizeMcpToolName } from './mcp-client'
-import { __resetUnknownActionCacheForTest } from './unknown-action-store'
+import { __resetUnknownActionCacheForTest, listPendingUnknownActions } from './unknown-action-store'
 
 const testDirectory = mkdtempSync(join(tmpdir(), 'mcp-client-test-'))
 const previousConfigDir = process.env.PROMA_TEST_CONFIG_DIR
@@ -77,13 +77,53 @@ describe('MCP 工具调用的结果判定', () => {
     expect(result.content).toContain('核对目标系统的实际状态')
   })
 
-  test('Given 服务返回工具错误 When 执行 Then 保持未知并阻止重试', async () => {
+  test('Given 服务返回工具错误 When 执行 Then 保留诊断并持久化未知原因', async () => {
     let calls = 0
     const manager = managerWith(() => { calls += 1; return Promise.resolve({ isError: true, content: [{ type: 'text', text: 'failed after dispatch' }] }) })
     const input = { ...ctx, sessionId: 'mcp-outcome-tool-error' }
-    expect((await manager.executeTool('demo', 'do_work', {}, input)).content).toContain('结果未知')
+    const first = await manager.executeTool('demo', 'do_work', {}, input)
+    expect(first.content).toContain('结果未知')
+    expect(first.content).toContain('failed after dispatch')
+    expect((await listPendingUnknownActions(input.sessionId))[0]?.reason).toContain('failed after dispatch')
     expect((await manager.executeTool('demo', 'do_work', {}, input)).isError).toBe(true)
     expect(calls).toBe(1)
+  })
+
+  test('Given 服务端明确方法不存在 When 修正后同参数重试 Then 允许再次调用', async () => {
+    let calls = 0
+    const manager = managerWith(() => {
+      calls += 1
+      return calls === 1
+        ? Promise.reject(Object.assign(new Error('Method not found'), { code: -32601 }))
+        : Promise.resolve({ content: [{ type: 'text', text: 'ok' }] })
+    })
+    const input = { ...ctx, sessionId: 'mcp-outcome-not-applied' }
+    const first = await manager.executeTool('demo', 'missing_tool', {}, input)
+    expect(first.content).toContain('未执行')
+    expect(await listPendingUnknownActions(input.sessionId)).toHaveLength(0)
+    const second = await manager.executeTool('demo', 'missing_tool', {}, input)
+    expect(second.isError).toBe(false)
+    expect(calls).toBe(2)
+  })
+
+  test('Given SDK 在发送前拒绝任务式工具 When 执行 Then 不触达服务也不登记未知', async () => {
+    let calls = 0
+    const manager = new McpClientManager({}, '/tmp')
+    ;(manager as unknown as { servers: unknown[] }).servers = [{
+      name: 'demo',
+      client: {
+        isToolTaskRequired: () => true,
+        callTool: () => { calls += 1; return Promise.resolve({ content: [] }) },
+      },
+      transport: {},
+    }]
+    const input = { ...ctx, sessionId: 'mcp-outcome-task-required' }
+    const result = await manager.executeTool('demo', 'task_tool', {}, input)
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('未执行')
+    expect(result.content).toContain('任务式')
+    expect(calls).toBe(0)
+    expect(await listPendingUnknownActions(input.sessionId)).toHaveLength(0)
   })
 
   test('Given 服务器未连接 When 执行工具 Then 保持明确未执行的文案', async () => {

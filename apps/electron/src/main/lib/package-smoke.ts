@@ -191,11 +191,22 @@ export async function runPackageSmoke(): Promise<void> {
 
   const newMedia = await runNewMediaSmoke()
   const ownerRuntimeVerification = await runOwnerRuntimeVerificationSmoke(root)
+  const localOnlySmoke = !process.env.GRAVITAS_OWNER_CHAIN_SMOKE_CHANNEL_ID
+    && !process.env.GRAVITAS_OWNER_PARAM_PROBE_CHANNEL_ID
+    && !process.env.GRAVITAS_PACKAGE_SMOKE_KIMI_CHANNEL_ID
+  const processSmoke = localOnlySmoke
+    ? await (await import('./package-process-smoke')).runPackageProcessSmoke(root, workspace)
+    : false
+  const openDesign = localOnlySmoke
+    ? await (await import('./package-design-smoke')).runPackageDesignSmoke(root)
+    : false
 
   console.log(JSON.stringify({
     packageSmoke: 'passed',
     newMedia,
     ownerRuntimeVerification,
+    processSmoke,
+    openDesign,
     version: app.getVersion(),
     tools: tools.length,
     defaultSkills: defaultSkillSlugs.length,

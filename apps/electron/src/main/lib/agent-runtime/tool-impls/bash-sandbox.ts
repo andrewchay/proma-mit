@@ -32,10 +32,58 @@ function realOrSelf(path: string): string {
   }
 }
 
+const BLOCKED_GIT_ENV_KEYS = [
+  'GIT_DIR',
+  'GIT_WORK_TREE',
+  'GIT_COMMON_DIR',
+  'GIT_TEMPLATE_DIR',
+  'GIT_OBJECT_DIRECTORY',
+  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
+  'GIT_INDEX_FILE',
+  'GIT_SHALLOW_FILE',
+  'GIT_EXEC_PATH',
+  'GIT_CONFIG',
+  'GIT_CONFIG_PARAMETERS',
+  'GIT_CONFIG_COUNT',
+  'GIT_NAMESPACE',
+  'GIT_CEILING_DIRECTORIES',
+  'GIT_DISCOVERY_ACROSS_FILESYSTEM',
+  'GIT_SSH',
+  'GIT_SSH_COMMAND',
+  'GIT_ASKPASS',
+  'GIT_EDITOR',
+  'GIT_SEQUENCE_EDITOR',
+  'GIT_PAGER',
+  'GIT_PROXY_COMMAND',
+  'SSH_ASKPASS',
+  'PAGER',
+  'EDITOR',
+  'VISUAL',
+] as const
+
+/**
+ * 清除继承的 Git 路径、config 与命令执行覆盖，避免它们绕过当前工作目录布局。
+ * 命令内自行设置的变量仍由 seatbelt 与命令后收口约束，不把环境清洗视为完整隔离。
+ */
+export function sanitizeBashGitEnvironment(source: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = { ...source }
+  for (const key of BLOCKED_GIT_ENV_KEYS) delete env[key]
+  for (const key of Object.keys(env)) {
+    if (/^GIT_CONFIG_(?:KEY|VALUE)_\d+$/.test(key)) delete env[key]
+  }
+  env.GIT_CONFIG_GLOBAL = '/dev/null'
+  env.GIT_CONFIG_SYSTEM = '/dev/null'
+  env.GIT_CONFIG_NOSYSTEM = '1'
+  return env
+}
+
 /** 解析 git 布局；cwd 不在 git 仓库中时返回 undefined。 */
 export function resolveGitLayout(cwd: string): Promise<GitLayout | undefined> {
   return new Promise((resolve) => {
-    execFile('git', ['-C', cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir', '--git-dir'], { encoding: 'utf8' }, (error, stdout) => {
+    execFile('git', ['-C', cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir', '--git-dir'], {
+      encoding: 'utf8',
+      env: sanitizeBashGitEnvironment(process.env),
+    }, (error, stdout) => {
       if (error) return resolve(undefined)
       const [common, own] = stdout.trim().split('\n')
       if (!common || !own) return resolve(undefined)
@@ -99,13 +147,12 @@ export function buildBashSandboxPolicy(input: {
 
 /**
  * 将可写范围内 nlink > 1 的普通文件替换为私有副本，使预先存在的跨边界硬链接失效。
+ * 启动前复核模式则只拒绝、不替换，避免把竞态发现静默推迟到下一次调用。
  *
- * seatbelt 只能按路径授权写入，无法识别"路径在范围内、inode 与范围外共享"的预存硬链接；
- * 在每次生成策略前把这类文件原子替换为独立副本（保留权限位），写入就不会再影响其他会话。
- * 边界：扫描与子进程启动之间仍存在理论窗口（外部进程可在此期间创建硬链接），
- * 且会溶解可写范围内合法的硬链接（如包管理器、本地克隆），这些代价已在证据文档中说明。
+ * seatbelt 只能按路径授权写入，无法识别"路径在范围内、inode 与范围外共享"的预存硬链接。
+ * 两次扫描之间及复核之后的系统外并发进程仍不受本模块控制，不能视为操作系统级原子隔离。
  */
-export async function quarantineWritableHardlinks(policy: SeatbeltPolicy): Promise<void> {
+async function scanWritableHardlinks(policy: SeatbeltPolicy, mode: 'quarantine' | 'reject'): Promise<void> {
   const roots = [...policy.writableRoots, ...(policy.writableLiterals ?? [])]
   let seq = 0
   const visit = async (path: string): Promise<void> => {
@@ -130,6 +177,7 @@ export async function quarantineWritableHardlinks(policy: SeatbeltPolicy): Promi
       return
     }
     if (!st.isFile() || st.nlink <= 1) return
+    if (mode === 'reject') throw new Error(`Bash 启动前复核：可写范围出现硬链接，已拒绝执行：${path}`)
     // 同目录临时文件 + 原子重命名，保证替换后是独立 inode；权限位按原文件恢复。
     const temp = `${path}.gravitas-quarantine-${process.pid}-${seq++}`
     try {
@@ -144,8 +192,22 @@ export async function quarantineWritableHardlinks(policy: SeatbeltPolicy): Promi
   for (const root of roots) await visit(root)
 }
 
+export async function quarantineWritableHardlinks(policy: SeatbeltPolicy): Promise<void> {
+  await scanWritableHardlinks(policy, 'quarantine')
+}
+
+/** 启动前再次核对可写范围；发现扫描间隙新增的硬链接时失败关闭。 */
+export async function assertNoWritableHardlinks(policy: SeatbeltPolicy): Promise<void> {
+  await scanWritableHardlinks(policy, 'reject')
+}
+
 /** 为一次 Bash 调用生成沙箱命令与受控环境。 */
-export async function prepareBashSandbox(cwd: string, sessionId: string): Promise<{ argv: string[]; env: NodeJS.ProcessEnv; gitWasPresent: boolean }> {
+export async function prepareBashSandbox(cwd: string, sessionId: string): Promise<{
+  argv: string[]
+  env: NodeJS.ProcessEnv
+  gitWasPresent: boolean
+  assertLaunchSafe: () => Promise<void>
+}> {
   const scratchDir = scratchDirFor(sessionId)
   const git = await resolveGitLayout(cwd)
   // 与策略口径一致：已有仓库或已有 .git 入口都算"命令前已存在"，其后 hooks/config 由策略拒写。
@@ -157,12 +219,13 @@ export async function prepareBashSandbox(cwd: string, sessionId: string): Promis
   return {
     argv: [SANDBOX_EXEC_PATH, '-p', profile, '/bin/sh', '-c'],
     env: {
-      ...process.env,
+      ...sanitizeBashGitEnvironment(process.env),
       TMPDIR: scratchDir,
       BUN_INSTALL_CACHE_DIR: join(scratchDir, 'bun-cache'),
       npm_config_cache: join(scratchDir, 'npm-cache'),
     },
     gitWasPresent,
+    assertLaunchSafe: () => assertNoWritableHardlinks(policy),
   }
 }
 

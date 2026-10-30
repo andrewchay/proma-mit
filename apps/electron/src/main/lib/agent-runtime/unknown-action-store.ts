@@ -31,10 +31,12 @@ export interface UnknownActionRecord {
   status: 'pending' | 'resolved'
   resolvedAt?: string
   resolution?: string
+  /** 用户已确认动作生效的时间；确认后仍保留 pending，持续阻止同一动作重试。 */
+  acknowledgedAt?: string
 }
 
 interface StoredEvent {
-  type: 'unknown' | 'resolved'
+  type: 'unknown' | 'unknown_failed' | 'confirmed_applied' | 'resolved'
   id: string
   sessionId: string
   actionKey: string
@@ -76,7 +78,9 @@ async function readEvents(): Promise<StoredEvent[]> {
   }
   return text.split('\n').filter((line) => line.trim()).map((line) => {
     const event = JSON.parse(line) as StoredEvent
-    if (!event || (event.type !== 'unknown' && event.type !== 'resolved') ||
+    const knownType = event?.type === 'unknown' || event?.type === 'unknown_failed' ||
+      event?.type === 'confirmed_applied' || event?.type === 'resolved'
+    if (!event || !knownType ||
       typeof event.id !== 'string' || typeof event.sessionId !== 'string' ||
       typeof event.actionKey !== 'string' || typeof event.createdAt !== 'string') {
       throw new Error('未知动作登记文件损坏，不能安全执行动作')
@@ -92,8 +96,23 @@ async function ensureLoaded(): Promise<void> {
       const records = new Map<string, UnknownActionRecord>()
       for (const event of await readEvents()) {
         const key = cacheKey(event.sessionId, event.actionKey)
-        if (event.type === 'unknown') records.set(key, toRecord(event))
-        else if (records.get(key)?.id === event.id) records.delete(key)
+        if (event.type === 'unknown') {
+          records.set(key, toRecord(event))
+          continue
+        }
+        const current = records.get(key)
+        // 同一指纹可能已有新记录，旧动作的后续事件不能改写或解除新记录。
+        if (current?.id !== event.id) continue
+        if (event.type === 'resolved') records.delete(key)
+        else if (event.type === 'unknown_failed') {
+          records.set(key, { ...current, reason: event.reason ?? current.reason })
+        } else {
+          records.set(key, {
+            ...current,
+            resolution: event.resolution,
+            acknowledgedAt: event.createdAt,
+          })
+        }
       }
       pending = records
     })().catch((error: unknown) => {
@@ -187,10 +206,28 @@ export async function beginTrackedAction(input: {
   }
 }
 
-/** 成功响应落盘后解除；失败或结果未知时保留登记。 */
-export async function finishTrackedAction(record: UnknownActionRecord, completed: boolean): Promise<void> {
-  inFlight.delete(cacheKey(record.sessionId, record.actionKey))
-  if (completed) await resolveUnknownAction({ sessionId: record.sessionId, id: record.id, resolution: '服务调用已返回成功' })
+/** 成功响应落盘后解除；失败时追加实际原因并保留门禁。 */
+export async function finishTrackedAction(record: UnknownActionRecord, completed: boolean, reason?: string): Promise<void> {
+  const key = cacheKey(record.sessionId, record.actionKey)
+  inFlight.delete(key)
+  if (completed) {
+    await resolveUnknownAction({ sessionId: record.sessionId, id: record.id, resolution: '服务调用已返回成功' })
+    return
+  }
+
+  const failedAt = new Date().toISOString()
+  const failureReason = reason ?? record.reason
+  await append({
+    type: 'unknown_failed',
+    id: record.id,
+    sessionId: record.sessionId,
+    actionKey: record.actionKey,
+    reason: failureReason,
+    createdAt: failedAt,
+  })
+  if (pending.get(key)?.id === record.id) {
+    pending.set(key, { ...record, reason: failureReason })
+  }
 }
 
 /** 查询同会话同指纹是否有未解除的未知结果。 */
@@ -206,6 +243,31 @@ export async function findPendingUnknownAction(
 export async function listPendingUnknownActions(sessionId: string): Promise<UnknownActionRecord[]> {
   await ensureLoaded()
   return [...pending.values()].filter((record) => record.sessionId === sessionId)
+}
+
+/** 持久化“已生效”的人工结论，但不解除 pending：同一动作之后也不能重试。 */
+export async function confirmUnknownActionApplied(input: {
+  sessionId: string
+  id: string
+  resolution: string
+}): Promise<UnknownActionRecord | undefined> {
+  await ensureLoaded()
+  const key = [...pending.entries()].find(([, item]) => item.id === input.id && item.sessionId === input.sessionId)?.[0]
+  const record = key ? pending.get(key) : undefined
+  if (!key || !record || inFlight.has(key)) return undefined
+
+  const acknowledgedAt = new Date().toISOString()
+  await append({
+    type: 'confirmed_applied',
+    id: record.id,
+    sessionId: record.sessionId,
+    actionKey: record.actionKey,
+    createdAt: acknowledgedAt,
+    resolution: input.resolution,
+  })
+  const confirmed = { ...record, resolution: input.resolution, acknowledgedAt }
+  if (pending.get(key)?.id === record.id) pending.set(key, confirmed)
+  return confirmed
 }
 
 /**
@@ -252,6 +314,13 @@ export async function blockIfUnknownAction(input: {
 }): Promise<string | undefined> {
   const record = await findPendingUnknownAction(input.sessionId, input.actionKey)
   if (!record) return undefined
+  if (record.acknowledgedAt) {
+    return (
+      `${input.tool} 拒绝执行：同一次动作（${record.actionKey}）已确认生效` +
+      `（${record.resolution ?? '用户确认'}，确认于 ${record.acknowledgedAt}）。` +
+      '该人工结论已持久化，仍禁止重试；可用 ListUnknownActions 查看待处理记录。'
+    )
+  }
   return (
     `${input.tool} 拒绝执行：同一次动作（${record.actionKey}）在 ${record.createdAt} 的结果未知（${record.reason}），` +
     `动作可能已经生效。${input.confirmHint}` +

@@ -38,7 +38,7 @@ export async function runOwner2048ProjectSmoke(projectId: string, channelId: str
     const result = reportOwner2048Project(projectId, channelId, modelId)
     if (result.deliveryState !== 'delivered') result.error = error ?? '项目未在受控期限内形成已验收交付；保留真实运行与阻断证据'
     return result
-  } finally { stop() }
+  } finally { await stop() }
 }
 
 function reportOwner2048Project(projectId: string, channelId: string, modelId: string): OwnerRealChainSmokeReport {
@@ -79,4 +79,87 @@ function reportOwner2048Project(projectId: string, channelId: string, modelId: s
     // 仅员工逐请求账本的已知费用；Owner 未知费用继续保留预留，不能称为已结算。
     knownEmployeeCostMicros: commands.reduce((sum, command) => sum + (command.actual_cost_micros ?? 0), 0),
   }
+}
+
+interface RevalidationCommand {
+  id: string
+  execution_id: string | null
+  state: string
+  actual_cost_micros: number | null
+  usage_evidence: string | null
+}
+
+function readRevalidationCommand(commandId: string): RevalidationCommand {
+  const command = store.getProjectDb().prepare('SELECT id,execution_id,state,actual_cost_micros,usage_evidence FROM project_owner_execution_commands WHERE id=?').get(commandId) as RevalidationCommand | undefined
+  if (!command) throw new Error('Owner复验命令在运行期间缺失')
+  return command
+}
+
+async function waitForKnownRevalidationSettlement(commandId: string, deadline: number): Promise<void> {
+  while (Date.now() < deadline) {
+    const command = readRevalidationCommand(commandId)
+    const execution = command.execution_id ? store.getAgentExecution(command.execution_id) : null
+    if (command.state === 'settled') {
+      let knownUsage = false
+      try { knownUsage = Boolean(command.usage_evidence && (JSON.parse(command.usage_evidence) as { source?: unknown }).source !== 'unknown') } catch { /* 下方统一阻断 */ }
+      if (command.actual_cost_micros === null || !knownUsage || execution?.status !== 'completed' || execution.ownerCommandId !== commandId) throw new Error('Owner复验命令没有可核验的成功终态与真实用量，停止后续步骤')
+      return
+    }
+    if (!['reserved', 'queued', 'running'].includes(command.state)) throw new Error(`Owner复验命令未成功结算（${command.state}），不自动重试`)
+    await new Promise(resolve => setTimeout(resolve, 1000))
+  }
+  throw new Error('Owner复验等待真实命令结算超时；保留未决状态，不自动重试或释放占额')
+}
+
+/** 复验只逐轮调用现有命令服务，不运行旧Scheduler；源码变化、费用未知或评审未批准都不会续派。 */
+export async function runOwner2048RevalidationSmoke(projectId: string, channelId: string, modelId: string, originalOwnerExecutionId: string, artifactHash: string): Promise<OwnerRealChainSmokeReport> {
+  const startedAt = Date.now(), deadline = startedAt + 10 * 60_000
+  const { reserveAndQueueAutonomousOwnerCommand } = await import('./project-owner-execution-command')
+  const { dispatchAutonomousOwnerCommandExecution } = await import('./project-owner-execution-dispatcher')
+  const { getOwnerExecutionGrant } = await import('./project-owner-execution-grant-issue')
+  const { readOwnerQualityRevalidationSmokePermit } = await import('./owner-quality-revalidation-smoke')
+  let stopManagement = () => {}
+  try {
+    const grant = getOwnerExecutionGrant({ projectId })
+    if (!grant || grant.state !== 'active') throw new Error('Owner复验缺少有效执行授权')
+    const originalReviewer = store.getProjectDb().prepare("SELECT source_task_id FROM project_owner_execution_commands WHERE grant_id=? AND project_id=? AND role='reviewer' AND rework_ordinal=0").get(grant.grantId, projectId) as { source_task_id: string } | undefined
+    if (!originalReviewer) throw new Error('Owner复验缺少原Reviewer来源')
+    const taskId = originalReviewer.source_task_id
+    const permit = readOwnerQualityRevalidationSmokePermit({ projectId, taskId, grantId: grant.grantId, reworkOrdinal: 1 })
+    if (!permit || permit.originalOwnerExecutionId !== originalOwnerExecutionId || permit.artifactHash !== artifactHash) throw new Error('Owner复验授权与原失败执行或成果哈希不一致')
+    const input = { grantId: grant.grantId, taskId, reworkOrdinal: 1, expectedRevalidationRevision: grant.revalidationRevision }
+    const executor = reserveAndQueueAutonomousOwnerCommand({ projectId }, { ...input, role: 'executor' })
+    await dispatchAutonomousOwnerCommandExecution({ commandId: executor.commandId, ackFingerprint: executor.ackFingerprint, acknowledgeExecution: true })
+    await waitForKnownRevalidationSettlement(executor.commandId, deadline)
+    const execution = store.getAgentExecution(executor.executionId)
+    if (!execution?.sessionId) throw new Error('Owner复验Executor缺少可核验会话')
+    const task = store.getTask(taskId), workspace = task?.workspaceId ? getAgentWorkspace(task.workspaceId) : null
+    if (!workspace) throw new Error('Owner复验Executor工作区缺失')
+    const sessionDirectory = (await import('./config-paths')).getAgentSessionWorkspacePath(workspace.slug, execution.sessionId)
+    const snapshot = await (await import('./development-snapshot-service')).loadDevelopmentSnapshotAsync(sessionDirectory, execution.id)
+    if (snapshot.contentHash !== artifactHash) throw new Error(`Owner复验源码快照已变化：期望${artifactHash}，实际${snapshot.contentHash}；不启动Reviewer`)
+    const reviewer = reserveAndQueueAutonomousOwnerCommand({ projectId }, { ...input, role: 'reviewer' })
+    await dispatchAutonomousOwnerCommandExecution({ commandId: reviewer.commandId, ackFingerprint: reviewer.ackFingerprint, acknowledgeExecution: true })
+    await waitForKnownRevalidationSettlement(reviewer.commandId, deadline)
+    const evidence = listOwnerTechnicalReviewEvidence(projectId, taskId).find(item => item.reviewerCommandId === reviewer.commandId && item.artifactHash === artifactHash && item.artifactVerified === true)
+    if (!evidence) throw new Error('Owner复验Reviewer未形成绑定原成果的可核验评审，停止质量判断')
+    stopManagement = startOwnerManagementLoop()
+    while (Date.now() < deadline) {
+      const result = reportOwner2048Project(projectId, channelId, modelId)
+      if (result.deliveryState === 'delivered') {
+        console.log(`[owner-2048] 复验快照哈希保持一致=${artifactHash}`)
+        return result
+      }
+      const view = getOwnerManagementView(projectId)
+      const attention = view.messages.findLast(message => message.kind === 'attention' && message.createdAt >= startedAt)
+      const liveOwner = store.listAgentExecutionsByProject(projectId).some(item => !item.ownerCommandId && ['queued', 'running'].includes(item.status))
+      if (attention && !liveOwner && listPendingOwnerManagementEvents(projectId).length === 0) throw new Error(attention.content.slice(0, 600))
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    }
+    throw new Error('Owner复验独立评审后未在期限内形成正常质量验收与交付；不自动重试')
+  } catch (cause) {
+    const result = reportOwner2048Project(projectId, channelId, modelId)
+    result.error = cause instanceof Error ? cause.message.slice(0, 1000) : 'Owner复验发生未知错误'
+    return result
+  } finally { await stopManagement() }
 }

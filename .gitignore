@@ -49,6 +49,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # macOS Computer Use helper is built from the tracked Objective-C source.
 apps/electron/resources/computer-use/macos/computer_use.node
 
+# electron-builder beforePack 暂存的 node-pty spawn-helper（打包时再生）
+apps/electron/.packaging/
+
 # ignore craft-agents-oss folder
 craft-agents-oss
 
@@ -66,3 +69,8 @@ apps/electron/resources/dynamic-island/macos/island.node
 
 # rebase/session scratch tooling
 .context/tmp/
+
+# 本地验收证据：解压后的 .app、SQLite 数据库、渠道配置与日志，体积达数 GB，
+# 且可能含凭据。只保留摘要与结论到受版本控制的文档，原始证据留在本地。
+.context/glm-real-acceptance/
+.context/package-smoke-evidence/

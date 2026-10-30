@@ -16,6 +16,10 @@ directories:
   output: out
   buildResources: resources
 
+# 打包前钩子：确认并暂存 node-pty 的 macOS spawn-helper，缺失时让打包失败。
+# CI 与发布流水线直接调用 electron-builder，不经过 rebuild:natives，必须在这里兜底。
+beforePack: scripts/before-pack.cjs
+
 # 压缩配置
 compression: normal
 
@@ -141,8 +145,9 @@ extraResources:
 # ============================================
 mac:
   # node-pty 的 spawn-helper 放到较短且稳定的可执行路径，避免深层解包目录触发 posix_spawnp 失败。
+  # 由 beforePack 钩子暂存：兼容 electron-rebuild 产物与 npm prebuilds 两种来源。
   extraFiles:
-    - from: ../../node_modules/node-pty/build/Release/spawn-helper
+    - from: .packaging/node-pty-spawn-helper
       to: MacOS/node-pty-spawn-helper
   category: public.app-category.developer-tools
   icon: resources/icon.icns

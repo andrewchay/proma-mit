@@ -129,6 +129,8 @@ describe('Web Bridge 动作结果分类', () => {
       expect(result.content).toContain('结果未知')
       expect(result.content).toContain('禁止自动重试')
       expect(result.content).toContain('WebBridgeObserve')
+      const { listPendingUnknownActions } = await import('../unknown-action-store')
+      expect((await listPendingUnknownActions(ctx.sessionId))[0]?.reason).toBe('Target closed')
     } finally { click.mockRestore() }
   })
 

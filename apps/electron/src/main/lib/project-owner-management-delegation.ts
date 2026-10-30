@@ -325,11 +325,12 @@ export function confirmOwnerManagementDelegation(raw: unknown): OwnerManagementD
     const preview = previewOwnerManagementDelegation(input)
     if (preview.previewHash !== value.previewHash) throw new Error('管理委托预览已变化，请重新确认')
     const current = getOwnerManagementDelegation(input.projectId, input.taskId)
+    const currentRevoked = current.delegation ? (db.prepare('SELECT revoked_at FROM project_owner_management_delegations WHERE id=? AND project_id=?').get(current.delegation.id, input.projectId) as { revoked_at: number | null } | undefined)?.revoked_at != null : false
     if (current.delegation && hasActiveOwnerManagementRequest(current.delegation.id)) throw new Error('上次管理请求仍在运行，请先核对请求状态')
     if (current.delegation && current.state === 'stale') {
       // 旧委托已因当前范围变化而失效；仅在用户确认新预览的同一事务中关闭旧记录。
       db.prepare('UPDATE project_owner_management_delegations SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ? AND project_id = ?').run(Date.now(), current.delegation.id, input.projectId)
-    } else if (current.delegation && !['revoked', 'expired'].includes(current.state)) {
+    } else if (current.delegation && !currentRevoked && !['revoked', 'expired'].includes(current.state)) {
       throw new Error('请先撤销已有管理委托，再确认新范围')
     }
     if (input.startApproval) confirmProjectOwnerPlanDraft(input.projectId, input.startApproval.expectedGoalRevision, input.startApproval.expectedPlanRevision, input.taskId)

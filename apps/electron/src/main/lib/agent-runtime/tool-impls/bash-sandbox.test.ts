@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildBashSandboxPolicy, quarantineNewGitHooks, quarantineWritableHardlinks, resolveGitLayout, scratchDirFor } from './bash-sandbox'
+import { assertNoWritableHardlinks, buildBashSandboxPolicy, quarantineNewGitHooks, quarantineWritableHardlinks, resolveGitLayout, sanitizeBashGitEnvironment, scratchDirFor } from './bash-sandbox'
 import { buildSeatbeltProfile } from '../../pinned-verifier-sandbox'
 import { executeBashTool, executeBashToolOnPlatform } from './bash-tool'
 
@@ -137,8 +137,9 @@ describe('Bash 沙箱（macOS seatbelt）', () => {
     const write = await run(sessionDir, 'echo data > note.txt')
     expect(write.isError).toBeFalsy()
     expect(readFileSync(join(sessionDir, 'note.txt'), 'utf8').trim()).toBe('data')
+    expect((await run(sessionDir, 'git init -q')).isError).toBeFalsy()
     const commit = await run(sessionDir, [
-      'git init -q', 'echo x > f.txt', 'git add f.txt',
+      'echo x > f.txt', 'git add f.txt',
       'git -c user.name=agent -c user.email=agent@example.invalid commit -qm init', 'git log --oneline',
     ].join(' && '))
     expect(commit.isError).toBeFalsy()
@@ -208,15 +209,36 @@ describe('Bash 沙箱（macOS seatbelt）', () => {
     await run(session, `echo '[evil]' > config-copy`)
     expect(readFileSync(join(common, 'config'), 'utf8')).not.toContain('[evil]')
   })
-  test('Given 非 git 目录 When 同命令 init 并注入 hook Then 命令成功且 hook 被收口', async () => {
-    const session = join(configDir, 'agent-workspaces', 'init-hook-attack', 'current')
+  test('Given 非 git 目录 When 同命令 init 并注入 config Then 执行前拒绝且不创建仓库', async () => {
+    const session = join(configDir, 'agent-workspaces', 'init-config-attack', 'current')
     mkdirSync(session, { recursive: true })
-    const result = await run(session, 'git init -q && echo evil > .git/hooks/pre-commit && echo planted')
-    // git init 本身仍可用（兼容性保持），注入文件在本命令内写入成功。
+    const marker = join(session, 'fsmonitor-ran')
+    const result = await run(session, `git init -q && git config core.fsmonitor 'touch ${marker}' && git status --porcelain`)
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('git init 必须单独执行')
+    expect(existsSync(join(session, '.git'))).toBe(false)
+    expect(existsSync(marker)).toBe(false)
+  })
+  test('Given 已有仓库 When 通过 -c 注入 fsmonitor Then 执行前拒绝且不触发命令', async () => {
+    const session = join(configDir, 'agent-workspaces', 'inline-config-attack', 'current')
+    mkdirSync(session, { recursive: true })
+    git(session, ['init', '-q'])
+    const marker = join(session, 'inline-fsmonitor-ran')
+    const result = await run(session, `git -c core.fsmonitor='touch ${marker}' status --porcelain`)
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('命令执行型 Git config')
+    expect(existsSync(marker)).toBe(false)
+  })
+  test('Given 独立 init 使用含 hook 的模板 When 命令结束 Then hook 被收口且后续提交可用', async () => {
+    const session = join(configDir, 'agent-workspaces', 'init-hook-template', 'current')
+    const template = join(configDir, 'agent-workspaces', 'init-hook-template', 'template')
+    mkdirSync(session, { recursive: true })
+    mkdirSync(join(template, 'hooks'), { recursive: true })
+    writeFileSync(join(template, 'hooks', 'pre-commit'), 'evil\n')
+    const result = await run(session, `git init -q --template='${template}'`)
     expect(result.isError).toBeFalsy()
     expect(readFileSync(join(session, '.git', 'hooks', 'pre-commit.gravitas-quarantine'), 'utf8')).toBe('evil\n')
     expect(existsSync(join(session, '.git', 'hooks', 'pre-commit'))).toBe(false)
-    // 后续命令正常 git 操作不受影响（sample hooks 不被执行，仓库可用）。
     const commit = await run(session, 'echo ok > a.txt && git add a.txt && git -c user.name=agent -c user.email=agent@example.invalid commit -qm init && git log --oneline')
     expect(commit.isError).toBeFalsy()
     expect(commit.content).toContain('init')
@@ -471,6 +493,77 @@ describe('quarantineNewGitHooks（纯文件系统）', () => {
     const { root } = makeRepo('nohooksdir')
     rmSync(join(root, '.git', 'hooks'), { recursive: true })
     expect(await quarantineNewGitHooks(root, false)).toBeUndefined()
+  })
+})
+
+describe('Git 间接环境隔离', () => {
+  test('Given 继承环境含目录、config 与执行变量 When 构建沙箱环境 Then 清除并重定向到空配置', () => {
+    const source: NodeJS.ProcessEnv = {
+      PATH: '/usr/bin:/bin',
+      GIT_DIR: '/outside/.git',
+      GIT_WORK_TREE: '/outside',
+      GIT_COMMON_DIR: '/outside/.git',
+      GIT_TEMPLATE_DIR: '/outside/templates',
+      GIT_OBJECT_DIRECTORY: '/outside/objects',
+      GIT_INDEX_FILE: '/outside/index',
+      GIT_EXEC_PATH: '/outside/libexec',
+      GIT_CONFIG_PARAMETERS: "'core.fsmonitor=/outside/pwn'",
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'core.fsmonitor',
+      GIT_CONFIG_VALUE_0: '/outside/pwn',
+      GIT_CONFIG_GLOBAL: '/outside/config',
+      GIT_SSH_COMMAND: '/outside/ssh',
+      GIT_ASKPASS: '/outside/askpass',
+      GIT_EDITOR: '/outside/editor',
+      PAGER: '/outside/pager',
+    }
+    const env = sanitizeBashGitEnvironment(source)
+    expect(env.PATH).toBe(source.PATH)
+    for (const key of [
+      'GIT_DIR', 'GIT_WORK_TREE', 'GIT_COMMON_DIR', 'GIT_TEMPLATE_DIR', 'GIT_OBJECT_DIRECTORY',
+      'GIT_INDEX_FILE', 'GIT_EXEC_PATH', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT',
+      'GIT_CONFIG_KEY_0', 'GIT_CONFIG_VALUE_0', 'GIT_SSH_COMMAND', 'GIT_ASKPASS', 'GIT_EDITOR', 'PAGER',
+    ]) expect(env[key]).toBeUndefined()
+    expect(env.GIT_CONFIG_GLOBAL).toBe('/dev/null')
+    expect(env.GIT_CONFIG_SYSTEM).toBe('/dev/null')
+    expect(env.GIT_CONFIG_NOSYSTEM).toBe('1')
+    expect(source.GIT_DIR).toBe('/outside/.git')
+  })
+
+  test('Given 进程 GIT_DIR 指向其他仓库 When 解析当前目录布局 Then 忽略继承覆盖', async () => {
+    const actual = join(root, 'layout-actual')
+    const other = join(root, 'layout-other')
+    mkdirSync(actual)
+    mkdirSync(other)
+    git(actual, ['init', '-q'])
+    git(other, ['init', '-q'])
+    const previous = process.env.GIT_DIR
+    process.env.GIT_DIR = join(other, '.git')
+    try {
+      const resolved = await resolveGitLayout(actual)
+      expect(resolved?.ownDir).toBe(resolved?.commonDir)
+      expect(resolved?.ownDir.endsWith(join('layout-actual', '.git'))).toBe(true)
+    } finally {
+      if (previous === undefined) delete process.env.GIT_DIR
+      else process.env.GIT_DIR = previous
+    }
+  })
+})
+
+describe('硬链接启动前复核', () => {
+  test('Given 初次隔离后新增跨边界硬链接 When 启动前复核 Then 失败关闭且不修改目标', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'hardlink-launch-race-'))
+    const workspace = join(root, 'workspace')
+    mkdirSync(workspace)
+    const target = join(root, 'outside.txt')
+    writeFileSync(target, 'original')
+    const policy = { writableRoots: [workspace], denyRoots: [] }
+    await quarantineWritableHardlinks(policy)
+    linkSync(target, join(workspace, 'raced.txt'))
+
+    await expect(assertNoWritableHardlinks(policy)).rejects.toThrow('可写范围出现硬链接')
+    expect(readFileSync(target, 'utf8')).toBe('original')
+    expect(statSync(target).nlink).toBe(2)
   })
 })
 

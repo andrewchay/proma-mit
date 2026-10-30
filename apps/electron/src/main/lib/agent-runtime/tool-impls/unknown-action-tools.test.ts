@@ -108,13 +108,22 @@ describe('解除未知动作', () => {
     expect((await listPendingUnknownActions(SESSION)).length).toBe(0)
   })
 
-  test('Given 用户确认动作已生效 When 处理 Then 仍拦截重复动作', async () => {
+  test('Given 用户确认动作已生效 When 处理 Then 持久化结论且仍拦截重复动作', async () => {
     await seed()
     const { ctx } = ctxWith('已核对：动作已生效，不要重试')
     const result = await executeResolveUnknownActionTool({ action_key: ACTION_KEY }, ctx)
     const payload = JSON.parse(result.content)
-    expect(payload.mayRetry).toBe(false)
-    expect((await listPendingUnknownActions(SESSION)).length).toBe(1)
+    expect(payload).toMatchObject({ acknowledged: true, mayRetry: false })
+    __resetUnknownActionCacheForTest()
+    const records = await listPendingUnknownActions(SESSION)
+    expect(records).toHaveLength(1)
+    expect(records[0]).toMatchObject({ resolution: '已核对：动作已生效，不要重试｜用户确认' })
+    expect(records[0]?.acknowledgedAt).toBeString()
+    const listed = await executeListUnknownActionsTool({}, { cwd: '/tmp', sessionId: SESSION })
+    expect(JSON.parse(listed.content).actions[0]).toMatchObject({
+      resolution: '已核对：动作已生效，不要重试｜用户确认',
+      acknowledgedAt: records[0]?.acknowledgedAt,
+    })
   })
 
   test('Given 用户确认期间出现新未知动作 When 确认旧动作 Then 不解除新记录', async () => {

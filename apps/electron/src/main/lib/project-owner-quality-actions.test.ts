@@ -33,7 +33,7 @@ const rendererPlan = await import('../../renderer/atoms/project-owner-plan-atoms
 const rendererGoal = await import('../../renderer/atoms/project-owner-goal-atoms')
 const ipcHandlers = new Map<string, (event: unknown, request: unknown) => unknown>()
 registerProjectOwnerExecutionIpcHandlers({ handle: (channel, handler) => { ipcHandlers.set(channel, handler) } })
-interface Scenario { extraQualityCriteria?: boolean; omitQualityKind?: boolean; rework?: boolean; ownerDefect?: boolean; dependent?: boolean; hold?: boolean; maxRework?: number; legacy?: boolean; development?: boolean; validationFails?: boolean; durableStartIntent?: boolean; emptyReview?: boolean }
+interface Scenario { extraQualityCriteria?: boolean; omitQualityKind?: boolean; invalidQualityQuote?: boolean; rework?: boolean; ownerDefect?: boolean; dependent?: boolean; hold?: boolean; maxRework?: number; legacy?: boolean; development?: boolean; validationFails?: boolean; durableStartIntent?: boolean; emptyReview?: boolean; localConfigurationError?: string; localConfigurationRuntimeResult?: boolean; localConfigurationNonZeroUsage?: boolean }
 interface Trace { role: string; taskId: string; round: number; prompt: string }
 const scenarios = new Map<string, Scenario>(), traces = new Map<string, Trace[]>()
 const pending = new Map<string, { finish: () => void; executionId: string }>()
@@ -43,6 +43,14 @@ beforeAll(async () => {
     callbacks.onRuntimeStarted?.()
     const execution = store.getAgentExecutionBySessionId(input.sessionId)!, scenario = scenarios.get(execution.projectId)!
     const log = traces.get(execution.projectId)!
+    if (scenario.localConfigurationError) {
+      if (scenario.localConfigurationRuntimeResult) {
+        const inputTokens = scenario.localConfigurationNonZeroUsage ? 1 : 0
+        callbacks.onComplete([], { runtimeResult: { type: 'result', subtype: 'error_during_execution', session_id: execution.sessionId, result: '', finish_reason: 'error', errors: [scenario.localConfigurationError], usage: { input_tokens: inputTokens, output_tokens: 0 }, owner_planning_usage: { inputTokens: scenario.localConfigurationNonZeroUsage ? 1 : null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null } } })
+        return
+      }
+      throw new Error(scenario.localConfigurationError)
+    }
     if (execution.ownerCommandId) {
       const command = store.getProjectDb().prepare('SELECT role,rework_ordinal FROM project_owner_execution_commands WHERE id=?').get(execution.ownerCommandId) as { role: string; rework_ordinal: number }
       const development = (await import('./project-owner-employee-runtime')).readOwnerCommandFrozenSource(execution.ownerCommandId).source.executionKind === 'development'
@@ -104,7 +112,7 @@ beforeAll(async () => {
     log.push({ role: delivery?.qualityDecisionVersion ? 'owner_quality' : 'owner_analysis', taskId: observed.businessTaskId, round: artifactRound, prompt: current.request.userPrompt })
     const responseBinding = { projectId: execution.projectId, goalVersion: current.context.goal.goal.goalVersion, contextFingerprint: current.context.fingerprint }
     const defect = Boolean(scenario.rework && artifactRound === 0)
-    const decision = { reviewerCommandId: observed.commandId, artifactHash, verdict: defect ? 'rework' : 'accept', reason: defect ? '受众依据仍缺，不能只看格式通过' : '已按准确范围标准核对完整成果与独立检查', criteria: [{ criterion: delivery?.developmentArtifact ? '代码输出固定42' : '明确目标范围与受众依据', status: defect ? 'not_met' : 'met', evidence: defect ? '正文未说明受众依据' : '范围与依据对应', quote: artifactContent }], findings: defect ? [{ severity: 'high', description: '受众依据未交代', requestedChange: '补充受众依据并保留明确范围' }] : [] }
+    const decision = { reviewerCommandId: observed.commandId, artifactHash, verdict: defect ? 'rework' : 'accept', reason: defect ? '受众依据仍缺，不能只看格式通过' : '已按准确范围标准核对完整成果与独立检查', criteria: [{ criterion: delivery?.developmentArtifact ? '代码输出固定42' : '明确目标范围与受众依据', status: defect ? 'not_met' : 'met', evidence: defect ? '正文未说明受众依据' : '范围与依据对应', quote: scenario.invalidQualityQuote ? 'var bestKey = \'best-score-2048\';' : artifactContent }], findings: defect ? [{ severity: 'high', description: '受众依据未交代', requestedChange: '补充受众依据并保留明确范围' }] : [] }
     if (scenario.extraQualityCriteria && delivery?.qualityDecisionVersion === 1) decision.criteria.push({ criterion: '明确范围', status: 'met', evidence: '额外已满足项目标准', quote: artifactContent })
     const response = delivery?.qualityDecisionVersion === 1 ? { schemaVersion: 1, kind: 'quality_decision', binding: responseBinding, messageId: conversation.throughMessageId, message: '已按完整成果逐项判断，待服务核验决定。', decision } : { schemaVersion: 1, kind: 'conversation_reply', binding: responseBinding, messageId: conversation.throughMessageId, message: '成果已收到，等待独立检查和质量判断。' }
     const { kind: _kind, ...withoutKind } = response
@@ -243,6 +251,33 @@ test('Given已有员工与新版质量委托 When交付及独立检查完成 The
     expect(downstreamPrompt).toContain('已完成上游任务的准确成果')
     expect(downstreamPrompt).toContain(upstreamAction.artifactHash)
     expect(downstreamPrompt).toContain('目标范围：面向已访谈的现有用户，建议有据可查。')
+  } finally { f.stop() }
+}, 15000)
+
+test('Given质量判断在途且同方案安排已准备 When成果验收并交付 Then旧安排与后续授权事件都不再调用模型', async () => {
+  const f = await fixture({ hold: true })
+  const assignment = await import('./project-owner-management-assignment')
+  try {
+    await until(() => pending.has(f.project.id), f.project.id)
+    const db = store.getProjectDb()
+    const plan = plans.getProjectOwnerPlanDraft(f.project.id)!
+    const arrangementLinks = () => (db.prepare("SELECT planning_task_id FROM project_owner_planning_links WHERE project_id=? AND json_extract(payload, '$.purpose')='owner_execution_assignment' ORDER BY rowid").all(f.project.id) as Array<{ planning_task_id: string }>).map(row => row.planning_task_id)
+    const before = arrangementLinks()
+    assignment.prepareOwnerManagementAssignment({ id: `pre-delivery-arrangement:${randomUUID()}`, projectId: f.project.id, kind: 'team_changed', sourceRevision: plan.revision, createdAt: Date.now(), consumedAt: null })
+    const prepared = arrangementLinks()
+    expect(prepared.length).toBe(before.length + 1)
+    const pendingTaskId = prepared.at(-1)!
+    expect(store.listAgentExecutionsByEntity('task', pendingTaskId)).toHaveLength(0)
+
+    pending.get(f.project.id)!.finish()
+    await until(() => (db.prepare("SELECT COUNT(*) AS count FROM project_owner_management_messages WHERE project_id=? AND json_extract(payload, '$.kind')='delivery'").get(f.project.id) as { count: number }).count === 1, f.project.id)
+    await Bun.sleep(150)
+    expect(traces.get(f.project.id)!.filter(item => item.role === 'owner_arrangement')).toHaveLength(0)
+    expect(store.listAgentExecutionsByEntity('task', pendingTaskId)).toHaveLength(0)
+
+    assignment.prepareOwnerManagementAssignment({ id: `post-delivery-arrangement:${randomUUID()}`, projectId: f.project.id, kind: 'team_changed', sourceRevision: plan.revision, createdAt: Date.now(), consumedAt: null })
+    expect(arrangementLinks()).toEqual(prepared)
+    expect(traces.get(f.project.id)!.filter(item => item.role === 'owner_arrangement')).toHaveLength(0)
   } finally { f.stop() }
 }, 15000)
 
@@ -459,6 +494,9 @@ test('Given代码任务交付且白名单验证成功 WhenReviewer与Owner检查
     expect(downstreamPrompt).toContain(actions[0]!.artifactHash)
     expect(downstreamPrompt).toContain('module.exports = { answer: 42 }')
     expect(scheduler.getOwnerAutonomousScheduleStatus(f.project.id).nextAction).toBe('none')
+    const firstReceipt = runs.getOwnerPlanningRunReceipt(actions[0]!.ownerReceiptId)!
+    const clock = spyOn(Date, 'now').mockReturnValue(firstReceipt.capturedAt + 366 * 24 * 60 * 60 * 1000)
+    try { expect(actionRows(f.project.id)).toEqual(actions) } finally { clock.mockRestore() }
   } finally { f.stop() }
 }, 120000)
 
@@ -741,6 +779,379 @@ test('Given已恢复的accept尚未执行而验证随后过期 When首次应用 
       expect(f.tasks()[0]!.status).toBe('paused')
     } finally { clock.mockRestore() }
   } finally { f.stop() }
+}, 15000)
+
+
+test('Given Owner质量引用被协议拒绝且历史提示已升级 When烟测显式恢复原失败 Then只新增一次判断并保留追溯且不自动重试', async () => {
+  const f = await fixture({ hold: true, invalidQualityQuote: true })
+  const savedSmoke = process.env.GRAVITAS_PACKAGE_SMOKE, savedRecovery = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID
+  let restartManagement: (() => void) | undefined
+  try {
+    await until(() => pending.has(f.project.id), f.project.id)
+    const held = pending.get(f.project.id)!
+    f.stop(); held.finish()
+    await until(() => runs.getOwnerPlanningRunOutcome(held.executionId)?.state === 'failed', f.project.id)
+    expect(actionRows(f.project.id)).toHaveLength(0)
+    const planningTaskId = store.getAgentExecution(held.executionId)!.entityId
+    const linkRow = store.getProjectDb().prepare('SELECT payload FROM project_owner_planning_links WHERE planning_task_id=?').get(planningTaskId) as { payload: string }
+    const historicalPayload = JSON.parse(linkRow.payload) as Record<string, unknown>
+    historicalPayload.promptHash = 'f'.repeat(64)
+    store.getProjectDb().prepare('UPDATE project_owner_planning_links SET payload=? WHERE planning_task_id=?').run(JSON.stringify(historicalPayload), planningTaskId)
+    expect(() => source.readOwnerPlanningSnapshot(planningTaskId)).toThrow('Owner规划来源记录无效')
+    const snapshot = source.readOwnerPlanningSnapshot(planningTaskId, { allowUnknownPromptForHistory: true })!
+    const reviewerCommandId = snapshot.context.conversation!.executionObservation!.commandId
+    expect(actions.getOwnerQualityRecovery(f.project.id, reviewerCommandId)).toBeNull()
+    process.env.GRAVITAS_PACKAGE_SMOKE = '1'
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID = held.executionId
+    expect(actions.getOwnerQualityRecovery(f.project.id, reviewerCommandId)?.previousExecutionId).toBe(held.executionId)
+    scenarios.set(f.project.id, {})
+    const recoverySmoke = await import('./owner-quality-protocol-recovery-smoke')
+    recoverySmoke.resumeFailedOwnerQualityForSmoke(f.project.id, held.executionId)
+    restartManagement = management.startOwnerManagementLoop()
+    await until(() => actionRows(f.project.id).length === 1, f.project.id)
+    const action = actionRows(f.project.id)[0]!
+    expect(action.state).toBe('accepted')
+    expect(action.recoveredFromOwnerExecutionId).toBe(held.executionId)
+    expect(runs.getOwnerPlanningRunOutcome(held.executionId)?.state).toBe('failed')
+    expect(traces.get(f.project.id)!.filter(item => ['executor', 'reviewer'].includes(item.role))).toHaveLength(2)
+    expect(traces.get(f.project.id)!.filter(item => item.role === 'owner_quality')).toHaveLength(2)
+    expect(() => recoverySmoke.resumeFailedOwnerQualityForSmoke(f.project.id, held.executionId)).toThrow('不允许恢复')
+  } finally {
+    restartManagement?.(); f.stop()
+    if (savedSmoke === undefined) delete process.env.GRAVITAS_PACKAGE_SMOKE
+    else process.env.GRAVITAS_PACKAGE_SMOKE = savedSmoke
+    if (savedRecovery === undefined) delete process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID
+    else process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID = savedRecovery
+  }
+}, 15000)
+
+
+test('Given质量协议失败且准备与委托均到期 When按原额度及新增预算续期 Then追加继任再验证且原授权账本与员工次数不变', async () => {
+  const f = await fixture({ hold: true, invalidQualityQuote: true })
+  const savedSmoke = process.env.GRAVITAS_PACKAGE_SMOKE, savedRecovery = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID, savedMaxRequests = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS
+  const savedMaxCost = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_COST_MICROS, savedDuration = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RENEWAL_DURATION_MS
+  let restartManagement: (() => void) | undefined, clock: ReturnType<typeof spyOn> | undefined
+  try {
+    await until(() => pending.has(f.project.id), f.project.id)
+    const held = pending.get(f.project.id)!
+    f.stop(); held.finish()
+    await until(() => runs.getOwnerPlanningRunOutcome(held.executionId)?.state === 'failed', f.project.id)
+    const planningTaskId = store.getAgentExecution(held.executionId)!.entityId
+    const snapshot = source.readOwnerPlanningSnapshot(planningTaskId)!
+    const reviewerCommandId = snapshot.context.conversation!.executionObservation!.commandId
+    const revalidation = await import('./project-owner-execution-revalidation')
+    const settlement = await import('./project-owner-execution-settlement')
+    const original = revalidation.listOwnerExecutionRevalidationHistory({ projectId: f.project.id })[0]!
+    const originalPayload = store.getProjectDb().prepare('SELECT payload,integrity_hash FROM project_owner_execution_revalidations WHERE id=?').get(original.id)
+    const originalUsage = settlement.readOwnerGrantUsage(f.grant.grantId)
+    const originalCommandCount = (store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE grant_id=?').get(f.grant.grantId) as { count: number }).count
+    const originalDelegation = delegation.getOwnerManagementDelegation(f.project.id).delegation!
+    process.env.GRAVITAS_PACKAGE_SMOKE = '1'
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID = held.executionId
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS = String(originalDelegation.maxRequests - 1)
+    clock = spyOn(Date, 'now').mockReturnValue(Math.max(f.input.expiresAt, originalDelegation.expiresAt) + 1000)
+    const recoverySmoke = await import('./owner-quality-protocol-recovery-smoke')
+    expect(() => recoverySmoke.renewExpiredOwnerQualityAuthorizationForSmoke(f.project.id, held.executionId)).toThrow('不得低于原额度')
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS = String(originalDelegation.maxRequests)
+    recoverySmoke.renewExpiredOwnerQualityAuthorizationForSmoke(f.project.id, held.executionId)
+    const renewed = revalidation.getOwnerExecutionRevalidation({ projectId: f.project.id })
+    expect(renewed.status).toBe('current')
+    expect(renewed.revalidation?.id).not.toBe(original.id)
+    expect(renewed.revalidation?.previousIntegrityHash).toBe(original.integrityHash)
+    expect(renewed.revalidation?.source.budget).toMatchObject({ maxCostMicros: f.input.maxCostMicros, maxRuns: f.input.maxRuns, maxRework: f.input.maxRework })
+    expect(store.getProjectDb().prepare('SELECT payload,integrity_hash FROM project_owner_execution_revalidations WHERE id=?').get(original.id)).toEqual(originalPayload)
+    const grant = executionGrants.getOwnerExecutionGrant({ projectId: f.project.id })!
+    expect(grant.grantId).toBe(f.grant.grantId)
+    expect(grant.revalidationId).toBe(renewed.revalidation!.id)
+    expect(grant.budget).toMatchObject({ maxCostMicros: f.input.maxCostMicros, maxRuns: f.input.maxRuns, maxRework: f.input.maxRework, expiresAt: renewed.revalidation!.source.budget.expiresAt })
+    expect(settlement.readOwnerGrantUsage(f.grant.grantId)).toEqual(originalUsage)
+    expect((store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE grant_id=?').get(f.grant.grantId) as { count: number }).count).toBe(originalCommandCount)
+    expect(actions.getOwnerQualityRecovery(f.project.id, reviewerCommandId)?.previousExecutionId).toBe(held.executionId)
+    const revalidationCount = revalidation.listOwnerExecutionRevalidationHistory({ projectId: f.project.id }).length
+    const delegationCount = (store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_management_delegations WHERE project_id=?').get(f.project.id) as { count: number }).count
+    const renewalActivityCount = (store.getProjectDb().prepare("SELECT COUNT(*) AS count FROM project_activities WHERE project_id=? AND action='owner_quality_smoke_renewed'").get(f.project.id) as { count: number }).count
+    recoverySmoke.renewExpiredOwnerQualityAuthorizationForSmoke(f.project.id, held.executionId)
+    expect(revalidation.listOwnerExecutionRevalidationHistory({ projectId: f.project.id })).toHaveLength(revalidationCount)
+    expect((store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_management_delegations WHERE project_id=?').get(f.project.id) as { count: number }).count).toBe(delegationCount)
+    expect((store.getProjectDb().prepare("SELECT COUNT(*) AS count FROM project_activities WHERE project_id=? AND action='owner_quality_smoke_renewed'").get(f.project.id) as { count: number }).count).toBe(renewalActivityCount)
+    const firstDelegation = delegation.getOwnerManagementDelegation(f.project.id).delegation!
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_COST_MICROS = String(firstDelegation.maxCostMicros + 650000)
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RENEWAL_DURATION_MS = '7200000'
+    clock.mockReturnValue(firstDelegation.expiresAt + 1000)
+    recoverySmoke.renewExpiredOwnerQualityAuthorizationForSmoke(f.project.id, held.executionId)
+    const increased = delegation.getOwnerManagementDelegation(f.project.id).delegation!
+    expect(increased.maxCostMicros).toBe(firstDelegation.maxCostMicros + 650000)
+    expect(increased.expiresAt).toBe(firstDelegation.expiresAt + 1000 + 7200000)
+    expect(executionGrants.getOwnerExecutionGrant({ projectId: f.project.id })!.budget).toMatchObject({ maxCostMicros: f.input.maxCostMicros, maxRuns: f.input.maxRuns, maxRework: f.input.maxRework })
+    expect(settlement.readOwnerGrantUsage(f.grant.grantId)).toEqual(originalUsage)
+    clock.mockRestore(); clock = undefined
+    scenarios.set(f.project.id, {})
+    recoverySmoke.resumeFailedOwnerQualityForSmoke(f.project.id, held.executionId)
+    restartManagement = management.startOwnerManagementLoop()
+    await until(() => actionRows(f.project.id).length === 1, f.project.id)
+    expect(actionRows(f.project.id)[0]).toMatchObject({ state: 'accepted', recoveredFromOwnerExecutionId: held.executionId })
+    expect(traces.get(f.project.id)!.filter(item => ['executor', 'reviewer'].includes(item.role))).toHaveLength(originalCommandCount)
+  } finally {
+    clock?.mockRestore(); restartManagement?.(); f.stop()
+    if (savedSmoke === undefined) delete process.env.GRAVITAS_PACKAGE_SMOKE
+    else process.env.GRAVITAS_PACKAGE_SMOKE = savedSmoke
+    if (savedRecovery === undefined) delete process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID
+    else process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID = savedRecovery
+    if (savedMaxRequests === undefined) delete process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS
+    else process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS = savedMaxRequests
+    if (savedMaxCost === undefined) delete process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_COST_MICROS
+    else process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_COST_MICROS = savedMaxCost
+    if (savedDuration === undefined) delete process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RENEWAL_DURATION_MS
+    else process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RENEWAL_DURATION_MS = savedDuration
+  }
+}, 20000)
+
+
+test('Given验证过期导致准确质量失败且请求用量完整 When明确授权原成果复验 Then只追加同期限同额度委托且可幂等恢复', async () => {
+  const f = await fixture({ development: true, hold: true })
+  const savedSmoke = process.env.GRAVITAS_PACKAGE_SMOKE, savedRecovery = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID
+  const savedHash = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_REVALIDATE_ARTIFACT_HASH, savedMaxRequests = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS, savedMaxCost = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_COST_MICROS
+  let clock: ReturnType<typeof spyOn> | undefined
+  try {
+    await until(() => pending.has(f.project.id), f.project.id)
+    const held = pending.get(f.project.id)!
+    f.stop()
+    clock = spyOn(Date, 'now').mockReturnValue(Date.now() + 31 * 60 * 1000)
+    held.finish()
+    await until(() => runs.getOwnerPlanningRunOutcome(held.executionId)?.state === 'failed', f.project.id)
+    clock.mockRestore(); clock = undefined
+    const originalOutcome = runs.getOwnerPlanningRunOutcome(held.executionId)
+    expect(originalOutcome?.detail).toBe('Owner不能在独立检查未通过或标准未满足时接受成果')
+    const previous = delegation.getOwnerManagementDelegation(f.project.id)
+    expect(previous).toMatchObject({ state: 'attention', attentionCheck: { reason: 'non_continueable_outcome', outcomeDetail: originalOutcome!.detail, inputTokens: 10, outputTokens: 20 } })
+    const planningTaskId = store.getAgentExecution(held.executionId)!.entityId
+    const snapshot = source.readOwnerPlanningSnapshot(planningTaskId)!
+    const artifactHash = snapshot.context.conversation!.deliveryReview!.developmentArtifact!.contentHash
+    const originalGrant = executionGrants.getOwnerExecutionGrant({ projectId: f.project.id })!
+    const settlement = await import('./project-owner-execution-settlement')
+    const originalUsage = settlement.readOwnerGrantUsage(f.grant.grantId)
+    const originalCommandCount = (store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE grant_id=?').get(f.grant.grantId) as { count: number }).count
+    process.env.GRAVITAS_PACKAGE_SMOKE = '1'
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID = held.executionId
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_REVALIDATE_ARTIFACT_HASH = artifactHash
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS = String(previous.delegation!.maxRequests)
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_COST_MICROS = String(previous.delegation!.maxCostMicros)
+    const recoverySmoke = await import('./owner-quality-protocol-recovery-smoke')
+    recoverySmoke.authorizeOwnerQualityRevalidationFromFailedRun(f.project.id, held.executionId, artifactHash)
+    const renewed = delegation.getOwnerManagementDelegation(f.project.id)
+    expect(renewed).toMatchObject({ state: 'active', delegation: { maxRequests: previous.delegation!.maxRequests, maxCostMicros: previous.delegation!.maxCostMicros, expiresAt: previous.delegation!.expiresAt } })
+    expect(renewed.delegation!.id).not.toBe(previous.delegation!.id)
+    const migratedGrant = executionGrants.getOwnerExecutionGrant({ projectId: f.project.id })!
+    expect(migratedGrant).toMatchObject({ grantId: originalGrant.grantId, revalidationId: originalGrant.revalidationId, revalidationRevision: originalGrant.revalidationRevision, ownerManagementDelegationId: renewed.delegation!.id })
+    expect(migratedGrant.budget.expiresAt).toBe(originalGrant.budget.expiresAt)
+    expect(settlement.readOwnerGrantUsage(f.grant.grantId)).toEqual(originalUsage)
+    expect(runs.getOwnerPlanningRunOutcome(held.executionId)).toEqual(originalOutcome)
+    expect((store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE grant_id=?').get(f.grant.grantId) as { count: number }).count).toBe(originalCommandCount)
+    const delegationCount = (store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_management_delegations WHERE project_id=?').get(f.project.id) as { count: number }).count
+    recoverySmoke.authorizeOwnerQualityRevalidationFromFailedRun(f.project.id, held.executionId, artifactHash)
+    expect((store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_management_delegations WHERE project_id=?').get(f.project.id) as { count: number }).count).toBe(delegationCount)
+    expect(() => recoverySmoke.authorizeOwnerQualityRevalidationFromFailedRun(f.project.id, held.executionId, '0'.repeat(64))).toThrow('准确成果哈希')
+    expect((store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_management_delegations WHERE project_id=?').get(f.project.id) as { count: number }).count).toBe(delegationCount)
+  } finally {
+    clock?.mockRestore(); f.stop()
+    for (const [key, value] of Object.entries({ GRAVITAS_PACKAGE_SMOKE: savedSmoke, GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID: savedRecovery, GRAVITAS_OWNER_CHAIN_SMOKE_REVALIDATE_ARTIFACT_HASH: savedHash, GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS: savedMaxRequests, GRAVITAS_OWNER_CHAIN_SMOKE_MAX_COST_MICROS: savedMaxCost })) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}, 20000)
+
+
+test('Given原成果复验许可与两项授权均已到期且同身份渠道配置已刷新 When明确续期复验 Then追加配置确认与继任许可且历史账本不变', async () => {
+  const f = await fixture({ development: true, hold: true })
+  const savedSmoke = process.env.GRAVITAS_PACKAGE_SMOKE, savedRecovery = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID
+  const savedHash = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_REVALIDATE_ARTIFACT_HASH, savedMaxRequests = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS, savedMaxCost = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_COST_MICROS
+  let clock: ReturnType<typeof spyOn> | undefined
+  try {
+    await until(() => pending.has(f.project.id), f.project.id)
+    const held = pending.get(f.project.id)!
+    f.stop()
+    clock = spyOn(Date, 'now').mockReturnValue(Date.now() + 31 * 60 * 1000)
+    held.finish()
+    await until(() => runs.getOwnerPlanningRunOutcome(held.executionId)?.state === 'failed', f.project.id)
+    clock.mockRestore(); clock = undefined
+    const originalOutcome = runs.getOwnerPlanningRunOutcome(held.executionId)
+    const planningTaskId = store.getAgentExecution(held.executionId)!.entityId
+    const snapshot = source.readOwnerPlanningSnapshot(planningTaskId)!
+    const artifactHash = snapshot.context.conversation!.deliveryReview!.developmentArtifact!.contentHash
+    const previous = delegation.getOwnerManagementDelegation(f.project.id).delegation!
+    process.env.GRAVITAS_PACKAGE_SMOKE = '1'
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID = held.executionId
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_REVALIDATE_ARTIFACT_HASH = artifactHash
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS = String(previous.maxRequests)
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_COST_MICROS = String(previous.maxCostMicros)
+    const recoverySmoke = await import('./owner-quality-protocol-recovery-smoke')
+    recoverySmoke.authorizeOwnerQualityRevalidationFromFailedRun(f.project.id, held.executionId, artifactHash)
+    const firstGrant = executionGrants.getOwnerExecutionGrant({ projectId: f.project.id })!
+    const firstDelegation = delegation.getOwnerManagementDelegation(f.project.id).delegation!
+    const settlement = await import('./project-owner-execution-settlement')
+    const originalUsage = settlement.readOwnerGrantUsage(f.grant.grantId)
+    const originalCommandCount = (store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE grant_id=?').get(f.grant.grantId) as { count: number }).count
+    const permitRows = () => store.getProjectDb().prepare("SELECT payload FROM project_activities WHERE project_id=? AND action='owner_quality_revalidation_smoke_authorized' ORDER BY rowid").all(f.project.id) as Array<{ payload: string }>
+    const firstPermit = permitRows()[0]!
+    const staleBinding = binding.getOwnerRuntimeBinding(f.project.id)!
+    channels.updateChannel(staleBinding.channelId, { name: 'fake-after-key-check' })
+    clock = spyOn(Date, 'now').mockReturnValue(Math.max(firstDelegation.expiresAt, firstGrant.budget.expiresAt) + 1000)
+    recoverySmoke.authorizeOwnerQualityRevalidationFromFailedRun(f.project.id, held.executionId, artifactHash)
+    const renewed = delegation.getOwnerManagementDelegation(f.project.id).delegation!
+    const migratedGrant = executionGrants.getOwnerExecutionGrant({ projectId: f.project.id })!
+    const refreshedBinding = binding.getOwnerRuntimeBinding(f.project.id)!
+    expect(refreshedBinding).toMatchObject({ revision: staleBinding.revision + 1, carrierId: staleBinding.carrierId, workspaceId: staleBinding.workspaceId, channelId: staleBinding.channelId, modelId: staleBinding.modelId, actor: 'local-user' })
+    const revalidationHistory = (await import('./project-owner-execution-revalidation')).listOwnerExecutionRevalidationHistory({ projectId: f.project.id })
+    expect(revalidationHistory.at(-1)?.source.channelHash).not.toBe(revalidationHistory.at(-2)?.source.channelHash)
+    expect(revalidationHistory.at(-1)?.source.ownerBindingProvenance).toMatchObject({ state: 'bound', bindingRevision: refreshedBinding.revision, carrierId: staleBinding.carrierId })
+    expect(renewed.id).not.toBe(firstDelegation.id)
+    expect(renewed).toMatchObject({ maxRequests: firstDelegation.maxRequests, maxCostMicros: firstDelegation.maxCostMicros, expiresAt: Date.now() + 3600_000 })
+    expect(migratedGrant.revalidationRevision).toBe(firstGrant.revalidationRevision + 1)
+    expect(migratedGrant.budget.expiresAt).toBe(renewed.expiresAt)
+    const permits = permitRows()
+    expect(permits).toHaveLength(2)
+    expect(permits[0]).toEqual(firstPermit)
+    expect(JSON.parse(permits[1]!.payload)).toMatchObject({ artifactHash, revalidationId: migratedGrant.revalidationId, revalidationRevision: migratedGrant.revalidationRevision })
+    expect(settlement.readOwnerGrantUsage(f.grant.grantId)).toEqual(originalUsage)
+    expect(runs.getOwnerPlanningRunOutcome(held.executionId)).toEqual(originalOutcome)
+    expect((store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE grant_id=?').get(f.grant.grantId) as { count: number }).count).toBe(originalCommandCount)
+    recoverySmoke.authorizeOwnerQualityRevalidationFromFailedRun(f.project.id, held.executionId, artifactHash)
+    expect(permitRows()).toHaveLength(2)
+    expect(() => recoverySmoke.authorizeOwnerQualityRevalidationFromFailedRun(f.project.id, held.executionId, '0'.repeat(64))).toThrow('准确成果哈希')
+    expect(permitRows()).toHaveLength(2)
+  } finally {
+    clock?.mockRestore(); f.stop()
+    for (const [key, value] of Object.entries({ GRAVITAS_PACKAGE_SMOKE: savedSmoke, GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID: savedRecovery, GRAVITAS_OWNER_CHAIN_SMOKE_REVALIDATE_ARTIFACT_HASH: savedHash, GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS: savedMaxRequests, GRAVITAS_OWNER_CHAIN_SMOKE_MAX_COST_MICROS: savedMaxCost })) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}, 20000)
+
+
+test('Given恢复请求因本地硬上限未发送且委托未到期 When用户明确续期 Then保留账本并允许再次恢复', async () => {
+  const f = await fixture({ hold: true, invalidQualityQuote: true })
+  const savedSmoke = process.env.GRAVITAS_PACKAGE_SMOKE, savedRecovery = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID, savedMaxRequests = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS
+  let restartManagement: (() => void) | undefined
+  try {
+    await until(() => pending.has(f.project.id), f.project.id)
+    const original = pending.get(f.project.id)!
+    f.stop(); original.finish()
+    await until(() => runs.getOwnerPlanningRunOutcome(original.executionId)?.state === 'failed', f.project.id)
+    process.env.GRAVITAS_PACKAGE_SMOKE = '1'
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID = original.executionId
+    const recoverySmoke = await import('./owner-quality-protocol-recovery-smoke')
+    scenarios.set(f.project.id, { localConfigurationError: 'No output generated. Check the stream for errors.；流错误：Error: 真实冒烟请求次数边界无效', localConfigurationRuntimeResult: true })
+    recoverySmoke.resumeFailedOwnerQualityForSmoke(f.project.id, original.executionId)
+    restartManagement = management.startOwnerManagementLoop()
+    await until(() => store.listAgentExecutionsByProject(f.project.id).some(item => item.id !== original.executionId && item.status === 'failed'), f.project.id)
+    restartManagement(); restartManagement = undefined
+    const localFailure = store.listAgentExecutionsByProject(f.project.id).find(item => item.id !== original.executionId && item.status === 'failed')!
+    const previous = delegation.getOwnerManagementDelegation(f.project.id)
+    expect(previous).toMatchObject({ state: 'stale', detail: expect.stringContaining('未进入模型请求发送') })
+    expect(previous.delegation!.expiresAt).toBeGreaterThan(Date.now())
+    expect(store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_planning_admissions WHERE execution_id=?').get(localFailure.id)).toEqual({ count: 0 })
+    const settlement = await import('./project-owner-execution-settlement')
+    const originalUsage = settlement.readOwnerGrantUsage(f.grant.grantId)
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS = String(previous.delegation!.maxRequests - 1)
+    expect(() => recoverySmoke.renewExpiredOwnerQualityAuthorizationForSmoke(f.project.id, original.executionId)).toThrow('不得低于原额度')
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS = String(previous.delegation!.maxRequests)
+    recoverySmoke.renewExpiredOwnerQualityAuthorizationForSmoke(f.project.id, original.executionId)
+    const renewed = delegation.getOwnerManagementDelegation(f.project.id)
+    expect(renewed).toMatchObject({ state: 'active', delegation: { maxRequests: previous.delegation!.maxRequests, maxCostMicros: previous.delegation!.maxCostMicros } })
+    expect(renewed.delegation!.id).not.toBe(previous.delegation!.id)
+    expect(settlement.readOwnerGrantUsage(f.grant.grantId)).toEqual(originalUsage)
+    scenarios.set(f.project.id, {})
+    recoverySmoke.resumeFailedOwnerQualityForSmoke(f.project.id, original.executionId)
+    restartManagement = management.startOwnerManagementLoop()
+    await until(() => actionRows(f.project.id).length === 1, f.project.id)
+    expect(actionRows(f.project.id)[0]).toMatchObject({ state: 'accepted', recoveredFromOwnerExecutionId: original.executionId })
+    expect(store.getAgentExecution(localFailure.id)?.status).toBe('failed')
+    expect(store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_planning_admissions WHERE execution_id=?').get(localFailure.id)).toEqual({ count: 0 })
+  } finally {
+    restartManagement?.(); f.stop()
+    if (savedSmoke === undefined) delete process.env.GRAVITAS_PACKAGE_SMOKE
+    else process.env.GRAVITAS_PACKAGE_SMOKE = savedSmoke
+    if (savedRecovery === undefined) delete process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID
+    else process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID = savedRecovery
+    if (savedMaxRequests === undefined) delete process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS
+    else process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS = savedMaxRequests
+  }
+}, 20000)
+
+
+test('Given相同本地错误但运行回执含非零用量 When请求续期 Then保持未知门禁且不发行继任委托', async () => {
+  const f = await fixture({ hold: true, invalidQualityQuote: true })
+  const savedSmoke = process.env.GRAVITAS_PACKAGE_SMOKE, savedRecovery = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID, savedMaxRequests = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS
+  let restartManagement: (() => void) | undefined
+  try {
+    await until(() => pending.has(f.project.id), f.project.id)
+    const original = pending.get(f.project.id)!
+    f.stop(); original.finish()
+    await until(() => runs.getOwnerPlanningRunOutcome(original.executionId)?.state === 'failed', f.project.id)
+    process.env.GRAVITAS_PACKAGE_SMOKE = '1'
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID = original.executionId
+    const current = delegation.getOwnerManagementDelegation(f.project.id).delegation!
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS = String(current.maxRequests)
+    scenarios.set(f.project.id, { localConfigurationError: 'No output generated. Check the stream for errors.；流错误：Error: 真实冒烟请求次数边界无效', localConfigurationRuntimeResult: true, localConfigurationNonZeroUsage: true })
+    const recoverySmoke = await import('./owner-quality-protocol-recovery-smoke')
+    recoverySmoke.resumeFailedOwnerQualityForSmoke(f.project.id, original.executionId)
+    restartManagement = management.startOwnerManagementLoop()
+    await until(() => store.listAgentExecutionsByProject(f.project.id).some(item => item.id !== original.executionId && item.status === 'failed'), f.project.id)
+    restartManagement(); restartManagement = undefined
+    expect(delegation.getOwnerManagementDelegation(f.project.id).state).toBe('attention')
+    const count = (store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_management_delegations WHERE project_id=?').get(f.project.id) as { count: number }).count
+    expect(() => recoverySmoke.renewExpiredOwnerQualityAuthorizationForSmoke(f.project.id, original.executionId)).toThrow('已到期')
+    expect((store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_management_delegations WHERE project_id=?').get(f.project.id) as { count: number }).count).toBe(count)
+  } finally {
+    restartManagement?.(); f.stop()
+    if (savedSmoke === undefined) delete process.env.GRAVITAS_PACKAGE_SMOKE
+    else process.env.GRAVITAS_PACKAGE_SMOKE = savedSmoke
+    if (savedRecovery === undefined) delete process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID
+    else process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID = savedRecovery
+    if (savedMaxRequests === undefined) delete process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS
+    else process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS = savedMaxRequests
+  }
+}, 20000)
+
+
+test('Given质量恢复请求已在途且恢复入口随管理状态关闭 When重放冻结来源 Then恢复提示不漂移且权限仍由门禁拒绝', async () => {
+  const f = await fixture({ hold: true, invalidQualityQuote: true })
+  const savedSmoke = process.env.GRAVITAS_PACKAGE_SMOKE, savedRecovery = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID
+  let restartManagement: (() => void) | undefined
+  try {
+    await until(() => pending.has(f.project.id), f.project.id)
+    const original = pending.get(f.project.id)!
+    f.stop(); original.finish()
+    await until(() => runs.getOwnerPlanningRunOutcome(original.executionId)?.state === 'failed', f.project.id)
+    process.env.GRAVITAS_PACKAGE_SMOKE = '1'
+    process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID = original.executionId
+    scenarios.set(f.project.id, { hold: true })
+    const recoverySmoke = await import('./owner-quality-protocol-recovery-smoke')
+    recoverySmoke.resumeFailedOwnerQualityForSmoke(f.project.id, original.executionId)
+    restartManagement = management.startOwnerManagementLoop()
+    await until(() => pending.get(f.project.id)?.executionId !== original.executionId, f.project.id)
+    const executionId = pending.get(f.project.id)!.executionId
+    const planningTaskId = store.getAgentExecution(executionId)!.entityId
+    const frozen = source.readOwnerPlanningSnapshot(planningTaskId)!
+    expect(frozen.context.conversation?.deliveryReview?.qualityRecovery?.previousExecutionId).toBe(original.executionId)
+    const reviewerCommandId = frozen.context.conversation!.executionObservation!.commandId
+    delegation.revokeOwnerManagementDelegation(f.project.id, delegation.getOwnerManagementDelegation(f.project.id).delegation!.id)
+    expect(actions.getOwnerQualityRecovery(f.project.id, reviewerCommandId)).toBeNull()
+    const conversation = await import('./project-owner-management-conversation')
+    const replay = conversation.withOwnerConversationContext(plans.getProjectOwnerPlanningContext(f.project.id), frozen.link.conversationMessageId!, frozen.context.conversation?.historyThroughMessageId,
+      frozen.context.conversation?.interactionVersion ?? 1, 1, 1, frozen.context.conversation?.employeeInteractionVersion ?? 0, frozen.context.conversation?.employeeInteractions, true, frozen.context.conversation?.deliveryReview)
+    expect(replay).toEqual(frozen.context)
+    expect(source.resolveOwnerPlanningTask(planningTaskId)!.context).toEqual(frozen.context)
+    expect(() => delegation.assertOwnerManagementTask(executionId)).toThrow('委托已撤销')
+  } finally {
+    restartManagement?.(); f.stop()
+    if (savedSmoke === undefined) delete process.env.GRAVITAS_PACKAGE_SMOKE
+    else process.env.GRAVITAS_PACKAGE_SMOKE = savedSmoke
+    if (savedRecovery === undefined) delete process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID
+    else process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID = savedRecovery
+  }
 }, 15000)
 
 
