@@ -52,11 +52,11 @@ test('Given 用户调整忽略范围 When 重新扫描 Then 更新基线而非�
   writeFileSync(join(root, '.gravitasignore'), '../outside\n')
   await expect(scanProjectFileChanges('ignore-case', root)).rejects.toThrow('相对路径')
   writeFileSync(join(root, '.gravitasignore'), '# 本地文件\nprivate/\n')
-  expect((await scanProjectFileChanges('ignore-case', root)).map(event => event.path)).toEqual(['.gravitasignore'])
+  expect(await scanProjectFileChanges('ignore-case', root)).toEqual([])
 })
 
 
-test('Given 文件内容等长修改且修改时间被还原 When 扫描 Then 通过状态变更时间发现变化', async () => {
+test('Given 文件内容等长修改且修改时间被还原 When 扫描 Then 通过内容摘要发现变化', async () => {
   const file = join(root, 'same-size.txt')
   writeFileSync(file, 'before')
   await scanProjectFileChanges('ctime-case', root)
@@ -66,4 +66,28 @@ test('Given 文件内容等长修改且修改时间被还原 When 扫描 Then �
   utimesSync(file, original.atime, original.mtime)
   const events = await scanProjectFileChanges('ctime-case', root)
   expect(events.some(event => event.path === 'same-size.txt' && event.kind === 'modified')).toBe(true)
+})
+
+
+test('Given 唯一相同摘要的新增和删除 When 扫描 Then 标记为疑似重命名；重复摘要不推断', async () => {
+  const dir = join(root, 'rename-test'); mkdirSync(dir)
+  writeFileSync(join(dir, 'old.txt'), '唯一内容')
+  writeFileSync(join(dir, 'duplicate-a.txt'), '重复内容')
+  writeFileSync(join(dir, 'duplicate-b.txt'), '重复内容')
+  await scanProjectFileChanges('rename-case', root)
+  renameSync(join(dir, 'old.txt'), join(dir, 'new.txt'))
+  renameSync(join(dir, 'duplicate-a.txt'), join(dir, 'duplicate-c.txt'))
+  renameSync(join(dir, 'duplicate-b.txt'), join(dir, 'duplicate-d.txt'))
+  const events = await scanProjectFileChanges('rename-case', root)
+  expect(events.find(item => item.path === 'rename-test/new.txt')).toMatchObject({ kind: 'renamed', previousPath: 'rename-test/old.txt', evidence: 'matching_digest' })
+  expect(events.filter(item => item.path.includes('duplicate')).map(item => item.kind).sort()).toEqual(['added', 'added', 'deleted', 'deleted'])
+})
+
+test('Given 内容相同的文本仅元数据发生变化 When 扫描 Then 不误报正文修改', async () => {
+  const file = join(root, 'metadata-only.txt')
+  writeFileSync(file, '内容保持不变')
+  await scanProjectFileChanges('metadata-case', root)
+  const original = statSync(file)
+  utimesSync(file, original.atime, new Date(original.mtimeMs + 5000))
+  expect((await scanProjectFileChanges('metadata-case', root)).filter(event => event.path === 'metadata-only.txt')).toEqual([])
 })

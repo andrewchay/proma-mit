@@ -1,7 +1,8 @@
-/** 本地项目文件元数据快照；不读取或保存文件正文。 */
+/** 本地项目文件快照；有限读取文本计算摘要，不保存正文。 */
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { join, relative } from 'node:path'
+import { constants } from 'node:fs'
 import { getProjectsDir } from './config-paths'
 import type { ProjectWorkspaceFileChangesView } from '@gravitas/shared'
 type ProjectFileScanView = Omit<ProjectWorkspaceFileChangesView, 'watching'>
@@ -9,9 +10,11 @@ type ProjectFileScanView = Omit<ProjectWorkspaceFileChangesView, 'watching'>
 const ignored = new Set(['.git', 'node_modules', '.next', '.nuxt', 'dist', 'build', '.cache', '__pycache__', '.turbo', '.parcel-cache', '.svelte-kit'])
 const MAX_FILES = 20000
 const MAX_EVENTS = 1000
+const MAX_HASH_FILE_BYTES = 1024 * 1024
+const MAX_HASH_TOTAL_BYTES = 64 * 1024 * 1024
 
-interface FileMetadata { size: number; modified: number; changed?: number }
-export interface ProjectFileChange { path: string; kind: 'added' | 'modified' | 'deleted'; observedAt: number }
+interface FileMetadata { size: number; modified: number; changed?: number; sha256?: string }
+export interface ProjectFileChange { path: string; kind: 'added' | 'modified' | 'deleted' | 'renamed'; observedAt: number; previousPath?: string; evidence?: 'content' | 'metadata' | 'matching_digest' }
 interface Snapshot { version: 1; root: string; files: Record<string, FileMetadata>; events: ProjectFileChange[]; scannedAt?: number; ignorePrefixes?: string[] }
 const scanErrors = new Map<string, { root: string; message: string }>()
 
@@ -40,8 +43,10 @@ async function readIgnorePrefixes(root: string): Promise<string[]> {
 async function collect(root: string, ignorePrefixes: string[]): Promise<Record<string, FileMetadata>> {
   const files: Record<string, FileMetadata> = Object.create(null)
   let count = 0
+  let bytesHashed = 0
   async function visit(dir: string): Promise<void> {
     const entries = await readdir(dir, { withFileTypes: true })
+    entries.sort((a, b) => a.name.localeCompare(b.name))
     for (const entry of entries) {
       if (ignored.has(entry.name) || entry.isSymbolicLink()) continue
       const path = join(dir, entry.name)
@@ -51,7 +56,31 @@ async function collect(root: string, ignorePrefixes: string[]): Promise<Record<s
       else if (entry.isFile()) {
         if (++count > MAX_FILES) throw new Error('文件数量超过项目变化扫描上限')
         const info = await stat(path)
-        files[name] = { size: info.size, modified: info.mtimeMs, changed: info.ctimeMs }
+        const metadata: FileMetadata = { size: info.size, modified: info.mtimeMs, changed: info.ctimeMs }
+        if (info.size <= MAX_HASH_FILE_BYTES && bytesHashed + info.size <= MAX_HASH_TOTAL_BYTES) {
+          const handle = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+          try {
+            const before = await handle.stat()
+            if (!before.isFile() || before.size !== info.size || before.ino !== info.ino || before.dev !== info.dev) throw new Error('文件在扫描期间发生变化')
+            const buffer = Buffer.alloc(before.size + 1)
+            let length = 0
+            while (length < buffer.length) {
+              const result = await handle.read(buffer, length, buffer.length - length, length)
+              if (!result.bytesRead) break
+              length += result.bytesRead
+            }
+            if (length !== before.size) throw new Error('文件在扫描期间发生变化')
+            const bytes = buffer.subarray(0, length)
+            const after = await handle.stat()
+            if (after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs) throw new Error('文件在扫描期间发生变化')
+            bytesHashed += bytes.length
+            try {
+              new TextDecoder('utf-8', { fatal: true }).decode(bytes)
+              if (!bytes.includes(0)) metadata.sha256 = createHash('sha256').update(bytes).digest('hex')
+            } catch { /* 非 UTF-8 或二进制文件只使用元数据。 */ }
+          } finally { await handle.close() }
+        }
+        files[name] = metadata
       }
     }
   }
@@ -86,12 +115,37 @@ async function scanProjectFileChangesInternal(workspaceId: string, root: string)
   const now = Date.now()
   const changes: ProjectFileChange[] = []
   if (previous && JSON.stringify(previous.ignorePrefixes ?? []) === JSON.stringify(ignorePrefixes)) {
+    const added = Object.keys(files).filter(name => !Object.hasOwn(previous.files, name))
+    const deleted = Object.keys(previous.files).filter(name => !Object.hasOwn(files, name))
+    const matchedAdded = new Set<string>()
+    const matchedDeleted = new Set<string>()
+    const groupByHash = (names: string[], source: Record<string, FileMetadata>): Map<string, string[]> => {
+      const groups = new Map<string, string[]>()
+      for (const name of names) {
+        const hash = source[name]?.sha256
+        if (hash) { const group = groups.get(hash) ?? []; group.push(name); groups.set(hash, group) }
+      }
+      return groups
+    }
+    const oldGroups = groupByHash(deleted, previous.files)
+    const newGroups = groupByHash(added, files)
+    for (const [hash, names] of newGroups) {
+      const oldNames = oldGroups.get(hash)
+      if (names.length === 1 && oldNames?.length === 1) {
+        const name = names[0]!, old = oldNames[0]!
+        matchedAdded.add(name); matchedDeleted.add(old)
+        changes.push({ path: name, previousPath: old, kind: 'renamed', observedAt: now, evidence: 'matching_digest' })
+      }
+    }
+    for (const name of added) if (!matchedAdded.has(name)) changes.push({ path: name, kind: 'added', observedAt: now, evidence: files[name]?.sha256 ? 'content' : 'metadata' })
+    for (const name of deleted) if (!matchedDeleted.has(name)) changes.push({ path: name, kind: 'deleted', observedAt: now, evidence: previous.files[name]?.sha256 ? 'content' : 'metadata' })
     for (const [name, info] of Object.entries(files)) {
       const old = Object.hasOwn(previous.files, name) ? previous.files[name] : undefined
-      if (!old) changes.push({ path: name, kind: 'added', observedAt: now })
-      else if (old.size !== info.size || old.modified !== info.modified || (old.changed !== undefined && old.changed !== info.changed)) changes.push({ path: name, kind: 'modified', observedAt: now })
+      if (!old) continue
+      const contentComparable = Boolean(old.sha256 && info.sha256)
+      const changed = contentComparable ? old.sha256 !== info.sha256 : old.size !== info.size || old.modified !== info.modified || (old.changed !== undefined && old.changed !== info.changed)
+      if (changed) changes.push({ path: name, kind: 'modified', observedAt: now, evidence: contentComparable ? 'content' : 'metadata' })
     }
-    for (const name of Object.keys(previous.files)) if (!files[name]) changes.push({ path: name, kind: 'deleted', observedAt: now })
   }
   const next: Snapshot = { version: 1, root, files, events: [...(previous?.events ?? []), ...changes].slice(-MAX_EVENTS), scannedAt: now, ignorePrefixes }
   await mkdir(join(getProjectsDir(), 'file-changes'), { recursive: true })
@@ -109,7 +163,7 @@ async function scanProjectFileChangesInternal(workspaceId: string, root: string)
 export async function readProjectFileChanges(workspaceId: string, root: string): Promise<ProjectFileScanView> {
   try {
     const snapshot: Snapshot = JSON.parse(await readFile(snapshotPath(workspaceId), 'utf8'))
-    if (snapshot.version !== 1 || snapshot.root !== root || !Array.isArray(snapshot.events) || snapshot.events.some(event => !event || typeof event.path !== 'string' || !['added', 'modified', 'deleted'].includes(event.kind) || !Number.isFinite(event.observedAt))) throw new Error('项目文件快照无效')
+    if (snapshot.version !== 1 || snapshot.root !== root || !Array.isArray(snapshot.events) || snapshot.events.some(event => !event || typeof event.path !== 'string' || !['added', 'modified', 'deleted', 'renamed'].includes(event.kind) || !Number.isFinite(event.observedAt))) throw new Error('项目文件快照无效')
     return { changes: snapshot.events.slice(-100).reverse(), lastScannedAt: typeof snapshot.scannedAt === 'number' ? snapshot.scannedAt : null, scanError: scanErrors.get(workspaceId)?.root === root ? scanErrors.get(workspaceId)!.message : null }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { changes: [], lastScannedAt: null, scanError: scanErrors.get(workspaceId)?.root === root ? scanErrors.get(workspaceId)!.message : null }

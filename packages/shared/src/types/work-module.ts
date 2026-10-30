@@ -373,8 +373,10 @@ export const PROJECT_IPC_CHANNELS = {
 
 export interface ProjectWorkspaceFileChange {
   path: string
-  kind: 'added' | 'modified' | 'deleted'
+  kind: 'added' | 'modified' | 'deleted' | 'renamed'
   observedAt: number
+  previousPath?: string
+  evidence?: 'content' | 'metadata' | 'matching_digest'
 }
 
 export interface ProjectWorkspaceFileChangesView {

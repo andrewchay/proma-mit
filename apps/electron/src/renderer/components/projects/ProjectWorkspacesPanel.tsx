@@ -196,7 +196,7 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
                   {!changes[binding.workspaceId]!.watching && <p role="alert" className="mt-2 text-destructive">目录监听未运行，新的变化可能无法及时记录。</p>}
                   {changes[binding.workspaceId]!.scanError && <p role="alert" className="mt-2 text-destructive">最近扫描失败，记录可能过期：{changes[binding.workspaceId]!.scanError}</p>}
                   <p className="mt-2 text-muted-foreground">{changes[binding.workspaceId]!.lastScannedAt ? `上次成功扫描：${new Date(changes[binding.workspaceId]!.lastScannedAt!).toLocaleString()}` : '尚无可确认的成功扫描时间。'}</p>
-                  {changes[binding.workspaceId]!.changes.length === 0 ? <p className="mt-2">暂无已记录变化。</p> : <ul className="mt-2 max-h-64 space-y-1 overflow-auto">{changes[binding.workspaceId]!.changes.map((change, index) => <li key={`${change.observedAt}-${index}`} className="break-all">{new Date(change.observedAt).toLocaleString()} · {change.kind === 'added' ? '新增' : change.kind === 'deleted' ? '删除' : '修改'} · {change.path}</li>)}</ul>}
+                  {changes[binding.workspaceId]!.changes.length === 0 ? <p className="mt-2">暂无已记录变化。</p> : <ul className="mt-2 max-h-64 space-y-1 overflow-auto">{changes[binding.workspaceId]!.changes.map((change, index) => <li key={`${change.observedAt}-${index}`} className="break-all">{new Date(change.observedAt).toLocaleString()} · {change.kind === 'added' ? '新增' : change.kind === 'deleted' ? '删除' : change.kind === 'renamed' ? '疑似重命名' : '修改'} · {change.previousPath ? `${change.previousPath} → ` : ''}{change.path} · {change.evidence === 'content' ? '内容摘要' : change.evidence === 'matching_digest' ? '摘要匹配推测' : '元数据'}</li>)}</ul>}
                 </div>}
               </div>
             ))}
