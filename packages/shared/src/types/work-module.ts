@@ -381,6 +381,7 @@ export interface ProjectWorkspaceFileChangesView {
   changes: ProjectWorkspaceFileChange[]
   lastScannedAt: number | null
   scanError: string | null
+  watching: boolean
 }
 
 /** Project ↔ AgentWorkspace 绑定记录：正式绑定仅表示授权，不代表资料共享 */

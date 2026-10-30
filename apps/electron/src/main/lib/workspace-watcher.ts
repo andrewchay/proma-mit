@@ -21,6 +21,7 @@ import { scanProjectFileChanges } from './project-file-changes'
 
 /** debounce 延迟（ms） */
 const DEBOUNCE_MS = 300
+const PROJECT_SCAN_DEBOUNCE_MS = 2000
 
 /** watcher 'error' 事件后的自愈重启延迟（ms），避免对持续故障状态紧密重试 */
 const WATCHER_RESTART_DELAY_MS = 5000
@@ -40,20 +41,29 @@ const projectRootWatchers = new Map<string, FSWatcher>()
 let projectRootRetryTimer: ReturnType<typeof setInterval> | null = null
 const projectScanTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const projectScans = new Map<string, Promise<void>>()
+const projectScanDirty = new Map<string, string>()
 
 function scheduleProjectScan(workspaceId: string, root: string): void {
   const timer = projectScanTimers.get(workspaceId)
   if (timer) clearTimeout(timer)
   projectScanTimers.set(workspaceId, setTimeout(() => {
     projectScanTimers.delete(workspaceId)
-    const previous = projectScans.get(workspaceId) ?? Promise.resolve()
-    const next = previous.then(async () => {
+    if (projectScans.has(workspaceId)) {
+      projectScanDirty.set(workspaceId, root)
+      return
+    }
+    const next = (async () => {
       if (!mainWin || !listAgentWorkspaces().some(item => item.id === workspaceId && item.rootPath === root)) return
       await scanProjectFileChanges(workspaceId, root)
-    }).catch(error => console.error('[项目变化扫描] 失败:', error))
+    })().catch(error => console.error('[项目变化扫描] 失败:', error))
     projectScans.set(workspaceId, next)
-    void next.finally(() => { if (projectScans.get(workspaceId) === next) projectScans.delete(workspaceId) })
-  }, DEBOUNCE_MS))
+    void next.finally(() => {
+      projectScans.delete(workspaceId)
+      const dirtyRoot = projectScanDirty.get(workspaceId)
+      projectScanDirty.delete(workspaceId)
+      if (dirtyRoot && mainWin) scheduleProjectScan(workspaceId, dirtyRoot)
+    })
+  }, PROJECT_SCAN_DEBOUNCE_MS))
 }
 
 /** 同步本地项目根目录监听，独立于会话附加目录的生命周期。 */
@@ -90,6 +100,10 @@ export function syncProjectRootWatchers(): void {
       console.error('[项目目录监听] 启动失败:', path, error)
     }
   }
+}
+
+export function isProjectRootWatched(root: string): boolean {
+  return projectRootWatchers.has(root)
 }
 
 /** 系统唤醒后补扫，覆盖休眠期间可能漏掉的事件。 */
@@ -208,6 +222,7 @@ export function stopWorkspaceWatcher(): void {
   }
   for (const timer of projectScanTimers.values()) clearTimeout(timer)
   projectScanTimers.clear()
+  projectScanDirty.clear()
   if (projectRootRetryTimer) clearInterval(projectRootRetryTimer)
   projectRootRetryTimer = null
   for (const rootWatcher of projectRootWatchers.values()) rootWatcher.close()

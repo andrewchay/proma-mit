@@ -4,6 +4,7 @@ import { lstat, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from
 import { join, relative } from 'node:path'
 import { getProjectsDir } from './config-paths'
 import type { ProjectWorkspaceFileChangesView } from '@gravitas/shared'
+type ProjectFileScanView = Omit<ProjectWorkspaceFileChangesView, 'watching'>
 
 const ignored = new Set(['.git', 'node_modules', '.next', '.nuxt', 'dist', 'build', '.cache', '__pycache__', '.turbo', '.parcel-cache', '.svelte-kit'])
 const MAX_FILES = 20000
@@ -105,7 +106,7 @@ async function scanProjectFileChangesInternal(workspaceId: string, root: string)
 }
 
 /** 用户主动查看工作区记录；不读取文件正文。 */
-export async function readProjectFileChanges(workspaceId: string, root: string): Promise<ProjectWorkspaceFileChangesView> {
+export async function readProjectFileChanges(workspaceId: string, root: string): Promise<ProjectFileScanView> {
   try {
     const snapshot: Snapshot = JSON.parse(await readFile(snapshotPath(workspaceId), 'utf8'))
     if (snapshot.version !== 1 || snapshot.root !== root || !Array.isArray(snapshot.events) || snapshot.events.some(event => !event || typeof event.path !== 'string' || !['added', 'modified', 'deleted'].includes(event.kind) || !Number.isFinite(event.observedAt))) throw new Error('项目文件快照无效')

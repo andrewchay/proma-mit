@@ -358,7 +358,7 @@ import {
   getReleaseByTag,
 } from './lib/github-release-service'
 import { listLocalReleases, mergeReleases } from './lib/local-release-notes'
-import { watchAttachedDirectory, unwatchAttachedDirectory, syncProjectRootWatchers } from './lib/workspace-watcher'
+import { watchAttachedDirectory, unwatchAttachedDirectory, syncProjectRootWatchers, isProjectRootWatched } from './lib/workspace-watcher'
 import {
   getFeishuConfig,
   saveFeishuConfig,
@@ -4879,7 +4879,8 @@ export async function registerIpcHandlers(): Promise<void> {
     const workspace = getAgentWorkspace(workspaceId)
     if (!workspace?.rootPath) throw new Error('工作区没有本地项目目录')
     const { readProjectFileChanges } = await import('./lib/project-file-changes')
-    return readProjectFileChanges(workspaceId, workspace.rootPath)
+    const result = await readProjectFileChanges(workspaceId, workspace.rootPath)
+    return { ...result, watching: isProjectRootWatched(workspace.rootPath) }
   })
 
   // ===== 智能提醒系统 =====
