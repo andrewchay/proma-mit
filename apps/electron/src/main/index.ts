@@ -141,7 +141,7 @@ import { stopAllAgents, killOrphanedClaudeSubprocesses } from './lib/agent-servi
 import { takePendingMcpOAuth } from './lib/agent-runtime/mcp-oauth-pending'
 import { stopAllGenerations } from './lib/chat-service'
 import { initAutoUpdater, cleanupUpdater } from './lib/updater/auto-updater'
-import { startWorkspaceWatcher, stopWorkspaceWatcher } from './lib/workspace-watcher'
+import { rescanProjectRoots, startWorkspaceWatcher, stopWorkspaceWatcher } from './lib/workspace-watcher'
 import { startChatToolsWatcher, stopChatToolsWatcher } from './lib/chat-tools-watcher'
 import { getIsQuitting, setQuitting } from './lib/app-lifecycle'
 import { registerBridge, startAllBridges, stopAllBridges } from './lib/bridge-registry'
@@ -799,6 +799,7 @@ let stopOwnerManagementLoop: (() => void) | null = null
 
 function handleSystemResume(): void {
   console.info('[项目管理] 系统唤醒，重新扫描项目状态')
+  rescanProjectRoots()
   try {
     const { rescanOwnerManagementProjects } = require('./lib/project-owner-management-loop') as typeof import('./lib/project-owner-management-loop')
     const { reconcilePilotProjectsAfterWake } = require('./lib/project-pilot-background-reconcile') as typeof import('./lib/project-pilot-background-reconcile')

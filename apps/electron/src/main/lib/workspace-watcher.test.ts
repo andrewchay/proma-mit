@@ -8,8 +8,8 @@ const internal = join(temp, 'workspaces')
 const project = join(temp, 'project')
 mkdirSync(internal)
 mkdirSync(project)
-let workspaces: Array<{ rootPath?: string }> = [{ rootPath: project }]
-mock.module('./config-paths', () => ({ getAgentWorkspacesDir: () => internal }))
+let workspaces: Array<{ id: string; rootPath?: string }> = [{ id: 'project', rootPath: project }]
+mock.module('./config-paths', () => ({ getAgentWorkspacesDir: () => internal, getProjectsDir: () => join(temp, 'data') }))
 mock.module('./agent-workspace-manager', () => ({ listAgentWorkspaces: () => workspaces }))
 const { startWorkspaceWatcher, stopWorkspaceWatcher, syncProjectRootWatchers } = await import('./workspace-watcher')
 const events: string[] = []

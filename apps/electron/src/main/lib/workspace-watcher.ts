@@ -17,6 +17,7 @@ import type { BrowserWindow } from 'electron'
 import { AGENT_IPC_CHANNELS } from '@gravitas/shared'
 import { getAgentWorkspacesDir } from './config-paths'
 import { listAgentWorkspaces } from './agent-workspace-manager'
+import { scanProjectFileChanges } from './project-file-changes'
 
 /** debounce 延迟（ms） */
 const DEBOUNCE_MS = 300
@@ -37,11 +38,29 @@ function isHighNoisePath(normalizedPath: string): boolean {
 let watcher: FSWatcher | null = null
 const projectRootWatchers = new Map<string, FSWatcher>()
 let projectRootRetryTimer: ReturnType<typeof setInterval> | null = null
+const projectScanTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const projectScans = new Map<string, Promise<void>>()
+
+function scheduleProjectScan(workspaceId: string, root: string): void {
+  const timer = projectScanTimers.get(workspaceId)
+  if (timer) clearTimeout(timer)
+  projectScanTimers.set(workspaceId, setTimeout(() => {
+    projectScanTimers.delete(workspaceId)
+    const previous = projectScans.get(workspaceId) ?? Promise.resolve()
+    const next = previous.then(async () => {
+      if (!mainWin || !listAgentWorkspaces().some(item => item.id === workspaceId && item.rootPath === root)) return
+      await scanProjectFileChanges(workspaceId, root)
+    }).catch(error => console.error('[项目变化扫描] 失败:', error))
+    projectScans.set(workspaceId, next)
+    void next.finally(() => { if (projectScans.get(workspaceId) === next) projectScans.delete(workspaceId) })
+  }, DEBOUNCE_MS))
+}
 
 /** 同步本地项目根目录监听，独立于会话附加目录的生命周期。 */
 export function syncProjectRootWatchers(): void {
   if (!mainWin || mainWin.isDestroyed()) return
-  const roots = new Set(listAgentWorkspaces().flatMap((workspace) => workspace.rootPath ? [workspace.rootPath] : []))
+  const workspaces = listAgentWorkspaces()
+  const roots = new Set(workspaces.flatMap((workspace) => workspace.rootPath ? [workspace.rootPath] : []))
   for (const [path, existing] of projectRootWatchers) {
     if (!roots.has(path)) {
       existing.close()
@@ -54,6 +73,9 @@ export function syncProjectRootWatchers(): void {
       const rootWatcher = watch(path, { recursive: true }, (_eventType, filename) => {
         if (filename && isHighNoisePath(filename.replace(/\\/g, '/'))) return
         scheduleAttachedFilesRefresh()
+        for (const workspace of listAgentWorkspaces()) {
+          if (workspace.rootPath === path) scheduleProjectScan(workspace.id, path)
+        }
       })
       rootWatcher.on('error', (error) => {
         console.error('[项目目录监听] 运行时错误:', path, error)
@@ -61,9 +83,19 @@ export function syncProjectRootWatchers(): void {
         projectRootWatchers.delete(path)
       })
       projectRootWatchers.set(path, rootWatcher)
+      for (const workspace of workspaces) {
+        if (workspace.rootPath === path) scheduleProjectScan(workspace.id, path)
+      }
     } catch (error) {
       console.error('[项目目录监听] 启动失败:', path, error)
     }
+  }
+}
+
+/** 系统唤醒后补扫，覆盖休眠期间可能漏掉的事件。 */
+export function rescanProjectRoots(): void {
+  for (const workspace of listAgentWorkspaces()) {
+    if (workspace.rootPath) scheduleProjectScan(workspace.id, workspace.rootPath)
   }
 }
 
@@ -173,6 +205,8 @@ export function stopWorkspaceWatcher(): void {
     watcher = null
     console.log('[工作区监听] 已停止')
   }
+  for (const timer of projectScanTimers.values()) clearTimeout(timer)
+  projectScanTimers.clear()
   if (projectRootRetryTimer) clearInterval(projectRootRetryTimer)
   projectRootRetryTimer = null
   for (const rootWatcher of projectRootWatchers.values()) rootWatcher.close()
