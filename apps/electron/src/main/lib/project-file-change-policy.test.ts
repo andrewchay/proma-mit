@@ -28,3 +28,21 @@ test('Given 用户开启分析后解绑 When 重新绑定 Then 授权不会恢�
   setProjectFileChangePolicy(project.id, workspace.id, false)
   expect(getProjectFileChangePolicy(project.id, workspace.id)).toBeNull()
 })
+
+test('Given 用户授权文件变化 When 重复接收同一批观察或撤销授权 Then 去重且旧观察不可再用', async () => {
+  const { recordProjectFileChangeObservation, getAuthorizedProjectFileChangeObservation } = await import('./project-file-change-observations')
+  const project = createProject({ title: '观察项目', description: '' })
+  const observationRoot = join(temp, 'observation'); mkdirSync(observationRoot)
+  const workspace = createAgentWorkspace('观察资料', observationRoot)
+  bindWorkspaceToProject(project.id, workspace.id)
+  const policy = setProjectFileChangePolicy(project.id, workspace.id, true)!
+  const event = { path: 'src/file.ts', kind: 'modified' as const, observedAt: policy.enabledAt + 1 }
+  const first = recordProjectFileChangeObservation(project.id, workspace.id, [event])!
+  expect(recordProjectFileChangeObservation(project.id, workspace.id, [event])?.id).toBe(first.id)
+  expect(getAuthorizedProjectFileChangeObservation(project.id, first.id)).toEqual(first)
+  expect(recordProjectFileChangeObservation(project.id, workspace.id, [{ ...event, observedAt: policy.enabledAt }])).toBeNull()
+  setProjectFileChangePolicy(project.id, workspace.id, false)
+  expect(getAuthorizedProjectFileChangeObservation(project.id, first.id)).toBeNull()
+  setProjectFileChangePolicy(project.id, workspace.id, true)
+  expect(getAuthorizedProjectFileChangeObservation(project.id, first.id)).toBeNull()
+})
