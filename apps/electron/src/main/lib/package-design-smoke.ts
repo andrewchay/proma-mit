@@ -1,0 +1,121 @@
+/** 在真实打包渲染器中验收 OpenDesign 下载，不访问网络、不写入用户工作区。 */
+import assert from 'node:assert/strict'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { BrowserWindow } from 'electron'
+import { setMainWindow } from '../main-window'
+
+const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
+
+async function waitRenderer(window: BrowserWindow, script: string, description: string, timeoutMs = 20_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  let lastError = ''
+  while (Date.now() < deadline) {
+    try {
+      if (await window.webContents.executeJavaScript(`Boolean(${script})`, true)) return
+    } catch (error) { lastError = String(error) }
+    await sleep(100)
+  }
+  const body = await window.webContents.executeJavaScript('document.body.innerText.slice(0, 800)', true).catch(() => '')
+  throw new Error(`打包渲染器验收超时：${description}${lastError ? `（${lastError}）` : ''}；当前界面：${JSON.stringify(body)}`)
+}
+
+async function clickProjectModule(window: BrowserWindow): Promise<void> {
+  const clicked = await window.webContents.executeJavaScript(`(() => {
+    const button = [...document.querySelectorAll('button')].find(item => item.textContent?.trim() === '项目管理')
+    if (!button) return false
+    button.click()
+    return true
+  })()`, true)
+  assert(clicked, '找不到项目管理入口')
+}
+
+export async function runPackageDesignSmoke(root: string): Promise<Record<string, unknown>> {
+  const { initProjectDb, closeProjectDb, createProject } = await import('./project-sqlite-store')
+  const { saveProjectOwnerGoalDraft } = await import('./project-owner-goal-service')
+  const { registerIpcHandlers } = await import('../ipc')
+  await initProjectDb()
+  const project = createProject({ title: 'Package OpenDesign Smoke', description: '临时本地验收项目' })
+  saveProjectOwnerGoalDraft(project.id, 0, {
+    objective: '只验证本地设计参考下载，不调用模型', constraints: [], acceptanceCriteria: ['下载内容正确且原文件不变'],
+  })
+  await registerIpcHandlers()
+
+  const downloadDir = join(root, 'opendesign-downloads')
+  const userWorkspace = join(root, 'opendesign-user-workspace')
+  mkdirSync(downloadDir, { recursive: true })
+  mkdirSync(userWorkspace, { recursive: true })
+  writeFileSync(join(userWorkspace, 'DESIGN.md'), 'USER_DESIGN_CANARY')
+  writeFileSync(join(userWorkspace, 'tokens.css'), 'USER_TOKENS_CANARY')
+
+  const window = new BrowserWindow({
+    show: false, width: 1280, height: 900,
+    webPreferences: { preload: join(__dirname, 'preload.cjs'), contextIsolation: true, nodeIntegration: false, sandbox: true },
+  })
+  setMainWindow(window)
+  const downloads: Array<{ path: string; state: string }> = []
+  window.webContents.session.on('will-download', (_event, item) => {
+    const path = join(downloadDir, item.getFilename())
+    item.setSavePath(path)
+    const record = { path, state: 'started' }
+    downloads.push(record)
+    item.once('done', (_doneEvent, state) => { record.state = state })
+  })
+  try {
+    await window.loadFile(join(__dirname, 'renderer', 'index.html'))
+    await waitRenderer(window, `document.body.innerText.includes('开始使用')`, '首次启动欢迎页')
+    await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent?.trim() === '开始使用').click()`, true)
+    await waitRenderer(window, `document.body.innerText.includes('稍后设置')`, '订阅引导页')
+    await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent?.trim() === '稍后设置').click()`, true)
+    await waitRenderer(window, `[...document.querySelectorAll('button')].some(item => item.textContent?.trim() === '智能体')`, '模式导航加载')
+    await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent?.trim() === '智能体').click()`, true)
+    await waitRenderer(window, `[...document.querySelectorAll('button')].some(item => item.textContent?.trim() === '项目管理')`, '应用导航加载')
+    await clickProjectModule(window)
+    await waitRenderer(window, `document.body.innerText.includes(${JSON.stringify(project.title)})`, '验收项目出现')
+    const opened = await window.webContents.executeJavaScript(`(() => {
+      const button = document.querySelector(${JSON.stringify(`[aria-label="与 ${project.title} 的 Owner 对话"]`)})
+      if (!(button instanceof HTMLElement)) return false
+      button.click()
+      return true
+    })()`, true)
+    assert(opened, '打不开验收项目的 Owner 对话')
+    await waitRenderer(window, `document.querySelector('details[aria-label="设计任务草稿"]')`, '设计任务草稿出现')
+    await window.webContents.executeJavaScript(`document.querySelector('details[aria-label="设计任务草稿"] > summary').click()`, true)
+    await waitRenderer(window, `document.querySelector('details[aria-label="设计任务草稿"] select')`, '设计参考选择器出现')
+    await window.webContents.executeJavaScript(`(() => {
+      const labels = [...document.querySelectorAll('label')]
+      const select = labels.find(item => item.textContent?.includes('设计系统参考（可选）'))?.querySelector('select')
+      if (!(select instanceof HTMLSelectElement)) throw new Error('设计参考选择器缺失')
+      Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set.call(select, 'stripe')
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+      const reference = document.querySelector('details[aria-label="设计系统参考内容"] > summary')
+      if (!(reference instanceof HTMLElement)) throw new Error('设计参考内容入口缺失')
+      reference.click()
+    })()`, true)
+    await waitRenderer(window, `[...document.querySelectorAll('button')].some(item => item.textContent === '下载设计说明' && !item.disabled)`, '设计说明下载按钮')
+
+    await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent === '下载设计说明').click()`, true)
+    const deadline = Date.now() + 10_000
+    while ((downloads[0]?.state === 'started' || downloads.length === 0) && Date.now() < deadline) await sleep(50)
+    assert.equal(downloads[0]?.state, 'completed', '设计说明未下载完成')
+    assert(downloads[0].path.endsWith('stripe-DESIGN.md'))
+    assert(readFileSync(downloads[0].path, 'utf8').includes('Design System Inspired by Stripe'))
+
+    await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent === '下载设计令牌').click()`, true)
+    const tokensDeadline = Date.now() + 10_000
+    while ((downloads[1]?.state === 'started' || downloads.length < 2) && Date.now() < tokensDeadline) await sleep(50)
+    assert.equal(downloads[1]?.state, 'completed', '设计令牌未下载完成')
+    assert(downloads[1].path.endsWith('stripe-tokens.css'))
+    assert(readFileSync(downloads[1].path, 'utf8').includes(':root'))
+
+    assert.equal(readFileSync(join(userWorkspace, 'DESIGN.md'), 'utf8'), 'USER_DESIGN_CANARY')
+    assert.equal(readFileSync(join(userWorkspace, 'tokens.css'), 'utf8'), 'USER_TOKENS_CANARY')
+    assert.deepEqual(readdirSync(userWorkspace).sort(), ['DESIGN.md', 'tokens.css'])
+    assert(existsSync(join(process.resourcesPath, 'opendesign', 'LICENSE.txt')), 'OpenDesign 许可证未随包分发')
+    return { downloads: downloads.map(item => ({ name: item.path.split('/').pop(), state: item.state })), userFilesUnchanged: true }
+  } finally {
+    if (!window.isDestroyed()) window.destroy()
+    setMainWindow(null)
+    closeProjectDb()
+  }
+}

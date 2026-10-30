@@ -72,15 +72,22 @@ export async function runOwnerRealChainSmoke(): Promise<OwnerRealChainSmokeRepor
   if (resumeProjectId) {
     const { owner2048SmokeGoal } = await import('./owner-2048-smoke-contract')
     const binding = getOwnerRuntimeBinding(resumeProjectId)
+    const resumePlan = plans.getProjectOwnerPlanDraft(resumeProjectId)
+    const delivered = resumePlan ? (await import('./project-owner-management-delivery')).hasCompleteOwnerManagementDelivery(resumeProjectId, undefined, resumePlan) : false
+    const hasBlockingExecution = store.listAgentExecutionsByProject(resumeProjectId).some(item => {
+      if (!['queued', 'running'].includes(item.status)) return false
+      // 已交付恢复只读取并停止管理循环；崩溃遗留的旧规划/安排保持 unknown，既不取消也不重放。
+      if (delivered && !item.ownerCommandId) return false
+      return item.status === 'running' || !item.ownerCommandId || Boolean(item.sessionId)
+        || Boolean(store.getProjectDb().prepare('SELECT 1 FROM project_owner_execution_start_attempts WHERE execution_id=?').get(item.id))
+    })
     if (mode !== 'project-2048' || !store.getProject(resumeProjectId)
       || getProjectOwnerGoalDraft(resumeProjectId)?.goal.objective !== owner2048SmokeGoal().objective
-      || binding?.channelId !== channelId || binding.modelId !== modelId
-      || store.listAgentExecutionsByProject(resumeProjectId).some(item => item.status === 'running' || item.status === 'queued'
-        && (!item.ownerCommandId || Boolean(item.sessionId) || Boolean(store.getProjectDb().prepare('SELECT 1 FROM project_owner_execution_start_attempts WHERE execution_id=?').get(item.id))))) throw new Error('只能恢复同一隔离2048项目的已知静止状态')
+      || binding?.channelId !== channelId || binding.modelId !== modelId || hasBlockingExecution) throw new Error('只能恢复同一隔离2048项目的已知静止状态')
     // 修复后的版本重新核验原始来源；不重写方案、请求账本或未知费用。
     const { readOwnerPlanningSnapshot } = await import('./project-owner-planning-source')
     for (const row of store.getProjectDb().prepare('SELECT planning_task_id FROM project_owner_planning_links WHERE project_id=?').all(resumeProjectId) as Array<{ planning_task_id: string }>) {
-      if (!readOwnerPlanningSnapshot(row.planning_task_id)) throw new Error('恢复项目的规划来源缺失')
+      if (!readOwnerPlanningSnapshot(row.planning_task_id, { allowUnknownPromptForHistory: true })) throw new Error('恢复项目的规划来源缺失')
     }
     if (process.env.GRAVITAS_OWNER_CHAIN_SMOKE_REPLAN_SINGLE_STEP === '1') {
       const goal = getProjectOwnerGoalDraft(resumeProjectId)!
@@ -104,7 +111,16 @@ export async function runOwnerRealChainSmoke(): Promise<OwnerRealChainSmokeRepor
     ;(await import('./project-owner-management-failures')).clearOwnerManagementFailure(resumeProjectId)
     const startIntentId = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RESUME_START_INTENT
     if (startIntentId) await (await import('./project-owner-execution-start-intent')).resumeOwnerExecutionStartIntent(startIntentId, { projectId: resumeProjectId })
-    const { runOwner2048ProjectSmoke } = await import('./owner-2048-project-smoke')
+    const failedOwnerExecutionId = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID
+    const revalidationHash = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_REVALIDATE_ARTIFACT_HASH
+    if (failedOwnerExecutionId) {
+      const recovery = await import('./owner-quality-protocol-recovery-smoke')
+      if (process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RENEW_EXPIRED === '1') recovery.renewExpiredOwnerQualityAuthorizationForSmoke(resumeProjectId, failedOwnerExecutionId)
+      if (revalidationHash) recovery.authorizeOwnerQualityRevalidationFromFailedRun(resumeProjectId, failedOwnerExecutionId, revalidationHash)
+      else recovery.resumeFailedOwnerQualityForSmoke(resumeProjectId, failedOwnerExecutionId)
+    } else if (revalidationHash) throw new Error('Owner复验必须绑定准确的原失败Owner执行')
+    const { runOwner2048ProjectSmoke, runOwner2048RevalidationSmoke } = await import('./owner-2048-project-smoke')
+    if (revalidationHash && failedOwnerExecutionId) return runOwner2048RevalidationSmoke(resumeProjectId, channel.id, modelId, failedOwnerExecutionId, revalidationHash)
     return runOwner2048ProjectSmoke(resumeProjectId, channel.id, modelId)
   }
   const project = store.createProject({ title: mode === 'project-2048' ? '真实2048项目冒烟' : '真实链路冒烟', description: mode === 'project-2048' ? '目标、真实Owner规划派工、员工执行、独立评审与原项目交付的完整验收' : '受控真实执行，只验证员工执行这一段' })
@@ -156,7 +172,7 @@ export async function runOwnerRealChainSmoke(): Promise<OwnerRealChainSmokeRepor
         ...(execution?.error ? { error: execution.error.slice(0, 400) } : {}),
         ...(execution?.resultSummary ? { resultExcerpt: execution.resultSummary.slice(0, 300) } : {}),
         reviewer: reviewer.report }
-    } finally { loop() }
+    } finally { await loop() }
   }
   const context = plans.getProjectOwnerPlanningContext(project.id)
   const steps = [{ key: 'brief', title: '整理需求说明', outcome: '一段可核验的需求说明', acceptanceCriteria: ['说明核心操作'], dependencies: [] as string[], roleKey: context.sources.roles[0]!.key }]

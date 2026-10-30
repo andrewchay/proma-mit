@@ -4,6 +4,14 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildElectronMock } from './testing/electron-mock'
 import { assertOwnerSmokeRequestLimit, assertSmokeRequestAllowance, ensureSmokeBudget, remainingSmokeBudget } from './owner-real-chain-smoke-budget'
+import { isOwnerPlanningConfigurationError } from './owner-planning-configuration'
+
+test('Given本地硬上限错误 When分类发送前失败 Then只接受精确原因且不泛化无输出错误', () => {
+  expect(isOwnerPlanningConfigurationError('No output generated. Check the stream for errors.；流错误：Error: 真实冒烟请求次数边界无效')).toBe(true)
+  expect(isOwnerPlanningConfigurationError('真实冒烟请求次数边界无效')).toBe(true)
+  expect(isOwnerPlanningConfigurationError('No output generated. Check the stream for errors.')).toBe(false)
+  expect(isOwnerPlanningConfigurationError('网络请求失败：真实冒烟请求次数边界无效之外的未知错误')).toBe(false)
+})
 
 test('Given真实冒烟请求次数 When接近8次 Then允许第8次并拒绝第9次', () => {
   expect(() => assertSmokeRequestAllowance(7, 8)).not.toThrow()
@@ -12,7 +20,11 @@ test('Given真实冒烟请求次数 When接近8次 Then允许第8次并拒绝第
   expect(() => assertSmokeRequestAllowance(20, 20)).toThrow('上限')
   expect(() => assertSmokeRequestAllowance(59, 60)).not.toThrow()
   expect(() => assertSmokeRequestAllowance(60, 60)).toThrow('上限')
-  for (const limit of [0, 61, 1.5, NaN]) expect(() => assertSmokeRequestAllowance(0, limit)).toThrow('边界无效')
+  expect(() => assertSmokeRequestAllowance(79, 80)).not.toThrow()
+  expect(() => assertSmokeRequestAllowance(80, 80)).toThrow('上限')
+  expect(() => assertSmokeRequestAllowance(99, 100)).not.toThrow()
+  expect(() => assertSmokeRequestAllowance(100, 100)).toThrow('上限')
+  for (const limit of [0, 101, 1.5, NaN]) expect(() => assertSmokeRequestAllowance(0, limit)).toThrow('边界无效')
   expect(() => assertSmokeRequestAllowance(-1, 8)).toThrow('边界无效')
   expect(() => ensureSmokeBudget(1_400_001)).toThrow('上限')
   expect(remainingSmokeBudget(5012)).toBe(1_394_988)

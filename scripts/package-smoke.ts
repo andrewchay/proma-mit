@@ -98,6 +98,8 @@ try {
   const child = Bun.spawn([executable, ...process.argv.slice(3)], {
     env: {
       ...process.env,
+      // 父 Agent 可能以 Electron Node 模式运行；不得让被测应用静默退化为 Node。
+      ELECTRON_RUN_AS_NODE: undefined,
       GRAVITAS_PACKAGE_SMOKE: '1',
       PROMA_TEST_CONFIG_DIR: directory,
       PROMA_ALLOW_MULTI_INSTANCE: '1',
@@ -106,7 +108,7 @@ try {
     },
     stdout: 'inherit', stderr: 'inherit',
   })
-  const timeoutMs = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_CHANNEL_ID ? (process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MODE === 'project-2048' ? 780_000 : 420_000) : process.env.GRAVITAS_PACKAGE_SMOKE_KIMI_CHANNEL_ID ? 180_000 : 60_000
+  const timeoutMs = process.env.GRAVITAS_OWNER_CHAIN_SMOKE_CHANNEL_ID ? (process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MODE === 'project-2048' ? 780_000 : 420_000) : process.env.GRAVITAS_PACKAGE_SMOKE_KIMI_CHANNEL_ID ? 180_000 : 120_000
   let timedOut = false
   const timer = setTimeout(() => {
     timedOut = true
