@@ -2130,6 +2130,8 @@ export interface ElectronAPI {
       listByWorkspace: (workspaceId: string) => Promise<import('@gravitas/shared').ProjectWorkspaceBinding[]>
       listFileChanges: (projectId: string, workspaceId: string) => Promise<import('@gravitas/shared').ProjectWorkspaceFileChangesView>
       getGitDiff: (projectId: string, workspaceId: string, path: string) => Promise<import('@gravitas/shared').ProjectWorkspaceGitDiff>
+      getFileChangePolicy: (projectId: string, workspaceId: string) => Promise<import('@gravitas/shared').ProjectFileChangePolicy | null>
+      setFileChangePolicy: (projectId: string, workspaceId: string, enabled: boolean) => Promise<import('@gravitas/shared').ProjectFileChangePolicy | null>
     }
     // --- AI 员工（Agent Employee） ---
     agentEmployees: {
@@ -4958,6 +4960,8 @@ const electronAPI: ElectronAPI = {
       listByWorkspace: (workspaceId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_WORKSPACE_PROJECTS, workspaceId),
       listFileChanges: (projectId, workspaceId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_WORKSPACE_FILE_CHANGES, projectId, workspaceId),
       getGitDiff: (projectId, workspaceId, path) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_WORKSPACE_GIT_DIFF, projectId, workspaceId, path),
+      getFileChangePolicy: (projectId, workspaceId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_FILE_CHANGE_POLICY, projectId, workspaceId),
+      setFileChangePolicy: (projectId, workspaceId, enabled) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SET_FILE_CHANGE_POLICY, projectId, workspaceId, enabled),
     },
     // --- AI 员工（Agent Employee） ---
     agentEmployees: {

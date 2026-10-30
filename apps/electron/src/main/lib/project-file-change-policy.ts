@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto'
+import type { ProjectFileChangePolicy } from '@gravitas/shared'
 import { getAgentWorkspace } from './agent-workspace-manager'
 import { getProjectDb } from './project-sqlite-store'
 import { hasProjectWorkspaceBinding } from './project-workspace-bindings'
 
-export interface ProjectFileChangePolicy { revision: string; enabledAt: number }
 interface PolicyRow { revision: string; enabled_at: number }
 
 /** 绑定撤销后策略立即失效；重新绑定不会恢复旧授权。 */

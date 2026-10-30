@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { atom, useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { editOwnerMessageAtom, getOwnerMessageComposer, ownerConversationNavigationAtom, ownerMessageComposersAtom } from '../../atoms/project-owner-management-atoms'
-import type { AgentWorkspace, ProjectWorkspaceBinding, ProjectWorkspaceFileChangesView, ProjectWorkspaceGitDiff } from '@gravitas/shared'
+import type { AgentWorkspace, ProjectWorkspaceBinding, ProjectWorkspaceFileChangesView, ProjectWorkspaceGitDiff, ProjectFileChangePolicy } from '@gravitas/shared'
 import { prepareProjectChangeMessage } from './project-file-change-message'
 
 /**
@@ -40,6 +40,8 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
   const [error, setError] = React.useState<string | null>(null)
   const changesAtom = React.useMemo(() => atom<Record<string, ProjectWorkspaceFileChangesView>>({}), [])
   const [changes, setChanges] = useAtom(changesAtom)
+  const policiesAtom = React.useMemo(() => atom<Record<string, ProjectFileChangePolicy | null>>({}), [])
+  const [policies, setPolicies] = useAtom(policiesAtom)
   const diffAtom = React.useMemo(() => atom<{ workspaceId: string; path: string; result: ProjectWorkspaceGitDiff | null } | null>(null), [])
   const [diff, setDiff] = useAtom(diffAtom)
   const diffRequest = React.useRef(0)
@@ -67,6 +69,11 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
         window.electronAPI.listAgentWorkspaces().catch(() => [] as AgentWorkspace[]),
       ])
       setBindings(Array.isArray(bindingList) ? bindingList : [])
+      const policyApi = window.electronAPI.paa.projectWorkspace.getFileChangePolicy
+      if (policyApi) {
+        const entries = await Promise.all(bindingList.map(async binding => [binding.workspaceId, await policyApi(projectId, binding.workspaceId)] as const))
+        setPolicies(Object.fromEntries(entries))
+      }
       setWorkspaces(workspaceList)
       setApiMissing(false)
     } catch (err) {
@@ -131,6 +138,15 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
+  }
+
+  const changePolicy = async (workspaceId: string, enabled: boolean): Promise<void> => {
+    setBusy(true); setError(null)
+    try {
+      const policy = await window.electronAPI.paa.projectWorkspace.setFileChangePolicy(projectId, workspaceId, enabled)
+      setPolicies(previous => ({ ...previous, [workspaceId]: policy }))
+    } catch (error) { setError(error instanceof Error ? error.message : String(error)) }
+    finally { setBusy(false) }
   }
 
   const showGitDiff = async (workspaceId: string, path: string): Promise<void> => {
@@ -206,6 +222,10 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
                   className="rounded border px-2 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
                 >解绑</button>
                 </div>
+                {workspaces.find(workspace => workspace.id === binding.workspaceId)?.rootPath && Object.hasOwn(policies, binding.workspaceId) && <label className="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
+                  <input type="checkbox" checked={Boolean(policies[binding.workspaceId])} disabled={busy} onChange={event => void changePolicy(binding.workspaceId, event.target.checked)} />
+                  <span>允许 Owner 自动分析之后的文件变化。路径及变化摘要会用于模型分析；需已有有效管理授权和预算，不会自动修改任务或派工。关闭或解绑后不再启动旧观察。</span>
+                </label>}
                 {Object.hasOwn(changes, binding.workspaceId) && <div className="mt-3 rounded-lg bg-muted/40 p-3 text-xs">
                   <p className="text-muted-foreground">最近最多 100 条记录，仅供查看；首次扫描建立基线，未包含文件正文，也未发送给 Owner。</p>
                   {(changes[binding.workspaceId]?.changes.length ?? 0) > 0 && <button type="button" className="mt-2 text-primary underline" onClick={() => prepareOwnerAnalysis(binding.workspaceId)}>将最近 20 条加入 Owner 消息草稿</button>}

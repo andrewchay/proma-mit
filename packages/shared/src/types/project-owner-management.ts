@@ -29,10 +29,11 @@ export interface OwnerManagementMessage {
   conversationId: string
   eventId: string
   role: 'user' | 'assistant'
-  kind: 'goal' | 'configuration_required' | 'planning_confirmation' | 'attention' | 'clarification' | 'answer' | 'plan_proposal' | 'management_progress' | 'execution_arranged' | 'conversation' | 'reply' | 'change_proposal' | 'change_decision' | 'execution_observation' | 'employee_interaction' | 'delivery'
+  kind: 'goal' | 'configuration_required' | 'planning_confirmation' | 'attention' | 'clarification' | 'answer' | 'plan_proposal' | 'management_progress' | 'execution_arranged' | 'conversation' | 'reply' | 'change_proposal' | 'change_decision' | 'execution_observation' | 'file_change_observation' | 'employee_interaction' | 'delivery'
   employeeInteraction?: import('./project-owner-employee-interaction').OwnerEmployeeInteraction
   /** 失败请求的结构化证据；只来自本地回执，不含账单确认。 */
   runEvidence?: OwnerRunEvidence
+  fileChangeObservationId?: string
   executionObservation?: OwnerExecutionObservation
   delivery?: OwnerManagementDelivery
   deliveryReference?: OwnerManagementDeliveryReference

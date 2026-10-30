@@ -63,8 +63,25 @@ export async function reconcileProjectFileChangeObservations(workspaceId: string
   }
   for (const binding of bindings) {
     for (const batch of batches.values()) {
-      try { recordProjectFileChangeObservation(binding.projectId, workspaceId, batch) }
+      try {
+        const observation = recordProjectFileChangeObservation(binding.projectId, workspaceId, batch)
+        if (observation) await enqueueOwnerFileObservation(observation)
+      }
       catch (error) { console.warn('[项目变化观察] 批次不一致，保留原观察并跳过:', error) }
     }
   }
+}
+
+/** 只写系统来源观察；实际请求仍经过 Owner 的管理许可与预算门槛。 */
+async function enqueueOwnerFileObservation(observation: ProjectFileChangeObservation): Promise<void> {
+  if (!getAuthorizedProjectFileChangeObservation(observation.projectId, observation.id)) return
+  const management = await import('./project-owner-management-store')
+  const goals = await import('./project-owner-goal-service')
+  const manager = management.getOwnerManager(observation.projectId)
+  const goal = goals.getProjectOwnerGoalDraft(observation.projectId)
+  if (!manager || manager.status !== 'active' || !goal) return
+  getProjectDb().transaction(() => {
+    if (!getAuthorizedProjectFileChangeObservation(observation.projectId, observation.id)) return
+    management.recordOwnerConversationMessage({ projectId: observation.projectId, eventId: `file-change:${observation.id}`, role: 'assistant', kind: 'file_change_observation', fileChangeObservationId: observation.id, goalRevision: goal.revision, content: `工作区有文件变化：记录了 ${observation.retainedChanges} 条观察，最多提供前 ${observation.changes.length} 条供分析；历史记录有数量上限。` })
+  })()
 }
