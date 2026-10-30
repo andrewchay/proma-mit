@@ -76,3 +76,40 @@ rebase 到 `32f17a5a`（origin/main）时只有两处真冲突：
 2. Git 词法门禁会误伤提交信息与 heredoc 正文：本文档编写过程中，
    提交信息里描述 `git init` 即被拒绝。需要区分命令与文本。
 3. `.context/plan/p1-next.md` 中"远端多 1 个提交"已过期（实际曾是 16）。
+
+---
+
+# 追加任务：PR #73 macOS package smoke 失败修复（2026-10-30 22:00 起）
+
+## 目标
+让 PR #73 的 Package Smoke 三平台全绿，并修复 macOS 打包缺失 node-pty spawn-helper 的根因。
+
+## 状态：已完成（等待 quality 全仓回归）
+
+- [x] 定位：macOS 作业报 `posix_spawnp failed`，打包日志有
+      `file source doesn't exist from=node_modules/node-pty/build/Release/spawn-helper`
+- [x] 结论：CI/发布流水线直接调用 electron-builder，不经过 `rebuild:natives`，
+      `build/Release/spawn-helper` 不存在；旧 `mac.extraFiles` 只取该路径，
+      electron-builder 仅告警后继续，产出缺 helper 的包
+- [x] 新增 `beforePack` 钩子：`apps/electron/scripts/before-pack.cjs` +
+      `node-pty-helper.cjs`（build/Release → build/Debug → prebuilds 依次查找，
+      缺失即抛错；修补 unixTerminal.js；暂存到 `.packaging/`）
+- [x] `mac.extraFiles` 改读暂存路径；`.gitignore` 忽略 `apps/electron/.packaging/`
+- [x] `prepare-node-pty.ts` 复用同一实现，删除旧的 `node-pty-packaging.ts`
+- [x] 单测 `node-pty-helper.test.ts`：7 pass / 0 fail
+- [x] 本地模拟 CI（移走 `build/Release`）：`electron-builder --dir` 成功，
+      产出包含 `Contents/MacOS/node-pty-spawn-helper`（0755）且 asar.unpacked 内
+      `unixTerminal.js` 含 `GRAVITAS_MACOS_PACKAGED_HELPER`
+- [x] Package Smoke 的 macOS 步骤新增 helper 存在性断言
+- [x] 提交 `00b93933` 并推送
+- [x] CI：macOS arm64 4m36s pass / Windows 6m13s pass / Linux 2m18s pass
+- [ ] `quality` 作业（`bun run test` 全仓回归 + lint + docs:check）结果待出
+
+## 环境限制（本地不可绕过）
+本机 Agent seatbelt 内 Electron 无法启动（`sandbox initialization failed`），
+node-pty 也无法真正起 shell（仓库内短路径同样 `posix_spawnp failed`）。
+因此 PTY 行为只能以 CI 为准；本地只验证打包结构与补丁内容。
+
+## 顺带发现
+发布流水线（`.github/workflows/release.yml`）同样不跑 `rebuild:natives`，
+过去发布的 macOS 包同样缺 helper；本次钩子覆盖该路径，未改发布工作流。
