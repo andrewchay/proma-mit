@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { rmSync } from 'node:fs'
+import { readFileSync, rmSync, writeFileSync } from 'node:fs'
 import {
   appendEvaluation,
   assertRubricTotals100,
@@ -10,8 +10,9 @@ import {
   readCaseRubric,
   readCaseStatement,
   readScoreboard,
+  listBenchmarks,
 } from './benchmark-store'
-import { getBenchmarkConfigPath, getBenchmarkCaseRubricPath, getEvalDir } from '../../config-paths'
+import { getBenchmarkConfigPath, getBenchmarkCaseRubricPath, getBenchmarkScoreboardPath, getEvalDir } from '../../config-paths'
 import type { BenchmarkConfig, BenchmarkEvaluation, Rubric } from './types'
 
 const testDir = join(tmpdir(), `gravitas-eval-test-${Date.now()}`)
@@ -94,6 +95,58 @@ describe('benchmark-store', () => {
     expect(scoreboard.evaluations).toHaveLength(1)
     expect(scoreboard.evaluations[0]!.agentVersion).toBe(1)
     expect(scoreboard.evaluations[0]!.score).toBe(74.4)
+  })
+
+  it('Given 历史文件损坏或结构不合法 When 追加 Then 拒绝且原文件与恢复文件不变', () => {
+    const evaluation: BenchmarkEvaluation = { time: '', agentVersion: 1, score: 80, runtime: config.runtime, cases: [] }
+    for (const [index, contents] of ['{broken', '{}', '{"benchmarkId":"other","evaluations":[]}', '{"benchmarkId":"bad-3","evaluations":{}}'].entries()) {
+      const id = `bad-${index}`
+      const path = getBenchmarkScoreboardPath(id)
+      const backup = JSON.stringify({ benchmarkId: id, evaluations: [] })
+      writeFileSync(path, contents)
+      writeFileSync(`${path}.bak`, backup)
+      expect(() => appendEvaluation(id, evaluation)).toThrow()
+      expect(readFileSync(path, 'utf8')).toBe(contents)
+      expect(readFileSync(`${path}.bak`, 'utf8')).toBe(backup)
+    }
+  })
+
+  it('Given 主文件缺失但存在恢复文件 When 追加 Then 不覆盖恢复文件', () => {
+    const id = 'backup-only'
+    const path = getBenchmarkScoreboardPath(id)
+    const backup = JSON.stringify({ benchmarkId: id, evaluations: [] })
+    writeFileSync(`${path}.bak`, backup)
+    expect(() => appendEvaluation(id, { time: '', agentVersion: 1, score: 80, runtime: config.runtime, cases: [] })).toThrow()
+    expect(readFileSync(`${path}.bak`, 'utf8')).toBe(backup)
+  })
+
+  it('Given 未完成写入文件 When 追加 Then 保留主文件和临时文件', () => {
+    const id = 'pending-write'
+    const path = getBenchmarkScoreboardPath(id)
+    const previous = JSON.stringify({ benchmarkId: id, evaluations: [] })
+    const pending = '{pending'
+    writeFileSync(path, previous)
+    writeFileSync(`${path}.tmp`, pending)
+    expect(() => appendEvaluation(id, { time: '', agentVersion: 1, score: 80, runtime: config.runtime, cases: [] })).toThrow()
+    expect(readFileSync(path, 'utf8')).toBe(previous)
+    expect(readFileSync(`${path}.tmp`, 'utf8')).toBe(pending)
+  })
+
+  it('Given 孤立评测历史 When 新建基准 Then 不覆盖已有数据', () => {
+    const orphan = { ...config, id: 'orphan-history' }
+    const path = getBenchmarkScoreboardPath(orphan.id)
+    writeFileSync(path, '{orphan')
+    expect(() => createBenchmark(orphan, [])).toThrow()
+    expect(readFileSync(path, 'utf8')).toBe('{orphan')
+  })
+
+  it('Given 已损坏历史 When 列出基准 Then 不自动覆盖原文件', () => {
+    const broken = { ...config, id: 'broken-list' }
+    createBenchmark(broken, [])
+    const path = getBenchmarkScoreboardPath(broken.id)
+    writeFileSync(path, '{broken')
+    expect(() => listBenchmarks()).toThrow()
+    expect(readFileSync(path, 'utf8')).toBe('{broken')
   })
 
   it('assertRubricTotals100 对总分非 100 抛错', () => {
