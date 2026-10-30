@@ -119,3 +119,41 @@ node-pty 也无法真正起 shell（仓库内短路径同样 `posix_spawnp faile
 ## 顺带发现
 发布流水线（`.github/workflows/release.yml`）同样不跑 `rebuild:natives`，
 过去发布的 macOS 包同样缺 helper；本次钩子覆盖该路径，未改发布工作流。
+
+---
+
+# 下一阶段：受控自主身份与恢复边界（2026-10-31 00:35 起）
+
+## 目标
+把进程内会话身份绑定从 AI SDK 扩展到 Pi / Proma，用测试覆盖四条绕过路径
+（直接调用 / 子 Agent / 恢复会话 / 不同 Runtime），使「身份缺失或不匹配默认拒绝」成立。
+
+## 前置事实核对（已完成）
+- [x] PR #73 已合并（`dc4b6e44`）；PR #78 仍 OPEN，三平台包烟测已过、quality 在跑
+- [x] `resolveOwnerExecutionGateSession`（project-owner-execution-gates.ts:135）在 sessionId
+      无 Owner 证据时返回 `unrestricted` → 门禁结论仍取决于调用方提供的 sessionId
+- [x] AI SDK 身份绑定：`ai-sdk-session-identity.ts`；绑定点 `ai-sdk-agent-adapter.ts:181`，
+      撤销点 406/415/474；复核点 `ai-sdk-runtime-core.ts:122`
+- [x] Pi：`pi-agent-adapter.ts:342` 构造 toolContext（sessionId/cwd 来自 input），
+      仅按 sessionId 查账本，无进程内身份比对
+- [x] Proma：`provider-agnostic-agent-adapter.ts:43` 直接用 `createCoreTools`，
+      仅 `assertNoOwnerBusinessSession`，无身份绑定
+
+## 实施项
+- [x] 新增共享身份模块 `agent-runtime/runtime-session-identity.ts`（bind/revoke/assert），
+      AI SDK 版改为兼容层委托
+- [x] Pi：工具上下文创建即绑定、canUseTool 五处复核、finally 撤销
+- [x] Proma：活动会话创建即绑定、执行前两处复核、query/abort/dispose 三处撤销
+- [x] 模块级 11 条用例覆盖未绑定/不匹配/撤销/幂等/跨 Runtime；
+      适配器级四条路径用例未补（需 electron mock 脚手架）
+- [x] typecheck 9 包全通过；身份测试 32 pass；两个适配器测试 61 pass；biome 通过
+- [ ] 分支推送与 PR
+
+## 边界
+- 不改普通会话行为；只让身份缺失/不匹配时拒绝
+- 不动 AGENTS.md / README.md；不声称生产验收
+- Bash unknown 门禁、跨进程协调另立切片
+
+## 环境备注
+`.context/tmp/`（gitignored）在实施期间被清空，本轮早期临时日志（打包模拟、CI 模拟）已丢失；
+结论仍可从 PR #73 与 CI 记录核对。
