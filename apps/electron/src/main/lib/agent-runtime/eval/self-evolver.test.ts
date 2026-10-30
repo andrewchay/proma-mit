@@ -59,6 +59,16 @@ function evaluateScored(baseScore: number, candidateScore?: number) {
 }
 
 describe('selfEvolve', () => {
+  it('Given 相同版本已评测 When 再次运行基线 Then 两次真实结果均被保存', async () => {
+    const benchmark = { ...config, id: 'repeat-baseline' }
+    for (const score of [65, 85]) {
+      await selfEvolve({ benchmark, maxRounds: 1, state: mkState(() => 7), evaluate: evaluateScored(score), propose: async () => null })
+    }
+    const records = readScoreboard(benchmark.id).evaluations
+    expect(records.map(item => item.agentVersion)).toEqual([7, 7])
+    expect(records.map(item => item.score)).toEqual([65, 85])
+  })
+
   it('baseline + 候选分数严格更高则接受', async () => {
     const defState = { v: 1 }
     const state = mkState(() => defState.v, {
