@@ -13,10 +13,20 @@ function ignoreDigest(root: string): string {
   const rootInfo = lstatSync(root, { bigint: true })
   if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink() || rootInfo.ino === 0n) throw new Error('项目目录不可用于授权')
   const rootIdentity = `${rootInfo.dev}:${rootInfo.ino}:`
+  const assertSameRoot = (): void => {
+    const current = lstatSync(root, { bigint: true })
+    if (!current.isDirectory() || current.isSymbolicLink() || current.dev !== rootInfo.dev || current.ino !== rootInfo.ino) throw new Error('项目目录在核对授权时发生变化')
+  }
+  const ignorePath = join(root, '.gravitasignore')
   let fd: number
-  try { fd = openSync(join(root, '.gravitasignore'), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)) }
+  try { fd = openSync(ignorePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)) }
   catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return createHash('sha256').update(rootIdentity).update('missing').digest('hex')
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      assertSameRoot()
+      try { lstatSync(ignorePath); throw new Error('忽略文件在核对授权时出现') }
+      catch (checkError) { if ((checkError as NodeJS.ErrnoException).code !== 'ENOENT') throw checkError }
+      return createHash('sha256').update(rootIdentity).update('missing').digest('hex')
+    }
     throw error
   }
   try {
@@ -27,6 +37,10 @@ function ignoreDigest(root: string): string {
     while (length < data.length) { const read = readSync(fd, data, length, data.length - length, length); if (!read) break; length += read }
     const after = fstatSync(fd)
     if (length !== info.size || after.size !== info.size || after.mtimeMs !== info.mtimeMs || after.ctimeMs !== info.ctimeMs) throw new Error('忽略文件读取期间发生变化')
+    assertSameRoot()
+    const descriptor = fstatSync(fd, { bigint: true })
+    const currentFile = lstatSync(ignorePath, { bigint: true })
+    if (!currentFile.isFile() || currentFile.isSymbolicLink() || descriptor.ino === 0n || currentFile.dev !== descriptor.dev || currentFile.ino !== descriptor.ino) throw new Error('忽略文件在核对授权时被替换')
     return createHash('sha256').update(rootIdentity).update('file:').update(data.subarray(0, length)).digest('hex')
   } finally { closeSync(fd) }
 }
