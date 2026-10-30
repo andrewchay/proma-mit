@@ -476,10 +476,13 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
     await page.getByLabel('Owner管理委托').waitFor()
     await page.getByRole('button', { name: '重新核对当前授权', exact: true }).waitFor()
     await page.getByLabel('项目总模型费用上限（美元）').fill('15')
-    await page.getByLabel('授权有效时间（小时）').fill('24')
-    // 首个案例要等浏览器 bundle、SQLite 与预览 IPC 冷启动；CI 上实测曾逼近默认 10s，此处单独放宽并保留诊断输出。
-    await page.getByRole('button', { name: '确认范围，让 Owner 自主推进', exact: true }).waitFor({ timeout: 30000 }).catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
-    await page.getByRole('button', { name: '确认范围，让 Owner 自主推进', exact: true }).click()
+    // 初始预算不足时按界面提示重新核对，并确认更新后的预算。
+    const confirmScope = page.getByRole('button', { name: '确认范围，让 Owner 自主推进', exact: true })
+    const retryScope = page.getByRole('button', { name: '重新核对授权范围', exact: true })
+    await confirmScope.or(retryScope).first().waitFor({ timeout: 30000 }).catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
+    if (await retryScope.isVisible()) await retryScope.click()
+    await page.getByText('项目总模型费用上限为 $15.00', { exact: false }).waitFor().catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
+    await confirmScope.click()
     const teamScope = page.getByLabel('团队工作区范围建议').last()
     await teamScope.waitFor()
     await new Promise(resolve => setTimeout(resolve, 100))
