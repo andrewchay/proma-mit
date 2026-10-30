@@ -9,6 +9,7 @@ import { assertToolAllowedForSessionPurpose, getOwnerExecutionToolNames, isOwner
  */
 
 import { assertRuntimePolicy } from '../agent-runtime/harness-policy'
+import { bindRuntimeSessionIdentity, assertRuntimeSessionIdentity, revokeRuntimeSessionIdentity } from '../agent-runtime/runtime-session-identity'
 import { randomUUID } from 'node:crypto'
 import { assertControlledPermissionChange, createControlledProviderFetch, guardControlledPiToolContext, guardControlledPiModelRuntime, hasOwnerCommandExecutionSession, isControlledProviderSession } from '../controlled-provider-boundary'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
@@ -275,6 +276,11 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       throw new Error('Pi Runtime 需要 provider、apiKey、baseUrl、model、cwd')
     }
 
+    // 会话身份：工具上下文对象一旦创建就与本次 Pi 会话绑定，工具执行入口据此 fail-closed。
+    // 方法级引用仅用于 finally 撤销；绑定对象本身在下方创建后不再替换。
+    const piSessionIdentity = { sessionId, cwd, runtime: 'pi' as const }
+    let guardedToolContextRef: ToolContext | undefined
+
     const runWithCompactionAbort = async <T>(operation: (signal: AbortSignal) => Promise<T>): Promise<T> => {
       const controller = new AbortController()
       const abortFromCaller = (): void => controller.abort(abortSignal?.reason)
@@ -338,27 +344,36 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     const toolAbortSignal = abortSignal
       ? AbortSignal.any([abortSignal, toolAbortController.signal])
       : toolAbortController.signal
+    const guardedToolContext = guardControlledPiToolContext(sessionId, {
+      ...toolContextOverrides, cwd, sessionId, permissionMode, abortSignal: toolAbortSignal, ownerWorkspaceWrite: Boolean(ownerCommand),
+    })
+    guardedToolContextRef = guardedToolContext
+    bindRuntimeSessionIdentity(guardedToolContext, piSessionIdentity)
     let customTools = createPiToolBridge({
-      toolContext: guardControlledPiToolContext(sessionId, {
-        ...toolContextOverrides, cwd, sessionId, permissionMode, abortSignal: toolAbortSignal, ownerWorkspaceWrite: Boolean(ownerCommand),
-      }),
+      toolContext: guardedToolContext,
       allowSubAgent: !controlled,
       canUseTool: controlled || canUseTool ? async (name, args, signal) => {
+        // 每次异步等待前后都复核身份：等待期间会话可能已被撤销或改写。
+        assertRuntimeSessionIdentity(guardedToolContext, piSessionIdentity)
         if (ownerCommand) await awaitOwnerExecutionRequestsSettled(sessionId)
+        assertRuntimeSessionIdentity(guardedToolContext, piSessionIdentity)
         // purpose感知：无Owner证据=原行为；有证据时仅知识工具可经fence（休眠能力）。
         const ownerApprovalCandidate = isOwnerWorkspaceFileActionCandidate(sessionId, name, args)
         // 工作区内低风险新建免逐次审批；覆盖/敏感路径/越界仍走权限链路请用户裁决。
         if (ownerApprovalCandidate && isOwnerAutoAllowedWorkspaceWrite(sessionId, name, args)) {
           assertControlledPermissionChange(sessionId, actualProvider().permissionMode)
           if (ownerCommand) await awaitOwnerExecutionRequestsSettled(sessionId)
+          assertRuntimeSessionIdentity(guardedToolContext, piSessionIdentity)
           return { allowed: true }
         }
         if (!ownerApprovalCandidate) assertToolAllowedForSessionPurpose(sessionId, name, args)
         assertControlledPermissionChange(sessionId, actualProvider().permissionMode)
         const result = await canUseTool?.(name, args, signal)
+        assertRuntimeSessionIdentity(guardedToolContext, piSessionIdentity)
         if (result?.allowed) assertToolAllowedForSessionPurpose(sessionId, name, args)
         assertControlledPermissionChange(sessionId, actualProvider().permissionMode)
         if (ownerCommand) await awaitOwnerExecutionRequestsSettled(sessionId)
+        assertRuntimeSessionIdentity(guardedToolContext, piSessionIdentity)
         return result ?? { allowed: false, message: '未配置权限回调' }
       } : undefined,
       mcpTools,
@@ -941,6 +956,8 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       abortSignal?.removeEventListener('abort', onCallerAbort)
       budgetGate?.stop()
       partialAssistantCoalescer.dispose()
+      // 会话结束即撤销工具上下文身份：迟到/挂起的工具调用此后一律 fail-closed。
+      if (guardedToolContextRef) revokeRuntimeSessionIdentity(guardedToolContextRef)
       this.releaseSession(sessionId, activePiSession)
       // task span 收尾：query 抛错时标 error；结束时刻由 sink 补全。
       if (spanSink && taskSpanId) {
