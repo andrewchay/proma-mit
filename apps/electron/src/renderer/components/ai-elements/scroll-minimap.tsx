@@ -96,7 +96,8 @@ export function ScrollMinimap({ items }: ScrollMinimapProps): React.ReactElement
 
   React.useEffect(() => {
     const el = scrollRef.current
-    if (!el) return
+    // items 变化代表消息集合变化，需要重新测量可见项；没有消息时组件本身渲染 null。
+    if (!el || items.length === 0) return
 
     const update = (): void => {
       const { scrollTop, scrollHeight, clientHeight } = el
@@ -121,12 +122,13 @@ export function ScrollMinimap({ items }: ScrollMinimapProps): React.ReactElement
     el.addEventListener('scroll', update, { passive: true })
     const observer = new ResizeObserver(update)
     observer.observe(el)
+    if (el.firstElementChild) observer.observe(el.firstElementChild)
 
     return () => {
       el.removeEventListener('scroll', update)
       observer.disconnect()
     }
-  }, [scrollRef])
+  }, [scrollRef, items])
 
   // ── 面板打开时自动聚焦搜索框 ──
 
