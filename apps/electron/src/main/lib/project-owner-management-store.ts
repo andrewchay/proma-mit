@@ -61,7 +61,8 @@ function deliveryContentMatchesArtifact(content: string, artifactHash: string): 
   } catch { return false }
 }
 
-function assertDeliveryMessage(message: Pick<OwnerManagementMessage, 'role' | 'kind' | 'delivery' | 'deliveryReference' | 'teamWorkspaceProposal' | 'teamWorkspaceApproval'>): void {
+function assertDeliveryMessage(message: Pick<OwnerManagementMessage, 'role' | 'kind' | 'delivery' | 'deliveryReference' | 'teamWorkspaceProposal' | 'teamWorkspaceApproval' | 'fileChangeObservationId'>): void {
+  if (message.kind === 'file_change_observation' ? message.role !== 'assistant' || typeof message.fileChangeObservationId !== 'string' || !/^[a-f0-9]{64}$/.test(message.fileChangeObservationId) : message.fileChangeObservationId !== undefined) throw new Error('Owner文件变化观察身份无效')
   const proposal = message.teamWorkspaceProposal
   if (proposal !== undefined && (message.role !== 'assistant' || message.kind !== 'attention'
     || !proposal || typeof proposal.workspaceId !== 'string' || !proposal.workspaceId.trim()

@@ -80,6 +80,9 @@ function handle(event: OwnerManagementEvent): void {
   if (event.kind === 'team_changed') { handleTeamChange(event); return }
   const goal = getProjectOwnerGoalDraft(event.projectId, event.taskId)
   if (!goal || (event.kind === 'goal_saved' && goal.revision !== event.sourceRevision)) return
+  if (event.kind === 'goal_saved' && !event.taskId) {
+    void import('./project-file-change-observations').then(service => service.reconcileProjectFileChangeObservationsForProject(event.projectId)).catch(error => console.warn('[Owner管理] 文件变化观察恢复失败:', error))
+  }
   if (event.kind === 'execution_observed') {
     if (goal.revision === event.sourceRevision) preparePendingOwnerConversation(event.projectId, event.taskId)
     return

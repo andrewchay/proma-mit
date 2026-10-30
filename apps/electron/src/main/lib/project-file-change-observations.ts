@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto'
 import type { ProjectWorkspaceFileChange } from '@gravitas/shared'
 import { getProjectDb } from './project-sqlite-store'
 import { getProjectFileChangePolicy } from './project-file-change-policy'
-import { listWorkspaceProjectBindings } from './project-workspace-bindings'
+import { listProjectWorkspaceBindings, listWorkspaceProjectBindings } from './project-workspace-bindings'
+import { getAgentWorkspace } from './agent-workspace-manager'
 import { readProjectFileChanges } from './project-file-changes'
 
 export interface ProjectFileChangeObservation {
@@ -84,4 +85,13 @@ async function enqueueOwnerFileObservation(observation: ProjectFileChangeObserva
     if (!getAuthorizedProjectFileChangeObservation(observation.projectId, observation.id)) return
     management.recordOwnerConversationMessage({ projectId: observation.projectId, eventId: `file-change:${observation.id}`, role: 'assistant', kind: 'file_change_observation', fileChangeObservationId: observation.id, goalRevision: goal.revision, content: `工作区有文件变化：记录了 ${observation.retainedChanges} 条观察，最多提供前 ${observation.changes.length} 条供分析；历史记录有数量上限。` })
   })()
+}
+
+/** Owner 目标建立后补齐之前已获授权但尚无管理主体的观察。 */
+export async function reconcileProjectFileChangeObservationsForProject(projectId: string): Promise<void> {
+  for (const binding of listProjectWorkspaceBindings(projectId)) {
+    if (!getProjectFileChangePolicy(projectId, binding.workspaceId)) continue
+    const workspace = getAgentWorkspace(binding.workspaceId)
+    if (workspace?.rootPath) await reconcileProjectFileChangeObservations(workspace.id, workspace.rootPath)
+  }
 }
