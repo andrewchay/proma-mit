@@ -14,6 +14,7 @@ mock.module('./config-paths', () => ({ getAgentWorkspacesDir: () => internal }))
 mock.module('./agent-workspace-manager', () => ({ listAgentWorkspaces: () => [{ id: 'w', rootPath: root }] }))
 mock.module('./project-file-changes', () => ({ scanProjectFileChanges: async () => { calls++; if (calls === 1) await new Promise<void>(resolve => { finish = resolve }); return [] } }))
 mock.module('./project-file-change-observations', () => ({ reconcileProjectFileChangeObservations: async () => {} }))
+mock.module('./project-file-change-policy', () => ({ invalidateWorkspaceFileChangePolicies: () => {} }))
 const { startWorkspaceWatcher, stopWorkspaceWatcher } = await import('./workspace-watcher')
 const window = { isDestroyed: () => false, webContents: { send: () => {} } }
 const pause = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))

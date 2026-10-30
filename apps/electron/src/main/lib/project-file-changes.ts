@@ -15,7 +15,7 @@ const MAX_HASH_TOTAL_BYTES = 64 * 1024 * 1024
 
 interface FileMetadata { size: number; modified: number; changed?: number; sha256?: string }
 export interface ProjectFileChange { path: string; kind: 'added' | 'modified' | 'deleted' | 'renamed'; observedAt: number; previousPath?: string; evidence?: 'content' | 'metadata' | 'matching_digest' }
-interface Snapshot { version: 1; root: string; files: Record<string, FileMetadata>; events: ProjectFileChange[]; scannedAt?: number; ignorePrefixes?: string[] }
+interface Snapshot { version: 1; root: string; files: Record<string, FileMetadata>; events: ProjectFileChange[]; scannedAt?: number; ignorePrefixes?: string[]; baselineReset?: { at: number; reason: 'initial' | 'ignore_changed' } }
 const scanErrors = new Map<string, { root: string; message: string }>()
 
 function snapshotPath(workspaceId: string): string {
@@ -114,7 +114,9 @@ async function scanProjectFileChangesInternal(workspaceId: string, root: string)
   const files = await collect(root, ignorePrefixes)
   const now = Date.now()
   const changes: ProjectFileChange[] = []
-  if (previous && JSON.stringify(previous.ignorePrefixes ?? []) === JSON.stringify(ignorePrefixes)) {
+  const ignoreChanged = Boolean(previous && JSON.stringify(previous.ignorePrefixes ?? []) !== JSON.stringify(ignorePrefixes))
+  const baselineReset = !previous ? { at: now, reason: 'initial' as const } : ignoreChanged ? { at: now, reason: 'ignore_changed' as const } : previous.baselineReset
+  if (previous && !ignoreChanged) {
     const added = Object.keys(files).filter(name => !Object.hasOwn(previous.files, name))
     const deleted = Object.keys(previous.files).filter(name => !Object.hasOwn(files, name))
     const matchedAdded = new Set<string>()
@@ -147,7 +149,7 @@ async function scanProjectFileChangesInternal(workspaceId: string, root: string)
       if (changed) changes.push({ path: name, kind: 'modified', observedAt: now, evidence: contentComparable ? 'content' : 'metadata' })
     }
   }
-  const next: Snapshot = { version: 1, root, files, events: [...(previous?.events ?? []), ...changes].slice(-MAX_EVENTS), scannedAt: now, ignorePrefixes }
+  const next: Snapshot = { version: 1, root, files, events: [...(previous?.events ?? []), ...changes].slice(-MAX_EVENTS), scannedAt: now, ignorePrefixes, ...(baselineReset ? { baselineReset } : {}) }
   await mkdir(join(getProjectsDir(), 'file-changes'), { recursive: true })
   const temp = `${path}.${randomUUID()}.tmp`
   try {
@@ -164,9 +166,10 @@ export async function readProjectFileChanges(workspaceId: string, root: string, 
   try {
     const snapshot: Snapshot = JSON.parse(await readFile(snapshotPath(workspaceId), 'utf8'))
     if (snapshot.version !== 1 || snapshot.root !== root || !Array.isArray(snapshot.events) || snapshot.events.some(event => !event || typeof event.path !== 'string' || !['added', 'modified', 'deleted', 'renamed'].includes(event.kind) || !Number.isFinite(event.observedAt))) throw new Error('项目文件快照无效')
-    return { changes: snapshot.events.slice(-Math.min(MAX_EVENTS, Math.max(1, limit))).reverse(), lastScannedAt: typeof snapshot.scannedAt === 'number' ? snapshot.scannedAt : null, scanError: scanErrors.get(workspaceId)?.root === root ? scanErrors.get(workspaceId)!.message : null }
+    const baselineReset = snapshot.baselineReset && Number.isSafeInteger(snapshot.baselineReset.at) && ['initial', 'ignore_changed'].includes(snapshot.baselineReset.reason) ? snapshot.baselineReset : null
+    return { changes: snapshot.events.slice(-Math.min(MAX_EVENTS, Math.max(1, limit))).reverse(), lastScannedAt: typeof snapshot.scannedAt === 'number' ? snapshot.scannedAt : null, baselineReset, scanError: scanErrors.get(workspaceId)?.root === root ? scanErrors.get(workspaceId)!.message : null }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { changes: [], lastScannedAt: null, scanError: scanErrors.get(workspaceId)?.root === root ? scanErrors.get(workspaceId)!.message : null }
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { changes: [], lastScannedAt: null, baselineReset: null, scanError: scanErrors.get(workspaceId)?.root === root ? scanErrors.get(workspaceId)!.message : null }
     throw error
   }
 }
