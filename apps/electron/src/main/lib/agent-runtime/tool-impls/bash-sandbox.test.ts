@@ -137,8 +137,9 @@ describe('Bash 沙箱（macOS seatbelt）', () => {
     const write = await run(sessionDir, 'echo data > note.txt')
     expect(write.isError).toBeFalsy()
     expect(readFileSync(join(sessionDir, 'note.txt'), 'utf8').trim()).toBe('data')
+    expect((await run(sessionDir, 'git init -q')).isError).toBeFalsy()
     const commit = await run(sessionDir, [
-      'git init -q', 'echo x > f.txt', 'git add f.txt',
+      'echo x > f.txt', 'git add f.txt',
       'git -c user.name=agent -c user.email=agent@example.invalid commit -qm init', 'git log --oneline',
     ].join(' && '))
     expect(commit.isError).toBeFalsy()
@@ -208,15 +209,36 @@ describe('Bash 沙箱（macOS seatbelt）', () => {
     await run(session, `echo '[evil]' > config-copy`)
     expect(readFileSync(join(common, 'config'), 'utf8')).not.toContain('[evil]')
   })
-  test('Given 非 git 目录 When 同命令 init 并注入 hook Then 命令成功且 hook 被收口', async () => {
-    const session = join(configDir, 'agent-workspaces', 'init-hook-attack', 'current')
+  test('Given 非 git 目录 When 同命令 init 并注入 config Then 执行前拒绝且不创建仓库', async () => {
+    const session = join(configDir, 'agent-workspaces', 'init-config-attack', 'current')
     mkdirSync(session, { recursive: true })
-    const result = await run(session, 'git init -q && echo evil > .git/hooks/pre-commit && echo planted')
-    // git init 本身仍可用（兼容性保持），注入文件在本命令内写入成功。
+    const marker = join(session, 'fsmonitor-ran')
+    const result = await run(session, `git init -q && git config core.fsmonitor 'touch ${marker}' && git status --porcelain`)
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('git init 必须单独执行')
+    expect(existsSync(join(session, '.git'))).toBe(false)
+    expect(existsSync(marker)).toBe(false)
+  })
+  test('Given 已有仓库 When 通过 -c 注入 fsmonitor Then 执行前拒绝且不触发命令', async () => {
+    const session = join(configDir, 'agent-workspaces', 'inline-config-attack', 'current')
+    mkdirSync(session, { recursive: true })
+    git(session, ['init', '-q'])
+    const marker = join(session, 'inline-fsmonitor-ran')
+    const result = await run(session, `git -c core.fsmonitor='touch ${marker}' status --porcelain`)
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('命令执行型 Git config')
+    expect(existsSync(marker)).toBe(false)
+  })
+  test('Given 独立 init 使用含 hook 的模板 When 命令结束 Then hook 被收口且后续提交可用', async () => {
+    const session = join(configDir, 'agent-workspaces', 'init-hook-template', 'current')
+    const template = join(configDir, 'agent-workspaces', 'init-hook-template', 'template')
+    mkdirSync(session, { recursive: true })
+    mkdirSync(join(template, 'hooks'), { recursive: true })
+    writeFileSync(join(template, 'hooks', 'pre-commit'), 'evil\n')
+    const result = await run(session, `git init -q --template='${template}'`)
     expect(result.isError).toBeFalsy()
     expect(readFileSync(join(session, '.git', 'hooks', 'pre-commit.gravitas-quarantine'), 'utf8')).toBe('evil\n')
     expect(existsSync(join(session, '.git', 'hooks', 'pre-commit'))).toBe(false)
-    // 后续命令正常 git 操作不受影响（sample hooks 不被执行，仓库可用）。
     const commit = await run(session, 'echo ok > a.txt && git add a.txt && git -c user.name=agent -c user.email=agent@example.invalid commit -qm init && git log --oneline')
     expect(commit.isError).toBeFalsy()
     expect(commit.content).toContain('init')
