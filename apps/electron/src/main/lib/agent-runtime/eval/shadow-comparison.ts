@@ -70,6 +70,8 @@ export interface ShadowComparison {
 }
 
 export interface ShadowComparisonOptions {
+  /** 可选的基准 case 清单；提供时两侧必须完整匹配。 */
+  expectedCaseIds?: string[]
   /** 判定"有差异"的最小均值差；绝对值小于该阈值视为无差异。默认 0.02。 */
   deltaThreshold?: number
   /** 允许的最大成本增幅（0.2 = 最多贵 20%）；不设置则不做成本门禁。 */
@@ -131,6 +133,10 @@ function evaluateResources(
 
   const costGate = options.maxCostIncreaseRatio
   const latencyGate = options.maxLatencyIncreaseRatio
+  if ((costGate !== undefined && finiteNonNegative(costGate) === null) ||
+      (latencyGate !== undefined && finiteNonNegative(latencyGate) === null)) {
+    return { ...base, gate: 'unverified', reasons: ['资源门禁阈值无效，门禁未核验'] }
+  }
   if (costGate === undefined && latencyGate === undefined) {
     return { ...base, gate: 'pass', reasons }
   }
@@ -164,6 +170,9 @@ export function compareShadowRuns(
   const threshold = options.deltaThreshold ?? 0.02
   const reasons: string[] = []
 
+  if (finiteNonNegative(threshold) === null) reasons.push('差值阈值无效')
+  if (baseline.cases.length === 0 || candidate.cases.length === 0) reasons.push('评测 case 为空')
+
   if (baseline.benchmarkVersion !== candidate.benchmarkVersion) {
     reasons.push(`基准版本不同：${baseline.benchmarkVersion} vs ${candidate.benchmarkVersion}`)
   }
@@ -173,6 +182,13 @@ export function compareShadowRuns(
 
   const baselineIds = baseline.cases.map((item) => item.caseId)
   const candidateIds = candidate.cases.map((item) => item.caseId)
+  if (options.expectedCaseIds) {
+    const expected = new Set(options.expectedCaseIds)
+    const matches = (ids: string[]) => ids.length === expected.size && ids.every((id) => expected.has(id))
+    if (expected.size === 0 || expected.size !== options.expectedCaseIds.length || !matches(baselineIds) || !matches(candidateIds)) {
+      reasons.push('评测与基准 case 不匹配，或基准 case 清单为空或重复')
+    }
+  }
   // 重复只在单侧内部判定：两侧共有同一 case 才是可比的前提，不是重复。
   const duplicatesWithin = (ids: string[]): string[] => [...new Set(ids.filter((id, index) => ids.indexOf(id) !== index))]
   const duplicateIds = [...duplicatesWithin(baselineIds), ...duplicatesWithin(candidateIds)]
@@ -222,7 +238,9 @@ export function compareShadowRuns(
   const improved = cases.filter((item) => item.delta > 0).length
   const regressed = cases.filter((item) => item.delta < 0).length
   const unchanged = cases.length - improved - regressed
-  const verdict: ShadowComparison['verdict'] = meanDelta >= threshold
+  const verdict: ShadowComparison['verdict'] = meanDelta === 0
+    ? 'no_difference'
+    : meanDelta >= threshold
     ? 'candidate_better'
     : meanDelta <= -threshold
       ? 'candidate_worse'
@@ -319,7 +337,8 @@ export interface ScoreboardShadowInput {
  * 用同一次基准的定义比较两条已落盘评测（基线版本 vs 候选版本）。
  *
  * 版本号来自基准定义本身：两侧共用同一 benchmark/rubric 版本，因此可比性只取决于
- * case 集合与分数完整性——这正是"影子"的前提：定义没变，只换被测对象。
+ * case 集合与分数完整性。历史评测未记录基准版本，调用方须自行核验两次评测
+ * 确实使用了该基准定义，不能据此证明版本来源。
  */
 export function compareScoreboardEvaluations(input: ScoreboardShadowInput): ShadowComparison {
   const benchmarkVersion = (input.benchmark as { version?: number }).version ?? 1
@@ -328,6 +347,7 @@ export function compareScoreboardEvaluations(input: ScoreboardShadowInput): Shad
     shadowRunFromEvaluation(input.baseline, { label: 'baseline', benchmarkVersion, rubricVersion }),
     shadowRunFromEvaluation(input.candidate, { label: 'candidate', benchmarkVersion, rubricVersion }),
     {
+      expectedCaseIds: input.benchmark.cases,
       ...(input.deltaThreshold === undefined ? {} : { deltaThreshold: input.deltaThreshold }),
       ...(input.maxCostIncreaseRatio === undefined ? {} : { maxCostIncreaseRatio: input.maxCostIncreaseRatio }),
       ...(input.maxLatencyIncreaseRatio === undefined ? {} : { maxLatencyIncreaseRatio: input.maxLatencyIncreaseRatio }),
