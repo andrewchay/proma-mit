@@ -358,7 +358,7 @@ import {
   getReleaseByTag,
 } from './lib/github-release-service'
 import { listLocalReleases, mergeReleases } from './lib/local-release-notes'
-import { watchAttachedDirectory, unwatchAttachedDirectory } from './lib/workspace-watcher'
+import { watchAttachedDirectory, unwatchAttachedDirectory, syncProjectRootWatchers } from './lib/workspace-watcher'
 import {
   getFeishuConfig,
   saveFeishuConfig,
@@ -2042,7 +2042,9 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(
     AGENT_IPC_CHANNELS.CREATE_WORKSPACE,
     async (_, name: string, rootPath?: string): Promise<AgentWorkspace> => {
-      return createAgentWorkspace(name, rootPath)
+      const workspace = createAgentWorkspace(name, rootPath)
+      syncProjectRootWatchers()
+      return workspace
     }
   )
 
@@ -2058,7 +2060,8 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(
     AGENT_IPC_CHANNELS.DELETE_WORKSPACE,
     async (_, id: string): Promise<void> => {
-      return deleteAgentWorkspace(id)
+      deleteAgentWorkspace(id)
+      syncProjectRootWatchers()
     }
   )
 

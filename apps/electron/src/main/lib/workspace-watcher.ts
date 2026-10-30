@@ -16,6 +16,7 @@ import type { FSWatcher } from 'node:fs'
 import type { BrowserWindow } from 'electron'
 import { AGENT_IPC_CHANNELS } from '@gravitas/shared'
 import { getAgentWorkspacesDir } from './config-paths'
+import { listAgentWorkspaces } from './agent-workspace-manager'
 
 /** debounce 延迟（ms） */
 const DEBOUNCE_MS = 300
@@ -34,6 +35,48 @@ function isHighNoisePath(normalizedPath: string): boolean {
 }
 
 let watcher: FSWatcher | null = null
+const projectRootWatchers = new Map<string, FSWatcher>()
+let projectRootRetryTimer: ReturnType<typeof setInterval> | null = null
+
+/** 同步本地项目根目录监听，独立于会话附加目录的生命周期。 */
+export function syncProjectRootWatchers(): void {
+  if (!mainWin || mainWin.isDestroyed()) return
+  const roots = new Set(listAgentWorkspaces().flatMap((workspace) => workspace.rootPath ? [workspace.rootPath] : []))
+  for (const [path, existing] of projectRootWatchers) {
+    if (!roots.has(path)) {
+      existing.close()
+      projectRootWatchers.delete(path)
+    }
+  }
+  for (const path of roots) {
+    if (projectRootWatchers.has(path) || !existsSync(path)) continue
+    try {
+      const rootWatcher = watch(path, { recursive: true }, (_eventType, filename) => {
+        if (filename && isHighNoisePath(filename.replace(/\\/g, '/'))) return
+        scheduleAttachedFilesRefresh()
+      })
+      rootWatcher.on('error', (error) => {
+        console.error('[项目目录监听] 运行时错误:', path, error)
+        rootWatcher.close()
+        projectRootWatchers.delete(path)
+      })
+      projectRootWatchers.set(path, rootWatcher)
+    } catch (error) {
+      console.error('[项目目录监听] 启动失败:', path, error)
+    }
+  }
+}
+
+function scheduleAttachedFilesRefresh(): void {
+  if (!mainWin || mainWin.isDestroyed()) return
+  if (attachedFilesTimer) clearTimeout(attachedFilesTimer)
+  attachedFilesTimer = setTimeout(() => {
+    if (mainWin && !mainWin.isDestroyed()) {
+      mainWin.webContents.send(AGENT_IPC_CHANNELS.WORKSPACE_FILES_CHANGED)
+    }
+    attachedFilesTimer = null
+  }, DEBOUNCE_MS)
+}
 
 /** 附加目录监听器：路径 → FSWatcher */
 const attachedWatchers = new Map<string, FSWatcher>()
@@ -49,6 +92,8 @@ let mainWin: BrowserWindow | null = null
  */
 export function startWorkspaceWatcher(win: BrowserWindow): void {
   mainWin = win
+  syncProjectRootWatchers()
+  if (!projectRootRetryTimer) projectRootRetryTimer = setInterval(syncProjectRootWatchers, WATCHER_RESTART_DELAY_MS)
   const watchDir = getAgentWorkspacesDir()
 
   if (!existsSync(watchDir)) {
@@ -128,6 +173,12 @@ export function stopWorkspaceWatcher(): void {
     watcher = null
     console.log('[工作区监听] 已停止')
   }
+  if (projectRootRetryTimer) clearInterval(projectRootRetryTimer)
+  projectRootRetryTimer = null
+  for (const rootWatcher of projectRootWatchers.values()) rootWatcher.close()
+  projectRootWatchers.clear()
+  if (attachedFilesTimer) clearTimeout(attachedFilesTimer)
+  attachedFilesTimer = null
   // 同时清理所有附加目录监听器
   for (const [dirPath, w] of attachedWatchers) {
     w.close()
@@ -150,16 +201,7 @@ export function watchAttachedDirectory(dirPath: string): void {
 
   try {
     const w = watch(dirPath, { recursive: true }, () => {
-      if (!mainWin || mainWin.isDestroyed()) return
-
-      // 统一防抖：所有附加目录变化合并为一次刷新
-      if (attachedFilesTimer) clearTimeout(attachedFilesTimer)
-      attachedFilesTimer = setTimeout(() => {
-        if (mainWin && !mainWin.isDestroyed()) {
-          mainWin.webContents.send(AGENT_IPC_CHANNELS.WORKSPACE_FILES_CHANGED)
-        }
-        attachedFilesTimer = null
-      }, DEBOUNCE_MS)
+      scheduleAttachedFilesRefresh()
     })
 
     // 同主 watcher：监听 'error' 防止运行时异常拖死主进程。
