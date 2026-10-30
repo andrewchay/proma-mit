@@ -226,6 +226,7 @@ describe('composeOdDesignContext', () => {
     expect(out).toContain('--accent: #533afd')
     expect(out).toContain('### color')
     expect(out).toContain('the brand wins for token values')
+    expect(out).not.toContain('<od_missing_resource type="craft"')
   })
 
   test('Given 无 od: 声明 When 组合 Then 返回空字符串', () => {
@@ -245,12 +246,21 @@ describe('composeOdDesignContext', () => {
     expect(out).toContain('缺少可用的 DESIGN.md')
   })
 
-  test('Given craft 目录缺失 When 组合 Then craft 静默缺席不抛错', () => {
+  test('Given craft 目录缺失 When 组合 Then 显示所需工艺资料缺项', () => {
     const out = composeOdDesignContext({
       requirements: { craftRequires: ['typography'], designSystemRequires: false },
       craftDir: undefined,
     })
-    expect(out).toBe('')
+    expect(out).toContain('<od_missing_resource type="craft"')
+    expect(out).toContain('typography')
+  })
+
+  test('Given 部分工艺资料缺失 When 组合 Then 保留已有内容并指出缺少的节', () => {
+    const refs = join(skillsDir, 'design-craft', 'references')
+    const out = composeOdDesignContext({ requirements: { craftRequires: ['color', 'motion'], designSystemRequires: false }, craftDir: refs })
+    expect(out).toContain('### color')
+    expect(out).toContain('<od_missing_resource type="craft"')
+    expect(out).toContain('motion')
   })
 })
 
@@ -290,6 +300,8 @@ describe('ReadSkill 工具接线', () => {
     expect(result.content).toContain('<od_design_system')
     expect(result.content).toContain('### typography')
     expect(result.content).toContain('### anti-ai-slop')
+    expect(result.content).toContain('<od_missing_resource type="craft"')
+    expect(result.content).toContain('motion')
   })
 
   test('Given 读取子文件 When 读取 Then 不重复注入 od: 上下文', async () => {
