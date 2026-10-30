@@ -74,6 +74,7 @@ export async function executeBashToolOnPlatform(input: unknown, ctx: ToolContext
     // 准备沙箱包含异步操作，启动子进程前再次核验会话授权与可写 inode 边界。
     assertOwnerGate()
     await sandbox.assertLaunchSafe()
+    assertOwnerGate()
     // 以独立进程组运行并接入会话中止信号：终止对整组下发，且只有在进程组确认消失后
     // 才把结果写成"已终止"，否则标记 unconfirmed。
     const run = await runBashCommand({
