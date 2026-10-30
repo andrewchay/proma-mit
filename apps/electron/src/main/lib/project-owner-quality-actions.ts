@@ -82,15 +82,28 @@ export function getOwnerQualityConditionFingerprint(projectId: string, reviewerC
     policyRevision: policy?.revision ?? null, usage, blockers, artifact,
     revalidation: { status: revalidation.status, id: revalidation.revalidation?.id ?? null, integrityHash: revalidation.revalidation?.integrityHash ?? null, sourceHash: revalidation.revalidation ? ownerExecutionHash(revalidation.revalidation.source) : null } })
 }
+interface FailedOwnerQualityRecovery { previousExecutionId: string; previousDetail: string; targetTaskId?: string }
+/** 只读取协议拒绝的原始失败，不改写原回执；是否允许复验由调用方另行显式授权。 */
+function readFailedOwnerQualityRecovery(projectId: string, reviewerCommandId: string, ownerExecutionId: string): FailedOwnerQualityRecovery | null {
+  const outcome = runs().getOwnerPlanningRunOutcome(ownerExecutionId), receipt = outcome ? runs().getOwnerPlanningRunReceipt(outcome.receiptId) : null
+  const snapshot = receipt ? readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true }) : null, conversation = snapshot?.context.conversation
+  if (outcome?.state !== 'failed' || outcome.detail !== 'Owner质量决定未按准确标准逐项判断或引用不符' || receipt?.projectId !== projectId
+    || conversation?.executionObservation?.role !== 'reviewer' || conversation.executionObservation.commandId !== reviewerCommandId
+    || conversation.deliveryReview?.qualityDecisionVersion !== 1) return null
+  return { previousExecutionId: ownerExecutionId, previousDetail: outcome.detail, targetTaskId: snapshot?.link.targetTaskId }
+}
 /** 仅在阻断原因相关的权威事实改变后，提供一次新的分析入口。 */
 export function getOwnerQualityRecovery(projectId: string, reviewerCommandId: string): { previousExecutionId: string; conditionFingerprint: string; previousDetail: string } | null {
   const latest = readOwnerQualityAction(reviewerCommandId)
-  if (!latest || latest.projectId !== projectId || latest.state !== 'blocked' || !latest.conditionFingerprint) return null
-  const targetTaskId = managementTaskId(latest.ownerExecutionId)
+  // 烟测只对明确指定的原协议失败开放一次人工复验；普通产品流程仍不自动重试协议拒绝。
+  const smokeFailureId = process.env.GRAVITAS_PACKAGE_SMOKE === '1' ? process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID : undefined
+  const failed = !latest && smokeFailureId ? readFailedOwnerQualityRecovery(projectId, reviewerCommandId, smokeFailureId) : null
+  if (!failed && (!latest || latest.projectId !== projectId || latest.state !== 'blocked' || !latest.conditionFingerprint)) return null
+  const targetTaskId = latest ? managementTaskId(latest.ownerExecutionId) : failed!.targetTaskId
   const management = getOwnerManagementDelegation(projectId, targetTaskId)
   if (management.state !== 'active' || management.delegation?.qualityDecisionEnabled !== true) return null
   const conditionFingerprint = getOwnerQualityConditionFingerprint(projectId, reviewerCommandId, targetTaskId)
-  if (conditionFingerprint === latest.conditionFingerprint) return null
+  if (latest && conditionFingerprint === latest.conditionFingerprint) return null
   const row = store.getProjectDb().prepare("SELECT c.state,c.actual_cost_micros,c.usage_evidence,c.grant_id,c.source_task_id,c.rework_ordinal,e.status AS execution_status,g.state AS grant_state,g.expires_at,g.revalidation_id,g.revalidation_integrity_hash,g.source_hash,g.policy_revision,g.task_id AS grant_task_id FROM project_owner_execution_commands c JOIN project_owner_execution_grants g ON g.id=c.grant_id AND g.project_id=c.project_id JOIN agent_executions e ON e.id=c.execution_id WHERE c.id=? AND c.project_id=? AND c.role='reviewer'").get(reviewerCommandId, projectId) as Record<string, unknown> | undefined
   const task = row ? store.getTask(String(row.source_task_id)) : null
   const usage = row ? readOwnerGrantUsage(String(row.grant_id)) : null
@@ -101,7 +114,7 @@ export function getOwnerQualityRecovery(projectId: string, reviewerCommandId: st
   const currentRevalidation = view.revalidation
   if (view.status !== 'current' || !currentRevalidation || currentRevalidation.id !== row.revalidation_id || currentRevalidation.integrityHash !== row.revalidation_integrity_hash || ownerExecutionHash(currentRevalidation.source) !== row.source_hash || getPilotPolicy(projectId)?.revision !== row.policy_revision) return null
   try { if (!readOwnerQualityArtifact(reviewerCommandId)) return null } catch { return null }
-  return { previousExecutionId: latest.ownerExecutionId, conditionFingerprint, previousDetail: latest.detail }
+  return { previousExecutionId: latest?.ownerExecutionId ?? failed!.previousExecutionId, conditionFingerprint, previousDetail: latest?.detail ?? failed!.previousDetail }
 }
 interface GrantRow { id: string; state: string; dispatch_mode: string; expires_at: number; revalidation_id: string; revalidation_integrity_hash: string; source_hash: string; policy_revision: number }
 function execute(value: OwnerQualityAction, planningTaskId: string): Pick<OwnerQualityAction, 'state' | 'detail'> {
@@ -149,17 +162,21 @@ export function applyOwnerQualityDecision(projectId: string, ownerExecutionId: s
     if (!outcome?.qualityDecision || outcome.state !== 'replied' || !receipt || receipt.projectId !== projectId || !manager || !observation || observation.role !== 'reviewer' || outcome.qualityDecision.reviewerCommandId !== observation.commandId || !Number.isSafeInteger(receipt.usage?.inputTokens) || !Number.isSafeInteger(receipt.usage?.outputTokens)) throw new Error('缺少准确Owner质量决定或可信用量回执')
     const runAction = readOwnerQualityActionByExecution(ownerExecutionId)
     if (runAction) { result = runAction; return }
-    const existing = readOwnerQualityAction(observation.commandId)
+    const existing = readOwnerQualityAction(observation.commandId), recovery = conversation?.deliveryReview?.qualityRecovery
     let recoveryFingerprint: string | undefined
     if (existing) {
-      const recovery = conversation?.deliveryReview?.qualityRecovery
       const currentFingerprint = getOwnerQualityConditionFingerprint(projectId, observation.commandId, frozen?.link.targetTaskId)
       if (existing.state !== 'blocked' || !existing.conditionFingerprint || !recovery || recovery.previousExecutionId !== existing.ownerExecutionId || recovery.conditionFingerprint !== currentFingerprint || currentFingerprint === existing.conditionFingerprint) throw new Error('同一评审已有决定；只有阻断条件发生变化并重新核对后才能形成新决定')
+      recoveryFingerprint = recovery.conditionFingerprint
+    } else if (recovery) {
+      const failed = readFailedOwnerQualityRecovery(projectId, observation.commandId, recovery.previousExecutionId)
+      const currentFingerprint = getOwnerQualityConditionFingerprint(projectId, observation.commandId, frozen?.link.targetTaskId)
+      if (!failed || recovery.previousDetail !== failed.previousDetail || recovery.conditionFingerprint !== currentFingerprint) throw new Error('Owner质量恢复未绑定原协议失败与当前事实')
       recoveryFingerprint = recovery.conditionFingerprint
     }
     const artifact = readOwnerQualityArtifact(observation.commandId)
     if (!artifact || artifact.contentHash !== outcome.qualityDecision.artifactHash) throw new Error('Owner质量决定未绑定可核验的成果版本')
-    let action: OwnerQualityAction = { ownerExecutionId, ownerReceiptId: receipt.id, actor: manager.ownerId, projectId, grantId: observation.grantId, taskId: observation.businessTaskId, reviewerCommandId: observation.commandId, artifactHash: outcome.qualityDecision.artifactHash, reworkOrdinal: artifact.reworkOrdinal, decision: outcome.qualityDecision, state: 'blocked', detail: '', conditionFingerprint: getOwnerQualityConditionFingerprint(projectId, observation.commandId, frozen!.link.targetTaskId), ...(existing ? { recoveredFromOwnerExecutionId: existing.ownerExecutionId } : {}), createdAt: Date.now() }
+    let action: OwnerQualityAction = { ownerExecutionId, ownerReceiptId: receipt.id, actor: manager.ownerId, projectId, grantId: observation.grantId, taskId: observation.businessTaskId, reviewerCommandId: observation.commandId, artifactHash: outcome.qualityDecision.artifactHash, reworkOrdinal: artifact.reworkOrdinal, decision: outcome.qualityDecision, state: 'blocked', detail: '', conditionFingerprint: getOwnerQualityConditionFingerprint(projectId, observation.commandId, frozen!.link.targetTaskId), ...(recoveryFingerprint && recovery ? { recoveredFromOwnerExecutionId: recovery.previousExecutionId } : {}), createdAt: Date.now() }
     // 保存动作失败不能留下半个Task状态；外层事务仍保存阻断原因与原决定。
     database.exec('SAVEPOINT owner_quality_apply')
     try {

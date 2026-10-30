@@ -59,28 +59,35 @@ export function listOwnerTaskMaterializationHistory(rawSubject: unknown): OwnerT
 function edgesFor(taskId: string, projectId: string) {
   return store.listTaskDependencies(projectId).filter(edge => edge.taskId === taskId || edge.dependsOnTaskId === taskId)
 }
-export function getOwnerTaskMaterialization(rawSubject: unknown): OwnerTaskMaterializationView {
+export function getOwnerTaskMaterialization(rawSubject: unknown, renewalExpiresAt?: number): OwnerTaskMaterializationView {
   const subject = parseOwnerExecutionSubject(rawSubject), history = readHistory(subject.projectId), record = history.filter(item => item.taskId === subject.taskId).at(-1) ?? null
+  if (renewalExpiresAt !== undefined && !Number.isSafeInteger(renewalExpiresAt)) fail('续期期限无效')
   if (!store.getProject(subject.projectId) || (subject.taskId && store.getTask(subject.taskId)?.projectId !== subject.projectId)) fail('目标主体不存在')
   const view: OwnerTaskMaterializationView = { revision: history.at(-1)?.revision ?? 0, materialization: record, status: record ? 'needs_revalidation' : 'none', blockers: record ? ['任务已暂停落地，执行准备需要重新验证；没有运行许可'] : [] }
   if (!record) return view
   try {
     const policy = getPilotPolicy(subject.projectId), reference = policy?.ownerExecutionPreparation, revalidation = policy?.ownerExecutionRevalidation
+    let effectiveRenewalExpiresAt = renewalExpiresAt
     const original = listOwnerExecutionPreparationHistory(subject).find(item => item.id === record.input.expectedPreparationId)
     if (!original || ownerExecutionHash(original) !== ownerExecutionHash(record.preview.preparation) || policy?.state !== 'paused') fail('原Owner准备证据或策略引用已损坏/修订')
     if (revalidation) {
       // 分支(b)：policy已升级v2引用；材料化视图仍保持needs_revalidation并显式标注，不回退(a)也不伪装current。
       if (revalidation.materializationId !== record.id || revalidation.materializationIntegrityHash !== record.integrityHash) fail('v2重验证引用与当前材料化记录不匹配')
       const row = store.getProjectDb().prepare('SELECT payload, integrity_hash FROM project_owner_execution_revalidations WHERE id=? AND project_id=?').get(revalidation.id, subject.projectId) as { payload: string; integrity_hash: string } | undefined
-      const parsed = row ? JSON.parse(row.payload) as { purpose?: string; stage?: string; source?: { originalPreparation?: unknown } } : null
+      const parsed = row ? JSON.parse(row.payload) as { purpose?: string; stage?: string; input?: { renewalExpiresAt?: number }; source?: { originalPreparation?: unknown; budget?: { expiresAt?: number } } } : null
       if (!row || row.integrity_hash !== revalidation.integrityHash || parsed?.purpose !== 'owner_business_execution_revalidation' || parsed?.stage !== 'paused_task_links' || JSON.stringify(parsed?.source?.originalPreparation) !== JSON.stringify({ id: original.id, revision: original.revision, integrityHash: original.integrityHash, policyRevision: original.policyRevision })) fail('v2重验证证据悬空或损坏，请保留原件核查')
+      if (parsed.input?.renewalExpiresAt !== undefined && parsed.input.renewalExpiresAt !== parsed.source?.budget?.expiresAt) fail('v2续期期限与冻结预算不一致')
+      effectiveRenewalExpiresAt ??= parsed.input?.renewalExpiresAt
     } else if (policy.revision !== record.input.expectedPolicyRevision || reference?.id !== original.id || reference.revision !== original.revision || reference.integrityHash !== original.integrityHash || reference.purpose !== 'owner_business_execution_preparation') {
       fail('原Owner准备证据或策略引用已损坏/修订')
     }
     if (revalidation) view.blockers = [`已被v2重新验证冻结真实任务（${revalidation.id.slice(0,8)}…）；仍不是执行许可`, ...view.blockers]
-    const frozen = record.preview.preparation, current = buildOwnerExecutionSource(subject, frozen.input)
+    const frozen = record.preview.preparation, effectiveInput = effectiveRenewalExpiresAt === undefined ? frozen.input : { ...frozen.input, expiresAt: effectiveRenewalExpiresAt }, current = buildOwnerExecutionSource(subject, effectiveInput)
     // 自己合法更新目标Task导致原AO05自然stale；只在此读取诊断中识别该已冻结差异，绝不改旧source或授予许可。
-    if (ownerExecutionHash({ ...current, ...(subject.taskId ? { targetTaskHash: frozen.source.targetTaskHash } : {}) }) !== ownerExecutionHash(frozen.source)) fail('目标、计划、人员或资料来源已变化')
+    // 显式续期可把当前渠道与Owner绑定写入新再验证；续期服务随后独立核对身份及其余来源，旧记录不修改。
+    const comparable = effectiveRenewalExpiresAt === undefined ? current : { ...current, channelHash: frozen.source.channelHash, ownerBindingProvenance: frozen.source.ownerBindingProvenance,
+      ...(current.employeeRuntimes ? { employeeRuntimes: current.employeeRuntimes.map((runtime, index) => ({ ...runtime, channelHash: frozen.source.employeeRuntimes?.[index]?.channelHash ?? runtime.channelHash })) } : {}) }
+    if (ownerExecutionHash({ ...comparable, ...(subject.taskId ? { targetTaskHash: frozen.source.targetTaskHash } : {}) }) !== ownerExecutionHash(frozen.source)) fail('目标、计划、人员或资料来源已变化')
     for (const link of record.links) {
       const task = store.getTask(link.taskId)
       const statusRemainsInScope = task && (task.status === 'paused' || isCompletedStatus(task.status, store.listTaskStatuses(subject.projectId)))

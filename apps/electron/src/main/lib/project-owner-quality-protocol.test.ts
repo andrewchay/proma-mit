@@ -52,6 +52,18 @@ test('GivenJSON快照含多行源码和引号 WhenOwner逐字引用文件正文 
   }
 })
 
+test('Given联合变量声明源码 When Owner引用同一行 Then完整连续片段可接受而省略前缀的缩写必须拒绝', async () => {
+  const { parseOwnerQualityDecision, OWNER_QUALITY_QUOTE_INSTRUCTIONS } = await import('./project-owner-quality-protocol')
+  const c = context(), source = "var size = 4, grid, score, bestKey = 'best-score-2048';"
+  c.conversation!.deliveryReview!.developmentArtifact!.content = JSON.stringify({ files: [{ path: 'index.html', oldContent: null, newContent: source }] })
+  const decision = acceptDecision(), criteria = decision.criteria as OwnerQualityDecision['criteria']
+  criteria[0]!.quote = source
+  expect(parseOwnerQualityDecision(decision, c).verdict).toBe('accept')
+  expect(() => parseOwnerQualityDecision({ ...decision, criteria: [{ ...criteria[0], quote: "var bestKey = 'best-score-2048';" }] }, c)).toThrow('引用不符')
+  expect(OWNER_QUALITY_QUOTE_INSTRUCTIONS).toContain('逐字连续的子串')
+  expect(OWNER_QUALITY_QUOTE_INSTRUCTIONS).toContain('不得省略同一行前缀')
+})
+
 test('Given完整质量判断附加已满足的项目标准 When解析 Then保留准确任务标准并拒绝未知、未满足、重复及错误引用', async () => {
   const { parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
   const c = context(); c.goal.goal.acceptanceCriteria = ['额外项目标准']

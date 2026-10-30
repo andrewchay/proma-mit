@@ -715,6 +715,8 @@ export interface OwnerExecutionRevalidationInput {
   expectedMaterializationRevision: number
   expectedMaterializationHash: string
   expectedPolicyRevision: number
+  /** 显式烟测续期：追加继任再验证，不改写原准备；普通产品路径拒绝该字段。 */
+  renewalExpiresAt?: number
   changeReason: string
 }
 export interface OwnerExecutionRevalidationTask {

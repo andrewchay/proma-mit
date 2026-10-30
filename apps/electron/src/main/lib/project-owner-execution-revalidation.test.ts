@@ -149,6 +149,12 @@ test('Given DB已提交但policy回退未应用 When 读取/重放 Then 显式un
   expect(service.listOwnerExecutionRevalidationHistory(f.subject)).toHaveLength(1)
   expect(service.listOwnerExecutionRevalidationHistory(f.subject)[0]).toEqual(saved)
 })
+test('Given普通产品再验证携带续期字段 When预览 Then明确拒绝且不追加历史', () => {
+  const f = fixture(), saved = save(f)
+  const input = { ...f.revalidationInput, requestId: randomUUID(), expectedRevalidationRevision: 1, expectedPolicyRevision: policy.getPilotPolicy(f.project.id)!.revision, renewalExpiresAt: Date.now() + 7200000, changeReason: '未经烟测授权的续期' }
+  expect(() => service.previewOwnerExecutionRevalidation(f.subject, input)).toThrow('普通产品路径不允许')
+  expect(service.listOwnerExecutionRevalidationHistory(f.subject)).toEqual([saved])
+})
 test('Given drift修复后重新验证 When 新请求 Then v2历史链式追加，旧记录保留', () => {
   const f = fixture(), saved = save(f)
   const input = { ...f.revalidationInput, requestId: randomUUID(), expectedRevalidationRevision: 1, expectedPolicyRevision: policy.getPilotPolicy(f.project.id)!.revision, changeReason: '再次确认' }

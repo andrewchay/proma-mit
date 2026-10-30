@@ -82,6 +82,19 @@ export function getOwnerPlanningRunReceipt(receiptId: string): OwnerPlanningRunR
   return row ? storedReceipt(row) : null
 }
 
+function hasOnlyNullUsage(usage: OwnerPlanningRunReceipt['usage']): boolean {
+  return usage === null || usage.inputTokens === null && usage.outputTokens === null && usage.cacheReadTokens === null && usage.cacheWriteTokens === null
+}
+/** AI SDK可能把已确认的本地入口错误包装成零用量错误终态；其他终态仍按未知请求处理。 */
+function isUnsentRuntimeEnvelope(result: SDKResultMessage | null, sessionId: string): boolean {
+  if (result === null) return true
+  if (result.type !== 'result' || result.session_id !== sessionId || result.subtype !== 'error_during_execution' || result.finish_reason !== 'error' || result.result !== '' || result.total_cost_usd !== undefined) return false
+  const usage = result.usage as { input_tokens?: unknown; output_tokens?:unknown } | undefined
+  const planningUsage = result.owner_planning_usage
+  return result.errors?.length === 1 && isOwnerPlanningConfigurationError(result.errors[0])
+    && usage !== undefined && Object.keys(usage).length === 2 && usage.input_tokens === 0 && usage.output_tokens === 0
+    && planningUsage !== undefined && hasOnlyNullUsage(planningUsage)
+}
 /** 发送前配置失败的只读核查；缺少准入本身不足以解除未知请求门禁。 */
 export function isUnsentOwnerPlanningConfigurationFailure(executionId: string, receiptId: string): boolean {
   const execution = store.getAgentExecution(executionId), receipt = getOwnerPlanningRunReceipt(receiptId)
@@ -95,15 +108,15 @@ export function isUnsentOwnerPlanningConfigurationFailure(executionId: string, r
   if (prepared?.execution_id !== executionId || prepared.owner_planning_link_id !== receipt.linkId || prepared.provider_admitted_at !== null) return false
   if (db.prepare('SELECT 1 FROM project_owner_planning_admissions WHERE execution_id=? OR session_id=? OR link_id=?').get(executionId, receipt.sessionId, receipt.linkId)) return false
   const receipts = (db.prepare('SELECT * FROM project_owner_planning_run_receipts WHERE execution_id=?').all(executionId) as ReceiptRow[]).map(storedReceipt)
-  if (!receipts.length || receipts.some(item => item.requestHash !== null || item.runtimeResult !== null || item.responseText !== '' || item.usage !== null
+  if (!receipts.length || receipts.some(item => item.requestHash !== null || !isUnsentRuntimeEnvelope(item.runtimeResult, item.sessionId) || item.responseText !== '' || !hasOnlyNullUsage(item.usage)
     || item.stopped || item.validTerminal || item.cost.source !== 'unknown' || item.cost.usd !== null
     || !['ai-sdk', 'unknown'].includes(item.runtimeSource) || item.error !== null && !isOwnerPlanningConfigurationError(item.error))) return false
   const callbacks = db.prepare('SELECT id,payload FROM project_owner_planning_callback_evidence WHERE execution_id=?').all(executionId) as { id: string; payload: string }[]
   return callbacks.length > 0 && callbacks.every(row => {
     try {
-      const value = JSON.parse(row.payload) as { executionId: string; sessionId: string; projectId: string; runtimeSource: string; runtimeResult: unknown; stopped: boolean; error: string | null }
+      const value = JSON.parse(row.payload) as { executionId: string; sessionId: string; projectId: string; runtimeSource: string; runtimeResult: SDKResultMessage | null; stopped: boolean; error: string | null }
       return hash(value) === row.id && value.executionId === executionId && value.sessionId === receipt.sessionId && value.projectId === execution.projectId
-        && ['ai-sdk', 'unknown'].includes(value.runtimeSource) && value.runtimeResult === null && value.stopped === false
+        && ['ai-sdk', 'unknown'].includes(value.runtimeSource) && isUnsentRuntimeEnvelope(value.runtimeResult, value.sessionId) && value.stopped === false
         && (value.error === null || isOwnerPlanningConfigurationError(value.error))
     } catch { return false }
   })
@@ -129,7 +142,8 @@ function readStoredOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRu
         if (!value.assignmentProposal || JSON.stringify(proposal) !== JSON.stringify(value.assignmentProposal)) throw new Error('人员安排结论与原始响应不一致')
       } else {
         if (value.assignmentProposal !== undefined) throw new Error('Owner规划Run不能夹带人员安排结论')
-        const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context)
+        // 历史结论按原回执时间重验；新鲜度属于当时证据，不能在恢复读取时反向使已接受成果失效。
+        const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, receipt.capturedAt)
         if (value.state === 'replied') {
           if (!['conversation_reply', 'conversation_change', 'quality_decision', 'employee_decision'].includes(response.kind) || !('message' in response) || value.reply !== response.message || value.planRevision !== undefined || value.clarification !== undefined || JSON.stringify(value.changeProposal) !== JSON.stringify(response.kind === 'conversation_change' ? response.change : undefined) || JSON.stringify(value.qualityDecision) !== JSON.stringify(response.kind === 'quality_decision' ? response.decision : undefined) || JSON.stringify(value.employeeDecision) !== JSON.stringify(response.kind === 'employee_decision' ? response.decision : undefined)) throw new Error('对话回应与原始响应不一致')
         } else if (value.employeeDecision !== undefined || value.qualityDecision !== undefined || value.reply !== undefined || value.changeProposal !== undefined || (value.state === 'proposed' ? response.kind !== 'plan_proposal' || !Number.isSafeInteger(value.planRevision) || value.planRevision !== frozen.link.planRevision + 1 || value.clarification !== undefined : response.kind !== 'needs_clarification' || JSON.stringify(response) !== JSON.stringify(value.clarification) || value.planRevision !== undefined)) throw new Error('结论与原始响应不一致')
