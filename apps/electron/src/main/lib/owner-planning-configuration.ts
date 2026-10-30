@@ -17,6 +17,8 @@ export function readOwnerPlanningApiKey(channelId: string): string {
 /** 只识别已知的本地入口错误；是否未发送还必须核对持久准入与全部回执。 */
 export function isOwnerPlanningConfigurationError(message: string | null | undefined): boolean {
   return message === LEGACY_MISSING_OPTIONS
+    || message === '真实冒烟请求次数边界无效'
+    || message === 'No output generated. Check the stream for errors.；流错误：Error: 真实冒烟请求次数边界无效'
     || Boolean(message?.startsWith(`${CONFIGURATION_ERROR}（missing_api_key）：`)
       || message?.startsWith(`${CONFIGURATION_ERROR}（credential_unavailable）：`))
 }

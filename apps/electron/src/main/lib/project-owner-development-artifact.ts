@@ -218,6 +218,8 @@ export async function readOwnerDevelopmentArtifactForReview(reviewerCommandId: s
   if (snapshot.workspaceId !== workspace.id || !await developmentWorktreeMatchesSnapshotAsync(worktreePath, snapshot, scope)) {
     throw new Error('Owner代码Reviewer快照与当前冻结范围/worktree不一致')
   }
+  const revalidation = (require('./owner-quality-revalidation-smoke') as typeof import('./owner-quality-revalidation-smoke')).readOwnerQualityRevalidationSmokePermit({ projectId: reviewer.project_id, taskId: reviewer.source_task_id, grantId: reviewer.grant_id, reworkOrdinal: reviewer.rework_ordinal })
+  if (revalidation && snapshot.contentHash !== revalidation.artifactHash) throw new Error('Owner复验成果哈希已变化，禁止启动独立评审')
   const files = await readDevelopmentSnapshotContentsAsync(sessionDirectory, execution.id)
   const content = JSON.stringify({ executionId: execution.id, workspaceId: workspace.id, baseCommit: snapshot.baseCommit, contentHash: snapshot.contentHash, files })
   if (Buffer.byteLength(content, 'utf8') > 512 * 1024) throw new Error('Owner代码快照超过Reviewer完整输入上限；未截断或启动评审')
@@ -259,7 +261,7 @@ export async function readOwnerDevelopmentArtifactForReview(reviewerCommandId: s
 /** Owner返工创建新会话，只交接同授权上一轮的已冻结源码，不复用旧业务会话。 */
 export async function seedOwnerDevelopmentRework(commandId: string, worktreePath: string): Promise<string | undefined> {
   const database = store.getProjectDb()
-  const current = database.prepare("SELECT grant_id,source_task_id,source_step_link_id,source_hash,rework_ordinal,role,state,execution_id FROM project_owner_execution_commands WHERE id=?").get(commandId) as { grant_id: string; source_task_id: string; source_step_link_id: string; source_hash: string; rework_ordinal: number; role: string; state: string; execution_id: string } | undefined
+  const current = database.prepare("SELECT project_id,grant_id,source_task_id,source_step_link_id,source_hash,rework_ordinal,role,state,execution_id FROM project_owner_execution_commands WHERE id=?").get(commandId) as { project_id: string; grant_id: string; source_task_id: string; source_step_link_id: string; source_hash: string; rework_ordinal: number; role: string; state: string; execution_id: string } | undefined
   if (!current || current.state !== 'queued') throw new Error('Owner返工命令尚未处于可准备状态')
   if (current.role !== 'executor' || current.rework_ordinal === 0) return undefined
   const prior = database.prepare(`SELECT c.id,c.execution_id,c.state,c.actual_cost_micros,c.usage_evidence,e.status,e.session_id
@@ -270,8 +272,9 @@ export async function seedOwnerDevelopmentRework(commandId: string, worktreePath
   const previous = prior[0]
   const action = database.prepare("SELECT reviewer_command_id FROM project_owner_quality_actions WHERE grant_id=? AND task_id=? AND json_extract(payload,'$.reworkOrdinal')=? ORDER BY created_at DESC LIMIT 1").get(current.grant_id,current.source_task_id,current.rework_ordinal-1) as { reviewer_command_id: string } | undefined
   const decision = action ? (require('./project-owner-quality-actions') as typeof import('./project-owner-quality-actions')).readOwnerQualityAction(action.reviewer_command_id) : null
+  const revalidation = (require('./owner-quality-revalidation-smoke') as typeof import('./owner-quality-revalidation-smoke')).readOwnerQualityRevalidationSmokePermit({ projectId: current.project_id, taskId: current.source_task_id, grantId: current.grant_id, reworkOrdinal: current.rework_ordinal })
   if (prior.length !== 1 || !previous || previous.state !== 'settled' || previous.status !== 'completed' || previous.actual_cost_micros === null
-    || !previous.usage_evidence || JSON.parse(previous.usage_evidence).source === 'unknown' || decision?.state !== 'rework_authorized') throw new Error('Owner返工缺少上一轮准确成果、已知费用或质量授权')
+    || !previous.usage_evidence || JSON.parse(previous.usage_evidence).source === 'unknown' || decision?.state !== 'rework_authorized' && !revalidation) throw new Error('Owner返工缺少上一轮准确成果、已知费用或质量授权')
   const { source } = readOwnerCommandFrozenSource(commandId)
   const task = source.tasks.find(item => item.taskId === current.source_task_id)
   const workspace = source.workspaceId ? getAgentWorkspace(source.workspaceId) : undefined
@@ -284,6 +287,7 @@ export async function seedOwnerDevelopmentRework(commandId: string, worktreePath
   const snapshot = await loadDevelopmentSnapshotAsync(previousDirectory, previous.execution_id)
   const scope = validateDevelopmentScope(task.developmentScope, { getWorkspace: getAgentWorkspace })
   if (!previousPath || snapshot.workspaceId !== workspace.id || !await developmentWorktreeMatchesSnapshotAsync(previousPath,snapshot,scope)) throw new Error('Owner返工上一轮worktree与冻结快照不一致')
+  if (revalidation && snapshot.contentHash !== revalidation.artifactHash) throw new Error('Owner复验交接前的原成果哈希已变化')
   const files = await readDevelopmentSnapshotContentsAsync(previousDirectory,previous.execution_id)
   for (const { file, newContent } of files) {
     const name = normalizeRepoRelativePath(file.path)
