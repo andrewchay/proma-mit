@@ -1683,6 +1683,13 @@ function migrate(database: SqliteCompat): void {
       observed_at INTEGER NOT NULL,
       payload TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS project_file_change_policy_scopes (
+      project_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      revision TEXT NOT NULL,
+      ignore_digest TEXT NOT NULL,
+      PRIMARY KEY (project_id, workspace_id)
+    );
     CREATE TABLE IF NOT EXISTS project_file_change_policies (
       project_id TEXT NOT NULL,
       workspace_id TEXT NOT NULL,
@@ -2105,6 +2112,7 @@ export function deleteProject(id: string): boolean {
     database.prepare(`DELETE FROM risk_assessments WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM task_statuses WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM project_file_change_observations WHERE project_id = ?`).run(id)
+    database.prepare(`DELETE FROM project_file_change_policy_scopes WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM project_file_change_policies WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM project_workspace_bindings WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM projects WHERE id = ?`).run(id)

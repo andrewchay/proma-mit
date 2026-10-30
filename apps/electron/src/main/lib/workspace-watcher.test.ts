@@ -11,6 +11,7 @@ mkdirSync(project)
 let workspaces: Array<{ id: string; rootPath?: string }> = [{ id: 'project', rootPath: project }]
 mock.module('./config-paths', () => ({ getAgentWorkspacesDir: () => internal, getProjectsDir: () => join(temp, 'data') }))
 mock.module('./agent-workspace-manager', () => ({ listAgentWorkspaces: () => workspaces }))
+mock.module('./project-file-change-policy', () => ({ invalidateWorkspaceFileChangePolicies: () => {} }))
 const { startWorkspaceWatcher, stopWorkspaceWatcher, syncProjectRootWatchers } = await import('./workspace-watcher')
 const events: string[] = []
 const window = { isDestroyed: () => false, webContents: { send: (channel: string) => events.push(channel) } }
