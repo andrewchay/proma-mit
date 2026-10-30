@@ -379,9 +379,9 @@ export function formatDuration(ms: number): string {
 }
 
 /** 构建 usage tooltip 多行文本 */
-export function buildUsageTooltip(durationMs: number, usage?: AgentEventUsage): string {
+export function buildUsageTooltip(durationMs: number | undefined, usage?: AgentEventUsage): string {
   const lines: string[] = []
-  lines.push(`耗时: ${formatDuration(durationMs)}`)
+  if (durationMs != null) lines.push(`耗时: ${formatDuration(durationMs)}`)
 
   if (usage) {
     const pureInput = usage.inputTokens - (usage.cacheReadTokens ?? 0) - (usage.cacheCreationTokens ?? 0)
