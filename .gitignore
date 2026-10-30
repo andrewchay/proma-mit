@@ -49,6 +49,9 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # macOS Computer Use helper is built from the tracked Objective-C source.
 apps/electron/resources/computer-use/macos/computer_use.node
 
+# electron-builder beforePack 暂存的 node-pty spawn-helper（打包时再生）
+apps/electron/.packaging/
+
 # ignore craft-agents-oss folder
 craft-agents-oss
 

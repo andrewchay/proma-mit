@@ -101,4 +101,7 @@ jobs:
           set -euo pipefail
           APP=$(find apps/electron/out -type d -name 'Gravitas.app' -print -quit)
           test -n "$APP"
+          # node-pty 的 spawn-helper 必须落在 Contents/MacOS；缺失时终端一启动就失败，
+          # 不能等到烟测最后一步才发现。
+          test -x "$APP/Contents/MacOS/node-pty-spawn-helper"
           bun scripts/package-smoke.ts "$APP/Contents/MacOS/Gravitas"
