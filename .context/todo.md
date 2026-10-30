@@ -84,7 +84,7 @@ rebase 到 `32f17a5a`（origin/main）时只有两处真冲突：
 ## 目标
 让 PR #73 的 Package Smoke 三平台全绿，并修复 macOS 打包缺失 node-pty spawn-helper 的根因。
 
-## 状态：已完成（等待 quality 全仓回归）
+## 状态：已完成（PR #73 全绿，可合并）
 
 - [x] 定位：macOS 作业报 `posix_spawnp failed`，打包日志有
       `file source doesn't exist from=node_modules/node-pty/build/Release/spawn-helper`
@@ -103,7 +103,13 @@ rebase 到 `32f17a5a`（origin/main）时只有两处真冲突：
 - [x] Package Smoke 的 macOS 步骤新增 helper 存在性断言
 - [x] 提交 `00b93933` 并推送
 - [x] CI：macOS arm64 4m36s pass / Windows 6m13s pass / Linux 2m18s pass
-- [ ] `quality` 作业（`bun run test` 全仓回归 + lint + docs:check）结果待出
+- [x] `quality` 作业 pass（15m4s，全仓回归 + lint + docs:check）
+- [x] rebase 到 origin/main（0.13.497 基线，含 #71/#72/#76）；重新生成 docs facts
+- [x] rebase 后本地验证：typecheck 9 包全通过；聚焦测试 56 + 7 pass / 0 fail
+- [x] 修复 CI 门禁：`docs:check` 生成文件过期、quality 作业 20 分钟超时被取消
+      → 放宽到 35 分钟（`dac1b95d`）
+- [x] 最终 head `f6a6dc38`：macOS 3m39s / Windows 5m53s / Linux 2m14s 全 pass，
+      mergeStateStatus=CLEAN
 
 ## 环境限制（本地不可绕过）
 本机 Agent seatbelt 内 Electron 无法启动（`sandbox initialization failed`），
