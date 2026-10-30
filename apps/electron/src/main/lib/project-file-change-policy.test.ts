@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, renameSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { closeProjectDb, createProject, initProjectDb } from './project-sqlite-store'
@@ -85,4 +85,82 @@ test('Given 持久化观察被更改或被其他项目引用 When 校验 Then �
   const altered = { ...source, changes: [{ ...source.changes[0]!, path: 'tampered.txt' }] }
   getProjectDb().prepare('UPDATE project_file_change_observations SET payload = ? WHERE id = ?').run(JSON.stringify(altered), source.id)
   expect(getAuthorizedProjectFileChangeObservation(project.id, source.id)).toBeNull()
+})
+
+test('Given 已授权的文件变化 When 忽略规则变化并恢复 Then 旧授权和观察不会恢复', async () => {
+  const { writeFileSync, rmSync } = await import('node:fs')
+  const { recordProjectFileChangeObservation, getAuthorizedProjectFileChangeObservation } = await import('./project-file-change-observations')
+  const project = createProject({ title: '范围变更', description: '' })
+  const path = join(temp, 'scope'); mkdirSync(path)
+  const workspace = createAgentWorkspace('范围资料', path)
+  bindWorkspaceToProject(project.id, workspace.id)
+  const policy = setProjectFileChangePolicy(project.id, workspace.id, true)!
+  const observation = recordProjectFileChangeObservation(project.id, workspace.id, [{ path: 'private/file.txt', kind: 'modified', observedAt: policy.enabledAt + 1 }])!
+  writeFileSync(join(path, '.gravitasignore'), 'private/\n')
+  expect(getAuthorizedProjectFileChangeObservation(project.id, observation.id)).toBeNull()
+  rmSync(join(path, '.gravitasignore'))
+  expect(getProjectFileChangePolicy(project.id, workspace.id)).toBeNull()
+  expect(getAuthorizedProjectFileChangeObservation(project.id, observation.id)).toBeNull()
+  const renewed = setProjectFileChangePolicy(project.id, workspace.id, true)!
+  expect(renewed.revision).not.toBe(policy.revision)
+  expect(getAuthorizedProjectFileChangeObservation(project.id, observation.id)).toBeNull()
+})
+
+test('Given 忽略规则短暂变化后恢复 When 文件监听收到事件 Then 原授权仍然撤销', async () => {
+  const { writeFileSync, rmSync } = await import('node:fs')
+  const { startWorkspaceWatcher, stopWorkspaceWatcher } = await import('./workspace-watcher')
+  const project = createProject({ title: '监听范围变化', description: '' })
+  const path = join(temp, 'watched-scope'); mkdirSync(path)
+  const workspace = createAgentWorkspace('监听范围资料', path)
+  bindWorkspaceToProject(project.id, workspace.id)
+  setProjectFileChangePolicy(project.id, workspace.id, true)
+  startWorkspaceWatcher({ isDestroyed: () => false, webContents: { send: () => {} } } as never)
+  try {
+    writeFileSync(join(path, '.gravitasignore'), 'private/\n')
+    await new Promise(resolve => setTimeout(resolve, 200))
+    rmSync(join(path, '.gravitasignore'))
+    await new Promise(resolve => setTimeout(resolve, 500))
+    expect(getProjectFileChangePolicy(project.id, workspace.id)).toBeNull()
+  } finally { stopWorkspaceWatcher() }
+})
+
+test('Given 旧版本授权没有忽略范围凭据 When 升级 Then 默认停用且重新开启创建新版本', async () => {
+  const { getProjectDb } = await import('./project-sqlite-store')
+  const project = createProject({ title: '旧授权升级', description: '' })
+  const path = join(temp, 'legacy-scope'); mkdirSync(path)
+  const workspace = createAgentWorkspace('旧范围资料', path)
+  bindWorkspaceToProject(project.id, workspace.id)
+  getProjectDb().prepare('INSERT INTO project_file_change_policies (project_id, workspace_id, revision, enabled_at) VALUES (?, ?, ?, ?)').run(project.id, workspace.id, 'old-revision', Date.now())
+  expect(getProjectFileChangePolicy(project.id, workspace.id)).toBeNull()
+  const renewed = setProjectFileChangePolicy(project.id, workspace.id, true)!
+  expect(renewed.revision).not.toBe('old-revision')
+  expect(getProjectFileChangePolicy(project.id, workspace.id)).toEqual(renewed)
+})
+
+test('Given 授权后的忽略规则无法安全读取 When 恢复规则 Then 必须重新授权', () => {
+  const project = createProject({ title: '规则不可读', description: '' })
+  const path = join(temp, 'invalid-scope'); mkdirSync(path)
+  const workspace = createAgentWorkspace('不可读范围', path)
+  bindWorkspaceToProject(project.id, workspace.id)
+  setProjectFileChangePolicy(project.id, workspace.id, true)
+  mkdirSync(join(path, '.gravitasignore'))
+  expect(getProjectFileChangePolicy(project.id, workspace.id)).toBeNull()
+  rmSync(join(path, '.gravitasignore'), { recursive: true })
+  expect(getProjectFileChangePolicy(project.id, workspace.id)).toBeNull()
+})
+
+test('Given 已授权项目目录被替换 When 路径相同但目录身份不同 Then 旧授权不能恢复', () => {
+  const project = createProject({ title: '目录替换', description: '' })
+  const path = join(temp, 'root-identity'); mkdirSync(path)
+  const workspace = createAgentWorkspace('目录身份资料', path)
+  bindWorkspaceToProject(project.id, workspace.id)
+  const original = setProjectFileChangePolicy(project.id, workspace.id, true)!
+  const moved = `${path}-old`
+  renameSync(path, moved)
+  mkdirSync(path)
+  expect(getProjectFileChangePolicy(project.id, workspace.id)).toBeNull()
+  rmSync(path, { recursive: true })
+  renameSync(moved, path)
+  expect(getProjectFileChangePolicy(project.id, workspace.id)).toBeNull()
+  expect(setProjectFileChangePolicy(project.id, workspace.id, true)!.revision).not.toBe(original.revision)
 })

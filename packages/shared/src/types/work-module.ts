@@ -389,6 +389,7 @@ export type ProjectWorkspaceGitDiff = { status: 'available'; text: string } | { 
 export interface ProjectWorkspaceFileChangesView {
   changes: ProjectWorkspaceFileChange[]
   lastScannedAt: number | null
+  baselineReset?: { at: number; reason: 'initial' | 'ignore_changed' } | null
   scanError: string | null
   watching: boolean
 }

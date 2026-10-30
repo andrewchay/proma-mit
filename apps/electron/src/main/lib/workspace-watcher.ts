@@ -18,6 +18,7 @@ import { AGENT_IPC_CHANNELS } from '@gravitas/shared'
 import { getAgentWorkspacesDir } from './config-paths'
 import { listAgentWorkspaces } from './agent-workspace-manager'
 import { scanProjectFileChanges } from './project-file-changes'
+import { invalidateWorkspaceFileChangePolicies } from './project-file-change-policy'
 
 /** debounce 延迟（ms） */
 const DEBOUNCE_MS = 300
@@ -90,7 +91,12 @@ export function syncProjectRootWatchers(): void {
         if (filename && isHighNoisePath(filename.replace(/\\/g, '/'))) return
         scheduleAttachedFilesRefresh()
         for (const workspace of listAgentWorkspaces()) {
-          if (workspace.rootPath === path) scheduleProjectScan(workspace.id, path)
+          if (workspace.rootPath !== path) continue
+          if (!filename || filename.replace(/\\/g, '/') === '.gravitasignore') {
+            try { invalidateWorkspaceFileChangePolicies(workspace.id) }
+            catch (error) { console.error('[项目变化授权] 撤销失败:', error) }
+          }
+          scheduleProjectScan(workspace.id, path)
         }
       })
       rootWatcher.on('error', (error) => {

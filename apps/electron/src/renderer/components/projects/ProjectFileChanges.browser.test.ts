@@ -15,11 +15,12 @@ browserTest('Given 绑定工作区有变化 When 用户查看并加入草稿 The
   writeFileSync(join(directory, 'entry.tsx'), `
 import React from 'react'; import {createRoot} from 'react-dom/client'; import {Provider,createStore} from 'jotai';
 import {ProjectWorkspacesPanel} from ${JSON.stringify(join(renderer, 'components/projects/ProjectWorkspacesPanel.tsx'))};
+import {workspaceFilesVersionAtom} from ${JSON.stringify(join(renderer, 'atoms/agent-atoms.ts'))};
 import {editOwnerMessageAtom, ownerMessageComposersAtom, getOwnerMessageComposer, ownerConversationNavigationAtom} from ${JSON.stringify(join(renderer, 'atoms/project-owner-management-atoms.ts'))};
 const store=createStore(), subject={projectId:'p'}; store.set(editOwnerMessageAtom,{subject,text:'已有草稿'});
-let calls=0, sends=0, policyCalls=[];
-window.electronAPI={listAgentWorkspaces:async()=>[{id:'w',name:'研发',slug:'dev',rootPath:'/project'}],paa:{projectWorkspace:{listByProject:async()=>[{projectId:'p',workspaceId:'w',createdAt:1}],bind:async()=>null,unbind:async()=>true,listFileChanges:async()=>{calls++;return {changes:[{path:'src/file.ts',kind:'modified',observedAt:1000}],lastScannedAt:1000,scanError:null,watching:true}},getGitDiff:async()=>({status:'available',text:'+updated'}),getFileChangePolicy:async()=>null,setFileChangePolicy:async(p,w,enabled)=>{policyCalls.push(enabled);return enabled?{revision:'r',enabledAt:1}:null}},project:{sendOwnerManagementMessage:async()=>{sends++}}}};
-window.fixture={facts:()=>({calls,sends,policyCalls,composer:getOwnerMessageComposer(store.get(ownerMessageComposersAtom),subject),navigation:store.get(ownerConversationNavigationAtom)})};
+let calls=0, sends=0, policyCalls=[], policy=null;
+window.electronAPI={listAgentWorkspaces:async()=>[{id:'w',name:'研发',slug:'dev',rootPath:'/project'}],paa:{projectWorkspace:{listByProject:async()=>[{projectId:'p',workspaceId:'w',createdAt:1}],bind:async()=>null,unbind:async()=>true,listFileChanges:async()=>{calls++;return {changes:[{path:'src/file.ts',kind:'modified',observedAt:1000}],lastScannedAt:1000,baselineReset:{at:1000,reason:'ignore_changed'},scanError:null,watching:true}},getGitDiff:async()=>({status:'available',text:'+updated'}),getFileChangePolicy:async()=>policy,setFileChangePolicy:async(p,w,enabled)=>{policyCalls.push(enabled);policy=enabled?{revision:'r',enabledAt:1}:null;return policy}},project:{sendOwnerManagementMessage:async()=>{sends++}}}};
+window.fixture={invalidate:()=>{policy=null;store.set(workspaceFilesVersionAtom,x=>x+1)},facts:()=>({calls,sends,policyCalls,composer:getOwnerMessageComposer(store.get(ownerMessageComposersAtom),subject),navigation:store.get(ownerConversationNavigationAtom)})};
 createRoot(document.getElementById('root')).render(<Provider store={store}><ProjectWorkspacesPanel projectId="p"/></Provider>);
 `)
   await build({ entryPoints: [join(directory, 'entry.tsx')], outfile: join(directory, 'entry.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', absWorkingDir: root, nodePaths: [join(root, 'node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
@@ -30,16 +31,20 @@ createRoot(document.getElementById('root')).render(<Provider store={store}><Proj
     await page.goto(`http://127.0.0.1:${server.port}`)
     const toggle = page.getByRole('checkbox', { name: /允许 Owner 自动分析/ })
     await toggle.check()
+    await page.evaluate('window.fixture.invalidate()')
+    await page.waitForFunction(() => !(document.querySelector('input[type=checkbox]') as HTMLInputElement)?.checked)
+    await toggle.check()
     await toggle.uncheck()
     await page.getByRole('button', { name: '查看文件变化' }).click()
     await page.getByText(/src\/file.ts/).waitFor()
+    await page.getByText(/忽略规则变化后已重新建立基线/).waitFor()
     await page.getByRole('button', { name: '查看当前 Git 差异' }).click()
     await page.getByText('+updated', { exact: true }).waitFor()
     await page.getByRole('button', { name: '将最近 20 条加入 Owner 消息草稿' }).click()
     const facts = await page.evaluate<{ calls: number; sends: number; policyCalls: boolean[]; composer: { text: string }; navigation: { projectId: string } }>('window.fixture.facts()')
     expect(facts.calls).toBe(1)
     expect(facts.sends).toBe(0)
-    expect(facts.policyCalls).toEqual([true, false])
+    expect(facts.policyCalls).toEqual([true, true, false])
     expect(facts.composer.text).toContain('已有草稿')
     expect(facts.composer.text).toContain('src/file.ts')
     expect(facts.navigation.projectId).toBe('p')

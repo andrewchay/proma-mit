@@ -63,6 +63,7 @@ export function unbindWorkspaceFromProject(projectId: string, workspaceId: strin
   const database = getProjectDb()
   let deleted = false
   database.transaction(() => {
+    database.prepare(`DELETE FROM project_file_change_policy_scopes WHERE project_id = ? AND workspace_id = ?`).run(projectId, workspaceId)
     database.prepare(`DELETE FROM project_file_change_policies WHERE project_id = ? AND workspace_id = ?`).run(projectId, workspaceId)
     deleted = database.prepare(`DELETE FROM project_workspace_bindings WHERE project_id = ? AND workspace_id = ?`).run(projectId, workspaceId).changes > 0
   })()

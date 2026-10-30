@@ -47,6 +47,7 @@ test('Given 用户调整忽略范围 When 重新扫描 Then 更新基线而非�
   await scanProjectFileChanges('ignore-case', root)
   writeFileSync(join(root, '.gravitasignore'), '# 本地文件\nprivate/\n')
   expect(await scanProjectFileChanges('ignore-case', root)).toEqual([])
+  expect((await readProjectFileChanges('ignore-case', root)).baselineReset?.reason).toBe('ignore_changed')
   writeFileSync(join(root, 'private', 'note.txt'), 'changed')
   expect(await scanProjectFileChanges('ignore-case', root)).toEqual([])
   writeFileSync(join(root, '.gravitasignore'), '../outside\n')
