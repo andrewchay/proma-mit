@@ -10,8 +10,8 @@ interface PolicyRow { revision: string; enabled_at: number; ignore_digest: strin
 
 /** 将原始忽略文件内容绑定到授权；读取失败时不沿用旧授权。 */
 function ignoreDigest(root: string): string {
-  const rootInfo = lstatSync(root)
-  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink()) throw new Error('项目目录不可用于授权')
+  const rootInfo = lstatSync(root, { bigint: true })
+  if (!rootInfo.isDirectory() || rootInfo.isSymbolicLink() || rootInfo.ino === 0n) throw new Error('项目目录不可用于授权')
   const rootIdentity = `${rootInfo.dev}:${rootInfo.ino}:`
   let fd: number
   try { fd = openSync(join(root, '.gravitasignore'), constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0) | (constants.O_NONBLOCK ?? 0)) }

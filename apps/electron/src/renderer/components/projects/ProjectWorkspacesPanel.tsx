@@ -234,7 +234,7 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
                 </div>
                 {workspaces.find(workspace => workspace.id === binding.workspaceId)?.rootPath && Object.hasOwn(policies, binding.workspaceId) && <label className="mt-3 flex items-start gap-2 text-xs text-muted-foreground">
                   <input type="checkbox" checked={Boolean(policies[binding.workspaceId])} disabled={busy} onChange={event => void changePolicy(binding.workspaceId, event.target.checked)} />
-                  <span>允许 Owner 自动分析之后的文件变化。路径及变化摘要会用于模型分析；需已有有效管理授权和预算，不会自动修改任务或派工。关闭、解绑、忽略规则或目录身份变化、无法核对范围时不再启动旧观察；升级或范围变化后可能需要重新开启。</span>
+                  <span>允许 Owner 自动分析之后的文件变化。路径及变化摘要会用于模型分析；需已有有效管理授权和预算，不会自动修改任务或派工。关闭、解绑、忽略规则或目录身份变化、无法核对范围时不再启动旧观察；升级或范围变化后可能需要重新开启；无法识别目录身份时不能开启。</span>
                 </label>}
                 {Object.hasOwn(changes, binding.workspaceId) && <div className="mt-3 rounded-lg bg-muted/40 p-3 text-xs">
                   <p className="text-muted-foreground">最近最多 100 条记录，仅供查看；首次扫描建立基线，未包含文件正文，也未发送给 Owner。</p>
