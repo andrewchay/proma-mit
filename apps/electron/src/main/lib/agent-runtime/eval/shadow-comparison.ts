@@ -167,8 +167,17 @@ export function compareShadowRuns(
   candidate: ShadowRunResult,
   options: ShadowComparisonOptions = {},
 ): ShadowComparison {
+  return compareShadowRunsWithReasons(baseline, candidate, options, [])
+}
+
+function compareShadowRunsWithReasons(
+  baseline: ShadowRunResult,
+  candidate: ShadowRunResult,
+  options: ShadowComparisonOptions,
+  initialReasons: string[],
+): ShadowComparison {
   const threshold = options.deltaThreshold ?? 0.02
-  const reasons: string[] = []
+  const reasons = [...initialReasons]
 
   if (finiteNonNegative(threshold) === null) reasons.push('差值阈值无效')
   if (baseline.cases.length === 0 || candidate.cases.length === 0) reasons.push('评测 case 为空')
@@ -301,7 +310,8 @@ export function describeShadowResources(resources: ShadowResourceComparison): st
 }
 
 /**
- * 把 scoreboard 里的一次评测转成影子对比输入。
+ * 把 scoreboard 里的一次评测转成影子对比输入。版本来自调用方，
+ * 此转换不核验来源，不应将其直接作为历史评测可比的证据。
  *
  * scoreboard 分数是 0..100，本模块统一用 0..1；越界或非有限的 case 分数按"缺分"
  * 处理（由 compareShadowRuns 判为不可比），不做裁剪、不按 0 计。
@@ -336,14 +346,13 @@ export interface ScoreboardShadowInput {
 /**
  * 用同一次基准的定义比较两条已落盘评测（基线版本 vs 候选版本）。
  *
- * 版本号来自基准定义本身：两侧共用同一 benchmark/rubric 版本，因此可比性只取决于
- * case 集合与分数完整性。历史评测未记录基准版本，调用方须自行核验两次评测
- * 确实使用了该基准定义，不能据此证明版本来源。
+ * 历史评测未记录其基准和评分规则来源，当前定义不能作为历史证据；
+ * 在评测记录获得可核验来源之前始终返回不可比，但保留案例及资源明细。
  */
 export function compareScoreboardEvaluations(input: ScoreboardShadowInput): ShadowComparison {
   const benchmarkVersion = (input.benchmark as { version?: number }).version ?? 1
   const rubricVersion = (input.benchmark as { rubricVersion?: number }).rubricVersion ?? 1
-  return compareShadowRuns(
+  return compareShadowRunsWithReasons(
     shadowRunFromEvaluation(input.baseline, { label: 'baseline', benchmarkVersion, rubricVersion }),
     shadowRunFromEvaluation(input.candidate, { label: 'candidate', benchmarkVersion, rubricVersion }),
     {
@@ -352,6 +361,7 @@ export function compareScoreboardEvaluations(input: ScoreboardShadowInput): Shad
       ...(input.maxCostIncreaseRatio === undefined ? {} : { maxCostIncreaseRatio: input.maxCostIncreaseRatio }),
       ...(input.maxLatencyIncreaseRatio === undefined ? {} : { maxLatencyIncreaseRatio: input.maxLatencyIncreaseRatio }),
     },
+    ['评测基准版本来源未核验，无法确认使用的基准与评分规则'],
   )
 }
 
