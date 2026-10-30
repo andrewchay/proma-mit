@@ -7,7 +7,7 @@
  *
  * 布局规则：
  * - 左侧边栏、中间主区、右侧文件面板两两之间无视觉间隔（不设 padding）。
- * - 左侧边栏宽度可拖拽调整（min 200 / max 440），持久化到 localStorage。
+ * - 左侧边栏宽度可拖拽调整（min 224 / max 440），持久化到 localStorage。
  * - 右侧文件面板打开时紧贴主区右侧，关闭时主区保留窗口右缘 padding。
  */
 
@@ -28,7 +28,7 @@ import { cn } from '@/lib/utils'
 const MIN_RIGHT_PANEL_WIDTH = 220
 const MAX_RIGHT_PANEL_WIDTH = 960
 
-const MIN_LEFT_SIDEBAR_WIDTH = 200
+const MIN_LEFT_SIDEBAR_WIDTH = 224
 const MAX_LEFT_SIDEBAR_WIDTH = 440
 
 function clampRightPanelWidth(width: number): number {
