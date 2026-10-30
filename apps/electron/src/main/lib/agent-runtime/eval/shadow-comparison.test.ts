@@ -201,6 +201,30 @@ describe('compareScoreboardEvaluations（scoreboard 适配）', () => {
     expect(result.verdict).toBe('candidate_better')
   })
 
+  test('Given 两侧同时缺少同一基准 case When 比较 Then 不可比', async () => {
+    const { compareScoreboardEvaluations } = await import('./shadow-comparison')
+    const result = compareScoreboardEvaluations({
+      benchmark,
+      baseline: evaluation(1, [['c1', 60]]),
+      candidate: evaluation(2, [['c1', 80]]),
+    })
+    expect(result.verdict).toBe('inconclusive')
+    expect(result.reasons.join()).toContain('基准 case 不匹配')
+    expect(result.meanDelta).toBeNull()
+    expect(result.resources.gate).toBe('unverified')
+  })
+
+  test('Given 两侧有相同的额外 case 或基准含重复项 When 比较 Then 不可比', async () => {
+    const { compareScoreboardEvaluations } = await import('./shadow-comparison')
+    const left = evaluation(1, [['c1', 60], ['c2', 70], ['extra', 80]])
+    const right = evaluation(2, [['c1', 80], ['c2', 90], ['extra', 90]])
+    expect(compareScoreboardEvaluations({ benchmark, baseline: left, candidate: right }).comparable).toBe(false)
+    const duplicate = { ...benchmark, cases: ['c1', 'c1', 'c2'] }
+    const complete = evaluation(1, [['c1', 60], ['c2', 70]])
+    expect(compareScoreboardEvaluations({ benchmark: duplicate, baseline: complete, candidate: complete }).comparable).toBe(false)
+    expect(compareScoreboardEvaluations({ benchmark: { ...benchmark, cases: [] }, baseline: complete, candidate: complete }).comparable).toBe(false)
+  })
+
   test('Given 候选缺一个 case When 比较 Then 不可比并指出缺哪个', async () => {
     const { compareScoreboardEvaluations } = await import('./shadow-comparison')
     const result = compareScoreboardEvaluations({
