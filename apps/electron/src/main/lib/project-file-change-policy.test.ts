@@ -40,6 +40,7 @@ test('Given 用户授权文件变化 When 重复接收同一批观察或撤销�
   const first = recordProjectFileChangeObservation(project.id, workspace.id, [event])!
   expect(recordProjectFileChangeObservation(project.id, workspace.id, [event])?.id).toBe(first.id)
   expect(getAuthorizedProjectFileChangeObservation(project.id, first.id)).toEqual(first)
+  expect(() => recordProjectFileChangeObservation(project.id, workspace.id, [{ ...event, path: 'different.ts' }])).toThrow('内容不一致')
   expect(recordProjectFileChangeObservation(project.id, workspace.id, [{ ...event, observedAt: policy.enabledAt }])).toBeNull()
   setProjectFileChangePolicy(project.id, workspace.id, false)
   expect(getAuthorizedProjectFileChangeObservation(project.id, first.id)).toBeNull()

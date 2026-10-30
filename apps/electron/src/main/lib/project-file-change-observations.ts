@@ -30,7 +30,11 @@ export function recordProjectFileChangeObservation(projectId: string, workspaceI
   const content = { ...identity, changes: selected, retainedChanges: changes.length, historyBounded: true as const }
   const contentHash = createHash('sha256').update(JSON.stringify(content)).digest('hex')
   const observation: ProjectFileChangeObservation = { id, ...content, contentHash }
-  getProjectDb().prepare('INSERT OR IGNORE INTO project_file_change_observations (id, project_id, workspace_id, policy_revision, observed_at, payload) VALUES (?, ?, ?, ?, ?, ?)').run(id, projectId, workspaceId, policy.revision, observedAt, JSON.stringify(observation))
+  const database = getProjectDb()
+  const payload = JSON.stringify(observation)
+  database.prepare('INSERT OR IGNORE INTO project_file_change_observations (id, project_id, workspace_id, policy_revision, observed_at, payload) VALUES (?, ?, ?, ?, ?, ?)').run(id, projectId, workspaceId, policy.revision, observedAt, payload)
+  const stored = database.prepare('SELECT payload FROM project_file_change_observations WHERE id = ?').get(id) as { payload: string } | undefined
+  if (!stored || stored.payload !== payload) throw new Error('同一文件变化批次的内容不一致，拒绝继续处理')
   return observation
 }
 
@@ -58,6 +62,9 @@ export async function reconcileProjectFileChangeObservations(workspaceId: string
     batches.set(event.observedAt, batch)
   }
   for (const binding of bindings) {
-    for (const batch of batches.values()) recordProjectFileChangeObservation(binding.projectId, workspaceId, batch)
+    for (const batch of batches.values()) {
+      try { recordProjectFileChangeObservation(binding.projectId, workspaceId, batch) }
+      catch (error) { console.warn('[项目变化观察] 批次不一致，保留原观察并跳过:', error) }
+    }
   }
 }
