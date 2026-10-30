@@ -125,6 +125,7 @@ let mainWin: BrowserWindow | null = null
 export function startWorkspaceWatcher(win: BrowserWindow): void {
   mainWin = win
   syncProjectRootWatchers()
+  rescanProjectRoots()
   if (!projectRootRetryTimer) projectRootRetryTimer = setInterval(syncProjectRootWatchers, WATCHER_RESTART_DELAY_MS)
   const watchDir = getAgentWorkspacesDir()
 

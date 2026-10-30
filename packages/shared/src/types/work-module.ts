@@ -377,6 +377,12 @@ export interface ProjectWorkspaceFileChange {
   observedAt: number
 }
 
+export interface ProjectWorkspaceFileChangesView {
+  changes: ProjectWorkspaceFileChange[]
+  lastScannedAt: number | null
+  scanError: string | null
+}
+
 /** Project ↔ AgentWorkspace 绑定记录：正式绑定仅表示授权，不代表资料共享 */
 export interface ProjectWorkspaceBinding {
   projectId: string

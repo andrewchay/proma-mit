@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 import { getProjectsDir } from './config-paths'
+import type { ProjectWorkspaceFileChangesView } from '@gravitas/shared'
 
 const ignored = new Set(['.git', 'node_modules', '.next', '.nuxt', 'dist', 'build', '.cache', '__pycache__', '.turbo', '.parcel-cache', '.svelte-kit'])
 const MAX_FILES = 20000
@@ -10,7 +11,8 @@ const MAX_EVENTS = 1000
 
 interface FileMetadata { size: number; modified: number }
 export interface ProjectFileChange { path: string; kind: 'added' | 'modified' | 'deleted'; observedAt: number }
-interface Snapshot { version: 1; root: string; files: Record<string, FileMetadata>; events: ProjectFileChange[] }
+interface Snapshot { version: 1; root: string; files: Record<string, FileMetadata>; events: ProjectFileChange[]; scannedAt?: number }
+const scanErrors = new Map<string, { root: string; message: string }>()
 
 function snapshotPath(workspaceId: string): string {
   const key = createHash('sha256').update(workspaceId).digest('hex')
@@ -39,6 +41,17 @@ async function collect(root: string): Promise<Record<string, FileMetadata>> {
 
 /** 扫描失败时不写入快照，避免把不可读目录误判为文件删除。首次扫描仅建立基线。 */
 export async function scanProjectFileChanges(workspaceId: string, root: string): Promise<ProjectFileChange[]> {
+  try {
+    const result = await scanProjectFileChangesInternal(workspaceId, root)
+    scanErrors.delete(workspaceId)
+    return result
+  } catch (error) {
+    scanErrors.set(workspaceId, { root, message: error instanceof Error ? error.message : '扫描失败' })
+    throw error
+  }
+}
+
+async function scanProjectFileChangesInternal(workspaceId: string, root: string): Promise<ProjectFileChange[]> {
   const path = snapshotPath(workspaceId)
   let previous: Snapshot | undefined
   try {
@@ -59,7 +72,7 @@ export async function scanProjectFileChanges(workspaceId: string, root: string):
     }
     for (const name of Object.keys(previous.files)) if (!files[name]) changes.push({ path: name, kind: 'deleted', observedAt: now })
   }
-  const next: Snapshot = { version: 1, root, files, events: [...(previous?.events ?? []), ...changes].slice(-MAX_EVENTS) }
+  const next: Snapshot = { version: 1, root, files, events: [...(previous?.events ?? []), ...changes].slice(-MAX_EVENTS), scannedAt: now }
   await mkdir(join(getProjectsDir(), 'file-changes'), { recursive: true })
   const temp = `${path}.${randomUUID()}.tmp`
   try {
@@ -72,13 +85,13 @@ export async function scanProjectFileChanges(workspaceId: string, root: string):
 }
 
 /** 用户主动查看工作区记录；不读取文件正文。 */
-export async function readProjectFileChanges(workspaceId: string, root: string): Promise<ProjectFileChange[] | null> {
+export async function readProjectFileChanges(workspaceId: string, root: string): Promise<ProjectWorkspaceFileChangesView> {
   try {
     const snapshot: Snapshot = JSON.parse(await readFile(snapshotPath(workspaceId), 'utf8'))
     if (snapshot.version !== 1 || snapshot.root !== root || !Array.isArray(snapshot.events) || snapshot.events.some(event => !event || typeof event.path !== 'string' || !['added', 'modified', 'deleted'].includes(event.kind) || !Number.isFinite(event.observedAt))) throw new Error('项目文件快照无效')
-    return snapshot.events.slice(-100).reverse()
+    return { changes: snapshot.events.slice(-100).reverse(), lastScannedAt: typeof snapshot.scannedAt === 'number' ? snapshot.scannedAt : null, scanError: scanErrors.get(workspaceId)?.root === root ? scanErrors.get(workspaceId)!.message : null }
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { changes: [], lastScannedAt: null, scanError: scanErrors.get(workspaceId)?.root === root ? scanErrors.get(workspaceId)!.message : null }
     throw error
   }
 }

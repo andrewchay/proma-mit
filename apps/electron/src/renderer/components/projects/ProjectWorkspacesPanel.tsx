@@ -1,7 +1,7 @@
 import * as React from 'react'
 import { atom, useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { editOwnerMessageAtom, getOwnerMessageComposer, ownerConversationNavigationAtom, ownerMessageComposersAtom } from '../../atoms/project-owner-management-atoms'
-import type { AgentWorkspace, ProjectWorkspaceBinding, ProjectWorkspaceFileChange } from '@gravitas/shared'
+import type { AgentWorkspace, ProjectWorkspaceBinding, ProjectWorkspaceFileChangesView } from '@gravitas/shared'
 import { prepareProjectChangeMessage } from './project-file-change-message'
 
 /**
@@ -38,7 +38,7 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
   const [apiMissing, setApiMissing] = React.useState(false)
   const [message, setMessage] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
-  const changesAtom = React.useMemo(() => atom<Record<string, ProjectWorkspaceFileChange[] | null>>({}), [])
+  const changesAtom = React.useMemo(() => atom<Record<string, ProjectWorkspaceFileChangesView>>({}), [])
   const [changes, setChanges] = useAtom(changesAtom)
   const composers = useAtomValue(ownerMessageComposersAtom)
   const editOwnerMessage = useSetAtom(editOwnerMessageAtom)
@@ -129,7 +129,7 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
   }
 
   const prepareOwnerAnalysis = (workspaceId: string): void => {
-    const events = changes[workspaceId]?.slice(0, 20) ?? []
+    const events = changes[workspaceId]?.changes.slice(0, 20) ?? []
     if (!events.length) return
     const subject = { projectId }
     const composer = getOwnerMessageComposer(composers, subject)
@@ -192,8 +192,10 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
                 </div>
                 {Object.hasOwn(changes, binding.workspaceId) && <div className="mt-3 rounded-lg bg-muted/40 p-3 text-xs">
                   <p className="text-muted-foreground">最近最多 100 条记录，仅供查看；首次扫描建立基线，未包含文件正文，也未发送给 Owner。</p>
-                  {(changes[binding.workspaceId]?.length ?? 0) > 0 && <button type="button" className="mt-2 text-primary underline" onClick={() => prepareOwnerAnalysis(binding.workspaceId)}>将最近 20 条加入 Owner 消息草稿</button>}
-                  {changes[binding.workspaceId] === null ? <p className="mt-2">尚未建立扫描基线，或项目目录当前不可用。</p> : changes[binding.workspaceId]!.length === 0 ? <p className="mt-2">暂无已记录变化。</p> : <ul className="mt-2 max-h-64 space-y-1 overflow-auto">{changes[binding.workspaceId]!.map((change, index) => <li key={`${change.observedAt}-${index}`} className="break-all">{new Date(change.observedAt).toLocaleString()} · {change.kind === 'added' ? '新增' : change.kind === 'deleted' ? '删除' : '修改'} · {change.path}</li>)}</ul>}
+                  {(changes[binding.workspaceId]?.changes.length ?? 0) > 0 && <button type="button" className="mt-2 text-primary underline" onClick={() => prepareOwnerAnalysis(binding.workspaceId)}>将最近 20 条加入 Owner 消息草稿</button>}
+                  {changes[binding.workspaceId]!.scanError && <p role="alert" className="mt-2 text-destructive">最近扫描失败，记录可能过期：{changes[binding.workspaceId]!.scanError}</p>}
+                  <p className="mt-2 text-muted-foreground">{changes[binding.workspaceId]!.lastScannedAt ? `上次成功扫描：${new Date(changes[binding.workspaceId]!.lastScannedAt!).toLocaleString()}` : '尚无可确认的成功扫描时间。'}</p>
+                  {changes[binding.workspaceId]!.changes.length === 0 ? <p className="mt-2">暂无已记录变化。</p> : <ul className="mt-2 max-h-64 space-y-1 overflow-auto">{changes[binding.workspaceId]!.changes.map((change, index) => <li key={`${change.observedAt}-${index}`} className="break-all">{new Date(change.observedAt).toLocaleString()} · {change.kind === 'added' ? '新增' : change.kind === 'deleted' ? '删除' : '修改'} · {change.path}</li>)}</ul>}
                 </div>}
               </div>
             ))}
