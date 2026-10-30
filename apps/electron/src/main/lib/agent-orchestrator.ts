@@ -901,12 +901,27 @@ export class AgentOrchestrator {
       const durationMs = startedAt ? Date.now() - startedAt : 0
       logInfo(sessionId, `[${agentRuntime} runtime] 会话完成 模型=${modelId ?? '-'} 耗时=${durationMs}ms 消息=${accumulatedMessages.length}`)
       trackSessionFinished(sessionId, durationMs, { runtime: agentRuntime })
+      // 某些 Provider 会将 abort 收敛为正常返回；完成终态仍以已接受的停止事实为准。
+      const stoppedByUser = this.stoppedBySessions.delete(sessionId)
+      if (stoppedByUser) {
+        try { updateAgentSessionMeta(sessionId, { stoppedByUser: true }) } catch { /* 会话可能已删除 */ }
+      }
       callbacks.onComplete(accumulatedMessages as unknown as AgentMessage[], {
         startedAt,
+        stoppedByUser,
         runtimeResult: [...accumulatedMessages].reverse().find((message): message is SDKResultMessage => message.type === 'result'),
       })
     } catch (error) {
+      // 只有已接受停止导致的 AbortError 才是预期取消；准备阶段的失效等错误仍必须向上抛出。
       const message = error instanceof Error ? error.message : String(error)
+      const wasStoppedByUser = this.stoppedBySessions.has(sessionId)
+        && ((error instanceof Error && error.name === 'AbortError') || message.includes('中止') || message.includes('aborted'))
+      if (wasStoppedByUser) {
+        this.stoppedBySessions.delete(sessionId)
+        try { updateAgentSessionMeta(sessionId, { stoppedByUser: true }) } catch { /* 会话可能已删除 */ }
+        callbacks.onComplete(getAgentSessionMessages(sessionId), { stoppedByUser: true, startedAt })
+        return
+      }
       const durationMs = startedAt ? Date.now() - startedAt : 0
       logError(sessionId, `[${agentRuntime} runtime] 运行失败 模型=${modelId ?? '-'} 耗时=${durationMs}ms 错误=${message.slice(0, 300)}`)
       trackSessionFinished(sessionId, durationMs, { runtime: agentRuntime, failed: true })
@@ -1206,12 +1221,27 @@ export class AgentOrchestrator {
       const durationMs = startedAt ? Date.now() - startedAt : 0
       logInfo(sessionId, `[Pi Runtime] 会话完成 模型=${modelId ?? '-'} 耗时=${durationMs}ms 消息=${accumulatedMessages.length}`)
       trackSessionFinished(sessionId, durationMs, { runtime: 'pi' })
+      // 某些 Provider 会将 abort 收敛为正常返回；完成终态仍以已接受的停止事实为准。
+      const stoppedByUser = this.stoppedBySessions.delete(sessionId)
+      if (stoppedByUser) {
+        try { updateAgentSessionMeta(sessionId, { stoppedByUser: true }) } catch { /* 会话可能已删除 */ }
+      }
       callbacks.onComplete(accumulatedMessages as unknown as AgentMessage[], {
         startedAt,
+        stoppedByUser,
         runtimeResult: [...accumulatedMessages].reverse().find((message): message is SDKResultMessage => message.type === 'result'),
       })
     } catch (error) {
+      // 只有已接受停止导致的 AbortError 才是预期取消；准备阶段的失效等错误仍必须向上抛出。
       const message = error instanceof Error ? error.message : String(error)
+      const wasStoppedByUser = this.stoppedBySessions.has(sessionId)
+        && ((error instanceof Error && error.name === 'AbortError') || message.includes('中止') || message.includes('aborted'))
+      if (wasStoppedByUser) {
+        this.stoppedBySessions.delete(sessionId)
+        try { updateAgentSessionMeta(sessionId, { stoppedByUser: true }) } catch { /* 会话可能已删除 */ }
+        callbacks.onComplete(getAgentSessionMessages(sessionId), { stoppedByUser: true, startedAt })
+        return
+      }
       const durationMs = startedAt ? Date.now() - startedAt : 0
       logError(sessionId, `[Pi Runtime] 运行失败 模型=${modelId ?? '-'} 耗时=${durationMs}ms 错误=${message.slice(0, 300)}`)
       trackSessionFinished(sessionId, durationMs, { runtime: 'pi', failed: true })
