@@ -10,7 +10,7 @@
  * 本模块与具体 Agent 定义存储解耦：候选应用/回滚由调用方注入，便于单测与接入现有 runtime。
  */
 
-import { appendEvaluation, readScoreboard } from './benchmark-store'
+import { appendEvaluation } from './benchmark-store'
 import { meanStd } from './evaluator'
 import type { BenchmarkConfig, BenchmarkEvaluation, HeldOutReport, JudgeIdentity, SelfEvolveChange, SelfEvolveRoundResult } from './types'
 
@@ -138,7 +138,6 @@ function buildEvaluation(
  * @returns baseline + 每轮候选的接受/回滚决策。
  */
 export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
-  const sc = readScoreboard(input.benchmark.id)
   const baselineVersion = input.state.version()
 
   // 1) Baseline
@@ -147,10 +146,8 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
   if (baselineScore === null) throw new Error('训练集基线评测不完整，不能生成候选')
   // held-out baseline 同时用于记录与候选门禁，避免同一轮重复消耗评测预算。
   const heldOutBaseline = input.evaluateHeldOut ? await input.evaluateHeldOut(undefined, input.benchmark) : null
-  // 记录 baseline 到 scoreboard（若无同版本记录）
-  if (!sc.evaluations.some((e) => e.agentVersion === baselineVersion)) {
-    appendEvaluation(input.benchmark.id, buildEvaluation(input.benchmark, baselineVersion, baselineByCase, new Date().toISOString(), input.judge, heldOutBaseline))
-  }
+  // 每次实际完成的基线都是独立观测，即使被测版本相同也保留。
+  appendEvaluation(input.benchmark.id, buildEvaluation(input.benchmark, baselineVersion, baselineByCase, new Date().toISOString(), input.judge, heldOutBaseline))
 
   // 2) 迭代候选
   const rounds: SelfEvolveRoundResult[] = []
