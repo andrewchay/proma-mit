@@ -1,5 +1,5 @@
 import { afterAll, expect, mock, test } from 'bun:test'
-import { mkdtempSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -53,4 +53,17 @@ test('Given 用户调整忽略范围 When 重新扫描 Then 更新基线而非�
   await expect(scanProjectFileChanges('ignore-case', root)).rejects.toThrow('相对路径')
   writeFileSync(join(root, '.gravitasignore'), '# 本地文件\nprivate/\n')
   expect((await scanProjectFileChanges('ignore-case', root)).map(event => event.path)).toEqual(['.gravitasignore'])
+})
+
+
+test('Given 文件内容等长修改且修改时间被还原 When 扫描 Then 通过状态变更时间发现变化', async () => {
+  const file = join(root, 'same-size.txt')
+  writeFileSync(file, 'before')
+  await scanProjectFileChanges('ctime-case', root)
+  const original = statSync(file)
+  await new Promise(resolve => setTimeout(resolve, 20))
+  writeFileSync(file, 'after!')
+  utimesSync(file, original.atime, original.mtime)
+  const events = await scanProjectFileChanges('ctime-case', root)
+  expect(events.some(event => event.path === 'same-size.txt' && event.kind === 'modified')).toBe(true)
 })

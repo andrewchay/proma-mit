@@ -9,7 +9,7 @@ const ignored = new Set(['.git', 'node_modules', '.next', '.nuxt', 'dist', 'buil
 const MAX_FILES = 20000
 const MAX_EVENTS = 1000
 
-interface FileMetadata { size: number; modified: number }
+interface FileMetadata { size: number; modified: number; changed?: number }
 export interface ProjectFileChange { path: string; kind: 'added' | 'modified' | 'deleted'; observedAt: number }
 interface Snapshot { version: 1; root: string; files: Record<string, FileMetadata>; events: ProjectFileChange[]; scannedAt?: number; ignorePrefixes?: string[] }
 const scanErrors = new Map<string, { root: string; message: string }>()
@@ -50,7 +50,7 @@ async function collect(root: string, ignorePrefixes: string[]): Promise<Record<s
       else if (entry.isFile()) {
         if (++count > MAX_FILES) throw new Error('文件数量超过项目变化扫描上限')
         const info = await stat(path)
-        files[name] = { size: info.size, modified: info.mtimeMs }
+        files[name] = { size: info.size, modified: info.mtimeMs, changed: info.ctimeMs }
       }
     }
   }
@@ -88,7 +88,7 @@ async function scanProjectFileChangesInternal(workspaceId: string, root: string)
     for (const [name, info] of Object.entries(files)) {
       const old = Object.hasOwn(previous.files, name) ? previous.files[name] : undefined
       if (!old) changes.push({ path: name, kind: 'added', observedAt: now })
-      else if (old.size !== info.size || old.modified !== info.modified) changes.push({ path: name, kind: 'modified', observedAt: now })
+      else if (old.size !== info.size || old.modified !== info.modified || (old.changed !== undefined && old.changed !== info.changed)) changes.push({ path: name, kind: 'modified', observedAt: now })
     }
     for (const name of Object.keys(previous.files)) if (!files[name]) changes.push({ path: name, kind: 'deleted', observedAt: now })
   }
