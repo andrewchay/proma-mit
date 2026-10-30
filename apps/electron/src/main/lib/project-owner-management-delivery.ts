@@ -1,6 +1,6 @@
 import { readOwnerGrantUsage } from './project-owner-execution-settlement'
 /** 将准确成果及逐项检查送入Owner分析；不授予验收或业务动作权限。 */
-import type { OwnerExecutionObservation, OwnerExecutionRevalidationRecord, OwnerExecutionRevalidationTask, OwnerManagementDeliveryItem, OwnerManagementDeliveryReview } from '@gravitas/shared'
+import type { OwnerExecutionObservation, OwnerExecutionRevalidationRecord, OwnerExecutionRevalidationTask, OwnerManagementDeliveryItem, OwnerManagementDeliveryReview, ProjectOwnerPlanDraft } from '@gravitas/shared'
 import { readOwnerTextDelivery, assertOwnerReviewerTextDelivery } from './project-owner-text-delivery'
 import { listOwnerTechnicalReviewEvidence } from './project-owner-technical-review'
 import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
@@ -12,7 +12,7 @@ import { isCompletedStatus } from './task-status-logic'
 import * as store from './project-sqlite-store'
 import { appendOwnerManagementMessage, getOwnerManager } from './project-owner-management-store'
 
-export function readOwnerManagementDelivery(projectId: string, observation: OwnerExecutionObservation): OwnerManagementDeliveryReview {
+export function readOwnerManagementDelivery(projectId: string, observation: OwnerExecutionObservation, recoverySnapshot?: { qualityRecovery: OwnerManagementDeliveryReview['qualityRecovery'] }): OwnerManagementDeliveryReview {
   const base = { version: 1 as const }
   if (observation.trigger !== 'terminal' || observation.executionStatus !== 'completed') return { ...base, state: 'unavailable', detail: '本次工作没有完整完成成果，不能作质量结论。' }
   try {
@@ -40,7 +40,8 @@ export function readOwnerManagementDelivery(projectId: string, observation: Owne
       if (!Number.isSafeInteger(reworkOrdinal)) throw new Error('Owner质量额度缺少成果返工轮次')
       result.qualityDecisionVersion = 1
       result.qualityLimits = { maxRework: frozen.budget.maxRework, remainingRework: Math.max(0, frozen.budget.maxRework - reworkOrdinal!), remainingRuns: Math.max(0, frozen.budget.maxRuns - usage.runReservations), remainingCostMicros: Math.max(0, frozen.budget.maxCostMicros - usage.committedCostMicros) }
-      result.qualityRecovery = getOwnerQualityRecovery(projectId, observation.commandId) ?? undefined
+      // 恢复提示属于冻结输入；当前权限和阻断条件在应用决定时另行实时复核。
+      result.qualityRecovery = recoverySnapshot ? recoverySnapshot.qualityRecovery : getOwnerQualityRecovery(projectId, observation.commandId) ?? undefined
     }
     if (JSON.stringify(result).length > 140000) return { ...base, state: 'unavailable', detail: '完整成果与检查的JSON超出140000字符管理输入上限；正文保留，不截断为通过依据，需要调整交付后再审。' }
     return result
@@ -114,6 +115,19 @@ function publishGrantCompletion(projectId: string, grant: OwnerDeliveryGrant): b
     role: 'assistant', kind: 'delivery', delivery,
     content: `本轮工作已完成，Owner已按约定标准验收并核对独立评审。以下保留员工提交的成果原文；验收与评审不代表外部事实已另行证实。` })
   return true
+}
+
+/** 当前方案的全部步骤已形成交付后，旧安排不得再消耗模型额度；新反馈须先形成新方案版本。 */
+export function hasCompleteOwnerManagementDelivery(projectId: string, taskId: string | undefined, plan: ProjectOwnerPlanDraft): boolean {
+  if (plan.proposal.steps.length === 0) return false
+  const rows = store.getProjectDb().prepare("SELECT payload FROM project_owner_management_messages WHERE project_id=? AND json_extract(payload, '$.kind')='delivery' AND json_extract(payload, '$.taskId') IS ?").all(projectId, taskId ?? null) as Array<{ payload: string }>
+  const delivered = new Set<string>()
+  for (const row of rows) {
+    const message = JSON.parse(row.payload) as { delivery?: { planVersion?: number; items?: Array<{ stepKey?: unknown }> } }
+    if (message.delivery?.planVersion !== plan.planVersion) continue
+    for (const item of message.delivery.items ?? []) if (typeof item.stepKey === 'string') delivered.add(item.stepKey)
+  }
+  return plan.proposal.steps.every(step => delivered.has(step.key))
 }
 
 /** 每份授权批次独立检查；较新的未完成批次不能挡住已完成批次回到Owner对话。 */

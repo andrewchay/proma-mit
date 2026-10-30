@@ -16,6 +16,7 @@ import { getPilotPolicy } from './project-pilot-policy'
 import { getOwnerTeamWorkspaceProposal } from './project-owner-team-workspace-access'
 import { ensureOwnerDefaultTeam } from './project-owner-default-team'
 import { saveOwnerExecutionStartIntent } from './project-owner-execution-start-intent'
+import { hasCompleteOwnerManagementDelivery } from './project-owner-management-delivery'
 import * as store from './project-sqlite-store'
 
 export function isRecoverableOwnerAssignmentRejection(detail: string): boolean {
@@ -71,6 +72,7 @@ export function prepareOwnerManagementAssignment(event: OwnerManagementEvent): v
     || event.kind === 'team_changed' && plan.revision !== event.sourceRevision
     || event.kind === 'team_changed' && plan.state !== 'confirmed' && !(plan.state === 'proposed' && event.sourceId?.startsWith('team-access:') && getOwnerManagementDelegation(event.projectId, event.taskId).state === 'active')
     || !['planning_result', 'plan_confirmed', 'team_changed', 'delegation_confirmed', 'assignment_recheck'].includes(event.kind)) return
+  if (hasCompleteOwnerManagementDelivery(event.projectId, event.taskId, plan)) return
   const binding = getOwnerRuntimeBinding(event.projectId)
   if (!binding) throw new Error('Owner安排缺少有效模型绑定')
   if (!getOwnerTeamWorkspaceProposal(event.projectId, event.taskId)) ensureOwnerDefaultTeam(event.projectId, binding, plan.proposal.steps.map(step => step.roleKey))

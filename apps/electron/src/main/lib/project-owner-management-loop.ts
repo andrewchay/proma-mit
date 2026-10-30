@@ -11,7 +11,7 @@ import { appendOwnerManagementMessage, appendOwnerManagementTrace, consumeOwnerM
 import * as store from './project-sqlite-store'
 import { scanOwnerExecutionObservations } from './project-owner-management-execution'
 import { readOwnerPlanningSnapshot } from './project-owner-planning-source'
-import { publishOwnerManagementCompletion } from './project-owner-management-delivery'
+import { hasCompleteOwnerManagementDelivery, publishOwnerManagementCompletion } from './project-owner-management-delivery'
 import { onOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
 import { listOwnerExecutionAssignmentRuns } from './project-owner-execution-assignment-service'
 import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt, recoverLegacyOwnerConversationReply, recoverLegacyOwnerAssignmentProposal } from './project-owner-planning-run-service'
@@ -311,9 +311,10 @@ function recoverMissingProposedPlanAssignment(projectId: string): void {
 }
 
 /** 主进程生命周期，不依赖页面挂载。旧项目无管理身份不会被启动扫描启用。 */
-export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementChanged) => void): () => void {
+export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementChanged) => void): () => Promise<void> {
   let stopped = false
   const inFlight = new Set<string>(), pending = new Set<string>()
+  const inFlightTasks = new Map<string, Promise<void>>()
   /**
    * 失败退避：对账失败多为"来源/回执不匹配"这类确定性错误，立即重试只会空转。
    * 次数与截止持久化到 SQLite，重启后继续退避；同一错误第 3 次起只提示一次。
@@ -353,7 +354,7 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
     }
     if (inFlight.has(projectId)) { pending.add(projectId); return }
     inFlight.add(projectId)
-    void (async () => {
+    const task = (async () => {
       do {
         pending.delete(projectId)
         if (stopped || getOwnerManager(projectId)?.status !== 'active') break
@@ -418,6 +419,12 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
           }
           try {
             const { startDelegatedOwnerPlanningTask } = await import('./controlled-project-task-service')
+            // 质量对话优先于内部安排；交付可能在安排等待期间形成，启动前必须按当前事实再核验。
+            const currentPlan = subject.purpose === 'owner_execution_assignment' ? getProjectOwnerPlanDraft(projectId, subject.targetTaskId) : null
+            if (currentPlan && hasCompleteOwnerManagementDelivery(projectId, subject.targetTaskId, currentPlan)) {
+              appendOwnerManagementTrace({ eventId: `owner-delivery-arrangement-suppressed:${link.planning_task_id}`, projectId, ...(subject.targetTaskId ? { taskId: subject.targetTaskId } : {}), phase: 'assignment_run', state: 'blocked', createdAt: Date.now(), detailCode: 'no_update' })
+              continue
+            }
             const started = await startDelegatedOwnerPlanningTask(link.planning_task_id)
             if (!['queued', 'running', 'completed'].includes(started.status)) throw new Error('管理运行尚未成功启动，请核对已有记录')
             const responseRun = Boolean(subject.conversationMessageId)
@@ -430,7 +437,12 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
           break
         }
       } while (!stopped && pending.has(projectId))
-    })().catch(cause => console.warn('[Owner管理] 对账失败，保留待处理事件', projectId, cause)).finally(() => { inFlight.delete(projectId); if (!stopped && pending.has(projectId)) run(projectId) })
+    })().catch(cause => console.warn('[Owner管理] 对账失败，保留待处理事件', projectId, cause)).finally(() => {
+      inFlight.delete(projectId)
+      inFlightTasks.delete(projectId)
+      if (!stopped && pending.has(projectId)) run(projectId)
+    })
+    inFlightTasks.set(projectId, task)
   }
   const unsubscribeChanges = onChanged ? onOwnerManagementChanged(onChanged) : () => {}
   const unsubscribe = onOwnerManagementWake(run)
@@ -440,12 +452,14 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
   const timer = setInterval(runAllProjects, 30_000)
   timer.unref?.()
   runAllProjects()
-  return () => {
+  return async () => {
     stopped = true
     if (requestActiveOwnerManagementRescan === runAllProjects) requestActiveOwnerManagementRescan = null
     clearInterval(timer)
     unsubscribe()
     unsubscribeSchedule()
     unsubscribeChanges()
+    // 停止只禁止新动作；已经启动的外部请求保持原账本，等待管理轮次退出后再导出证据。
+    await Promise.allSettled([...inFlightTasks.values()])
   }
 }
