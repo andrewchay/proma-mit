@@ -1,5 +1,6 @@
 import * as React from 'react'
-import type { AgentWorkspace, ProjectWorkspaceBinding } from '@gravitas/shared'
+import { atom, useAtom } from 'jotai'
+import type { AgentWorkspace, ProjectWorkspaceBinding, ProjectWorkspaceFileChange } from '@gravitas/shared'
 
 /**
  * ProjectWorkspacesPanel - 项目「工作空间」面板
@@ -35,6 +36,8 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
   const [apiMissing, setApiMissing] = React.useState(false)
   const [message, setMessage] = React.useState<string | null>(null)
   const [error, setError] = React.useState<string | null>(null)
+  const changesAtom = React.useMemo(() => atom<Record<string, ProjectWorkspaceFileChange[]>>({}), [])
+  const [changes, setChanges] = useAtom(changesAtom)
 
   const load = React.useCallback(async () => {
     setError(null)
@@ -100,12 +103,23 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
     setMessage(null)
     try {
       await api.unbind(projectId, workspaceId)
+      setChanges(previous => { const next = { ...previous }; delete next[workspaceId]; return next })
       setMessage(`已解除「${name}」的绑定。`)
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
+    }
+  }
+
+  const showChanges = async (workspaceId: string): Promise<void> => {
+    setError(null)
+    try {
+      const events = await window.electronAPI.paa.projectWorkspace.listFileChanges(projectId, workspaceId)
+      setChanges(previous => ({ ...previous, [workspaceId]: events }))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -140,7 +154,8 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
         ) : (
           <div className="space-y-2">
             {bindings.map((binding) => (
-              <div key={binding.workspaceId} className="flex items-center gap-3 rounded border p-3">
+              <div key={binding.workspaceId} className="rounded border p-3">
+                <div className="flex items-center gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="text-sm font-medium">{resolveName(binding)}</div>
                   <div className="text-xs text-muted-foreground">
@@ -148,11 +163,20 @@ export function ProjectWorkspacesPanel({ projectId }: ProjectWorkspacesPanelProp
                     {binding.createdAt ? ` · 绑定于 ${new Date(binding.createdAt).toLocaleString()}` : ''}
                   </div>
                 </div>
+                {workspaces.find(workspace => workspace.id === binding.workspaceId)?.rootPath && <button
+                  type="button" onClick={() => void showChanges(binding.workspaceId)}
+                  className="rounded px-2 py-1 text-xs text-primary hover:bg-muted"
+                >查看文件变化</button>}
                 <button
                   onClick={() => void unbind(binding.workspaceId, resolveName(binding))}
                   disabled={busy || apiMissing}
                   className="rounded border px-2 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-50"
                 >解绑</button>
+                </div>
+                {changes[binding.workspaceId] && <div className="mt-3 rounded-lg bg-muted/40 p-3 text-xs">
+                  <p className="text-muted-foreground">最近最多 100 条记录，仅供查看；首次扫描建立基线，未包含文件正文，也未发送给 Owner。</p>
+                  {changes[binding.workspaceId]!.length === 0 ? <p className="mt-2">暂无已记录变化。</p> : <ul className="mt-2 max-h-64 space-y-1 overflow-auto">{changes[binding.workspaceId]!.map((change, index) => <li key={`${change.observedAt}-${index}`} className="break-all">{new Date(change.observedAt).toLocaleString()} · {change.kind === 'added' ? '新增' : change.kind === 'deleted' ? '删除' : '修改'} · {change.path}</li>)}</ul>}
+                </div>}
               </div>
             ))}
           </div>

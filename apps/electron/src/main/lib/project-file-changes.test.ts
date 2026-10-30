@@ -7,7 +7,7 @@ const temp = mkdtempSync(join(tmpdir(), 'gravitas-project-changes-'))
 const root = join(temp, 'root')
 mkdirSync(root)
 mock.module('./config-paths', () => ({ getProjectsDir: () => join(temp, 'data') }))
-const { scanProjectFileChanges } = await import('./project-file-changes')
+const { readProjectFileChanges, scanProjectFileChanges } = await import('./project-file-changes')
 afterAll(() => rmSync(temp, { recursive: true, force: true }))
 
 test('Given 项目已有基线 When 离线增删改文件后重新扫描 Then 记录变化并忽略构建缓存', async () => {
@@ -24,6 +24,7 @@ test('Given 项目已有基线 When 离线增删改文件后重新扫描 Then �
     ['delete.txt', 'deleted'], ['edit.txt', 'modified'], ['new.txt', 'added'],
   ])
   expect(await scanProjectFileChanges('workspace', root)).toEqual([])
+  expect((await readProjectFileChanges('workspace', root)).map(event => event.kind).sort()).toEqual(['added', 'deleted', 'modified'])
 })
 
 test('Given 项目目录不可用 When 扫描失败 Then 原基线仍可用于恢复后比较', async () => {

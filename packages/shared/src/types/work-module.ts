@@ -368,7 +368,14 @@ export const PROJECT_IPC_CHANNELS = {
   UNBIND_WORKSPACE: 'project:unbind-workspace',
   LIST_PROJECT_WORKSPACES: 'project:list-project-workspaces',
   LIST_WORKSPACE_PROJECTS: 'project:list-workspace-projects',
+  LIST_WORKSPACE_FILE_CHANGES: 'project:list-workspace-file-changes',
 } as const
+
+export interface ProjectWorkspaceFileChange {
+  path: string
+  kind: 'added' | 'modified' | 'deleted'
+  observedAt: number
+}
 
 /** Project ↔ AgentWorkspace 绑定记录：正式绑定仅表示授权，不代表资料共享 */
 export interface ProjectWorkspaceBinding {

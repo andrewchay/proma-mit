@@ -200,7 +200,7 @@ bun run generate:icons    # 生成应用图标
 |------|------|
 | `chat-tools/` | Chat 工具实现目录：内置工具函数 |
 | `workspace-watcher.ts` | 工作区文件监听：本地项目根目录、附加目录监听和界面刷新；启动及唤醒时触发项目变化补扫 |
-| `project-file-changes.ts` | 本地项目文件元数据快照和最近增删改记录；首次建立基线，扫描失败不覆盖旧基线，不读取文件正文 |
+| `project-file-changes.ts` | 本地项目文件元数据快照和最近增删改记录；首次建立基线，扫描失败不覆盖旧基线，不读取文件正文；用户可在项目工作空间面板主动查看已绑定工作区的最近记录，Owner 不自动读取 |
 | `web-bridge-service.ts` | Web Bridge P0：每会话独立、可见、隔离的受管浏览器；仅允许受限 DOM 操作 |
 | `computer-use-service.ts` | macOS Computer Use：权限状态、显示器枚举、指定屏幕截图及系统鼠标/键盘/滚动；输入事件由加载进 Electron 主进程的 N-API 模块发送 |
 | `chat-tools-watcher.ts` | Chat 工具监听：工具配置变化监控 |

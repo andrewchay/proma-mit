@@ -4874,6 +4874,14 @@ export async function registerIpcHandlers(): Promise<void> {
     listWorkspaceProjectBindings(workspaceId),
   )
 
+  ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_WORKSPACE_FILE_CHANGES, async (_, projectId: string, workspaceId: string) => {
+    if (!listProjectWorkspaceBindings(projectId).some(binding => binding.workspaceId === workspaceId)) throw new Error('工作区未绑定到项目')
+    const workspace = getAgentWorkspace(workspaceId)
+    if (!workspace?.rootPath) throw new Error('工作区没有本地项目目录')
+    const { readProjectFileChanges } = await import('./lib/project-file-changes')
+    return readProjectFileChanges(workspaceId, workspace.rootPath)
+  })
+
   // ===== 智能提醒系统 =====
   const { registerReminderIpcHandlers } = require('./lib/reminder-ipc-handlers') as { registerReminderIpcHandlers: () => void }
   registerReminderIpcHandlers()
