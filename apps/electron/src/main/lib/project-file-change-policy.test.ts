@@ -69,3 +69,19 @@ test('Given 扫描后尚未建立观察 When 从快照重复恢复 Then 只保�
   expect(rows).toHaveLength(1)
   expect(JSON.parse(rows[0]!.payload).changes.map((event: { path: string }) => event.path)).toEqual(['new.txt'])
 })
+
+test('Given 持久化观察被更改或被其他项目引用 When 校验 Then 拒绝使用', async () => {
+  const { recordProjectFileChangeObservation, getAuthorizedProjectFileChangeObservation } = await import('./project-file-change-observations')
+  const { getProjectDb } = await import('./project-sqlite-store')
+  const project = createProject({ title: '完整性项目', description: '' })
+  const other = createProject({ title: '其他项目', description: '' })
+  const path = join(temp, 'integrity'); mkdirSync(path)
+  const workspace = createAgentWorkspace('完整性资料', path)
+  bindWorkspaceToProject(project.id, workspace.id)
+  const policy = setProjectFileChangePolicy(project.id, workspace.id, true)!
+  const source = recordProjectFileChangeObservation(project.id, workspace.id, [{ path: 'a.txt', kind: 'modified', observedAt: policy.enabledAt + 1 }])!
+  expect(getAuthorizedProjectFileChangeObservation(other.id, source.id)).toBeNull()
+  const altered = { ...source, changes: [{ ...source.changes[0]!, path: 'tampered.txt' }] }
+  getProjectDb().prepare('UPDATE project_file_change_observations SET payload = ? WHERE id = ?').run(JSON.stringify(altered), source.id)
+  expect(getAuthorizedProjectFileChangeObservation(project.id, source.id)).toBeNull()
+})
