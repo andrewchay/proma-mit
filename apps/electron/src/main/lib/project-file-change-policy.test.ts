@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, renameSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { closeProjectDb, createProject, initProjectDb } from './project-sqlite-store'
@@ -147,4 +147,20 @@ test('Given 授权后的忽略规则无法安全读取 When 恢复规则 Then �
   expect(getProjectFileChangePolicy(project.id, workspace.id)).toBeNull()
   rmSync(join(path, '.gravitasignore'), { recursive: true })
   expect(getProjectFileChangePolicy(project.id, workspace.id)).toBeNull()
+})
+
+test('Given 已授权项目目录被替换 When 路径相同但目录身份不同 Then 旧授权不能恢复', () => {
+  const project = createProject({ title: '目录替换', description: '' })
+  const path = join(temp, 'root-identity'); mkdirSync(path)
+  const workspace = createAgentWorkspace('目录身份资料', path)
+  bindWorkspaceToProject(project.id, workspace.id)
+  const original = setProjectFileChangePolicy(project.id, workspace.id, true)!
+  const moved = `${path}-old`
+  renameSync(path, moved)
+  mkdirSync(path)
+  expect(getProjectFileChangePolicy(project.id, workspace.id)).toBeNull()
+  rmSync(path, { recursive: true })
+  renameSync(moved, path)
+  expect(getProjectFileChangePolicy(project.id, workspace.id)).toBeNull()
+  expect(setProjectFileChangePolicy(project.id, workspace.id, true)!.revision).not.toBe(original.revision)
 })
