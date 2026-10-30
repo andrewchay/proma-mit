@@ -1,6 +1,6 @@
 /** 本地项目文件元数据快照；不读取或保存文件正文。 */
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import { lstat, mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 import { getProjectsDir } from './config-paths'
 import type { ProjectWorkspaceFileChangesView } from '@gravitas/shared'
@@ -11,7 +11,7 @@ const MAX_EVENTS = 1000
 
 interface FileMetadata { size: number; modified: number }
 export interface ProjectFileChange { path: string; kind: 'added' | 'modified' | 'deleted'; observedAt: number }
-interface Snapshot { version: 1; root: string; files: Record<string, FileMetadata>; events: ProjectFileChange[]; scannedAt?: number }
+interface Snapshot { version: 1; root: string; files: Record<string, FileMetadata>; events: ProjectFileChange[]; scannedAt?: number; ignorePrefixes?: string[] }
 const scanErrors = new Map<string, { root: string; message: string }>()
 
 function snapshotPath(workspaceId: string): string {
@@ -19,7 +19,24 @@ function snapshotPath(workspaceId: string): string {
   return join(getProjectsDir(), 'file-changes', `${key}.json`)
 }
 
-async function collect(root: string): Promise<Record<string, FileMetadata>> {
+/** .gravitasignore 每行一个根目录相对路径；不支持通配符，避免与 Git 规则混淆。 */
+async function readIgnorePrefixes(root: string): Promise<string[]> {
+  const path = join(root, '.gravitasignore')
+  try {
+    const info = await lstat(path)
+    if (!info.isFile() || info.size > 65536) throw new Error('.gravitasignore 必须是小于 64KB 的普通文件')
+    const content = await readFile(path, 'utf8')
+    const prefixes = content.split(/\r?\n/).map(line => line.trim()).filter(line => line && !line.startsWith('#')).map(line => line.replace(/\/$/, ''))
+    if (prefixes.length > 256) throw new Error('.gravitasignore 最多支持 256 条路径')
+    if (prefixes.some(line => !line || line.startsWith('/') || line.includes('\\') || /[*?\[\]]/.test(line) || line.split('/').some(part => !part || part === '.' || part === '..'))) throw new Error('.gravitasignore 只能包含项目内的相对路径，不支持通配符')
+    return [...new Set(prefixes)].sort()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []
+    throw error
+  }
+}
+
+async function collect(root: string, ignorePrefixes: string[]): Promise<Record<string, FileMetadata>> {
   const files: Record<string, FileMetadata> = Object.create(null)
   let count = 0
   async function visit(dir: string): Promise<void> {
@@ -27,11 +44,13 @@ async function collect(root: string): Promise<Record<string, FileMetadata>> {
     for (const entry of entries) {
       if (ignored.has(entry.name) || entry.isSymbolicLink()) continue
       const path = join(dir, entry.name)
+      const name = relative(root, path).replace(/\\/g, '/')
+      if (ignorePrefixes.some(prefix => name === prefix || name.startsWith(`${prefix}/`))) continue
       if (entry.isDirectory()) await visit(path)
       else if (entry.isFile()) {
         if (++count > MAX_FILES) throw new Error('文件数量超过项目变化扫描上限')
         const info = await stat(path)
-        files[relative(root, path).replace(/\\/g, '/')] = { size: info.size, modified: info.mtimeMs }
+        files[name] = { size: info.size, modified: info.mtimeMs }
       }
     }
   }
@@ -61,10 +80,11 @@ async function scanProjectFileChangesInternal(workspaceId: string, root: string)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
   }
-  const files = await collect(root)
+  const ignorePrefixes = await readIgnorePrefixes(root)
+  const files = await collect(root, ignorePrefixes)
   const now = Date.now()
   const changes: ProjectFileChange[] = []
-  if (previous) {
+  if (previous && JSON.stringify(previous.ignorePrefixes ?? []) === JSON.stringify(ignorePrefixes)) {
     for (const [name, info] of Object.entries(files)) {
       const old = Object.hasOwn(previous.files, name) ? previous.files[name] : undefined
       if (!old) changes.push({ path: name, kind: 'added', observedAt: now })
@@ -72,7 +92,7 @@ async function scanProjectFileChangesInternal(workspaceId: string, root: string)
     }
     for (const name of Object.keys(previous.files)) if (!files[name]) changes.push({ path: name, kind: 'deleted', observedAt: now })
   }
-  const next: Snapshot = { version: 1, root, files, events: [...(previous?.events ?? []), ...changes].slice(-MAX_EVENTS), scannedAt: now }
+  const next: Snapshot = { version: 1, root, files, events: [...(previous?.events ?? []), ...changes].slice(-MAX_EVENTS), scannedAt: now, ignorePrefixes }
   await mkdir(join(getProjectsDir(), 'file-changes'), { recursive: true })
   const temp = `${path}.${randomUUID()}.tmp`
   try {

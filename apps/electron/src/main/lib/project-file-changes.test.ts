@@ -40,3 +40,17 @@ test('Given 项目目录不可用 When 扫描失败 Then 原基线仍可用于�
   expect(await scanProjectFileChanges('workspace', root)).toEqual([])
   expect((await readProjectFileChanges('workspace', root)).scanError).toBeNull()
 })
+
+test('Given 用户调整忽略范围 When 重新扫描 Then 更新基线而非将忽略文件误报为删除', async () => {
+  mkdirSync(join(root, 'private'))
+  writeFileSync(join(root, 'private', 'note.txt'), 'private')
+  await scanProjectFileChanges('ignore-case', root)
+  writeFileSync(join(root, '.gravitasignore'), '# 本地文件\nprivate/\n')
+  expect(await scanProjectFileChanges('ignore-case', root)).toEqual([])
+  writeFileSync(join(root, 'private', 'note.txt'), 'changed')
+  expect(await scanProjectFileChanges('ignore-case', root)).toEqual([])
+  writeFileSync(join(root, '.gravitasignore'), '../outside\n')
+  await expect(scanProjectFileChanges('ignore-case', root)).rejects.toThrow('相对路径')
+  writeFileSync(join(root, '.gravitasignore'), '# 本地文件\nprivate/\n')
+  expect((await scanProjectFileChanges('ignore-case', root)).map(event => event.path)).toEqual(['.gravitasignore'])
+})
