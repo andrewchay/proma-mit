@@ -203,6 +203,7 @@ export interface OwnerPlanningConversationContext {
   /** v1由主进程绑定后台回应的消息身份；缺省保留历史模型回填契约。 */
   observationMessageBindingVersion?: 1
   /** 系统主动观察来源，不能伪装用户消息或授权。 */
+  fileChangeObservation?: { id: string; projectId: string; workspaceId: string; policyRevision: string; observedAt: number; changes: import('./work-module').ProjectWorkspaceFileChange[]; retainedChanges: number; historyBounded: true; contentHash: string }
   executionObservation?: import('./project-owner-management').OwnerExecutionObservation
   /** v1员工待决事项快照；缺省保持旧冻结提示不变。 */
   employeeInteractionVersion?: 1

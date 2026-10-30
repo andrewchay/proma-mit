@@ -368,7 +368,30 @@ export const PROJECT_IPC_CHANNELS = {
   UNBIND_WORKSPACE: 'project:unbind-workspace',
   LIST_PROJECT_WORKSPACES: 'project:list-project-workspaces',
   LIST_WORKSPACE_PROJECTS: 'project:list-workspace-projects',
+  LIST_WORKSPACE_FILE_CHANGES: 'project:list-workspace-file-changes',
+  GET_WORKSPACE_GIT_DIFF: 'project:get-workspace-git-diff',
+  GET_FILE_CHANGE_POLICY: 'project:get-file-change-policy',
+  SET_FILE_CHANGE_POLICY: 'project:set-file-change-policy',
 } as const
+
+export interface ProjectWorkspaceFileChange {
+  path: string
+  kind: 'added' | 'modified' | 'deleted' | 'renamed'
+  observedAt: number
+  previousPath?: string
+  evidence?: 'content' | 'metadata' | 'matching_digest'
+}
+
+export interface ProjectFileChangePolicy { revision: string; enabledAt: number }
+
+export type ProjectWorkspaceGitDiff = { status: 'available'; text: string } | { status: 'unavailable'; reason: string }
+
+export interface ProjectWorkspaceFileChangesView {
+  changes: ProjectWorkspaceFileChange[]
+  lastScannedAt: number | null
+  scanError: string | null
+  watching: boolean
+}
 
 /** Project ↔ AgentWorkspace 绑定记录：正式绑定仅表示授权，不代表资料共享 */
 export interface ProjectWorkspaceBinding {

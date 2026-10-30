@@ -1675,6 +1675,21 @@ function migrate(database: SqliteCompat): void {
       PRIMARY KEY (project_id, workspace_id)
     );
     CREATE INDEX IF NOT EXISTS idx_pwb_workspace ON project_workspace_bindings(workspace_id);
+    CREATE TABLE IF NOT EXISTS project_file_change_observations (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      policy_revision TEXT NOT NULL,
+      observed_at INTEGER NOT NULL,
+      payload TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS project_file_change_policies (
+      project_id TEXT NOT NULL,
+      workspace_id TEXT NOT NULL,
+      revision TEXT NOT NULL,
+      enabled_at INTEGER NOT NULL,
+      PRIMARY KEY (project_id, workspace_id)
+    );
   `)
   // 存量项目补种预置五态（幂等）
   const projectRows = database.prepare('SELECT id FROM projects').all() as Array<{ id: string }>
@@ -2089,6 +2104,8 @@ export function deleteProject(id: string): boolean {
     database.prepare(`DELETE FROM outbox_events WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM risk_assessments WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM task_statuses WHERE project_id = ?`).run(id)
+    database.prepare(`DELETE FROM project_file_change_observations WHERE project_id = ?`).run(id)
+    database.prepare(`DELETE FROM project_file_change_policies WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM project_workspace_bindings WHERE project_id = ?`).run(id)
     database.prepare(`DELETE FROM projects WHERE id = ?`).run(id)
   })

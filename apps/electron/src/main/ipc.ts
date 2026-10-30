@@ -358,7 +358,7 @@ import {
   getReleaseByTag,
 } from './lib/github-release-service'
 import { listLocalReleases, mergeReleases } from './lib/local-release-notes'
-import { watchAttachedDirectory, unwatchAttachedDirectory } from './lib/workspace-watcher'
+import { watchAttachedDirectory, unwatchAttachedDirectory, syncProjectRootWatchers } from './lib/workspace-watcher'
 import {
   getFeishuConfig,
   saveFeishuConfig,
@@ -2042,7 +2042,9 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(
     AGENT_IPC_CHANNELS.CREATE_WORKSPACE,
     async (_, name: string, rootPath?: string): Promise<AgentWorkspace> => {
-      return createAgentWorkspace(name, rootPath)
+      const workspace = createAgentWorkspace(name, rootPath)
+      syncProjectRootWatchers()
+      return workspace
     }
   )
 
@@ -2058,7 +2060,8 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(
     AGENT_IPC_CHANNELS.DELETE_WORKSPACE,
     async (_, id: string): Promise<void> => {
-      return deleteAgentWorkspace(id)
+      deleteAgentWorkspace(id)
+      syncProjectRootWatchers()
     }
   )
 
@@ -4870,6 +4873,25 @@ export async function registerIpcHandlers(): Promise<void> {
   ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_WORKSPACE_PROJECTS, (_, workspaceId: string) =>
     listWorkspaceProjectBindings(workspaceId),
   )
+
+  ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_WORKSPACE_FILE_CHANGES, async (_, projectId: string, workspaceId: string) => {
+    const { getProjectWorkspaceFileChanges } = await import('./lib/project-file-changes-access')
+    return getProjectWorkspaceFileChanges(projectId, workspaceId)
+  })
+
+  ipcMain.handle(PROJECT_IPC_CHANNELS.GET_WORKSPACE_GIT_DIFF, async (_, projectId: string, workspaceId: string, path: string) => {
+    const { getProjectWorkspaceGitDiff } = await import('./lib/project-file-git-diff')
+    return getProjectWorkspaceGitDiff(projectId, workspaceId, path)
+  })
+
+  ipcMain.handle(PROJECT_IPC_CHANNELS.GET_FILE_CHANGE_POLICY, async (_, projectId: string, workspaceId: string) => {
+    const { getProjectFileChangePolicy } = await import('./lib/project-file-change-policy')
+    return getProjectFileChangePolicy(projectId, workspaceId)
+  })
+  ipcMain.handle(PROJECT_IPC_CHANNELS.SET_FILE_CHANGE_POLICY, async (_, projectId: string, workspaceId: string, enabled: boolean) => {
+    const { setProjectFileChangePolicy } = await import('./lib/project-file-change-policy')
+    return setProjectFileChangePolicy(projectId, workspaceId, enabled)
+  })
 
   // ===== 智能提醒系统 =====
   const { registerReminderIpcHandlers } = require('./lib/reminder-ipc-handlers') as { registerReminderIpcHandlers: () => void }

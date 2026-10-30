@@ -9,7 +9,7 @@ import { atom } from 'jotai'
 // ===== Jotai Atoms =====
 
 /** 是否显示用户消息悬浮置顶条 */
-export const stickyUserMessageEnabledAtom = atom<boolean>(true)
+export const stickyUserMessageEnabledAtom = atom<boolean>(false)
 
 // ===== 初始化 =====
 
@@ -21,7 +21,7 @@ export async function initializeUiPreferences(
 ): Promise<void> {
   try {
     const settings = await window.electronAPI.getSettings()
-    setStickyUserMessageEnabled(settings.stickyUserMessageEnabled ?? true)
+    setStickyUserMessageEnabled(settings.stickyUserMessageEnabled ?? false)
   } catch (error) {
     console.error('[UI偏好] 初始化失败:', error)
   }
