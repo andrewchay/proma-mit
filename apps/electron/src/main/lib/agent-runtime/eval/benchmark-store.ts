@@ -12,7 +12,7 @@
  *     └── cases/<case-id>/{ statement.md, rubric.json, statement/ }
  */
 
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import {
   getBenchmarkCaseRubricPath,
   getBenchmarkCaseStatementAssetsDir,
@@ -41,6 +41,10 @@ export function createBenchmark(
 ): BenchmarkConfig {
   if (existsSync(getBenchmarkConfigPath(config.id))) {
     throw new Error(`Benchmark 已存在: ${config.id}`)
+  }
+  const scoreboardPath = getBenchmarkScoreboardPath(config.id)
+  if ([scoreboardPath, `${scoreboardPath}.tmp`, `${scoreboardPath}.bak`].some(existsSync)) {
+    throw new Error('发现已有评测历史或恢复文件，请检查后再新建基准')
   }
   writeJsonFileAtomic(getBenchmarkConfigPath(config.id), config)
   const fs = require('node:fs') as typeof import('node:fs')
@@ -83,12 +87,32 @@ export function readCaseRubric(benchmarkId: string, caseId: string): Rubric | nu
 
 /** 读取 scoreboard；不存在返回空 scoreboard。 */
 export function readScoreboard(benchmarkId: string): Scoreboard {
-  return readJsonFileSafe<Scoreboard>(getBenchmarkScoreboardPath(benchmarkId)) ?? { benchmarkId, evaluations: [] }
+  const path = getBenchmarkScoreboardPath(benchmarkId)
+  let raw: string
+  try {
+    raw = readFileSync(path, 'utf-8')
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT' && !existsSync(`${path}.tmp`) && !existsSync(`${path}.bak`)) {
+      return { benchmarkId, evaluations: [] }
+    }
+    throw new Error('评测历史无法读取，请检查原文件及恢复文件后再继续', { cause: error })
+  }
+  let data: unknown
+  try { data = JSON.parse(raw) } catch (error) {
+    throw new Error('评测历史损坏，请检查原文件及恢复文件后再继续', { cause: error })
+  }
+  if (!data || typeof data !== 'object' || !('benchmarkId' in data) || data.benchmarkId !== benchmarkId || !('evaluations' in data) || !Array.isArray(data.evaluations)) {
+    throw new Error('评测历史格式或基准标识不正确，请检查原文件后再继续')
+  }
+  return data as Scoreboard
 }
 
 /** 追加一条完整评测结果到 scoreboard（保持「存储值权威」：不做重算直接落盘）。 */
 export function appendEvaluation(benchmarkId: string, evaluation: BenchmarkEvaluation): Scoreboard {
   const scoreboard = readScoreboard(benchmarkId)
+  if (existsSync(`${getBenchmarkScoreboardPath(benchmarkId)}.tmp`)) {
+    throw new Error('发现未完成的评测历史写入，请检查临时文件后再继续')
+  }
   scoreboard.evaluations.push(evaluation)
   writeJsonFileAtomic(getBenchmarkScoreboardPath(benchmarkId), scoreboard)
   return scoreboard
@@ -126,8 +150,8 @@ export function listBenchmarks(): Array<BenchmarkConfig & { latestScore: number 
     if (!existsSync(configPath)) continue
     const config = readJsonFileSafe<BenchmarkConfig>(configPath)
     if (!config) continue
-    const scoreboard = readJsonFileSafe<Scoreboard>(join(root, entry, 'scoreboard.json'))
-    const last = scoreboard?.evaluations?.length ? scoreboard.evaluations[scoreboard.evaluations.length - 1] : undefined
+    const scoreboard = readScoreboard(entry)
+    const last = scoreboard.evaluations.length ? scoreboard.evaluations[scoreboard.evaluations.length - 1] : undefined
     out.push({
       ...config,
       latestScore: last ? last.score : null,
