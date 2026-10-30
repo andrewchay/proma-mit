@@ -22,6 +22,7 @@ import { scanProjectFileChanges } from './project-file-changes'
 /** debounce 延迟（ms） */
 const DEBOUNCE_MS = 300
 const PROJECT_SCAN_DEBOUNCE_MS = 2000
+const PROJECT_SCAN_RETRY_MS = 30000
 
 /** watcher 'error' 事件后的自愈重启延迟（ms），避免对持续故障状态紧密重试 */
 const WATCHER_RESTART_DELAY_MS = 5000
@@ -43,7 +44,7 @@ const projectScanTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const projectScans = new Map<string, Promise<void>>()
 const projectScanDirty = new Map<string, string>()
 
-function scheduleProjectScan(workspaceId: string, root: string): void {
+function scheduleProjectScan(workspaceId: string, root: string, delay = PROJECT_SCAN_DEBOUNCE_MS): void {
   const timer = projectScanTimers.get(workspaceId)
   if (timer) clearTimeout(timer)
   projectScanTimers.set(workspaceId, setTimeout(() => {
@@ -55,7 +56,10 @@ function scheduleProjectScan(workspaceId: string, root: string): void {
     const next = (async () => {
       if (!mainWin || !listAgentWorkspaces().some(item => item.id === workspaceId && item.rootPath === root)) return
       await scanProjectFileChanges(workspaceId, root)
-    })().catch(error => console.error('[项目变化扫描] 失败:', error))
+    })().catch(error => {
+      console.error('[项目变化扫描] 失败，将稍后重试:', error)
+      if (mainWin) scheduleProjectScan(workspaceId, root, PROJECT_SCAN_RETRY_MS)
+    })
     projectScans.set(workspaceId, next)
     void next.finally(() => {
       projectScans.delete(workspaceId)
@@ -63,7 +67,7 @@ function scheduleProjectScan(workspaceId: string, root: string): void {
       projectScanDirty.delete(workspaceId)
       if (dirtyRoot && mainWin) scheduleProjectScan(workspaceId, dirtyRoot)
     })
-  }, PROJECT_SCAN_DEBOUNCE_MS))
+  }, delay))
 }
 
 /** 同步本地项目根目录监听，独立于会话附加目录的生命周期。 */
