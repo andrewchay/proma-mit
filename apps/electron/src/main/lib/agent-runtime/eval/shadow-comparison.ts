@@ -131,6 +131,10 @@ function evaluateResources(
 
   const costGate = options.maxCostIncreaseRatio
   const latencyGate = options.maxLatencyIncreaseRatio
+  if ((costGate !== undefined && finiteNonNegative(costGate) === null) ||
+      (latencyGate !== undefined && finiteNonNegative(latencyGate) === null)) {
+    return { ...base, gate: 'unverified', reasons: ['资源门禁阈值无效，门禁未核验'] }
+  }
   if (costGate === undefined && latencyGate === undefined) {
     return { ...base, gate: 'pass', reasons }
   }
@@ -163,6 +167,9 @@ export function compareShadowRuns(
 ): ShadowComparison {
   const threshold = options.deltaThreshold ?? 0.02
   const reasons: string[] = []
+
+  if (finiteNonNegative(threshold) === null) reasons.push('差值阈值无效')
+  if (baseline.cases.length === 0 || candidate.cases.length === 0) reasons.push('评测 case 为空')
 
   if (baseline.benchmarkVersion !== candidate.benchmarkVersion) {
     reasons.push(`基准版本不同：${baseline.benchmarkVersion} vs ${candidate.benchmarkVersion}`)
@@ -222,7 +229,9 @@ export function compareShadowRuns(
   const improved = cases.filter((item) => item.delta > 0).length
   const regressed = cases.filter((item) => item.delta < 0).length
   const unchanged = cases.length - improved - regressed
-  const verdict: ShadowComparison['verdict'] = meanDelta >= threshold
+  const verdict: ShadowComparison['verdict'] = meanDelta === 0
+    ? 'no_difference'
+    : meanDelta >= threshold
     ? 'candidate_better'
     : meanDelta <= -threshold
       ? 'candidate_worse'

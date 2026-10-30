@@ -55,6 +55,27 @@ describe('compareShadowRuns（可比性）', () => {
     expect(result.verdict).toBe('candidate_better')
   })
 
+  test('Given 两侧没有 case When 比较 Then 不可比且没有均值', () => {
+    const result = compareShadowRuns(run('baseline', []), run('candidate', []))
+    expect(result.comparable).toBe(false)
+    expect(result.verdict).toBe('inconclusive')
+    expect(result.meanDelta).toBeNull()
+    expect(result.resources.gate).toBe('unverified')
+  })
+
+  test('Given 无效的差值阈值 When 比较 Then 不下结论', () => {
+    for (const deltaThreshold of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const result = compareShadowRuns(run('b', [['a', 0.5]]), run('c', [['a', 0.9]]), { deltaThreshold })
+      expect(result.verdict).toBe('inconclusive')
+      expect(result.reasons.join()).toContain('差值阈值无效')
+    }
+  })
+
+  test('Given 零阈值和相同分数 When 比较 Then 不判为改善', () => {
+    const result = compareShadowRuns(run('b', [['a', 0.5]]), run('c', [['a', 0.5]]), { deltaThreshold: 0 })
+    expect(result.verdict).toBe('no_difference')
+  })
+
   test('Given 基准版本不同 When 比较 Then 不可比且不下结论', () => {
     const result = compareShadowRuns(
       run('baseline', [['a', 0.8]]),
@@ -218,6 +239,16 @@ describe('compareShadowRuns（成本与延迟）', () => {
     expect(result.resources.costDeltaUsd).toBeCloseTo(0.5, 5)
     expect(result.resources.durationIncreaseRatio).toBeCloseTo(-0.1, 5)
     expect(result.resources.reasons).toEqual([])
+  })
+
+  test('Given 无效资源门禁 When 比较 Then 标记未核验', () => {
+    for (const invalid of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      for (const options of [{ maxCostIncreaseRatio: invalid }, { maxLatencyIncreaseRatio: invalid }]) {
+        const result = compareShadowRuns(withCost('b', 0.6, 1, 1000), withCost('c', 0.9, 2, 2000), options)
+        expect(result.resources.gate).toBe('unverified')
+        expect(result.resources.reasons.join()).toContain('门禁阈值无效')
+      }
+    }
   })
 
   test('Given 成本增幅超阈值 When 比较 Then gate=cost_exceeded 并说明比例', () => {
