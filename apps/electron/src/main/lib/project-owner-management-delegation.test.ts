@@ -152,6 +152,38 @@ test('Given已有发送准入但错误文本与本地参数错误相同 When核�
   service.revokeOwnerManagementDelegation(f.project.id, grant.id)
 })
 
+test('Given硬上限错误已有准入或只有泛化无输出错误 When核对 Then仍禁止按未发送失败恢复', async () => {
+  const withAdmission = fixture(), grantWithAdmission = issue(withAdmission)
+  await startDelegatedOwnerPlanningTask(withAdmission.taskId)
+  const admittedExecution = store.listAgentExecutionsByProject(withAdmission.project.id)[0]!
+  callbacks.get(admittedExecution.sessionId!)!.onError('No output generated. Check the stream for errors.；流错误：Error: 真实冒烟请求次数边界无效')
+  expect(service.getOwnerManagementDelegation(withAdmission.project.id).state).toBe('attention')
+  service.revokeOwnerManagementDelegation(withAdmission.project.id, grantWithAdmission.id)
+
+  const generic = fixture(), genericGrant = issue(generic)
+  localConfigurationError = 'No output generated. Check the stream for errors.'
+  try {
+    await startDelegatedOwnerPlanningTask(generic.taskId)
+    await until(() => store.listAgentExecutionsByProject(generic.project.id)[0]?.status === 'failed')
+  } finally { localConfigurationError = null }
+  expect(service.getOwnerManagementDelegation(generic.project.id).state).toBe('attention')
+  service.revokeOwnerManagementDelegation(generic.project.id, genericGrant.id)
+})
+
+test('Given失败回执使委托保持attention且用户已撤销 When确认新委托 Then持久撤销标记优先且不重发旧请求', async () => {
+  const f = fixture(), grant = issue(f), before = calls
+  await startDelegatedOwnerPlanningTask(f.taskId)
+  const execution = store.listAgentExecutionsByProject(f.project.id)[0]!
+  callbacks.get(execution.sessionId!)!.onError('AI SDK Runtime 需要 provider、apiKey、baseUrl、model、cwd')
+  expect(service.getOwnerManagementDelegation(f.project.id).state).toBe('attention')
+  service.revokeOwnerManagementDelegation(f.project.id, grant.id)
+  const input = { ...f.input, requestId: randomUUID() }, preview = service.previewOwnerManagementDelegation(input)
+  const next = service.confirmOwnerManagementDelegation({ input, previewHash: preview.previewHash })
+  expect(next.id).not.toBe(grant.id)
+  expect(calls).toBe(before + 1)
+  service.revokeOwnerManagementDelegation(f.project.id, next.id)
+})
+
 test('Given本地失败之后出现运行结果或损坏回调 When重新核对 Then证据矛盾仍进入核对门禁', async () => {
   for (const evidence of ['runtime_result', 'broken_json']) {
     const f = fixture(), grant = issue(f)
