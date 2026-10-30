@@ -12,6 +12,7 @@ let calls = 0
 mock.module('./config-paths', () => ({ getAgentWorkspacesDir: () => internal }))
 mock.module('./agent-workspace-manager', () => ({ listAgentWorkspaces: () => [{ id: 'w', rootPath: root }] }))
 mock.module('./project-file-changes', () => ({ scanProjectFileChanges: async () => { if (++calls === 1) throw new Error('暂时不可读'); return [] } }))
+mock.module('./project-file-change-observations', () => ({ reconcileProjectFileChangeObservations: async () => {} }))
 const { startWorkspaceWatcher, stopWorkspaceWatcher } = await import('./workspace-watcher')
 const window = { isDestroyed: () => false, webContents: { send: () => {} } }
 afterAll(() => { stopWorkspaceWatcher(); rmSync(temp, { recursive: true, force: true }) })

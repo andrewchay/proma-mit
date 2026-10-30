@@ -56,6 +56,8 @@ function scheduleProjectScan(workspaceId: string, root: string, delay = PROJECT_
     const next = (async () => {
       if (!mainWin || !listAgentWorkspaces().some(item => item.id === workspaceId && item.rootPath === root)) return
       await scanProjectFileChanges(workspaceId, root)
+      const { reconcileProjectFileChangeObservations } = await import('./project-file-change-observations')
+      await reconcileProjectFileChangeObservations(workspaceId, root)
     })().catch(error => {
       console.error('[项目变化扫描] 失败，将稍后重试:', error)
       if (mainWin) scheduleProjectScan(workspaceId, root, PROJECT_SCAN_RETRY_MS)

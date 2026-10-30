@@ -160,11 +160,11 @@ async function scanProjectFileChangesInternal(workspaceId: string, root: string)
 }
 
 /** 用户主动查看工作区记录；不读取文件正文。 */
-export async function readProjectFileChanges(workspaceId: string, root: string): Promise<ProjectFileScanView> {
+export async function readProjectFileChanges(workspaceId: string, root: string, limit = 100): Promise<ProjectFileScanView> {
   try {
     const snapshot: Snapshot = JSON.parse(await readFile(snapshotPath(workspaceId), 'utf8'))
     if (snapshot.version !== 1 || snapshot.root !== root || !Array.isArray(snapshot.events) || snapshot.events.some(event => !event || typeof event.path !== 'string' || !['added', 'modified', 'deleted', 'renamed'].includes(event.kind) || !Number.isFinite(event.observedAt))) throw new Error('项目文件快照无效')
-    return { changes: snapshot.events.slice(-100).reverse(), lastScannedAt: typeof snapshot.scannedAt === 'number' ? snapshot.scannedAt : null, scanError: scanErrors.get(workspaceId)?.root === root ? scanErrors.get(workspaceId)!.message : null }
+    return { changes: snapshot.events.slice(-Math.min(MAX_EVENTS, Math.max(1, limit))).reverse(), lastScannedAt: typeof snapshot.scannedAt === 'number' ? snapshot.scannedAt : null, scanError: scanErrors.get(workspaceId)?.root === root ? scanErrors.get(workspaceId)!.message : null }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { changes: [], lastScannedAt: null, scanError: scanErrors.get(workspaceId)?.root === root ? scanErrors.get(workspaceId)!.message : null }
     throw error
