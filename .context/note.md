@@ -1,5 +1,47 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-10-30 macOS 打包缺 node-pty spawn-helper（PR #73）
+
+### 现象
+Package Smoke 的 macOS arm64 作业失败：`Error: posix_spawnp failed.`，栈在
+`app.asar/node_modules/node-pty/lib/unixTerminal.js` 的 `UnixTerminal` 构造器。
+Windows / Linux 同 PR 同提交通过。
+
+### 根因（打包链路，不是业务代码）
+- CI 与 `release.yml` 都直接调用 `electron-builder`，从不执行 `rebuild:natives`，
+  所以 `node_modules/node-pty/build/Release/spawn-helper` 不存在；node-pty 1.1.0
+  实际用的是 npm 包自带的 `prebuilds/darwin-arm64/{pty.node,spawn-helper}`。
+- 旧 `mac.extraFiles` 只从 `build/Release/spawn-helper` 取文件，electron-builder
+  打一行 `file source doesn't exist` 后继续 → 安装包没有
+  `Contents/MacOS/node-pty-spawn-helper`。
+- `unixTerminal.js` 的 helper 解析被 `prepare-node-pty.ts` 修补为指向
+  `Contents/MacOS/node-pty-spawn-helper`，但该修补只在 `rebuild:natives` 里执行，
+  CI 打包时源文件未修补，helper 也不存在 → 一 spawn 就失败。
+- `package-process-smoke.ts` 是本轮新增（覆盖 PTY 停止语义），因此这个既有打包缺陷
+  到本轮才暴露。**发布流水线在同一缺陷下也会产出终端不可用的 macOS 包。**
+
+### 修复
+- `apps/electron/scripts/before-pack.cjs`（electron-builder `beforePack` 钩子）
+  + `node-pty-helper.cjs`：按 `build/Release` → `build/Debug` → `prebuilds/<plat>-<arch>`
+  查找 helper，修补 `unixTerminal.js`（幂等标记 `GRAVITAS_MACOS_PACKAGED_HELPER`），
+  暂存到 `apps/electron/.packaging/node-pty-spawn-helper`；找不到即抛错，打包失败。
+- `mac.extraFiles` 改读 `.packaging/node-pty-spawn-helper`（兼容两种来源）。
+- `prepare-node-pty.ts` 复用同一实现；删除 `node-pty-packaging.ts` 与其测试，
+  新增 `node-pty-helper.test.ts`（7 项，含“缺 helper 必须失败”）。
+- Package Smoke 的 macOS 步骤新增 `test -x "$APP/Contents/MacOS/node-pty-spawn-helper"`。
+
+### 环境限制（下次别重复踩）
+- 本机 Agent seatbelt 内 Electron 起不来（`sandbox initialization failed`），
+  node-pty 也无法真正起 shell（仓库内短路径同样 `posix_spawnp failed`）。
+  **PTY 行为只能以 CI 为准**，本地只能验证打包结构与补丁内容。
+- 模拟 CI 只需把 `node_modules/node-pty/build` 移走再打包，产物断言：
+  helper 存在且 0755、`app.asar.unpacked/.../unixTerminal.js` 含修补标记。
+- 本仓库 `/tmp` 对 Agent 不可写，备份目录要放工作区内的 `.context/tmp/`。
+
+### 顺带教训
+`docs/generated/repository-facts.md` 每次版本号或文件数变化都会让 `docs:check` 失败，
+rebase 后必须重跑 `bun run docs:generate` 并提交，否则 quality 必挂。
+
 ## 2026-10-29 项目整体理解（首次通读）
 
 ### 一句话定位
