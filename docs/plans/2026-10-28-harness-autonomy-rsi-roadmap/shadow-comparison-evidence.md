@@ -111,4 +111,29 @@ scoreboard 条目没有记录评测时的基准及评分规则来源，当前基
 - **不是影子流量**：比较的仍是批量评测结果，没有旁路真实流量。
 - **不做统计显著性**：阈值法仍是产品口径的最小有意义差值。
 - **成本仍是评测估算**，不是 Provider 账单。
-- **未接入 UI/审批**：报告目前随 `selfEvolve` 返回值提供，尚无界面呈现与人工签收。
+- **UI 已接入、审批未接入**：报告已随 `ImproveSummary.rounds` 经 IPC 透到设置面板，逐轮展示接受/拒绝、Δ 或「不可比」与资源门禁；人工签收与审批流仍未做。
+
+## 收口状态（2026-10-31）
+
+### 已闭环（工程侧，可在测试环境验证）
+
+| 能力 | 位置 | 证据 |
+| --- | --- | --- |
+| 写入评测时冻结基准来源（version / rubricVersion / definitionHash / frozenAt） | `benchmark-versioning.ts` | `benchmark-versioning.test.ts`、`shadow-comparison.test.ts` |
+| 每次运行记录题目与评分规则摘要（`caseTextRubricSha256`） | `evaluator.ts`、`types.ts` | `evaluator.test.ts` |
+| 可比性由记录自身来源判定，不可比写明原因，不固定返回「不可比」 | `shadow-comparison.ts:compareRecordedEvaluations` | `shadow-comparison.test.ts` |
+| 影子对比接入自演化每轮（同一次运行、同一份冻结基准） | `self-evolver.ts` | `self-evolver.test.ts` |
+| 每轮结论透出 IPC 与设置面板（Δ / 不可比 / 资源门禁） | `commands.ts`、`preload/index.ts`、`EvalPanel.tsx` | `commands.test.ts` |
+
+### 未闭环（需要真实环境、费用授权或人工判断）
+
+- **影子流量采集**：比较对象仍是批量评测结果，没有旁路真实用户流量。
+- **统计显著性**：阈值法（默认 0.02）是产品口径的最小有意义差值，不做显著性检验，阈值差异不能称为显著。
+- **Provider 账单核对**：成本来自评测估算，不是账单；门禁只能标 `unverified`，不能核对真实开销。
+- **真实人工验收**：面板呈现与人工签收是两件事；本轮只做了呈现。
+
+### 边界（重申）
+
+- 摘要与 `definitionHash` 不是签名，不防本地文件篡改，也不证明评测独立性。
+- 历史记录不回填：没有来源的旧评测仍不可比，不能用当前配置追认。
+- 替身评判下的测试通过，不等于真实 Provider 行为已验证。
