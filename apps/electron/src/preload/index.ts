@@ -2041,6 +2041,7 @@ export interface ElectronAPI {
       listWebWatchRuns: (projectId: string) => Promise<unknown>
       getWebChangeObservation: (projectId: string, id: string) => Promise<unknown>
       recordWebObservationFeedback: (input: { projectId: string; observationId: string; verdict: 'helpful' | 'irrelevant' | 'snooze'; reason?: string | null }) => Promise<unknown>
+      getWebObservationQuality: (projectId: string, since?: number) => Promise<unknown>
       getOwnerGoalDraft: import('@gravitas/shared').ProjectOwnerGoalApi['getOwnerGoalDraft']
       saveOwnerGoalDraft: import('@gravitas/shared').ProjectOwnerGoalApi['saveOwnerGoalDraft']
       observePilot: (projectId: string) => Promise<import('@gravitas/shared').PilotObservation>
@@ -4871,6 +4872,7 @@ const electronAPI: ElectronAPI = {
       listWebWatchRuns: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_WEB_WATCH_RUNS, projectId),
       getWebChangeObservation: (projectId, id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_WEB_CHANGE_OBSERVATION, projectId, id),
       recordWebObservationFeedback: (input) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.RECORD_WEB_OBSERVATION_FEEDBACK, input),
+      getWebObservationQuality: (projectId, since) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_WEB_OBSERVATION_QUALITY, projectId, since),
       getOwnerGoalDraft: (subject) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_GOAL_DRAFT, subject),
       saveOwnerGoalDraft: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_OWNER_GOAL_DRAFT, request),
       observePilot: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.OBSERVE_PILOT, projectId),

@@ -179,6 +179,7 @@ export const PROJECT_IPC_CHANNELS = {
   LIST_WEB_WATCH_RUNS: 'project:list-web-watch-runs',
   GET_WEB_CHANGE_OBSERVATION: 'project:get-web-change-observation',
   RECORD_WEB_OBSERVATION_FEEDBACK: 'project:record-web-observation-feedback',
+  GET_WEB_OBSERVATION_QUALITY: 'project:get-web-observation-quality',
   /** 无费用规划草案入口：读取/保存都不创建执行授权或派发。 */
   GET_OWNER_EXECUTION_GRANT: 'project:get-owner-execution-grant',
   LIST_OWNER_EXECUTION_GRANT_HISTORY: 'project:list-owner-execution-grant-history',
