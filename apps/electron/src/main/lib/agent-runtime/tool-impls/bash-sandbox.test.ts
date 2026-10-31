@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { assertNoWritableHardlinks, buildBashSandboxPolicy, quarantineNewGitHooks, quarantineWritableHardlinks, resolveGitLayout, sanitizeBashGitEnvironment, scratchDirFor } from './bash-sandbox'
 import { buildSeatbeltProfile } from '../../pinned-verifier-sandbox'
 import { executeBashTool, executeBashToolOnPlatform } from './bash-tool'
+import { bindTestToolContext } from '../../testing/bound-tool-context'
 
 const root = mkdtempSync(join(tmpdir(), 'gravitas-bash-sandbox-'))
 const configDir = join(root, 'config')
@@ -27,7 +28,8 @@ afterAll(async () => {
   rmSync(root, { recursive: true, force: true })
 })
 
-const run = (cwd: string, command: string) => executeBashTool({ command }, { cwd, sessionId })
+// 工具入口要求已绑定会话身份：按 Runtime 的方式绑定后调用。
+const run = (cwd: string, command: string) => executeBashTool({ command }, bindTestToolContext({ cwd, sessionId }))
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', ['-C', cwd, ...identity, ...args], { encoding: 'utf8' }).trim()
 }
@@ -259,7 +261,7 @@ describe('Bash 沙箱（macOS seatbelt）', () => {
     const dir = join(root, 'linux-check')
     mkdirSync(dir)
     const marker = join(dir, 'ran')
-    const result = await executeBashToolOnPlatform({ command: `touch '${marker}'` }, { cwd: dir, sessionId }, 'linux')
+    const result = await executeBashToolOnPlatform({ command: `touch '${marker}'` }, bindTestToolContext({ cwd: dir, sessionId }), 'linux')
     expect(result.isError).toBe(true)
     expect(result.content).toContain('默认拒绝')
     expect(existsSync(marker)).toBe(false)
@@ -574,7 +576,7 @@ describe('Bash 会话中止（端到端）', () => {
     const controller = new AbortController()
     const pending = executeBashTool(
       { command: `sleep 3; touch '${marker}'` },
-      { cwd: dir, sessionId, abortSignal: controller.signal },
+      bindTestToolContext({ cwd: dir, sessionId, abortSignal: controller.signal }),
     )
     setTimeout(() => controller.abort(), 200)
     const result = await pending

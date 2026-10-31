@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import type { CapabilityDescriptor } from '@gravitas/shared'
 import type { RuntimeToolDefinition } from './types'
 import { buildElectronMock } from '../testing/electron-mock'
+import { bindTestToolContext } from '../testing/bound-tool-context'
 
 const dir = mkdtempSync(join(tmpdir(), 'gravitas-effects-'))
 const oldConfig = process.env.PROMA_TEST_CONFIG_DIR
@@ -38,7 +39,8 @@ describe('编译工具实例effects绑定（未启用调度）', () => {
     expect(tool('Read').parameters.required).toContain('file_path')
   })
   test('元数据不改变schema或Read/Write/Edit实际执行', async () => {
-    const ctx = { cwd: dir, sessionId: 'fixture' }
+    // 工具入口要求已绑定会话身份：按 Runtime 的方式绑定后调用。
+    const ctx = bindTestToolContext({ cwd: dir, sessionId: 'fixture' })
     expect((await tool('Write').execute({ file_path: 'nested/data.txt', content: 'one\ntwo' }, ctx)).isError).not.toBe(true)
     expect((await tool('Read').execute({ file_path: 'nested/data.txt' }, ctx)).content).toBe('one\ntwo')
     expect((await tool('Edit').execute({ file_path: 'nested/data.txt', old_string: 'two', new_string: 'three' }, ctx)).isError).not.toBe(true)
