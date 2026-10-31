@@ -46,8 +46,13 @@ export function buildCapabilityAlerts(input: CapabilityAlertInput): CapabilityAl
     if (item.executionSampleSufficient && item.failureRate !== null && item.executionDecidedSampleCount >= consecutiveFailureThreshold && item.failureRate >= 1) {
       alerts.push({ code: 'consecutive_failures', severity: 'warning', versionId: item.versionId, message: '该版本已观察到的执行样本全部失败，建议人工核查', evidence: `执行样本 ${item.executionDecidedSampleCount} 条，执行失败率 ${(item.failureRate * 100).toFixed(1)}%` })
     }
-    if (item.sampleSufficient && item.reworkRate !== null && item.reworkRate >= reworkRateThreshold) {
-      alerts.push({ code: 'rework_spike', severity: 'warning', versionId: item.versionId, message: '该版本 Owner 退回修改比例偏高，建议核查任务说明或能力内容', evidence: `Owner 判断 ${item.decidedSampleCount} 条，退回修改比例 ${(item.reworkRate * 100).toFixed(1)}%` })
+    const exceedsNoiseFloor = item.noiseFloorMode === 'fixed_fallback'
+      || (item.historicalReworkRate !== null && item.reworkNoiseFloor !== null && item.reworkRate !== null && item.reworkRate - item.historicalReworkRate > item.reworkNoiseFloor)
+    if (item.sampleSufficient && item.reworkRate !== null && item.reworkRate >= reworkRateThreshold && exceedsNoiseFloor) {
+      const noiseEvidence = item.noiseFloorMode === 'historical'
+        ? `；历史均值 ${(item.historicalReworkRate! * 100).toFixed(1)}%，波动地板 δ=${(item.reworkNoiseFloor! * 100).toFixed(1)}%（${item.noiseFloorWindowCount} 个滚动窗）`
+        : '；历史判断样本不足，使用固定阈值'
+      alerts.push({ code: 'rework_spike', severity: 'warning', versionId: item.versionId, message: '该版本 Owner 退回修改比例超过观察阈值，建议核查任务说明或能力内容', evidence: `Owner 判断 ${item.decidedSampleCount} 条，退回修改比例 ${(item.reworkRate * 100).toFixed(1)}%${noiseEvidence}` })
     }
     if (item.decidedSampleCount === 0) {
       const executionNote = item.executionDecidedSampleCount > 0 ? `已有执行样本 ${item.executionDecidedSampleCount} 条，但没有 Owner 判断。` : ''

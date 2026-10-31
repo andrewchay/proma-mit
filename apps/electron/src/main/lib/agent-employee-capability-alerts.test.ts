@@ -3,7 +3,7 @@ import { buildCapabilityAlerts } from './agent-employee-capability-alerts'
 import type { AgentEmployeeCapabilityHealth } from './project-types'
 
 function health(overrides: Partial<AgentEmployeeCapabilityHealth> = {}): AgentEmployeeCapabilityHealth {
-  return { versionId: 'v1', windowDays: 30, executionCount: 6, reworkRate: 0.1, failureRate: 0, cancellationRate: 0, decidedSampleCount: 6, executionDecidedSampleCount: 6, humanJudgmentEligibleCount: 0, humanAcceptedCount: 0, humanChangesRequestedCount: 0, sampleSufficient: true, executionSampleSufficient: true, lastExecutedAt: Date.now(), comparisonComparable: false, ...overrides }
+  return { versionId: 'v1', windowDays: 30, executionCount: 6, reworkRate: 0.1, failureRate: 0, cancellationRate: 0, decidedSampleCount: 6, executionDecidedSampleCount: 6, humanJudgmentEligibleCount: 0, humanAcceptedCount: 0, humanChangesRequestedCount: 0, sampleSufficient: true, executionSampleSufficient: true, reworkNoiseFloor: null, historicalReworkRate: null, noiseFloorMode: 'fixed_fallback', noiseFloorWindowCount: 0, reworkDeltaExceedsNoiseFloor: null, lastExecutedAt: Date.now(), comparisonComparable: false, ...overrides }
 }
 
 test('样本不足时不产生质量告警，只提示观察不足', () => {
@@ -17,6 +17,26 @@ test('执行失败告警与 Owner 返工告警分别使用各自的样本门槛'
   expect(alerts.map((item) => item.code)).toContain('consecutive_failures')
   expect(alerts.map((item) => item.code)).not.toContain('rework_spike')
   expect(alerts.find((item) => item.code === 'consecutive_failures')?.evidence).toContain('执行样本 6 条')
+})
+
+test('历史波动范围内的返工变化不产生质量告警', () => {
+  const alerts = buildCapabilityAlerts({ health: [health({
+    reworkRate: 0.6,
+    historicalReworkRate: 0.4,
+    reworkNoiseFloor: 0.2,
+    noiseFloorMode: 'historical',
+  })] })
+  expect(alerts.some((item) => item.code === 'rework_spike')).toBe(false)
+})
+
+test('超过历史均值加噪声地板且固定阈值时产生返工告警', () => {
+  const alerts = buildCapabilityAlerts({ health: [health({
+    reworkRate: 0.8,
+    historicalReworkRate: 0.4,
+    reworkNoiseFloor: 0.2,
+    noiseFloorMode: 'historical',
+  })] })
+  expect(alerts.find((item) => item.code === 'rework_spike')?.evidence).toContain('历史均值 40.0%')
 })
 
 test('连续失败与返工率激增生成告警', () => {
