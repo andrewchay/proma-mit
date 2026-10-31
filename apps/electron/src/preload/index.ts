@@ -203,6 +203,18 @@ export interface EvalBaselineSummary {
   evaluationsBefore: number
 }
 
+/** Benchmark Improve 单轮对比报告（可比性、差值、资源门禁）。 */
+export interface EvalImproveRoundReport {
+  round: number
+  accepted: boolean
+  score: number
+  comparable: boolean | null
+  verdict: string | null
+  meanDelta: number | null
+  gate: string | null
+  summary: string | null
+}
+
 /** Benchmark Improve 优化摘要。 */
 export interface EvalImproveSummary {
   baselineScore: number
@@ -211,6 +223,8 @@ export interface EvalImproveSummary {
   totalRounds: number
   finalVersion: number
   bestAcceptedPrompt?: string
+  /** 每轮与 Reference 的对比报告；旧版本主进程不返回该字段。 */
+  rounds?: EvalImproveRoundReport[]
 }
 
 /** 采纳写回结果（preload 本地形状）。 */

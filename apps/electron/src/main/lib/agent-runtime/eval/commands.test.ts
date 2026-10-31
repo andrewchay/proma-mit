@@ -162,6 +162,30 @@ describe('runImprove', () => {
     expect(out.finalScore).toBeGreaterThan(out.baselineScore)
     expect(phases).toContain("case_start")
     expect(phases).toContain("case_complete")
+    // 每轮都要给出与 Reference 的对比报告，而不是只有总分。
+    expect(out.rounds.length).toBe(out.totalRounds)
+    expect(out.rounds[0]!.comparable).toBe(false)
+    expect(out.rounds[0]!.verdict).toBe('inconclusive')
+    expect(out.rounds[0]!.meanDelta).toBeNull()
+    expect(out.rounds[0]!.summary).toContain('不可比')
+  })
+
+  it('Given 配置成本门禁但评测未记录成本 When 生成报告 Then 门禁标注未核验而不是通过', async () => {
+    const state: StateGuard = {
+      async snapshot() {},
+      async apply() {},
+      async restore() {},
+      version: () => 1,
+    }
+    const out = await runImprove({
+      benchmark: config,
+      delegate: async () => ({ text: 'file:line 修复' }),
+      state,
+      maxRounds: 1,
+      propose: async () => ({ description: 'noop', target: 'builtin:code-reviewer', afterState: 2 }),
+      maxCostIncreaseRatio: 0.2,
+    })
+    expect(out.rounds[0]!.gate).toBe('unverified')
   })
 
   it('Given held-out 实际调用失败 When 训练分数上升 Then 拒绝候选且不伪造零分', async () => {

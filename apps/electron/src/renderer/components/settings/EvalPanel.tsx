@@ -226,7 +226,20 @@ export function EvalPanel(): React.ReactElement {
     setPendingAdopt(null)
     try {
       const r = await window.electronAPI.runEvalImprove(id)
-      setNotice(`Improve 完成：baseline=${r.baselineScore} → final=${r.finalScore}，接受候选 ${r.acceptedRounds} 轮（未自动写回）`)
+      // 每轮对比结论直接展示：不可比时写「不可比」而不是「无差异」，避免把缺证据读成持平。
+      const roundLines = (r.rounds ?? []).slice(0, 3).map((item) => {
+        const parts = [`第${item.round}轮`, item.accepted ? '接受' : '拒绝']
+        if (item.comparable === false) parts.push('不可比')
+        else if (item.meanDelta !== null) parts.push(`Δ=${item.meanDelta > 0 ? '+' : ''}${item.meanDelta.toFixed(2)}`)
+        if (item.gate === 'cost_exceeded') parts.push('成本超限')
+        else if (item.gate === 'latency_exceeded') parts.push('耗时超限')
+        else if (item.gate === 'unverified') parts.push('资源未核验')
+        return parts.join(' ')
+      })
+      setNotice([
+        `Improve 完成：baseline=${r.baselineScore} → final=${r.finalScore}，接受候选 ${r.acceptedRounds} 轮（未自动写回）`,
+        ...roundLines,
+      ].join('；'))
       // 若存在被接受候选，展示供「审查并采纳」
       const bench = benchmarks.find((b) => b.id === id)
       if (r.bestAcceptedPrompt && bench) {
