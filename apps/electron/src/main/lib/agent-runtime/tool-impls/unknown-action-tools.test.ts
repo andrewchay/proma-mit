@@ -106,6 +106,14 @@ describe('解除未知动作', () => {
     expect(result.isError).toBeFalsy()
     expect(JSON.parse(result.content)).toMatchObject({ resolved: true, mayRetry: true })
     expect(askCalls).toHaveLength(1)
+    const question = (askCalls[0]!.questions as Array<{ question: string; options: Array<{ description?: string }> }>)[0]!
+    expect(question.question).toContain(ACTION_KEY)
+    expect(question.question).toContain('记录时间：')
+    expect(question.options.map(option => option.description)).toEqual([
+      '解除此动作的拦截，后续可以重试。',
+      '保存已生效的结论，继续拦截重复动作。',
+      '保留未知状态和重试拦截。',
+    ])
     expect((await listPendingUnknownActions(SESSION)).length).toBe(0)
   })
 
