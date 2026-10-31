@@ -12,7 +12,7 @@
 
 import { appendEvaluation } from './benchmark-store'
 import { meanStd } from './evaluator'
-import type { BenchmarkConfig, BenchmarkEvaluation, HeldOutReport, JudgeIdentity, SelfEvolveChange, SelfEvolveRoundResult } from './types'
+import type { BenchmarkConfig, BenchmarkEvaluation, HeldOutReport, JudgeIdentity, ScoreboardCaseRun, SelfEvolveChange, SelfEvolveRoundResult } from './types'
 
 /** 评测单个 Case × run 的分数（含成本/耗时可选）。null=评测失败。 */
 export interface CaseEval {
@@ -21,6 +21,8 @@ export interface CaseEval {
   costUsd?: number | null
   durationMs?: number | null
   sessionId?: string
+  /** 每次实际运行的原始记录；缺省表示调用方未提供明细。 */
+  runs?: ScoreboardCaseRun[]
   /** 该评估的 trace 文件路径（决策序列 JSONL） */
   tracePath?: string
 }
@@ -96,7 +98,7 @@ function toHeldOutReport(byCase: CaseEval[], expected?: string[]): HeldOutReport
       score: c.score ?? 0,
       costUsd: c.costUsd ?? null,
       durationMs: c.durationMs ?? null,
-      runs: c.sessionId ? [{ score: c.score ?? 0, costUsd: c.costUsd ?? null, durationMs: c.durationMs ?? null, sessionId: c.sessionId, tracePath: c.tracePath }] : [],
+      runs: c.runs ?? (c.sessionId ? [{ score: c.score ?? 0, costUsd: c.costUsd ?? null, durationMs: c.durationMs ?? null, sessionId: c.sessionId, tracePath: c.tracePath }] : []),
     })),
   }
 }
@@ -127,7 +129,7 @@ function buildEvaluation(
       score: c.score ?? 0,
       costUsd: c.costUsd ?? null,
       durationMs: c.durationMs ?? null,
-      runs: c.sessionId ? [{ score: c.score ?? 0, costUsd: c.costUsd ?? null, durationMs: c.durationMs ?? null, sessionId: c.sessionId, tracePath: c.tracePath }] : [],
+      runs: c.runs ?? (c.sessionId ? [{ score: c.score ?? 0, costUsd: c.costUsd ?? null, durationMs: c.durationMs ?? null, sessionId: c.sessionId, tracePath: c.tracePath }] : []),
     })),
   }
 }

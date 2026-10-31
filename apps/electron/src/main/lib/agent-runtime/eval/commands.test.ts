@@ -96,6 +96,29 @@ describe('runBaseline', () => {
 })
 
 describe('runImprove', () => {
+  it('Given 每个案例运行两次 When 自演化保存基线与候选 Then 保留每次真实分数与会话', async () => {
+    const benchmark = { ...config, id: 'improve-multiple-runs', runsPerCase: 2, heldOutCases: ['HELD-1'] }
+    createBenchmark(benchmark, [{ caseId: 'CASE-001', statement: 'train', rubric }, { caseId: 'HELD-1', statement: 'held', rubric }])
+    let count = 0
+    const scores = [10, 30, 50, 70, 60, 80, 80, 90]
+    let version = 1
+    const state: StateGuard = { async snapshot() {}, async apply() { version = 2 }, async restore() { version = 1 }, version: () => version }
+    await runImprove({ benchmark, state, includeHeldOut: true, maxRounds: 1, propose: async () => ({ description: 'better', target: 'x', afterState: { prompt: 'new' } }),
+      delegate: delegate('result'), scoreDelegate: async () => scores[count++]!,
+    })
+    const record = readScoreboard(benchmark.id).evaluations[0]!
+    expect(record.cases[0]!.score).toBe(20)
+    expect(record.cases[0]!.runs.map(run => run.score)).toEqual([10, 30])
+    expect(record.heldOut!.cases[0]!.runs.map(run => run.score)).toEqual([50, 70])
+    const candidate = readScoreboard(benchmark.id).evaluations[1]!
+    expect(candidate.cases[0]!.runs.map(run => run.score)).toEqual([60, 80])
+    expect(candidate.heldOut!.cases[0]!.runs.map(run => run.score)).toEqual([80, 90])
+    for (const item of [record.cases[0]!, record.heldOut!.cases[0]!, candidate.cases[0]!, candidate.heldOut!.cases[0]!]) {
+      expect(item.runs.every(run => run.sessionId.length > 0)).toBe(true)
+      expect(new Set(item.runs.map(run => run.sessionId)).size).toBe(2)
+    }
+  })
+
   it('候选提升分数则接受并推进版本', async () => {
     const defState = { v: 1 }
     const state: StateGuard = {
