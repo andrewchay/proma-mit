@@ -134,6 +134,7 @@ import type {
   AgentSessionReferenceSearchResult,
   AgentAuditEvent,
   AgentAuditQuery,
+  PendingUnknownActionSummary,
   AgentSpanQuery,
   RuntimeSpan,
   ContextCompactionMetrics,
@@ -881,6 +882,8 @@ export interface ElectronAPI {
   setComputerUseSettings: (updates: { enabled?: boolean; readOnlyOnly?: boolean }) => Promise<{ enabled: boolean; readOnlyOnly: boolean }>
   /** 查询本地 Web Bridge / Computer Use 审计（不会上传） */
   listAgentAuditEvents: (query?: AgentAuditQuery) => Promise<AgentAuditEvent[]>
+  /** 查询仍被重试门禁拦截的本地未知动作摘要，不含参数或错误详情 */
+  listPendingUnknownActionsForReview: () => Promise<PendingUnknownActionSummary[]>
   /** 查询会话运行 span（瀑布图数据源；仅本机 JSONL） */
   listAgentSpans: (query?: AgentSpanQuery) => Promise<RuntimeSpan[]>
   /** 将当前筛选结果导出为用户选择位置的 JSONL */
@@ -3478,6 +3481,7 @@ const electronAPI: ElectronAPI = {
   getComputerUseSettings: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_COMPUTER_USE_SETTINGS),
   setComputerUseSettings: (updates: { enabled?: boolean; readOnlyOnly?: boolean }) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.SET_COMPUTER_USE_SETTINGS, updates),
   listAgentAuditEvents: (query: AgentAuditQuery = {}) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_AUDIT_EVENTS, query),
+  listPendingUnknownActionsForReview: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_PENDING_UNKNOWN_ACTIONS),
   listAgentSpans: (query: AgentSpanQuery = {}) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.LIST_SESSION_SPANS, query),
   exportAgentAuditEvents: (query: AgentAuditQuery = {}) => ipcRenderer.invoke(AGENT_IPC_CHANNELS.EXPORT_AUDIT_EVENTS, query),
   getContextCompactionMetrics: () => ipcRenderer.invoke(AGENT_IPC_CHANNELS.GET_CONTEXT_COMPACTION_METRICS),

@@ -245,6 +245,14 @@ export async function listPendingUnknownActions(sessionId: string): Promise<Unkn
   return [...pending.values()].filter((record) => record.sessionId === sessionId)
 }
 
+/** 列出本机仍被门禁拦截的未知动作，供设置中的只读待核对面板使用。 */
+export async function listPendingUnknownActionsForReview(): Promise<UnknownActionRecord[]> {
+  await ensureLoaded()
+  return [...pending.values()]
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+    .slice(0, 300)
+}
+
 /** 持久化“已生效”的人工结论，但不解除 pending：同一动作之后也不能重试。 */
 export async function confirmUnknownActionApplied(input: {
   sessionId: string

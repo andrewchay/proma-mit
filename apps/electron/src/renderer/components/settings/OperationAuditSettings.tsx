@@ -1,9 +1,9 @@
 /** 本地自动化与外部消息入口审计查看器。 */
 
 import * as React from 'react'
-import { Download, RefreshCw, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, Download, RefreshCw, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
-import type { AgentAuditEvent, AgentAuditQuery } from '@gravitas/shared'
+import type { AgentAuditEvent, AgentAuditQuery, PendingUnknownActionSummary } from '@gravitas/shared'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
@@ -24,7 +24,9 @@ export function OperationAuditSettings(): React.ReactElement {
   const [sessionId, setSessionId] = React.useState('')
   const [action, setAction] = React.useState('')
   const [events, setEvents] = React.useState<AgentAuditEvent[]>([])
+  const [pendingUnknownActions, setPendingUnknownActions] = React.useState<PendingUnknownActionSummary[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [loadingUnknownActions, setLoadingUnknownActions] = React.useState(true)
   const [exporting, setExporting] = React.useState(false)
 
   const query = React.useMemo<AgentAuditQuery>(() => ({
@@ -48,6 +50,20 @@ export function OperationAuditSettings(): React.ReactElement {
 
   React.useEffect(() => { void loadEvents() }, [loadEvents])
 
+  const loadPendingUnknownActions = React.useCallback(async () => {
+    setLoadingUnknownActions(true)
+    try {
+      setPendingUnknownActions(await window.electronAPI.listPendingUnknownActionsForReview())
+    } catch (error) {
+      console.error('[未知动作] 读取待核对列表失败:', error)
+      toast.error('读取待核对动作失败')
+    } finally {
+      setLoadingUnknownActions(false)
+    }
+  }, [])
+
+  React.useEffect(() => { void loadPendingUnknownActions() }, [loadPendingUnknownActions])
+
   const exportEvents = async (): Promise<void> => {
     setExporting(true)
     try {
@@ -64,6 +80,25 @@ export function OperationAuditSettings(): React.ReactElement {
   return (
     <div className="space-y-5">
       <ContextCompactionMetrics />
+      <SettingsSection title="未知动作待核对" description="动作结果不确定时会持续拦截同一动作的重试。此处只列出会话、工具和时间，不显示动作参数或错误正文；核对与解除仍须回到对应会话并经过明确确认。">
+        <SettingsCard className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-xs text-muted-foreground">最多显示最近 300 条仍被门禁拦截的动作。</p>
+            <Button variant="outline" onClick={() => void loadPendingUnknownActions()} disabled={loadingUnknownActions}><RefreshCw className={loadingUnknownActions ? 'mr-2 size-4 animate-spin' : 'mr-2 size-4'} />刷新</Button>
+          </div>
+          {pendingUnknownActions.length === 0 && !loadingUnknownActions && <p className="py-5 text-center text-sm text-muted-foreground">当前没有待核对动作。</p>}
+          {pendingUnknownActions.map((item) => <div key={item.id} className="rounded-lg bg-background/70 p-3 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <AlertTriangle className="size-4 text-amber-600" />
+              <span className="font-medium">{item.tool || '未知工具'}</span>
+              <span className="text-amber-700 dark:text-amber-300">{item.acknowledgedAt ? '已确认动作生效，仍拦截重试' : '结果待核对，仍拦截重试'}</span>
+              <span className="ml-auto text-muted-foreground">{formatTimestamp(item.createdAt)}</span>
+            </div>
+            <p className="mt-2 break-all text-muted-foreground">会话：<span className="font-mono text-foreground/80">{item.sessionId}</span></p>
+            <p className="mt-1 text-muted-foreground">请在对应 Agent 会话中调用 ListUnknownActions 查看核对依据，再通过 ResolveUnknownAction 明确处理；确认已生效或暂不处理仍会保持拦截。</p>
+          </div>)}
+        </SettingsCard>
+      </SettingsSection>
       <SettingsSection title="操作审计" description="仅显示保存在本机 JSONL 的 Web Bridge、Computer Use 与外部 IM 入口摘要；不会上传，也不含截图、页面正文、消息正文、敏感输入或原始用户标识。">
         <SettingsCard className="space-y-4">
           <div className="flex flex-wrap items-end gap-3">
