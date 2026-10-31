@@ -227,7 +227,22 @@ describe('composeOdDesignContext', () => {
     expect(out).toContain('--accent: #533afd')
     expect(out).toContain('### color')
     expect(out).toContain('the brand wins for token values')
+    expect(out).not.toContain('<od_missing_resource type="design_tokens"')
     expect(out).not.toContain('<od_missing_resource type="craft"')
+  })
+
+  test('Given 设计说明存在但令牌缺失或为空 When 组合 Then 保留说明并提示令牌不可用', () => {
+    const cwd = join(tempHomeDir, 'ds-missing-tokens')
+    mkdirSync(cwd, { recursive: true })
+    writeFileSync(join(cwd, 'DESIGN.md'), '# Design\n\nExisting guidance.\n')
+    const input = { requirements: { craftRequires: [], designSystemRequires: true }, cwd }
+    for (const tokens of [undefined, '', '  \n']) {
+      if (tokens !== undefined) writeFileSync(join(cwd, 'tokens.css'), tokens)
+      const out = composeOdDesignContext(input)
+      expect(out).toContain('Existing guidance.')
+      expect(out).toContain('<od_missing_resource type="design_tokens"')
+      expect(out).toContain('不要声称已遵循完整令牌规范')
+    }
   })
 
   test('Given 无 od: 声明 When 组合 Then 返回空字符串', () => {
