@@ -204,6 +204,21 @@ export interface OwnerPlanningConversationContext {
   observationMessageBindingVersion?: 1
   /** 系统主动观察来源，不能伪装用户消息或授权。 */
   fileChangeObservation?: { id: string; projectId: string; workspaceId: string; policyRevision: string; observedAt: number; changes: import('./work-module').ProjectWorkspaceFileChange[]; retainedChanges: number; historyBounded: true; contentHash: string }
+  /** 外部变化观察来源：只作材料，不构成执行授权；网页正文仍是不可信数据。 */
+  webChangeObservation?: {
+    id: string
+    projectId: string
+    runId: string
+    judgment: 'record_only' | 'attention' | 'decision_required' | 'insufficient_evidence' | 'duplicate'
+    facts: Array<{ title: string; url: string; sourceId: string; snippetDigest: string | null; publishedAt: string | null; quote: string; isInference: boolean }>
+    impact: string | null
+    suggestion: string | null
+    question: string | null
+    uncertainty: string | null
+    failureReason: string | null
+    createdAt: number
+    contentHash: string
+  }
   executionObservation?: import('./project-owner-management').OwnerExecutionObservation
   /** v1员工待决事项快照；缺省保持旧冻结提示不变。 */
   employeeInteractionVersion?: 1

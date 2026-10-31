@@ -11,6 +11,7 @@ import { getSettings, onSettingsChange } from './settings-service'
 import * as store from './project-sqlite-store'
 import { generateProjectSummary, type ProjectSummary } from './project-summary-service'
 import { resolveStateGroup } from './task-status-logic'
+import { removeProjectWebWatchFiles } from './project-web-watch-store'
 import type {
   Project,
   Task,
@@ -133,7 +134,10 @@ export async function updateProject(id: string, updates: Partial<Omit<Project, '
 }
 
 export async function deleteProject(id: string): Promise<boolean> {
-  return store.deleteProject(id)
+  const deleted = store.deleteProject(id)
+  // 本机扫描文件不属于 SQLite，必须单独清理，否则项目删掉后永久残留。
+  if (deleted) removeProjectWebWatchFiles(id)
+  return deleted
 }
 
 export async function archiveProject(id: string): Promise<Project | null> {
