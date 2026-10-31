@@ -107,17 +107,26 @@ export function createApproval(input: CreateApprovalInput): ProactiveApproval {
   return approval
 }
 
-export async function approveApproval(id: string): Promise<ProactiveApproval | null> {
+export async function approveApproval(id: string, decisionReason?: string): Promise<ProactiveApproval | null> {
   const approvals = loadApprovals()
   const idx = approvals.findIndex((a) => a.id === id)
   if (idx === -1) return null
   const current = approvals[idx]!
   if (current.status !== 'pending' && current.status !== 'edited') return current
+  const proposedChange = current.proposedChange
+  const isCapabilityAdoption = current.sourceType === 'employee_capability'
+    && typeof proposedChange === 'object' && proposedChange !== null
+    && 'type' in proposedChange && proposedChange.type === 'employee_capability_adopt'
+  const normalizedReason = typeof decisionReason === 'string' ? decisionReason.trim() : ''
+  if (isCapabilityAdoption && (!normalizedReason || normalizedReason.length > 1000)) {
+    throw new Error('员工能力推广必须填写审批理由，且不能超过 1000 字')
+  }
 
   const updated: ProactiveApproval = {
     ...current,
     status: 'approved',
     resolvedAt: Date.now(),
+    ...(isCapabilityAdoption ? { decisionReason: normalizedReason } : {}),
     executionStatus: 'pending',
     executionError: undefined,
     executedAt: undefined,
@@ -154,6 +163,7 @@ export function editApproval(id: string, editedChange: unknown): ProactiveApprov
     proposedChange: editedChange,
     status: 'edited' as const,
     resolvedAt: undefined,
+    decisionReason: undefined,
     executionStatus: undefined,
     executionError: undefined,
     executedAt: undefined,
@@ -213,7 +223,11 @@ export function deleteApproval(id: string): boolean {
 // ===== 批量操作 =====
 
 export async function approveAllPending(): Promise<number> {
-  const pendingIds = getPendingApprovals().map((approval) => approval.id)
+  const approvals = getPendingApprovals()
+  if (approvals.some((approval) => approval.sourceType === 'employee_capability')) {
+    throw new Error('能力推广审批必须逐条填写理由，不能批量批准')
+  }
+  const pendingIds = approvals.map((approval) => approval.id)
   for (const id of pendingIds) await approveApproval(id)
   return pendingIds.length
 }
@@ -332,7 +346,7 @@ export function registerApprovalIPCHandlers(): void {
   ipcMain.handle('proactive:getApproval', (_event: unknown, id: string) => getApproval(id))
   ipcMain.handle('proactive:createApproval', (_event: unknown, input: CreateApprovalInput) => createApproval(input))
   ipcMain.handle('proactive:createTestMemoryApproval', () => createTestMemoryApproval())
-  ipcMain.handle('proactive:approveApproval', (_event: unknown, id: string) => approveApproval(id))
+  ipcMain.handle('proactive:approveApproval', (_event: unknown, id: string, decisionReason?: string) => approveApproval(id, decisionReason))
   ipcMain.handle('proactive:rejectApproval', (_event: unknown, id: string) => rejectApproval(id))
   ipcMain.handle('proactive:editApproval', (_event: unknown, id: string, editedChange: unknown) => editApproval(id, editedChange))
   ipcMain.handle('proactive:deleteApproval', (_event: unknown, id: string) => deleteApproval(id))

@@ -78,7 +78,7 @@ export async function executeApprovedChange(
         contentHash: change.contentHash,
         source: 'evolution',
         retiredAt: undefined,
-      }, () => {
+      }, { auditReason: approval.decisionReason ?? '', validateEvidence: () => {
         const currentEmployee = getAgentEmployee(agentId)
         if (!currentEmployee?.enabled) throw new Error('目标 AI 员工已停用或删除，不能推广能力')
         if (change.scope === 'workspace' && ![currentEmployee.workspaceId, ...(currentEmployee.workspaceIds ?? [])].includes(typeof change.workspaceId === 'string' ? change.workspaceId : undefined)) {
@@ -89,7 +89,7 @@ export async function executeApprovedChange(
           throw new Error('能力推广证据已删除、排除或不属于目标工作区，请重新生成候选')
         }
         if (!isString(change.evidenceFingerprint) || fingerprintCapabilityEvidence(evidence) !== change.evidenceFingerprint) throw new Error('能力推广证据已变更或缺少冻结摘要，请重新生成候选')
-      })
+      } })
       return
     }
     case 'skill_create': {

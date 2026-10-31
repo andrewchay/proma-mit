@@ -184,6 +184,8 @@ export interface ProactiveApproval {
   status: ApprovalStatus
   createdAt: number
   resolvedAt?: number
+  /** AI 员工能力推广由本机用户给出的审批理由，并同步记录到能力审计表。 */
+  decisionReason?: string
   /** 人工决策后的执行结果；批准不等同于变更已经生效。 */
   executionStatus?: ApprovalExecutionStatus
   executionError?: string

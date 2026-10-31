@@ -31,7 +31,7 @@ test('待审核样本经人工摘要后才能标记为已脱敏', () => {
 test('能力观察按执行冻结版本归因，人工回滚保留审计', () => {
   const employee = createAgentEmployee({ name: '版本管理员', role: '开发', description: '', channelId: 'channel' })
   const base = createAgentEmployeeCapabilityVersion({ agentId: employee.id, versionNumber: 1, scope: 'role', content: '基线', contentHash: 'base-hash', status: 'active', source: 'manual', activatedAt: Date.now() })
-  const active = adoptAgentEmployeeCapabilityVersion({ agentId: employee.id, parentVersionId: base.id, versionNumber: 2, scope: 'role', content: '候选', contentHash: 'candidate-hash', source: 'evolution' })
+  const active = adoptAgentEmployeeCapabilityVersion({ agentId: employee.id, parentVersionId: base.id, versionNumber: 2, scope: 'role', content: '候选', contentHash: 'candidate-hash', source: 'evolution' }, { auditReason: '能力审批理由' })
   const project = createProject({ title: '观察', description: '' })
   const task = createTask(project.id, { title: '观察任务', description: '', priority: 'medium' })
   createAgentEmployeeLearningSample({ agentId: employee.id, executionId: 'observed-run', projectId: project.id, taskId: task.id, capabilityVersionIds: [active.id], outcome: 'changes_requested', evidenceSummary: '返工', privacyStatus: 'pending' })
@@ -88,10 +88,10 @@ test('Given 审批证据检查失败 When 激活候选 Then 同一事务不留�
   const project = createProject({ title: '事务项目', description: '' })
   const task = createTask(project.id, { title: '任务', description: '' })
   const sample = createAgentEmployeeLearningSample({ agentId: employee.id, executionId: randomUUID(), projectId: project.id, taskId: task.id, capabilityVersionIds: [], outcome: 'accepted', evidenceSummary: '已脱敏', privacyStatus: 'sanitized' })
-  expect(() => adoptAgentEmployeeCapabilityVersion({ agentId: employee.id, versionNumber: 1, scope: 'role', content: '候选', contentHash: 'hash', source: 'evolution' }, () => {
+  expect(() => adoptAgentEmployeeCapabilityVersion({ agentId: employee.id, versionNumber: 1, scope: 'role', content: '候选', contentHash: 'hash', source: 'evolution' }, { auditReason: '事务回滚验证', validateEvidence: () => {
     excludeAgentEmployeeLearningSample(sample.id)
     throw new Error('证据检查失败')
-  })).toThrow('证据检查失败')
+  } })).toThrow('证据检查失败')
   expect(listAgentEmployeeCapabilityVersions(employee.id)).toHaveLength(0)
   expect(listAgentEmployeeLearningSamples(employee.id)[0]?.privacyStatus).toBe('sanitized')
 })
