@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { bindTestToolContext } from '../testing/bound-tool-context'
 import { buildElectronMock } from '../testing/electron-mock'
 
 const originalConfig = process.env.PROMA_TEST_CONFIG_DIR
@@ -70,9 +71,10 @@ describe('P02 硬底线不被放宽', () => {
     expect(() => resolvePilotRuntimeBudgetLimitUsd('ai-sdk', 0)).toThrow(/无法核验/)
   })
   test('写工具与 Bash 工具经调度器接线后仍返回内容（接线不吞结果）', async () => {
-    const result = await writeTool.execute({ file_path: 'ok.txt', content: 'v' }, { cwd, sessionId: 'inv' } as never)
+    // 直接调用工具实现必须先绑定会话身份，否则只会验证到"缺绑定拒绝"。
+    const result = await writeTool.execute({ file_path: 'ok.txt', content: 'v' }, bindTestToolContext({ cwd, sessionId: 'inv' }))
     expect(result.content).toContain('已写入')
-    const listed = await bashTool.execute({ command: 'ls ok.txt' }, { cwd, sessionId: 'inv' } as never)
+    const listed = await bashTool.execute({ command: 'ls ok.txt' }, bindTestToolContext({ cwd, sessionId: 'inv' }))
     expect(listed.content).toContain('ok.txt')
     void buildTools
   })

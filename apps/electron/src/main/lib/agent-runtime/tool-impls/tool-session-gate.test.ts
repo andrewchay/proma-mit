@@ -2,6 +2,7 @@ import { afterAll, expect, test } from 'bun:test'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { bindTestToolContext } from '../../testing/bound-tool-context'
 import { executeSearchProjectMemoryTool, executeReadProjectMemoryTool } from './project-memory-tool'
 import { executeSkillTool } from './skill-tool'
 import { executeExploreContextTool } from './context-graph-tool'
@@ -24,7 +25,8 @@ afterAll(() => rmSync(directory, { recursive: true, force: true }))
 test('Given 权威项目账本不可用 When 直接调用工具 Then 拒绝读取、写入、编辑和执行', async () => {
   const path = join(directory, 'test.txt')
   writeFileSync(path, 'original')
-  const context = { cwd: directory, sessionId: 'no-project-database' }
+  // 绑定身份必须合法：本用例验证的是「账本不可用一律拒绝」，不是「缺绑定拒绝」。
+  const context = bindTestToolContext({ cwd: directory, sessionId: 'no-project-database' })
   const previousFetch = globalThis.fetch
   let networkCalls = 0
   let subAgentCalls = 0

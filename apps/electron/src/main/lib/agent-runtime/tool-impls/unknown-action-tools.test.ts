@@ -7,6 +7,7 @@ import {
   listPendingUnknownActions,
   recordUnknownAction,
 } from '../unknown-action-store'
+import { bindTestToolContext } from '../../testing/bound-tool-context'
 import { executeListUnknownActionsTool, executeResolveUnknownActionTool } from './unknown-action-tools'
 
 const SESSION = 'unknown-tools-session'
@@ -14,7 +15,7 @@ const ACTION_KEY = 'computer-use:click:10,20@primary'
 
 function ctxWith(answer: string | undefined, behavior: 'allow' | 'deny' = 'allow') {
   const askCalls: Record<string, unknown>[] = []
-  const ctx = {
+  const ctx = bindTestToolContext({
     cwd: '/tmp',
     sessionId: SESSION,
     abortSignal: new AbortController().signal,
@@ -24,7 +25,7 @@ function ctxWith(answer: string | undefined, behavior: 'allow' | 'deny' = 'allow
       const questions = (input.questions ?? []) as { question: string }[]
       return { behavior: 'allow' as const, answers: { [questions[0]?.question ?? '']: answer ?? '' } }
     },
-  }
+  })
   return { ctx, askCalls }
 }
 
@@ -60,7 +61,7 @@ beforeEach(() => {
 describe('查看未知动作', () => {
   test('Given 本会话有未知动作 When 列出 Then 只读返回指纹与理由', async () => {
     await seed()
-    const result = await executeListUnknownActionsTool({}, { cwd: '/tmp', sessionId: SESSION })
+    const result = await executeListUnknownActionsTool({}, bindTestToolContext({ cwd: '/tmp', sessionId: SESSION }))
     const payload = JSON.parse(result.content)
     expect(payload.count).toBe(1)
     expect(payload.actions[0].actionKey).toBe(ACTION_KEY)
@@ -70,7 +71,7 @@ describe('查看未知动作', () => {
 
   test('Given 其他会话有未知动作 When 列出 Then 不返回', async () => {
     await seed()
-    const result = await executeListUnknownActionsTool({}, { cwd: '/tmp', sessionId: 'other-session' })
+    const result = await executeListUnknownActionsTool({}, bindTestToolContext({ cwd: '/tmp', sessionId: 'other-session' }))
     expect(JSON.parse(result.content).count).toBe(0)
   })
 })
@@ -85,7 +86,7 @@ describe('解除未知动作', () => {
 
   test('Given 没有用户确认通道 When 解除 Then 拒绝而不是放行', async () => {
     await seed()
-    const result = await executeResolveUnknownActionTool({ action_key: ACTION_KEY }, { cwd: '/tmp', sessionId: SESSION })
+    const result = await executeResolveUnknownActionTool({ action_key: ACTION_KEY }, bindTestToolContext({ cwd: '/tmp', sessionId: SESSION }))
     expect(result.isError).toBe(true)
     expect(result.content).toContain('必须经过用户确认')
     expect((await listPendingUnknownActions(SESSION)).length).toBe(1)
@@ -119,7 +120,7 @@ describe('解除未知动作', () => {
     expect(records).toHaveLength(1)
     expect(records[0]).toMatchObject({ resolution: '已核对：动作已生效，不要重试｜用户确认' })
     expect(records[0]?.acknowledgedAt).toBeString()
-    const listed = await executeListUnknownActionsTool({}, { cwd: '/tmp', sessionId: SESSION })
+    const listed = await executeListUnknownActionsTool({}, bindTestToolContext({ cwd: '/tmp', sessionId: SESSION }))
     expect(JSON.parse(listed.content).actions[0]).toMatchObject({
       resolution: '已核对：动作已生效，不要重试｜用户确认',
       acknowledgedAt: records[0]?.acknowledgedAt,
@@ -128,14 +129,14 @@ describe('解除未知动作', () => {
 
   test('Given 用户确认期间出现新未知动作 When 确认旧动作 Then 不解除新记录', async () => {
     await seed()
-    const ctx = {
+    const ctx = bindTestToolContext({
       cwd: '/tmp', sessionId: SESSION, abortSignal: new AbortController().signal,
       onAskUser: async (input: Record<string, unknown>) => {
         const questions = (input.questions ?? []) as { question: string }[]
         await recordUnknownAction({ sessionId: SESSION, tool: 'ComputerUseClick', actionKey: ACTION_KEY, reason: 'new failure' })
         return { behavior: 'allow' as const, answers: { [questions[0]?.question ?? '']: '已核对：动作没有生效，允许重试' } }
       },
-    }
+    })
     const result = await executeResolveUnknownActionTool({ action_key: ACTION_KEY }, ctx)
     expect(result.isError).toBe(true)
     expect((await listPendingUnknownActions(SESSION))[0]?.reason).toBe('new failure')
@@ -160,12 +161,12 @@ describe('解除未知动作', () => {
 
   test('Given 用户确认请求抛错 When 解除 Then 保持拦截并说明失败', async () => {
     await seed()
-    const ctx = {
+    const ctx = bindTestToolContext({
       cwd: '/tmp',
       sessionId: SESSION,
       abortSignal: new AbortController().signal,
       onAskUser: async () => { throw new Error('界面已关闭') },
-    }
+    })
     const result = await executeResolveUnknownActionTool({ action_key: ACTION_KEY }, ctx)
     expect(result.isError).toBe(true)
     expect(result.content).toContain('界面已关闭')

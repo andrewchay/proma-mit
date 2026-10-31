@@ -236,23 +236,22 @@ export function isOwnerAutoAllowedWorkspaceWrite(sessionId: string, toolName: st
 }
 
 /**
- * 工具执行入口的绑定校验：有绑定对象就严格比对；Owner 受控会话缺绑定直接拒绝。
+ * 工具执行入口的绑定校验：有绑定对象就严格比对；没有绑定对象一律拒绝。
  *
- * 绑定对象只用于读取「运行时时写入的身份」，调用方携带的 sessionId / cwd 只参与比对，
+ * 绑定对象只用于读取「运行时写入的身份」，调用方携带的 sessionId / cwd 只参与比对，
  * 不能改写绑定；因此替换 sessionId 冒充普通会话无法绕过 Owner 门禁。
+ *
+ * 缺绑定不再区分 Owner 与普通会话：工具实现只允许被 Runtime 绑定身份后调用，
+ * 「直接调用工具实现、绕过 Runtime 绑定」在任何会话下都 fail-closed。
  */
 export function assertBoundToolSession(ctx: { sessionId: string; cwd?: string; boundSession?: object; runtime?: AgentRuntimeKind }): void {
-  const bound = ctx.boundSession ? getRuntimeSessionIdentity(ctx.boundSession) : undefined
-  if (ctx.boundSession) {
-    if (!bound || bound.revoked) throw new Error('会话身份绑定已失效，拒绝执行工具')
-    if (bound.sessionId !== ctx.sessionId) throw new Error('工具执行会话身份与会话不一致，拒绝执行')
-    if (ctx.cwd !== undefined && bound.cwd !== resolve(ctx.cwd)) throw new Error('工具执行工作目录与会话身份不一致，拒绝执行')
-    // Runtime 种类同样参与比对：把别的 Runtime 的会话对象塞进 boundSession 不能冒充本 Runtime。
-    if (ctx.runtime !== undefined && bound.runtime !== ctx.runtime) throw new Error('工具执行 Runtime 与会话绑定不一致，拒绝执行')
-    return
-  }
-  // 无绑定对象：普通会话行为不变，Owner 受控会话一律拒绝。
-  if (resolveOwnerExecutionGateSession(ctx.sessionId).kind !== 'unrestricted') throw new Error('Owner 受控会话缺少已绑定的执行身份，拒绝执行工具')
+  if (!ctx.boundSession) throw new Error('工具执行缺少已绑定的会话身份，拒绝执行工具')
+  const bound = getRuntimeSessionIdentity(ctx.boundSession)
+  if (!bound || bound.revoked) throw new Error('会话身份绑定已失效，拒绝执行工具')
+  if (bound.sessionId !== ctx.sessionId) throw new Error('工具执行会话身份与会话不一致，拒绝执行')
+  if (ctx.cwd !== undefined && bound.cwd !== resolve(ctx.cwd)) throw new Error('工具执行工作目录与会话身份不一致，拒绝执行')
+  // Runtime 种类同样参与比对：把别的 Runtime 的会话对象塞进 boundSession 不能冒充本 Runtime。
+  if (ctx.runtime !== undefined && bound.runtime !== ctx.runtime) throw new Error('工具执行 Runtime 与会话绑定不一致，拒绝执行')
 }
 
 export function assertToolAllowedForSessionPurpose(sessionId: string, toolName: string, args?: Record<string, unknown>, options?: { recordKnowledgeRead?: boolean }): void {

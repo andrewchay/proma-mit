@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext } from '../types'
+import { bindTestToolContext } from '../../testing/bound-tool-context'
 import { createListMcpResourcesToolDefinition, createReadMcpResourceToolDefinition } from './mcp-resource-tools'
 
 const directory = mkdtempSync(join(tmpdir(), 'mcp-resource-gate-')), previous = process.env.PROMA_TEST_CONFIG_DIR
@@ -12,7 +13,7 @@ afterAll(() => { store.closeProjectDb(); if (previous === undefined) delete proc
 
 test('Given 普通会话 When 读取 MCP 资源 Then 返回模拟服务结果', async () => {
   const mcpManager = { listAllResources: async () => [{ name: '资源' }], readResource: async () => ({ text: '内容' }) } as unknown as ToolContext['mcpManager']
-  const ctx = { cwd: directory, sessionId: 'ordinary', mcpManager }
+  const ctx = bindTestToolContext({ cwd: directory, sessionId: 'ordinary', mcpManager })
   expect((await createListMcpResourcesToolDefinition().execute({}, ctx)).content).toContain('资源')
   expect((await createReadMcpResourceToolDefinition().execute({ uri: 'example:test' }, ctx)).content).toContain('内容')
 })
@@ -20,7 +21,7 @@ test('Given 普通会话 When 读取 MCP 资源 Then 返回模拟服务结果', 
 test('Given MCP 响应等待期间账本失效 When 返回 Then 不泄露结果', async () => {
   let finish!: (value: Array<{ name: string }>) => void
   const mcpManager = { listAllResources: () => new Promise<Array<{ name: string }>>(resolve => { finish = resolve }) } as unknown as ToolContext['mcpManager']
-  const pending = createListMcpResourcesToolDefinition().execute({}, { cwd: directory, sessionId: 'ordinary', mcpManager })
+  const pending = createListMcpResourcesToolDefinition().execute({}, bindTestToolContext({ cwd: directory, sessionId: 'ordinary', mcpManager }))
   store.closeProjectDb()
   finish([{ name: '私有结果' }])
   const result = await pending
