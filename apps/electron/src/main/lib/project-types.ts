@@ -550,6 +550,12 @@ export interface AgentEmployeeCapabilityHealth {
   /** 样本量是否足以支撑趋势结论。 */
   sampleSufficient: boolean
   executionSampleSufficient: boolean
+  /** 近 90 天 Owner 返工率滚动波动估计；历史窗口不足时为 null。 */
+  reworkNoiseFloor: number | null
+  historicalReworkRate: number | null
+  noiseFloorMode: 'historical' | 'fixed_fallback'
+  noiseFloorWindowCount: number
+  reworkDeltaExceedsNoiseFloor: boolean | null
   lastExecutedAt?: number
   /** 同 scope 内的对比对象（父版本或基线）；无则缺省。 */
   comparisonVersionId?: string

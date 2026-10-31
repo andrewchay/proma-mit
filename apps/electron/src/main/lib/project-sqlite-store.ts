@@ -22,6 +22,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { assertTaskCompletionAllowed, emptyProjectChain } from './project-chain'
 import type { ProjectChain, OwnerTaskStepLink, OwnerTaskMaterializationRecord } from '@gravitas/shared'
 import { requestOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
+import { calculateReworkNoiseFloor } from './agent-employee-noise-floor'
 
 // better-sqlite3 类型（仅类型引用；运行时在 loadNativeSqlite 中延迟 require，Bun 下不会加载）
 type SqliteNativeConstructor = typeof import('better-sqlite3')
@@ -4022,7 +4023,9 @@ export function getAgentEmployeeCapabilityHealth(agentId: string, windowDays = 3
   const observedExecutions = executions.filter((execution) => (execution.completed_at ?? execution.started_at) >= since)
   const observedSamples = samples.filter((sample) => sample.created_at >= since)
   // 人工判断来自项目链，执行完成不能代替业务验收；仅纳入已脱敏且未排除的样本。
-  const humanSamples = listAgentEmployeeLearningSamples(agentId).filter((sample) => sample.createdAt >= since && sample.privacyStatus === 'sanitized' && sample.outcome !== 'manual_excluded')
+  const allHumanSamples = listAgentEmployeeLearningSamples(agentId).filter((sample) => sample.privacyStatus === 'sanitized' && sample.outcome !== 'manual_excluded')
+  const humanSamples = allHumanSamples.filter((sample) => sample.createdAt >= since)
+  const noiseFloor = calculateReworkNoiseFloor(allHumanSamples.flatMap((sample) => sample.ownerJudgment ? [{ at: sample.createdAt, outcome: sample.ownerJudgment.outcome }] : []), now)
   const versions = listAgentEmployeeCapabilityVersions(agentId)
   const statsFor = (versionId: string) => {
     const matchedExecutions = observedExecutions.filter((execution) => parseJsonArray(execution.capability_version_ids).includes(versionId))
@@ -4049,6 +4052,11 @@ export function getAgentEmployeeCapabilityHealth(agentId: string, windowDays = 3
       // 两类信号分别要求各自样本充足，避免运行状态替代人工判断。
       sampleSufficient: ownerDecisions.length >= 5,
       executionSampleSufficient: executionDecided.length >= 5,
+      reworkNoiseFloor: noiseFloor.standardDeviation,
+      historicalReworkRate: noiseFloor.meanReworkRate,
+      noiseFloorMode: noiseFloor.mode,
+      noiseFloorWindowCount: noiseFloor.windowCount,
+      reworkDeltaExceedsNoiseFloor: null,
       lastExecutedAt: matchedExecutions.length ? Math.max(...matchedExecutions.map((item) => item.completed_at ?? item.started_at)) : undefined,
     }
   }
@@ -4062,15 +4070,20 @@ export function getAgentEmployeeCapabilityHealth(agentId: string, windowDays = 3
     if (!comparison) return { versionId: version.id, windowDays, ...stats, comparisonComparable: false }
     const comparisonStats = statsFor(comparison.id)
     const delta = (current: number | null, base: number | null): number | null => current === null || base === null ? null : Math.round((current - base) * 1000) / 1000
+    const reworkRateDelta = delta(stats.reworkRate, comparisonStats.reworkRate)
+    const comparisonComparable = stats.sampleSufficient && comparisonStats.sampleSufficient
     return {
       versionId: version.id,
       windowDays,
       ...stats,
       comparisonVersionId: comparison.id,
-      reworkRateDelta: delta(stats.reworkRate, comparisonStats.reworkRate),
+      reworkRateDelta,
       failureRateDelta: delta(stats.failureRate, comparisonStats.failureRate),
       // 双方都样本充足才认为可比，避免用极小样本制造“改善”错觉。
-      comparisonComparable: stats.sampleSufficient && comparisonStats.sampleSufficient,
+      comparisonComparable,
+      reworkDeltaExceedsNoiseFloor: comparisonComparable && stats.noiseFloorMode === 'historical' && stats.reworkNoiseFloor !== null && reworkRateDelta !== null
+        ? Math.abs(reworkRateDelta) > stats.reworkNoiseFloor
+        : null,
     }
   })
 }
