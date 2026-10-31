@@ -48,6 +48,30 @@ export function readBenchmarkVersion(benchmark: BenchmarkConfig): BenchmarkVersi
 }
 
 /**
+ * 冻结一条评测记录的基准来源。
+ *
+ * 只在写入评测时调用：版本、rubric 版本与定义哈希一起落盘，后续配置变化不回填历史，
+ * 这样「这条评测当时用的是哪份基准」可被核对，影子对比才有可信输入。
+ */
+export function freezeEvaluationDefinition(
+  benchmark: import('./types').BenchmarkConfig,
+  frozenAt: string = new Date().toISOString(),
+): import('./types').EvaluationDefinitionProvenance {
+  const rubricVersion = benchmark.rubricVersion ?? 1
+  return {
+    version: benchmark.version ?? 1,
+    rubricVersion,
+    definitionHash: hashBenchmarkDefinition({
+      cases: benchmark.cases,
+      rubricVersion,
+      targetAgentId: benchmark.targetAgentId,
+      ...(benchmark.targetScope === undefined ? {} : { targetScope: benchmark.targetScope }),
+    }),
+    frozenAt,
+  }
+}
+
+/**
  * 比较两次快照。版本号未递增但影响复现性的内容变化时报告漂移。
  * 仅版本号递增本身不算漂移。
  */

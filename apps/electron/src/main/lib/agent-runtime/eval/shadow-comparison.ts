@@ -334,6 +334,54 @@ export function shadowRunFromEvaluation(evaluation: import('./types').BenchmarkE
   }
 }
 
+export interface RecordedEvaluationComparisonInput {
+  baseline: import('./types').BenchmarkEvaluation
+  candidate: import('./types').BenchmarkEvaluation
+  expectedCaseIds?: string[]
+  deltaThreshold?: number
+  maxCostIncreaseRatio?: number
+  maxLatencyIncreaseRatio?: number
+}
+
+/**
+ * 用两条评测记录各自冻结的来源比较。
+ *
+ * 与 `compareShadowRuns` 的区别：版本与基准定义不取「当前配置」，而取记录写入时
+ * 冻结的哈希；任一侧没有冻结来源、或两侧哈希不一致，都判为不可比并写明原因——
+ * 历史评测没有被追认的可能，当前配置也不能回填成历史事实。
+ */
+export function compareRecordedEvaluations(input: RecordedEvaluationComparisonInput): ShadowComparison {
+  const baselineDefinition = input.baseline.definition
+  const candidateDefinition = input.candidate.definition
+  const reasons: string[] = []
+  if (!baselineDefinition || !candidateDefinition) {
+    reasons.push('评测记录未冻结基准来源，不能作为对比证据')
+  } else {
+    if (baselineDefinition.definitionHash !== candidateDefinition.definitionHash) {
+      reasons.push(`两侧基准定义不同：${baselineDefinition.definitionHash} vs ${candidateDefinition.definitionHash}`)
+    }
+    if (baselineDefinition.version !== candidateDefinition.version) {
+      reasons.push(`基准版本不同：${baselineDefinition.version} vs ${candidateDefinition.version}`)
+    }
+    if (baselineDefinition.rubricVersion !== candidateDefinition.rubricVersion) {
+      reasons.push(`rubric 版本不同：${baselineDefinition.rubricVersion} vs ${candidateDefinition.rubricVersion}`)
+    }
+  }
+  const benchmarkVersion = baselineDefinition?.version ?? 0
+  const rubricVersion = baselineDefinition?.rubricVersion ?? 0
+  return compareShadowRunsWithReasons(
+    shadowRunFromEvaluation(input.baseline, { label: 'baseline', benchmarkVersion, rubricVersion }),
+    shadowRunFromEvaluation(input.candidate, { label: 'candidate', benchmarkVersion, rubricVersion }),
+    {
+      ...(input.expectedCaseIds === undefined ? {} : { expectedCaseIds: input.expectedCaseIds }),
+      ...(input.deltaThreshold === undefined ? {} : { deltaThreshold: input.deltaThreshold }),
+      ...(input.maxCostIncreaseRatio === undefined ? {} : { maxCostIncreaseRatio: input.maxCostIncreaseRatio }),
+      ...(input.maxLatencyIncreaseRatio === undefined ? {} : { maxLatencyIncreaseRatio: input.maxLatencyIncreaseRatio }),
+    },
+    reasons,
+  )
+}
+
 export interface ScoreboardShadowInput {
   benchmark: import('./types').BenchmarkConfig
   baseline: import('./types').BenchmarkEvaluation
@@ -344,25 +392,20 @@ export interface ScoreboardShadowInput {
 }
 
 /**
- * 用同一次基准的定义比较两条已落盘评测（基线版本 vs 候选版本）。
+ * 用评测记录自身冻结的来源比较两条已落盘评测（基线版本 vs 候选版本）。
  *
- * 历史评测未记录其基准和评分规则来源，当前定义不能作为历史证据；
- * 在评测记录获得可核验来源之前始终返回不可比，但保留案例及资源明细。
+ * 历史评测没有冻结来源，仍返回不可比（原因写明「未冻结基准来源」）；新评测在写入时
+ * 冻结 version / rubricVersion / definitionHash，因此同一基准下的两条新记录可以比较。
  */
 export function compareScoreboardEvaluations(input: ScoreboardShadowInput): ShadowComparison {
-  const benchmarkVersion = (input.benchmark as { version?: number }).version ?? 1
-  const rubricVersion = (input.benchmark as { rubricVersion?: number }).rubricVersion ?? 1
-  return compareShadowRunsWithReasons(
-    shadowRunFromEvaluation(input.baseline, { label: 'baseline', benchmarkVersion, rubricVersion }),
-    shadowRunFromEvaluation(input.candidate, { label: 'candidate', benchmarkVersion, rubricVersion }),
-    {
-      expectedCaseIds: input.benchmark.cases,
-      ...(input.deltaThreshold === undefined ? {} : { deltaThreshold: input.deltaThreshold }),
-      ...(input.maxCostIncreaseRatio === undefined ? {} : { maxCostIncreaseRatio: input.maxCostIncreaseRatio }),
-      ...(input.maxLatencyIncreaseRatio === undefined ? {} : { maxLatencyIncreaseRatio: input.maxLatencyIncreaseRatio }),
-    },
-    ['评测基准版本来源未核验，无法确认使用的基准与评分规则'],
-  )
+  return compareRecordedEvaluations({
+    baseline: input.baseline,
+    candidate: input.candidate,
+    expectedCaseIds: input.benchmark.cases,
+    ...(input.deltaThreshold === undefined ? {} : { deltaThreshold: input.deltaThreshold }),
+    ...(input.maxCostIncreaseRatio === undefined ? {} : { maxCostIncreaseRatio: input.maxCostIncreaseRatio }),
+    ...(input.maxLatencyIncreaseRatio === undefined ? {} : { maxLatencyIncreaseRatio: input.maxLatencyIncreaseRatio }),
+  })
 }
 
 /** 同上，但先按 scoreboard 评测构造两侧输入再比较（供调用方一次写全）。 */

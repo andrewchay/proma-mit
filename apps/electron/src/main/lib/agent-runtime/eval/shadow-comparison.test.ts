@@ -199,8 +199,47 @@ describe('compareScoreboardEvaluations（scoreboard 适配）', () => {
     expect(result.meanBaseline).toBeNull()
     expect(result.meanCandidate).toBeNull()
     expect(result.verdict).toBe('inconclusive')
-    expect(result.reasons.join()).toContain('基准版本来源未核验')
+    expect(result.reasons.join()).toContain('未冻结基准来源')
     expect(result.cases[0]?.baseline).toBeCloseTo(0.6, 5)
+  })
+
+  test('Given 两条记录冻结了同一基准来源 When 比较 Then 可比并给出差值', async () => {
+    const { compareScoreboardEvaluations } = await import('./shadow-comparison')
+    const definition = { version: 2, rubricVersion: 3, definitionHash: 'hash-same', frozenAt: '2026-10-31T00:00:00Z' }
+    const result = compareScoreboardEvaluations({
+      benchmark,
+      baseline: { ...evaluation(1, [['c1', 60], ['c2', 70]]), definition },
+      candidate: { ...evaluation(2, [['c1', 80], ['c2', 90]]), definition },
+    })
+    expect(result.comparable).toBe(true)
+    expect(result.reasons).toEqual([])
+    expect(result.meanDelta).toBeCloseTo(0.2, 5)
+    expect(result.verdict).toBe('candidate_better')
+  })
+
+  test('Given 两条记录冻结的基准定义哈希不同 When 比较 Then 不可比且写明原因', async () => {
+    const { compareScoreboardEvaluations } = await import('./shadow-comparison')
+    const base = { version: 2, rubricVersion: 3, definitionHash: 'hash-a', frozenAt: '2026-10-31T00:00:00Z' }
+    const result = compareScoreboardEvaluations({
+      benchmark,
+      baseline: { ...evaluation(1, [['c1', 60], ['c2', 70]]), definition: base },
+      candidate: { ...evaluation(2, [['c1', 80], ['c2', 90]]), definition: { ...base, definitionHash: 'hash-b' } },
+    })
+    expect(result.comparable).toBe(false)
+    expect(result.verdict).toBe('inconclusive')
+    expect(result.reasons.join()).toContain('两侧基准定义不同')
+  })
+
+  test('Given 仅一侧冻结来源 When 比较 Then 不可比，不把缺来源当同源', async () => {
+    const { compareRecordedEvaluations } = await import('./shadow-comparison')
+    const definition = { version: 2, rubricVersion: 3, definitionHash: 'hash-same', frozenAt: '2026-10-31T00:00:00Z' }
+    const result = compareRecordedEvaluations({
+      baseline: { ...evaluation(1, [['c1', 60], ['c2', 70]]), definition },
+      candidate: evaluation(2, [['c1', 80], ['c2', 90]]),
+      expectedCaseIds: ['c1', 'c2'],
+    })
+    expect(result.comparable).toBe(false)
+    expect(result.reasons.join()).toContain('未冻结基准来源')
   })
 
   test('Given 两侧同时缺少同一基准 case When 比较 Then 不可比', async () => {
