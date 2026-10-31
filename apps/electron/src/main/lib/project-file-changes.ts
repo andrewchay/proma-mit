@@ -4,6 +4,7 @@ import { lstat, mkdir, open, readFile, readdir, rename, stat, unlink, writeFile 
 import { join, relative } from 'node:path'
 import { constants } from 'node:fs'
 import { getProjectsDir } from './config-paths'
+import { startPerformanceDiagnostic } from './performance-diagnostics'
 import type { ProjectWorkspaceFileChangesView } from '@gravitas/shared'
 type ProjectFileScanView = Omit<ProjectWorkspaceFileChangesView, 'watching'>
 
@@ -41,10 +42,14 @@ async function readIgnorePrefixes(root: string): Promise<string[]> {
 }
 
 async function collect(root: string, ignorePrefixes: string[]): Promise<Record<string, FileMetadata>> {
+  const finishDiagnostic = startPerformanceDiagnostic('project-file-scan')
   const files: Record<string, FileMetadata> = Object.create(null)
   let count = 0
   let bytesHashed = 0
+  let directories = 0
+  let status: 'ok' | 'error' = 'error'
   async function visit(dir: string): Promise<void> {
+    if (finishDiagnostic) directories++
     const entries = await readdir(dir, { withFileTypes: true })
     entries.sort((a, b) => a.name.localeCompare(b.name))
     for (const entry of entries) {
@@ -84,8 +89,13 @@ async function collect(root: string, ignorePrefixes: string[]): Promise<Record<s
       }
     }
   }
-  await visit(root)
-  return files
+  try {
+    await visit(root)
+    status = 'ok'
+    return files
+  } finally {
+    finishDiagnostic?.(status, { files: count, directories, bytesHashed })
+  }
 }
 
 /** 扫描失败时不写入快照，避免把不可读目录误判为文件删除。首次扫描仅建立基线。 */
