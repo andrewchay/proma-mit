@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { assertNoWritableHardlinks, buildBashSandboxPolicy, quarantineNewGitHooks, quarantineWritableHardlinks, resolveGitLayout, sanitizeBashGitEnvironment, scratchDirFor } from './bash-sandbox'
+import { assertNoWritableHardlinks, buildBashSandboxPolicy, quarantineNewGitHooks, quarantineWritableHardlinks, resolveGitIdentityEnvironment, resolveGitLayout, sanitizeBashGitEnvironment, scratchDirFor } from './bash-sandbox'
 import { buildSeatbeltProfile } from '../../pinned-verifier-sandbox'
 import { executeBashTool, executeBashToolOnPlatform } from './bash-tool'
 import { bindTestToolContext } from '../../testing/bound-tool-context'
@@ -96,6 +96,78 @@ describe('Bash 沙箱（macOS seatbelt）', () => {
     expect(result.isError).toBeFalsy()
     expect(result.content).toContain('feature change')
     expect(result.content).toContain('feature')
+  })
+  test('Given 全局身份和仓库身份 When 沙箱提交 Then 保留 Git 优先级并隔离可执行配置', async () => {
+    const repo = join(root, 'identity-repo')
+    const globalConfig = join(root, 'identity-global')
+    const marker = join(root, 'identity-helper-ran')
+    mkdirSync(repo)
+    execFileSync('git', ['init', '-q', repo])
+    writeFileSync(globalConfig, `[user]\n name = Global Fixture\n email = global@example.invalid\n[credential]\n helper = !touch ${marker}\n`)
+    const keys = ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_NOSYSTEM', 'GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL'] as const
+    const previous = Object.fromEntries(keys.map(key => [key, process.env[key]]))
+    try {
+      for (const key of keys) delete process.env[key]
+      process.env.GIT_CONFIG_GLOBAL = globalConfig
+      process.env.GIT_CONFIG_NOSYSTEM = '1'
+      writeFileSync(join(repo, 'a.txt'), 'one')
+      const first = await run(repo, 'git add a.txt && git commit -qm first && git log -1 --format="%an|%ae|%cn|%ce"')
+      expect(first.isError).toBeFalsy()
+      expect(first.content).toContain('Global Fixture|global@example.invalid|Global Fixture|global@example.invalid')
+      const visibleConfig = await run(repo, 'git config --list')
+      expect(visibleConfig.content).not.toContain('credential.helper')
+      execFileSync('git', ['-C', repo, 'config', '--local', 'user.name', 'Local Fixture'])
+      execFileSync('git', ['-C', repo, 'config', '--local', 'user.email', 'local@example.invalid'])
+      writeFileSync(join(repo, 'a.txt'), 'two')
+      const second = await run(repo, 'git add a.txt && git commit -qm second && git log -1 --format="%an|%ae"')
+      expect(second.isError).toBeFalsy()
+      expect(second.content).toContain('Local Fixture|local@example.invalid')
+      writeFileSync(join(repo, 'a.txt'), 'three')
+      const third = await run(repo, 'git add a.txt && git -c user.name=Command -c user.email=command@example.invalid commit -qm third && git log -1 --format="%an|%ae"')
+      expect(third.isError).toBeFalsy()
+      expect(third.content).toContain('Command|command@example.invalid')
+      process.env.GIT_AUTHOR_NAME = 'Environment Author'
+      process.env.GIT_AUTHOR_EMAIL = 'environment@example.invalid'
+      writeFileSync(join(repo, 'a.txt'), 'four')
+      const fourth = await run(repo, 'git add a.txt && git commit -qm fourth && git log -1 --format="%an|%ae|%cn|%ce"')
+      expect(fourth.isError).toBeFalsy()
+      expect(fourth.content).toContain('Environment Author|environment@example.invalid|Local Fixture|local@example.invalid')
+      expect(existsSync(marker)).toBe(false)
+    } finally {
+      for (const key of keys) {
+        if (previous[key] === undefined) delete process.env[key]
+        else process.env[key] = previous[key]
+      }
+    }
+  })
+  test('Given includeIf 匹配工作区 When 解析身份 Then 使用条件配置且不传递其他配置', async () => {
+    const repo = join(root, 'identity-conditional')
+    const globalConfig = join(root, 'conditional-global')
+    const include = join(root, 'conditional-identity')
+    mkdirSync(repo)
+    execFileSync('git', ['init', '-q', repo])
+    writeFileSync(include, '[user]\n name = Conditional Fixture\n email = conditional@example.invalid\n')
+    writeFileSync(globalConfig, `[user]\n name = Global Fixture\n email = global@example.invalid\n[includeIf "gitdir:${realpathSync(repo)}/"]\n path = ${include}\n[core]\n fsmonitor = dangerous-command\n`)
+    const source = { ...process.env, GIT_CONFIG_GLOBAL: globalConfig, GIT_CONFIG_NOSYSTEM: '1' }
+    const selected = await resolveGitIdentityEnvironment(repo, source)
+    const isolated = { ...sanitizeBashGitEnvironment(source), ...selected }
+    const name = execFileSync('git', ['-C', repo, 'config', '--get', 'user.name'], { env: isolated, encoding: 'utf8' }).trim()
+    expect(name).toBe('Conditional Fixture')
+    expect(Object.values(selected)).not.toContain('dangerous-command')
+  })
+  test('Given 没有配置身份 When 解析 Then 不让 Git 推测姓名或邮箱', async () => {
+    const repo = join(root, 'identity-missing')
+    const globalConfig = join(root, 'identity-missing-global')
+    mkdirSync(repo)
+    execFileSync('git', ['init', '-q', repo])
+    writeFileSync(globalConfig, '# no identity configured\n')
+    const source = { ...process.env, GIT_CONFIG_GLOBAL: globalConfig, GIT_CONFIG_NOSYSTEM: '1' }
+    for (const key of ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL']) delete source[key as keyof typeof source]
+    const selected = await resolveGitIdentityEnvironment(repo, source)
+    const isolated = { ...sanitizeBashGitEnvironment(source), ...selected }
+    const result = Bun.spawnSync(['git', '-C', repo, 'var', 'GIT_AUTHOR_IDENT'], { env: isolated, stdout: 'pipe', stderr: 'pipe' })
+    expect(result.exitCode).not.toBe(0)
+    expect(Object.values(selected)).not.toContain('Global Fixture')
   })
   test('写入 git hooks 被拒绝（hooks 会在之后的正常 git 操作中执行）', async () => {
     const { feature } = layout('hooks')
