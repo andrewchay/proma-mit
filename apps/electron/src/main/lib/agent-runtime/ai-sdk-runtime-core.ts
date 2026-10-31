@@ -689,6 +689,8 @@ export class AISDKRuntimeCore {
         ownerWorkspaceWrite: Boolean(state.activeSession.ownerActionApproval),
         cwd: state.cwd,
         sessionId: state.sessionId,
+        // 运行时时绑定的活动会话对象：门禁据此校验身份，调用方无法用 sessionId 冒充其他会话。
+        boundSession: state.activeSession,
         abortSignal: state.signal,
         permissionMode: state.activeSession.permissionMode,
         planModeEntered: state.activeSession.planModeEntered,
