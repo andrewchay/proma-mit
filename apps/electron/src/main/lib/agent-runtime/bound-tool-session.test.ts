@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildElectronMock } from '../testing/electron-mock'
+import { bindTestToolContext } from '../testing/bound-tool-context'
+import { executeReadTool } from './tool-impls/read-tool'
 
 const directory = mkdtempSync(join(tmpdir(), 'bound-tool-session-')), previous = process.env.PROMA_TEST_CONFIG_DIR
 process.env.PROMA_TEST_CONFIG_DIR = directory
@@ -12,8 +14,7 @@ mock.module('../agent-service', () => ({ isAgentSessionActive: () => false }))
 
 const store = await import('../project-sqlite-store')
 const { assertBoundToolSession, resolveOwnerExecutionGateSession } = await import('../project-owner-execution-gates')
-const { bindRuntimeSessionIdentity, revokeRuntimeSessionIdentity } = await import('./runtime-session-identity')
-
+const { revokeRuntimeSessionIdentity } = await import('./runtime-session-identity')
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => {
   store.closeProjectDb()
@@ -28,9 +29,7 @@ function boundOwner(
   cwd: string,
   runtime: 'ai-sdk' | 'pi' | 'proma' = 'ai-sdk',
 ): { sessionId: string; cwd: string; boundSession?: object; runtime?: 'ai-sdk' | 'pi' | 'proma' } {
-  const boundSession = { runtimeSession: sessionId }
-  bindRuntimeSessionIdentity(boundSession, { sessionId, cwd, runtime })
-  return { sessionId, cwd, boundSession, runtime }
+  return bindTestToolContext({ sessionId, cwd }, runtime)
 }
 
 describe('bound tool session gate', () => {
@@ -55,10 +54,29 @@ describe('bound tool session gate', () => {
     expect(() => assertBoundToolSession(ctx)).toThrow('绑定已失效')
   })
 
-  test('Given 普通会话未携带绑定对象 When 校验 Then 行为不变放行', () => {
+  test('Given 普通会话未携带绑定对象 When 校验 Then 拒绝为缺少绑定身份', () => {
     const sessionId = randomUUID()
     expect(resolveOwnerExecutionGateSession(sessionId).kind).toBe('unrestricted')
-    expect(() => assertBoundToolSession({ sessionId })).not.toThrow()
+    expect(() => assertBoundToolSession({ sessionId })).toThrow('缺少已绑定的会话身份')
+  })
+
+  test('Given 普通会话未携带绑定对象 When 直接调用 Read 工具 Then 拒绝执行', async () => {
+    const sessionId = randomUUID()
+    const cwd = mkdtempSync(join(directory, 'unbound-read-'))
+    writeFileSync(join(cwd, 'note.txt'), 'hello\n')
+    expect(resolveOwnerExecutionGateSession(sessionId).kind).toBe('unrestricted')
+    const result = await executeReadTool({ file_path: 'note.txt' }, { sessionId, cwd })
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('缺少已绑定的会话身份')
+  })
+
+  test('Given 同一普通会话已绑定身份 When 直接调用 Read 工具 Then 读取成功（对照）', async () => {
+    const sessionId = randomUUID()
+    const cwd = mkdtempSync(join(directory, 'bound-read-'))
+    writeFileSync(join(cwd, 'note.txt'), 'hello\n')
+    const result = await executeReadTool({ file_path: 'note.txt' }, bindTestToolContext({ sessionId, cwd }))
+    expect(result.isError).toBeFalsy()
+    expect(result.content).toContain('hello')
   })
 
   test('Given 伪造的未绑定对象 When 写入 boundSession 后校验 Then 拒绝为绑定已失效', () => {

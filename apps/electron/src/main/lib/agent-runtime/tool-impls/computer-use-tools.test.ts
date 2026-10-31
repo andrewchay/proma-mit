@@ -2,10 +2,14 @@ import { describe, expect, mock, test, beforeAll, afterAll, spyOn } from 'bun:te
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { bindTestToolContext } from '../../testing/bound-tool-context'
 import { buildElectronMock } from '../../testing/electron-mock'
 
 
 mock.module('electron', () => buildElectronMock())
+
+/** 工具入口要求已绑定会话身份：测试显式按 Runtime 的方式绑定。 */
+const cuCtx = (sessionId: string, extra: Record<string, unknown> = {}) => bindTestToolContext({ cwd: '/tmp', sessionId, ...extra })
 
 const {
   createComputerUseStatusToolDefinition,
@@ -45,14 +49,14 @@ describe('Computer Use 工具', () => {
   test('Given 普通会话 When 查询桌面能力 Then 进入能力服务', async () => {
     const capabilities = spyOn(computerUseService, 'getCapabilities')
     try {
-      const result = await executeComputerUseCapabilitiesTool({}, { cwd: directory, sessionId: 'ordinary-computer-session' })
+      const result = await executeComputerUseCapabilitiesTool({}, bindTestToolContext({ cwd: directory, sessionId: 'ordinary-computer-session' }))
       expect(result.isError).toBeFalsy()
       expect(capabilities).toHaveBeenCalled()
     } finally { capabilities.mockRestore() }
   })
 
   test('无效参数不访问系统桌面', async () => {
-    const ctx = { cwd: '/tmp', sessionId: 'computer-use-test' }
+    const ctx = cuCtx('computer-use-test')
     const click = await executeComputerUseClickTool({ x: 1 }, ctx)
     const scroll = await executeComputerUseScrollTool({ direction: 'left' }, ctx)
     expect(click.isError).toBe(true)
@@ -62,12 +66,10 @@ describe('Computer Use 工具', () => {
   test('用户接管明确取消时返回错误', async () => {
     const result = await executeComputerUseRequestTakeoverTool(
       { reason: '需要输入验证码', instruction: '请完成后选择继续' },
-      {
-        cwd: '/tmp',
-        sessionId: 'computer-use-test',
+      cuCtx('computer-use-test', {
         abortSignal: new AbortController().signal,
         onAskUser: async () => ({ behavior: 'allow', answers: { '完成敏感操作后继续吗？': '取消' } }),
-      },
+      }),
     )
     expect(result.isError).toBe(true)
     expect(result.content).toContain('取消')
@@ -76,10 +78,9 @@ describe('Computer Use 工具', () => {
 
 describe('Computer Use 动作结果分类', () => {
   // 每个用例独立 sessionId：结果未知会登记在执行入口，同会话同指纹会被拦截。
-  const baseCtx = { cwd: '/tmp' }
 
   test('Given 服务超时 When 点击 Then 标记结果未知并禁止自动重试', async () => {
-    const ctx = { ...baseCtx, sessionId: 'cu-outcome-timeout' }
+    const ctx = cuCtx('cu-outcome-timeout')
     const click = spyOn(computerUseService, 'click').mockImplementation(() => {
       const error = new Error('operation timed out')
       error.name = 'TimeoutError'
@@ -97,7 +98,7 @@ describe('Computer Use 动作结果分类', () => {
   })
 
   test('Given 服务报权限错误 When 点击 Then 不能推断动作未生效', async () => {
-    const ctx = { ...baseCtx, sessionId: 'cu-outcome-denied' }
+    const ctx = cuCtx('cu-outcome-denied')
     const click = spyOn(computerUseService, 'click').mockRejectedValue(Object.assign(new Error('not permitted'), { code: 'EPERM' }))
     try {
       const result = await executeComputerUseClickTool({ x: 10, y: 20 }, ctx)
@@ -108,7 +109,7 @@ describe('Computer Use 动作结果分类', () => {
   })
 
   test('Given 未知异常 When 输入 Then 保守判为结果未知', async () => {
-    const ctx = { ...baseCtx, sessionId: 'cu-outcome-type' }
+    const ctx = cuCtx('cu-outcome-type')
     const type = spyOn(computerUseService, 'type').mockRejectedValue(new Error('CGEventPost failed'))
     try {
       const result = await executeComputerUseTypeTool({ text: 'hello' }, ctx)
@@ -118,7 +119,7 @@ describe('Computer Use 动作结果分类', () => {
   })
 
   test('Given 成功 When 点击 Then 结果标记 applied 且保留原始 message', async () => {
-    const ctx = { ...baseCtx, sessionId: 'cu-outcome-success' }
+    const ctx = cuCtx('cu-outcome-success')
     const click = spyOn(computerUseService, 'click').mockResolvedValue('已点击 (10, 20)')
     try {
       const result = await executeComputerUseClickTool({ x: 10, y: 20 }, ctx)
@@ -132,7 +133,7 @@ describe('Computer Use 动作结果分类', () => {
 describe('动作派发前登记', () => {
   test('Given 桌面动作派发 When 服务开始执行 Then 登记已写入且成功后解除', async () => {
     const { listPendingUnknownActions } = await import('../unknown-action-store')
-    const ctx = { cwd: '/tmp', sessionId: 'cu-predispatch' }
+    const ctx = cuCtx('cu-predispatch')
     let observed = false
     const click = spyOn(computerUseService, 'click').mockImplementation(async () => {
       observed = (await listPendingUnknownActions(ctx.sessionId)).length === 1
@@ -150,7 +151,7 @@ describe('动作派发前登记', () => {
 describe('未知结果的执行约束', () => {
   test('Given 上次点击结果未知 When 再点同一坐标 Then 入口直接拒绝直到解除', async () => {
     const { resolveUnknownAction } = await import('../unknown-action-store')
-    const ctx = { cwd: '/tmp', sessionId: 'cu-block-e2e' }
+    const ctx = cuCtx('cu-block-e2e')
     const click = spyOn(computerUseService, 'click').mockRejectedValue(new Error('operation timed out'))
     try {
       const first = await executeComputerUseClickTool({ x: 3, y: 4 }, ctx)

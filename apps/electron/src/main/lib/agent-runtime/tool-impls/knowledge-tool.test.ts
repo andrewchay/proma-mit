@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext } from '../types.ts'
+import { bindTestToolContext } from '../../testing/bound-tool-context'
 import { buildElectronMock } from '../../testing/electron-mock'
 
 // agent-session-manager 传递依赖 agent-workspace-manager / electron；统一使用完整 mock，避免单测进程加载真实 electron。
@@ -41,7 +42,7 @@ async function loadTools() {
 }
 
 function makeCtx(sessionId: string): ToolContext {
-  return { cwd: tempDir, sessionId }
+  return bindTestToolContext({ cwd: tempDir, sessionId })
 }
 
 beforeEach(async () => {

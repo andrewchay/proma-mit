@@ -19,6 +19,7 @@ import {
 } from './design-context'
 import { getWorkspaceSkillsDir, getDefaultSkillsDir } from './config-paths'
 import { executeSkillTool } from './agent-runtime/tool-impls/skill-tool'
+import { bindTestToolContext } from './testing/bound-tool-context'
 
 // 测试经 getWorkspaceSkillsDir 闭包注入工作区 skills 目录（见 resolveDesignCraftDir 调用处）
 
@@ -265,12 +266,14 @@ describe('composeOdDesignContext', () => {
 })
 
 describe('ReadSkill 工具接线', () => {
+  const skillCtx = (cwd: string, sessionId: string) => bindTestToolContext({ cwd, sessionId, workspaceSlug: WORKSPACE_SLUG })
+
   test('Given 同一会话切换设计系统 When 再次读取 Skill Then 使用当前品牌与令牌', async () => {
     const cwd = join(tempHomeDir, 'brand-refresh')
     mkdirSync(cwd, { recursive: true })
     writeFileSync(join(cwd, 'DESIGN.md'), '# Brand A\nOld brand')
     writeFileSync(join(cwd, 'tokens.css'), ':root { --brand: red; }')
-    const ctx = { cwd, sessionId: 'same-session', workspaceSlug: WORKSPACE_SLUG }
+    const ctx = skillCtx(cwd, 'same-session')
     expect((await executeSkillTool({ skill_slug: 'frontend-design' }, ctx)).content).toContain('Brand A')
     writeFileSync(join(cwd, 'DESIGN.md'), '# Brand B\nNew brand')
     writeFileSync(join(cwd, 'tokens.css'), ':root { --brand: blue; }')
@@ -283,7 +286,7 @@ describe('ReadSkill 工具接线', () => {
   test('Given Skill 要求设计系统而工作区缺少 DESIGN.md When 读取 Then 明确提示缺项', async () => {
     const cwd = join(tempHomeDir, 'brand-missing')
     mkdirSync(cwd, { recursive: true })
-    const result = await executeSkillTool({ skill_slug: 'frontend-design' }, { cwd, sessionId: 'missing', workspaceSlug: WORKSPACE_SLUG })
+    const result = await executeSkillTool({ skill_slug: 'frontend-design' }, skillCtx(cwd, 'missing'))
     expect(result.content).toContain('缺少可用的 DESIGN.md')
   })
   test('Given 声明 od: 的 Skill When 读取 SKILL.md Then 工具结果附带注入上下文', async () => {
@@ -293,7 +296,7 @@ describe('ReadSkill 工具接线', () => {
 
     const result = await executeSkillTool(
       { skill_slug: 'frontend-design' },
-      { cwd, sessionId: 's1', workspaceSlug: WORKSPACE_SLUG },
+      skillCtx(cwd, 's1'),
     )
     expect(result.isError).toBeFalsy()
     expect(result.content).toContain('# frontend-design body')
@@ -309,7 +312,7 @@ describe('ReadSkill 工具接线', () => {
     writeFileSync(subPath, '# guide\nsub content', 'utf-8')
     const result = await executeSkillTool(
       { skill_slug: 'frontend-design', file_path: 'guide.md' },
-      { cwd: tempHomeDir, sessionId: 's1', workspaceSlug: WORKSPACE_SLUG },
+      skillCtx(tempHomeDir, 's1'),
     )
     expect(result.isError).toBeFalsy()
     expect(result.content).toContain('sub content')
@@ -319,7 +322,7 @@ describe('ReadSkill 工具接线', () => {
   test('Given 无 od: 声明的 Skill When 读取 Then 结果与正文一致', async () => {
     const result = await executeSkillTool(
       { skill_slug: 'plain-skill' },
-      { cwd: tempHomeDir, sessionId: 's1', workspaceSlug: WORKSPACE_SLUG },
+      skillCtx(tempHomeDir, 's1'),
     )
     expect(result.isError).toBeFalsy()
     expect(result.content).not.toContain('<od_design_system')

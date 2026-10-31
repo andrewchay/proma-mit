@@ -19,6 +19,7 @@ import { createSource, createKnowledgeBase, bindProject as bindProjectKnowledge 
 import { closeKnowledgeIndexStore, indexAllEnabledSources, openKnowledgeIndexStore } from './knowledge-index-service'
 import { createAgentSession, updateAgentSessionMeta } from './agent-session-manager'
 import { executeSearchKnowledgeTool, executeReadKnowledgeSourceTool } from './agent-runtime/tool-impls/knowledge-tool'
+import { bindTestToolContext } from './testing/bound-tool-context'
 import { resolveRetrievableScope } from './knowledge-scope-service'
 import { ElectronRuntimeWorkspaceStore } from './agent-runtime/runtime-services'
 import { savePilotPolicyDraft } from './project-pilot-policy'
@@ -146,7 +147,7 @@ test('A07：知识工具使用持久会话权限，跨项目文档与撤权后�
   expect(indexed.failed).toBe(0)
   const session = createAgentSession('G1 限域会话', undefined, workspace.id)
   updateAgentSessionMeta(session.id, { projectId: projectA.id, knowledgeScopeMode: 'project' })
-  const ctx = { sessionId: session.id, cwd: getAgentSessionWorkspacePath(workspace.slug, session.id) }
+  const ctx = bindTestToolContext({ sessionId: session.id, cwd: getAgentSessionWorkspacePath(workspace.slug, session.id) })
   const allowed = await executeSearchKnowledgeTool({ query: 'AlphaCanaryOnly' }, ctx)
   expect(allowed.isError ?? false).toBe(false)
   const documentId = /documentId: (\S+)/.exec(allowed.content)?.[1]

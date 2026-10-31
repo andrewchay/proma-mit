@@ -11,6 +11,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { MemoryItem } from '../../memory-plugin-service'
+import { bindTestToolContext } from '../../testing/bound-tool-context'
 
 let mockItems: MemoryItem[] = []
 let mockSearchCalls: Array<{ query: string; sessionId: string; limit?: number }> = []
@@ -66,7 +67,7 @@ afterAll(async () => {
 })
 
 describe('项目记忆工具（Agent Runtime）', () => {
-  const ctx = { cwd: '/tmp/workspace', sessionId: 'session-42' }
+  const ctx = bindTestToolContext({ cwd: '/tmp/workspace', sessionId: 'session-42' })
 
   beforeEach(() => {
     mockItems = []

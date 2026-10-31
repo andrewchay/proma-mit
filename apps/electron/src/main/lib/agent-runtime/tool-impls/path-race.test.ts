@@ -51,6 +51,7 @@ mock.module('node:fs', () => ({
   }) as typeof fs.statSync,
 }))
 
+import { bindTestToolContext } from '../../testing/bound-tool-context'
 const { executeReadTool } = await import('./read-tool')
 const { executeWriteTool } = await import('./write-tool')
 const { assertDescriptorMatchesStat } = await import('./tool-utils')
@@ -91,6 +92,9 @@ describe('路径替换竞态', () => {
     rmSync(outside, { recursive: true, force: true })
   })
 
+  /** 工具上下文按 Runtime 的方式绑定会话身份；绑定不触碰 fs，不影响竞态计数。 */
+  const toolCtx = () => bindTestToolContext({ cwd, sessionId })
+
   /** 布置竞态：目标路径第 nth 次被解析返回后执行替换；布置本身不计入命中。 */
   const armRace = (target: string, nth: number, action: () => void) => {
     raceTargetCanonical = realRealpathSync(target)
@@ -119,7 +123,7 @@ describe('路径替换竞态', () => {
     const { sub, target } = setup()
     // 第 3 次命中是 Read 打开前的 stat（inode 基准）；返回后立即替换父目录，open 将落到范围外。
     armRace(target, 3, () => swapParentToOutside(sub))
-    const result = await executeReadTool({ file_path: 'sub/file.txt' }, { cwd, sessionId } as never)
+    const result = await executeReadTool({ file_path: 'sub/file.txt' }, toolCtx())
     expect(result.isError).toBe(true)
     expect(result.content).not.toContain('secret-content')
     expect(result.content).toContain('被替换')
@@ -129,17 +133,17 @@ describe('路径替换竞态', () => {
     const { sub, target } = setup()
     // 第 1 次解析发生在 resolveToolPath 内；返回后替换父目录，打开将落到范围外。
     armRace(target, 1, () => swapParentToOutside(sub))
-    const result = await executeWriteTool({ file_path: 'sub/file.txt', content: 'hacked' }, { cwd, sessionId } as never)
+    const result = await executeWriteTool({ file_path: 'sub/file.txt', content: 'hacked' }, toolCtx())
     expect(result.isError).toBe(true)
     expect(readFileSync(join(outside, 'file.txt'), 'utf8')).toBe('secret-content')
   })
 
   test('Given 无竞态 When 正常读写 Then 行为不变', async () => {
     const { target } = setup()
-    const read = await executeReadTool({ file_path: 'sub/file.txt' }, { cwd, sessionId } as never)
+    const read = await executeReadTool({ file_path: 'sub/file.txt' }, toolCtx())
     expect(read.isError).toBeFalsy()
     expect(read.content).toContain('inside-content')
-    const write = await executeWriteTool({ file_path: 'sub/file.txt', content: 'updated' }, { cwd, sessionId } as never)
+    const write = await executeWriteTool({ file_path: 'sub/file.txt', content: 'updated' }, toolCtx())
     expect(write.isError).toBeFalsy()
     expect(readFileSync(target, 'utf8')).toBe('updated')
   })

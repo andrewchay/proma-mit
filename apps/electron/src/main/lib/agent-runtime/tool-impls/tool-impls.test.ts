@@ -14,6 +14,8 @@ import { executeEditTool, createEditToolDefinition } from './edit-tool'
 import { executeBashTool, createBashToolDefinition } from './bash-tool'
 import { executeGrepTool, createGrepToolDefinition } from './grep-tool'
 import { executeAgentTool, createAgentToolDefinition, AGENT_TOOL_NAME } from './agent-tool'
+import type { ToolContext } from '../types'
+import { bindTestToolContext } from '../../testing/bound-tool-context'
 
 const databaseDir = mkdtempSync(join(tmpdir(), 'gravitas-tool-db-'))
 const previousConfigDir = process.env.PROMA_TEST_CONFIG_DIR
@@ -43,11 +45,15 @@ describe('Agent Runtime 核心工具', () => {
     rmSync(tempDir, { recursive: true, force: true })
   })
 
+  /** 工具入口要求已绑定会话身份：测试显式按 Runtime 的方式绑定。 */
+  const toolCtx = (extra: Partial<ToolContext> = {}): ToolContext =>
+    bindTestToolContext({ cwd: tempDir, sessionId, ...extra } as ToolContext)
+
   test('Read 工具读取文件内容', async () => {
     const filePath = join(tempDir, 'hello.txt')
     writeFileSync(filePath, 'hello world\nline 2', 'utf-8')
 
-    const result = await executeReadTool({ file_path: 'hello.txt' }, { cwd: tempDir, sessionId })
+    const result = await executeReadTool({ file_path: 'hello.txt' }, toolCtx())
 
     expect(result.isError).toBeFalsy()
     expect(result.content).toBe('hello world\nline 2')
@@ -57,13 +63,13 @@ describe('Agent Runtime 核心工具', () => {
     const filePath = join(tempDir, 'multi.txt')
     writeFileSync(filePath, 'a\nb\nc\nd\ne', 'utf-8')
 
-    const result = await executeReadTool({ file_path: 'multi.txt', offset: 1, limit: 2 }, { cwd: tempDir, sessionId })
+    const result = await executeReadTool({ file_path: 'multi.txt', offset: 1, limit: 2 }, toolCtx())
 
     expect(result.content).toBe('b\nc')
   })
 
   test('Read 工具拒绝越界路径', async () => {
-    const result = await executeReadTool({ file_path: '../etc/passwd' }, { cwd: tempDir, sessionId })
+    const result = await executeReadTool({ file_path: '../etc/passwd' }, toolCtx())
 
     expect(result.isError).toBe(true)
     expect(result.content).toContain('路径越界')
@@ -72,7 +78,7 @@ describe('Agent Runtime 核心工具', () => {
   test('Write 工具写入文件', async () => {
     const result = await executeWriteTool(
       { file_path: 'subdir/test.txt', content: 'new content' },
-      { cwd: tempDir, sessionId },
+      toolCtx(),
     )
 
     expect(result.isError).toBeFalsy()
@@ -86,7 +92,7 @@ describe('Agent Runtime 核心工具', () => {
 
     const result = await executeEditTool(
       { file_path: 'edit.txt', old_string: 'bar', new_string: 'qux' },
-      { cwd: tempDir, sessionId },
+      toolCtx(),
     )
 
     expect(result.isError).toBeFalsy()
@@ -99,7 +105,7 @@ describe('Agent Runtime 核心工具', () => {
 
     const result = await executeEditTool(
       { file_path: 'dup.txt', old_string: 'a', new_string: 'b' },
-      { cwd: tempDir, sessionId },
+      toolCtx(),
     )
 
     expect(result.isError).toBe(true)
@@ -112,7 +118,7 @@ describe('Agent Runtime 核心工具', () => {
       const original = join(outside, 'original.txt')
       writeFileSync(original, 'original')
       linkSync(original, join(tempDir, 'linked.txt'))
-      const result = await executeEditTool({ file_path: 'linked.txt', old_string: 'original', new_string: 'changed' }, { cwd: tempDir, sessionId })
+      const result = await executeEditTool({ file_path: 'linked.txt', old_string: 'original', new_string: 'changed' }, toolCtx())
       expect(result.isError).toBe(true)
       expect(readFileSync(original, 'utf8')).toBe('original')
     } finally { rmSync(outside, { recursive: true, force: true }) }
@@ -120,7 +126,7 @@ describe('Agent Runtime 核心工具', () => {
 
   test('Given 多字节文本 When Edit 缩短内容 Then 输出完整且没有旧字节残留', async () => {
     writeFileSync(join(tempDir, 'unicode.txt'), '前缀：一二三四五。')
-    const result = await executeEditTool({ file_path: 'unicode.txt', old_string: '一二三四五', new_string: '新' }, { cwd: tempDir, sessionId })
+    const result = await executeEditTool({ file_path: 'unicode.txt', old_string: '一二三四五', new_string: '新' }, toolCtx())
     expect(result.isError).toBeFalsy()
     expect(readFileSync(join(tempDir, 'unicode.txt'), 'utf8')).toBe('前缀：新。')
   })
@@ -128,13 +134,13 @@ describe('Agent Runtime 核心工具', () => {
   test('Given 工作区内符号链接 When Edit Then 拒绝且原文件不变', async () => {
     writeFileSync(join(tempDir, 'target.txt'), 'original')
     symlinkSync('target.txt', join(tempDir, 'alias.txt'))
-    const result = await executeEditTool({ file_path: 'alias.txt', old_string: 'original', new_string: 'changed' }, { cwd: tempDir, sessionId })
+    const result = await executeEditTool({ file_path: 'alias.txt', old_string: 'original', new_string: 'changed' }, toolCtx())
     expect(result.isError).toBe(true)
     expect(readFileSync(join(tempDir, 'target.txt'), 'utf8')).toBe('original')
   })
 
   test('Bash 工具执行命令', async () => {
-    const result = await executeBashTool({ command: 'echo hello' }, { cwd: tempDir, sessionId })
+    const result = await executeBashTool({ command: 'echo hello' }, toolCtx())
 
     expect(result.isError).toBeFalsy()
     expect(result.content?.trim()).toBe('hello')
@@ -144,7 +150,7 @@ describe('Agent Runtime 核心工具', () => {
     writeFileSync(join(tempDir, 'a.txt'), 'target line\nother', 'utf-8')
     writeFileSync(join(tempDir, 'b.txt'), 'no match', 'utf-8')
 
-    const result = await executeGrepTool({ regex: 'target' }, { cwd: tempDir, sessionId })
+    const result = await executeGrepTool({ regex: 'target' }, toolCtx())
 
     expect(result.isError).toBeFalsy()
     expect(result.content).toContain('target line')
@@ -156,7 +162,7 @@ describe('Agent Runtime 核心工具', () => {
 
     const result = await executeGrepTool(
       { regex: '$(touch "' + injectedPath.replace(/"/g, '\\"') + '")' },
-      { cwd: tempDir, sessionId },
+      toolCtx(),
     )
 
     // 无论搜索是否命中，都不应创建注入文件
@@ -172,7 +178,7 @@ describe('Agent Runtime 核心工具', () => {
     try {
       symlinkSync(outsideFile, join(tempDir, 'link.txt'))
 
-      const result = await executeReadTool({ file_path: 'link.txt' }, { cwd: tempDir, sessionId })
+      const result = await executeReadTool({ file_path: 'link.txt' }, toolCtx())
 
       expect(result.isError).toBe(true)
       expect(result.content).toContain('路径越界')
@@ -189,7 +195,7 @@ describe('Agent Runtime 核心工具', () => {
 
       const result = await executeWriteTool(
         { file_path: 'linkdir/evil.txt', content: 'pwned' },
-        { cwd: tempDir, sessionId },
+        toolCtx(),
       )
 
       expect(result.isError).toBe(true)
@@ -217,7 +223,7 @@ describe('Agent Runtime 核心工具', () => {
   })
 
   test('Agent 工具无 runSubAgent 回调时返回错误', async () => {
-    const result = await executeAgentTool({ agent_name: 'code-reviewer', task: 'review' }, { cwd: tempDir, sessionId })
+    const result = await executeAgentTool({ agent_name: 'code-reviewer', task: 'review' }, toolCtx())
 
     expect(result.isError).toBe(true)
     expect(result.content).toContain('未配置 Sub Agent 运行器')
@@ -231,9 +237,7 @@ describe('Agent Runtime 核心工具', () => {
         files: ['src/main.ts', 'src/lib.ts'],
         max_turns: 5,
       },
-      {
-        cwd: tempDir,
-        sessionId,
+      toolCtx({
         runSubAgent: async (input) => {
           expect(input.agentName).toBe('explorer')
           expect(input.task).toBe('find usages')
@@ -241,7 +245,7 @@ describe('Agent Runtime 核心工具', () => {
           expect(input.maxTurns).toBe(5)
           return 'found 3 usages'
         },
-      },
+      }),
     )
 
     expect(result.isError).toBe(false)
@@ -251,11 +255,9 @@ describe('Agent Runtime 核心工具', () => {
   test('Agent 工具参数缺失时返回错误', async () => {
     const result = await executeAgentTool(
       { agent_name: 'code-reviewer' },
-      {
-        cwd: tempDir,
-        sessionId,
+      toolCtx({
         runSubAgent: async () => 'should not run',
-      },
+      }),
     )
 
     expect(result.isError).toBe(true)
@@ -265,13 +267,11 @@ describe('Agent Runtime 核心工具', () => {
   test('Agent 工具执行失败时包装错误', async () => {
     const result = await executeAgentTool(
       { agent_name: 'researcher', task: 'investigate' },
-      {
-        cwd: tempDir,
-        sessionId,
+      toolCtx({
         runSubAgent: async () => {
           throw new Error('sub agent crashed')
         },
-      },
+      }),
     )
 
     expect(result.isError).toBe(true)

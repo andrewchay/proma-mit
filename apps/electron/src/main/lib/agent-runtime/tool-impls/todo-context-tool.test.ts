@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { rmSync } from 'node:fs'
 import { initProjectDb, closeProjectDb, createProject, createTask } from '../../project-sqlite-store'
+import { bindTestToolContext } from '../../testing/bound-tool-context'
 import { executeTodoContextTool } from './todo-context-tool'
 import type { ToolContext } from '../types'
 
@@ -14,7 +15,7 @@ import type { ToolContext } from '../types'
  */
 
 const testDir = join(tmpdir(), `gravitas-todocontext-test-${Date.now()}`)
-const mockCtx = { cwd: '/tmp', sessionId: 's-1' } as ToolContext
+const mockCtx: ToolContext = bindTestToolContext({ cwd: '/tmp', sessionId: 's-1' })
 
 beforeAll(async () => {
   process.env.PROMA_TEST_CONFIG_DIR = testDir

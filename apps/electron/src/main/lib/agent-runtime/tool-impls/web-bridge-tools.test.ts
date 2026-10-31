@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildElectronMock } from '../../testing/electron-mock'
+import { bindTestToolContext } from '../../testing/bound-tool-context'
 
 
 mock.module('electron', () => buildElectronMock())
@@ -30,6 +31,8 @@ const {
   executeWebBridgeDownloadTool,
 } = await import('./web-bridge-tools')
 const { normalizeWebUrl, webBridgeService } = await import('../../web-bridge-service')
+/** 工具入口要求已绑定会话身份：测试显式按 Runtime 的方式绑定。 */
+const bridgeCtx = (sessionId: string, extra: Record<string, unknown> = {}) => bindTestToolContext({ cwd: '/tmp', sessionId, ...extra })
 const directory = mkdtempSync(join(tmpdir(), 'bridge-tool-db-')), previous = process.env.PROMA_TEST_CONFIG_DIR
 beforeAll(async () => { process.env.PROMA_TEST_CONFIG_DIR = directory; await (await import('../../project-sqlite-store')).initProjectDb() })
 afterAll(async () => {
@@ -59,7 +62,7 @@ describe('Web Bridge 工具', () => {
   test('Given 普通会话 When 查询浏览器状态 Then 进入浏览器服务', async () => {
     const status = spyOn(webBridgeService, 'getStatus')
     try {
-      const result = await executeWebBridgeStatusTool({}, { cwd: directory, sessionId: 'ordinary-bridge-session' })
+      const result = await executeWebBridgeStatusTool({}, bindTestToolContext({ cwd: directory, sessionId: 'ordinary-bridge-session' }))
       expect(result.isError).toBeFalsy()
       expect(status).toHaveBeenCalledWith('ordinary-bridge-session')
     } finally { status.mockRestore() }
@@ -68,14 +71,14 @@ describe('Web Bridge 工具', () => {
   test('Given 受控标记与账本不一致 When 紧急停止 Then 仍允许关闭会话', async () => {
     const close = spyOn(webBridgeService, 'close').mockImplementation(() => {})
     try {
-      const result = await executeWebBridgeStopTool({}, { cwd: directory, sessionId: 'ordinary-bridge-session', ownerWorkspaceWrite: true })
+      const result = await executeWebBridgeStopTool({}, bindTestToolContext({ cwd: directory, sessionId: 'ordinary-bridge-session', ownerWorkspaceWrite: true }))
       expect(result.isError).toBeFalsy()
       expect(close).toHaveBeenCalledWith('ordinary-bridge-session')
     } finally { close.mockRestore() }
   })
 
   test('缺少必要参数时不访问浏览器', async () => {
-    const ctx = { cwd: '/tmp', sessionId: 'web-bridge-test' }
+    const ctx = bridgeCtx('web-bridge-test')
     const navigate = await executeWebBridgeNavigateTool({}, ctx)
     const type = await executeWebBridgeTypeTool({ selector: '#query' }, ctx)
 
@@ -118,10 +121,8 @@ const fakeSnapshot = { url: 'https://example.com/', title: '示例', text: '正�
 
 describe('Web Bridge 动作结果分类', () => {
   // 每个用例独立 sessionId：结果未知会在执行入口拦截同指纹的重复动作。
-  const baseCtx = { cwd: '/tmp' }
-
   test('Given 连接在点击后关闭 When 执行 Then 结果未知且禁止自动重试', async () => {
-    const ctx = { ...baseCtx, sessionId: 'bw-outcome-closed' }
+    const ctx = bridgeCtx('bw-outcome-closed')
     const click = spyOn(webBridgeService, 'click').mockRejectedValue(new Error('Target closed'))
     try {
       const result = await executeWebBridgeClickTool({ element_id: 'r1-2' }, ctx)
@@ -135,7 +136,7 @@ describe('Web Bridge 动作结果分类', () => {
   })
 
   test('Given 服务报 ref 已失效 When 点击 Then 不能推断动作未生效', async () => {
-    const ctx = { ...baseCtx, sessionId: 'bw-outcome-stale' }
+    const ctx = bridgeCtx('bw-outcome-stale')
     const click = spyOn(webBridgeService, 'click').mockRejectedValue(new Error('No node with given id 42'))
     try {
       const result = await executeWebBridgeClickTool({ element_id: 'r1-9' }, ctx)
@@ -147,7 +148,7 @@ describe('Web Bridge 动作结果分类', () => {
   })
 
   test('Given 输入时协议报错 When 执行 Then 保守判为未知', async () => {
-    const ctx = { ...baseCtx, sessionId: 'bw-outcome-type' }
+    const ctx = bridgeCtx('bw-outcome-type')
     const type = spyOn(webBridgeService, 'type').mockRejectedValue(new Error('Protocol error (Input.insertText)'))
     try {
       const result = await executeWebBridgeTypeTool({ element_id: 'r1-3', text: 'hi' }, ctx)
@@ -157,7 +158,7 @@ describe('Web Bridge 动作结果分类', () => {
   })
 
   test('Given 下载中断 When 执行 Then 指引核对落盘位置', async () => {
-    const ctx = { ...baseCtx, sessionId: 'bw-outcome-download' }
+    const ctx = bridgeCtx('bw-outcome-download')
     const download = spyOn(webBridgeService, 'download').mockRejectedValue(new Error('socket hang up'))
     try {
       const result = await executeWebBridgeDownloadTool({ url: 'https://example.com/file.pdf' }, ctx)
@@ -168,7 +169,7 @@ describe('Web Bridge 动作结果分类', () => {
   })
 
   test('Given 点击成功 When 执行 Then 返回快照且不出现未知提示', async () => {
-    const ctx = { ...baseCtx, sessionId: 'bw-outcome-success' }
+    const ctx = bridgeCtx('bw-outcome-success')
     const click = spyOn(webBridgeService, 'click').mockResolvedValue(fakeSnapshot)
     try {
       const result = await executeWebBridgeClickTool({ element_id: 'r1-2' }, ctx)
@@ -204,7 +205,7 @@ describe('Web Bridge 失败动作审计', () => {
   test('Given 结果未知 When 点击失败 Then 审计记 outcome 且不写页面正文', async () => {
     const click = spyOn(webBridgeService, 'click').mockRejectedValue(new Error('Target closed'))
     try {
-      await executeWebBridgeClickTool({ element_id: 'r1-5' }, { cwd: '/tmp', sessionId: 'bridge-audit-session' })
+      await executeWebBridgeClickTool({ element_id: 'r1-5' }, bridgeCtx('bridge-audit-session'))
       const detail = await waitForFailedClick('r1-5')
       expect(detail?.outcome).toBe('unknown')
       expect(String(detail?.error)).toContain('Target closed')
@@ -216,7 +217,7 @@ describe('Web Bridge 失败动作审计', () => {
 
 describe('Web Bridge 未知结果的执行约束', () => {
   test('Given 上次点击结果未知 When 点同一元素 Then 不触达浏览器服务', async () => {
-    const ctx = { cwd: '/tmp', sessionId: 'bw-block-e2e' }
+    const ctx = bridgeCtx('bw-block-e2e')
     const click = spyOn(webBridgeService, 'click').mockRejectedValue(new Error('Target closed'))
     try {
       const first = await executeWebBridgeClickTool({ element_id: 'r2-1' }, ctx)

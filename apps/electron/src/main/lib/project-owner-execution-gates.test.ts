@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext } from './agent-runtime/types'
-import { bindRuntimeSessionIdentity } from './agent-runtime/runtime-session-identity'
+import { bindTestToolContext } from './testing/bound-tool-context'
 import { buildElectronMock } from './testing/electron-mock'
 const directory = mkdtempSync(join(tmpdir(), 'owner-execution-gates-')), previous = process.env.PROMA_TEST_CONFIG_DIR
 process.env.PROMA_TEST_CONFIG_DIR = directory
@@ -47,14 +47,10 @@ beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
 /**
  * 模拟 Runtime 适配器的注入方式：把会话身份绑定到上下文对象并自引用传给工具。
- * 新门禁要求工具上下文携带「运行时时绑定的会话对象」，否则 Owner 受控会话直接拒绝；
- * 这些用例验证的是各自原有的门禁规则，因此必须先给出合法绑定，避免退化成"只因缺绑定被拒"。
+ * 新门禁要求工具上下文必须携带「运行时绑定的会话对象」，否则一律拒绝；这些用例验证的是
+ * 各自原有的门禁规则，因此必须先给出合法绑定，避免退化成"只因缺绑定被拒"。
  */
-function bindCtx<T extends { cwd: string; sessionId: string }>(ctx: T): T & { boundSession: object } {
-  bindRuntimeSessionIdentity(ctx, { sessionId: ctx.sessionId, cwd: ctx.cwd, runtime: 'ai-sdk' })
-  return Object.assign(ctx, { boundSession: ctx })
-}
-const ownerCtx = (cwd: string, sessionId: string) => bindCtx({ cwd, sessionId })
+const ownerCtx = (cwd: string, sessionId: string) => bindTestToolContext({ cwd, sessionId })
 function fixture(single = false, textDelivery = false) {
   const project = store.createProject({ title: 'Owner门禁fixture', description: '' })
   const target = single ? store.createTask(project.id, { title: '单任务', description: '' }) : null
@@ -114,7 +110,7 @@ test('Given 已准入的 Owner 业务会话 When 直接调用 Bash 工具 Then �
   const work = mkdtempSync(join(tmpdir(), 'owner-bash-work-'))
   try {
     const marker = join(work, 'marker')
-    const ordinary = await executeBashToolOnPlatform({ command: `touch '${marker}'` }, { cwd: work, sessionId: randomUUID() }, 'darwin')
+    const ordinary = await executeBashToolOnPlatform({ command: `touch '${marker}'` }, bindTestToolContext({ cwd: work, sessionId: randomUUID() }), 'darwin')
     expect(ordinary.isError).toBeFalsy()
     expect(existsSync(marker)).toBe(true)
     rmSync(marker)
@@ -134,15 +130,15 @@ test('Given 已准入的 Owner 业务会话 When 工具上下文未携带绑定�
   const work = mkdtempSync(join(tmpdir(), 'owner-unbound-work-'))
   try {
     const marker = join(work, 'marker')
-    // 调用方只带 sessionId、不带运行时时绑定的会话对象：Bash 拒绝且不执行命令。
+    // 调用方只带 sessionId、不带运行时绑定的会话对象：Bash 拒绝且不执行命令。
     const bash = await executeBashToolOnPlatform({ command: `touch '${marker}'` }, { cwd: work, sessionId }, 'darwin')
     expect(bash.isError).toBe(true)
-    expect(bash.content).toContain('缺少已绑定的执行身份')
+    expect(bash.content).toContain('缺少已绑定的会话身份')
     expect(existsSync(marker)).toBe(false)
     // Write 同样在工具入口被拒，文件不落地。
     const write = await executeWriteTool({ file_path: 'unbound.txt', content: 'unexpected' }, { cwd: work, sessionId })
     expect(write.isError).toBe(true)
-    expect(write.content).toContain('缺少已绑定的执行身份')
+    expect(write.content).toContain('缺少已绑定的会话身份')
     expect(existsSync(join(work, 'unbound.txt'))).toBe(false)
   } finally { rmSync(work, { recursive: true, force: true }) }
 })
