@@ -470,7 +470,8 @@ node-pty 也无法真正起 shell（仓库内短路径同样 `posix_spawnp faile
 ## S8 真实项目观察：未执行（需真实环境）
 - [x] `.context/plan/web-observation-s8-runbook.md`（前置条件、7 天步骤、记录表、结论模板、已知限制）
 - [x] `project-web-observation-metrics.ts` 质量汇总 + 4 项单测
-- [ ] 真实 7 次扫描与人工对照（需真实 Provider/搜索凭据/真实项目，且需你授权花费）
+- [x] 观察质量汇总接入界面（项目 → 外网扫描 → 观察质量近 7 天），观察期不用跑脚本
+- [ ] 真实 7 次扫描与人工对照（必须在应用内执行：渠道密钥是 safeStorage 密文，命令行解不开）
 
 ## 验证
 - 64 pass / 0 fail（7 个测试文件）；typecheck 9 包 exit 0；biome 13 文件通过；docs:check 通过

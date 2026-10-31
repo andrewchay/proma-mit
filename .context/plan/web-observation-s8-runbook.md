@@ -1,8 +1,9 @@
 # S8 真实项目观察 · 执行手册
 
 - 目的：用真实数据检验"观察—判断—提醒"是否值得保留，并据此决定是否进入第四批（受控行动）。
-- 状态：**未执行**。本机没有可用的真实 Provider、搜索凭据与带外部变化的真实项目，
-  且真实扫描会产生第三方费用，必须由你确认后执行。
+- 状态：**未执行**。本机渠道与 Tavily 凭据都在，但渠道 API Key 是 `safeStorage`（macOS Keychain）加密的
+  `v10` 密文，只有 Electron 进程能解；在命令行里跑会直接解密失败。加上真实扫描会产生第三方费用，
+  这一步只能由你在应用内执行。
 - 进入第四批的硬条件：本手册的观察结果已产出并被你认可。没有这份结果，不得设计第四批。
 
 ## 1. 前置条件（缺一项则不开始）
@@ -50,12 +51,8 @@
 | `truncatedObservations` | 上下文被截断次数 | >0 → 主题或来源太多，需收敛输入 |
 | `feedback` | 你的反馈分布 | `irrelevant` 集中 → 主题或判据需要调整 |
 
-拉取方式（在应用主进程侧执行，或写一次性脚本调用该函数）：
-
-```ts
-const { summarizeWebObservationQuality } = await import('./project-web-observation-metrics')
-console.log(summarizeWebObservationQuality(projectId, Date.now() - 7 * 24 * 60 * 60 * 1000))
-```
+拉取方式：应用内「项目 → 外网扫描 → 观察质量（近 7 天）」直接显示上述数字，
+不需要跑脚本。数据来自 `summarizeWebObservationQuality`，也可在主进程内单独调用。
 
 ## 5. 需要人工判断的四件事（无法从数字得出）
 
