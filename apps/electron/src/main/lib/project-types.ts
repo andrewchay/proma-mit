@@ -534,18 +534,22 @@ export interface AgentEmployeeCapabilityHealth {
   /** 观察时间窗（天）。 */
   windowDays: number
   executionCount: number
-  /** 返工或未通过的样本占已判定样本的比例；样本不足时为 null。 */
+  /** 已核验 Owner 判断中退回修改的比例；无判断时为 null。 */
   reworkRate: number | null
+  /** 执行失败数占已脱敏、非取消执行样本的比例；不等同于业务负反馈。 */
   failureRate: number | null
   cancellationRate: number | null
-  /** 已判定样本量（排除取消与待审核）；用于判断结论可信度。 */
+  /** 已核验 Owner 判断数；用于返工信号的样本充分性。 */
   decidedSampleCount: number
+  /** 已脱敏、非取消的执行样本数；用于执行失败信号的样本充分性。 */
+  executionDecidedSampleCount: number
   /** 观察期内已脱敏样本的最新人工判断，按执行去重。 */
   humanJudgmentEligibleCount: number
   humanAcceptedCount: number
   humanChangesRequestedCount: number
   /** 样本量是否足以支撑趋势结论。 */
   sampleSufficient: boolean
+  executionSampleSufficient: boolean
   lastExecutedAt?: number
   /** 同 scope 内的对比对象（父版本或基线）；无则缺省。 */
   comparisonVersionId?: string

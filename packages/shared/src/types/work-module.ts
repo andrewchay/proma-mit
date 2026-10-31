@@ -758,10 +758,12 @@ export interface AgentEmployeeCapabilityHealthResult {
   failureRate: number | null
   cancellationRate: number | null
   decidedSampleCount: number
+  executionDecidedSampleCount: number
   humanJudgmentEligibleCount: number
   humanAcceptedCount: number
   humanChangesRequestedCount: number
   sampleSufficient: boolean
+  executionSampleSufficient: boolean
   lastExecutedAt?: number
   comparisonVersionId?: string
   reworkRateDelta?: number | null
@@ -831,7 +833,7 @@ export interface AgentEmployeeEvolutionLedgerEntryResult {
   samples: { total: number; pending: number; sanitized: number; excluded: number; cancelled: number }
   decisions: { approved: number; rejected: number; pending: number }
   rollbacks: number
-  observations: { executionCount: number; reworkRate: number | null; failureRate: number | null; decidedSampleCount: number; sampleSufficient: boolean }
+  observations: { executionCount: number; reworkRate: number | null; failureRate: number | null; decidedSampleCount: number; executionDecidedSampleCount: number; sampleSufficient: boolean; executionSampleSufficient: boolean }
   evaluationCostUsd: number
   reviewEffortProxy: number
 }

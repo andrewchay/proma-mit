@@ -79,7 +79,8 @@ test('已脱敏样本达到阈值才创建员工能力推广审批', () => {
   }
   const sampleIds = listAgentEmployeeLearningSamples(employee.id).map((sample) => sample.id)
   const result = proposeEmployeeCapabilityAdoption({ agentId: employee.id, scope: 'role', content: '先核对测试，再交付证据。', trainingScore: 81, heldOutScore: 80, judgeIndependent: true, evidenceSampleIds: sampleIds })
-  expect(listApprovals().find((approval) => approval.id === result.approvalId)).toEqual(expect.objectContaining({ sourceType: 'employee_capability', status: 'pending' }))
+  expect(listApprovals().find((approval) => approval.id === result.approvalId)).toEqual(expect.objectContaining({ sourceType: 'employee_capability', status: 'pending', summary: expect.stringContaining('Owner 判断 0 条') }))
+  expect(listApprovals().find((approval) => approval.id === result.approvalId)?.summary).toContain('Owner 判断少于 5 条')
 })
 
 test('Given 审批证据检查失败 When 激活候选 Then 同一事务不留下能力或部分证据更改', () => {

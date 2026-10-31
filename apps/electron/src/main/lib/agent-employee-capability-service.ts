@@ -37,6 +37,17 @@ export function proposeEmployeeCapabilityAdoption(input: {
   }
   const active = store.getActiveAgentEmployeeCapabilityVersions(input.agentId, input.workspaceId)
     .find((version) => version.scope === input.scope && version.workspaceId === input.workspaceId)
+  const activeHealth = active
+    ? store.getAgentEmployeeCapabilityHealth(input.agentId).find((item) => item.versionId === active.id)
+    : undefined
+  const percent = (value: number | null | undefined): string => value === null || value === undefined ? '数据不足' : `${(value * 100).toFixed(1)}%`
+  const healthSummary = activeHealth
+    ? `当前版本 v${active!.versionNumber}：Owner 判断 ${activeHealth.decidedSampleCount} 条、退回修改率 ${percent(activeHealth.reworkRate)}、执行失败率 ${percent(activeHealth.failureRate)}。`
+    : '当前范围尚无可用版本健康记录。'
+  const selectedOwnerJudgmentCount = selected.filter((sample) => sample.ownerJudgment).length
+  const ownerSampleWarning = input.scope === 'role' && selectedOwnerJudgmentCount < 5
+    ? '警告：Owner 判断少于 5 条；该建议仍可审批，但不能据此声称角色能力趋势改善。'
+    : ''
   const versionNumber = Math.max(0, ...store.listAgentEmployeeCapabilityVersions(input.agentId).map((version) => version.versionNumber)) + 1
   const content = input.content.trim()
   if (!content || content.length > 12_000) throw new Error('候选能力内容为空或超出长度限制')
@@ -48,7 +59,7 @@ export function proposeEmployeeCapabilityAdoption(input: {
   const approval = createApproval({
     sourceType: 'employee_capability',
     title: `推广 AI 员工能力候选：${employee.name}`,
-    summary: `训练集 ${input.trainingScore.toFixed(1)}；held-out ${input.heldOutScore.toFixed(1)}；${selected.length} 条已脱敏样本；评判配置由本次运行或调用方声明，独立性尚未核验。批准后才会激活新版本。`,
+    summary: `训练集 ${input.trainingScore.toFixed(1)}；held-out ${input.heldOutScore.toFixed(1)}；${selected.length} 条已脱敏样本，其中 Owner 判断 ${selectedOwnerJudgmentCount} 条；${healthSummary}${ownerSampleWarning}评判配置由本次运行或调用方声明，独立性尚未核验。批准后才会激活新版本。`,
     proposedChange: {
       type: 'employee_capability_adopt',
       agentId: input.agentId,

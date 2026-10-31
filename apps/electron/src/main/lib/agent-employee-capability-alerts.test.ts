@@ -3,13 +3,20 @@ import { buildCapabilityAlerts } from './agent-employee-capability-alerts'
 import type { AgentEmployeeCapabilityHealth } from './project-types'
 
 function health(overrides: Partial<AgentEmployeeCapabilityHealth> = {}): AgentEmployeeCapabilityHealth {
-  return { versionId: 'v1', windowDays: 30, executionCount: 6, reworkRate: 0.1, failureRate: 0, cancellationRate: 0, decidedSampleCount: 6, humanJudgmentEligibleCount: 0, humanAcceptedCount: 0, humanChangesRequestedCount: 0, sampleSufficient: true, lastExecutedAt: Date.now(), comparisonComparable: false, ...overrides }
+  return { versionId: 'v1', windowDays: 30, executionCount: 6, reworkRate: 0.1, failureRate: 0, cancellationRate: 0, decidedSampleCount: 6, executionDecidedSampleCount: 6, humanJudgmentEligibleCount: 0, humanAcceptedCount: 0, humanChangesRequestedCount: 0, sampleSufficient: true, executionSampleSufficient: true, lastExecutedAt: Date.now(), comparisonComparable: false, ...overrides }
 }
 
 test('样本不足时不产生质量告警，只提示观察不足', () => {
-  const alerts = buildCapabilityAlerts({ health: [health({ sampleSufficient: false, decidedSampleCount: 1, failureRate: 1, reworkRate: 1 })] })
+  const alerts = buildCapabilityAlerts({ health: [health({ sampleSufficient: false, decidedSampleCount: 1, executionSampleSufficient: false, executionDecidedSampleCount: 1, failureRate: 1, reworkRate: 1 })] })
   expect(alerts.some((item) => item.code === 'consecutive_failures')).toBe(false)
   expect(alerts.some((item) => item.code === 'rework_spike')).toBe(false)
+})
+
+test('执行失败告警与 Owner 返工告警分别使用各自的样本门槛', () => {
+  const alerts = buildCapabilityAlerts({ health: [health({ sampleSufficient: false, executionSampleSufficient: true, executionDecidedSampleCount: 6, failureRate: 1, reworkRate: 0.8 })] })
+  expect(alerts.map((item) => item.code)).toContain('consecutive_failures')
+  expect(alerts.map((item) => item.code)).not.toContain('rework_spike')
+  expect(alerts.find((item) => item.code === 'consecutive_failures')?.evidence).toContain('执行样本 6 条')
 })
 
 test('连续失败与返工率激增生成告警', () => {
@@ -20,7 +27,7 @@ test('连续失败与返工率激增生成告警', () => {
 })
 
 test('无样本或长时间无执行只提示观察不足', () => {
-  const noSamples = buildCapabilityAlerts({ health: [health({ decidedSampleCount: 0, failureRate: null, reworkRate: null })] })
+  const noSamples = buildCapabilityAlerts({ health: [health({ decidedSampleCount: 0, executionDecidedSampleCount: 0, failureRate: null, reworkRate: null })] })
   expect(noSamples).toEqual([expect.objectContaining({ code: 'stale_observation', severity: 'info' })])
 
   const stale = buildCapabilityAlerts({ health: [health({ lastExecutedAt: Date.now() - 40 * 24 * 60 * 60 * 1000 })], staleDays: 21 })
