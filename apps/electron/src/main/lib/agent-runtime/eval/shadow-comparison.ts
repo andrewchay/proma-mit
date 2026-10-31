@@ -334,6 +334,66 @@ export function shadowRunFromEvaluation(evaluation: import('./types').BenchmarkE
   }
 }
 
+export interface RecordedEvaluationComparisonInput {
+  baseline: import('./types').BenchmarkEvaluation
+  candidate: import('./types').BenchmarkEvaluation
+  expectedCaseIds?: string[]
+  deltaThreshold?: number
+  maxCostIncreaseRatio?: number
+  maxLatencyIncreaseRatio?: number
+}
+
+/**
+ * 用两条评测记录各自保存的来源检查可比性。
+ *
+ * 与 `compareShadowRuns` 的区别：版本与基准定义不取「当前配置」，而取记录写入时
+ * 冻结的哈希；任一侧没有冻结来源、或两侧哈希不一致，都判为不可比并写明原因——
+ * 当前来源未覆盖案例素材和评判实现，因此所有记录暂判不可比；历史不回填。
+ */
+export function compareRecordedEvaluations(input: RecordedEvaluationComparisonInput): ShadowComparison {
+  const baselineDefinition = input.baseline.definition
+  const candidateDefinition = input.candidate.definition
+  const reasons: string[] = []
+  // 现有来源仅覆盖题目与评分规则，不覆盖案例素材及实际评判实现，不能据此认定完整输入一致。
+  reasons.push('案例素材与评判实现的完整来源尚未冻结，不能确认评测可比')
+  if (!baselineDefinition || !candidateDefinition) {
+    reasons.push('评测记录未冻结基准来源，不能作为对比证据')
+  } else {
+    if (baselineDefinition.definitionHash !== candidateDefinition.definitionHash) {
+      reasons.push(`两侧基准定义不同：${baselineDefinition.definitionHash} vs ${candidateDefinition.definitionHash}`)
+    }
+    if (baselineDefinition.version !== candidateDefinition.version) {
+      reasons.push(`基准版本不同：${baselineDefinition.version} vs ${candidateDefinition.version}`)
+    }
+    if (baselineDefinition.rubricVersion !== candidateDefinition.rubricVersion) {
+      reasons.push(`rubric 版本不同：${baselineDefinition.rubricVersion} vs ${candidateDefinition.rubricVersion}`)
+    }
+  }
+  for (const baselineCase of input.baseline.cases) {
+    const candidateCase = input.candidate.cases.find(item => item.caseId === baselineCase.caseId)
+    if (!candidateCase) continue
+    const hashes = [...baselineCase.runs, ...candidateCase.runs].map(run => run.caseTextRubricSha256)
+    if (!baselineCase.runs.length || !candidateCase.runs.length || hashes.some(hash => !hash || !/^[a-f0-9]{64}$/.test(hash))) {
+      reasons.push(`case ${baselineCase.caseId} 缺少有效的题目与评分规则摘要`)
+    } else if (new Set(hashes).size !== 1) {
+      reasons.push(`case ${baselineCase.caseId} 的题目或评分规则摘要不一致`)
+    }
+  }
+  const benchmarkVersion = baselineDefinition?.version ?? 0
+  const rubricVersion = baselineDefinition?.rubricVersion ?? 0
+  return compareShadowRunsWithReasons(
+    shadowRunFromEvaluation(input.baseline, { label: 'baseline', benchmarkVersion, rubricVersion }),
+    shadowRunFromEvaluation(input.candidate, { label: 'candidate', benchmarkVersion, rubricVersion }),
+    {
+      ...(input.expectedCaseIds === undefined ? {} : { expectedCaseIds: input.expectedCaseIds }),
+      ...(input.deltaThreshold === undefined ? {} : { deltaThreshold: input.deltaThreshold }),
+      ...(input.maxCostIncreaseRatio === undefined ? {} : { maxCostIncreaseRatio: input.maxCostIncreaseRatio }),
+      ...(input.maxLatencyIncreaseRatio === undefined ? {} : { maxLatencyIncreaseRatio: input.maxLatencyIncreaseRatio }),
+    },
+    reasons,
+  )
+}
+
 export interface ScoreboardShadowInput {
   benchmark: import('./types').BenchmarkConfig
   baseline: import('./types').BenchmarkEvaluation
@@ -344,25 +404,19 @@ export interface ScoreboardShadowInput {
 }
 
 /**
- * 用同一次基准的定义比较两条已落盘评测（基线版本 vs 候选版本）。
+ * 用评测记录自身冻结的来源比较两条已落盘评测（基线版本 vs 候选版本）。
  *
- * 历史评测未记录其基准和评分规则来源，当前定义不能作为历史证据；
- * 在评测记录获得可核验来源之前始终返回不可比，但保留案例及资源明细。
+ * 当前记录缺少完整素材和评判来源，新旧评测均暂不可比。
  */
 export function compareScoreboardEvaluations(input: ScoreboardShadowInput): ShadowComparison {
-  const benchmarkVersion = (input.benchmark as { version?: number }).version ?? 1
-  const rubricVersion = (input.benchmark as { rubricVersion?: number }).rubricVersion ?? 1
-  return compareShadowRunsWithReasons(
-    shadowRunFromEvaluation(input.baseline, { label: 'baseline', benchmarkVersion, rubricVersion }),
-    shadowRunFromEvaluation(input.candidate, { label: 'candidate', benchmarkVersion, rubricVersion }),
-    {
-      expectedCaseIds: input.benchmark.cases,
-      ...(input.deltaThreshold === undefined ? {} : { deltaThreshold: input.deltaThreshold }),
-      ...(input.maxCostIncreaseRatio === undefined ? {} : { maxCostIncreaseRatio: input.maxCostIncreaseRatio }),
-      ...(input.maxLatencyIncreaseRatio === undefined ? {} : { maxLatencyIncreaseRatio: input.maxLatencyIncreaseRatio }),
-    },
-    ['评测基准版本来源未核验，无法确认使用的基准与评分规则'],
-  )
+  return compareRecordedEvaluations({
+    baseline: input.baseline,
+    candidate: input.candidate,
+    expectedCaseIds: input.benchmark.cases,
+    ...(input.deltaThreshold === undefined ? {} : { deltaThreshold: input.deltaThreshold }),
+    ...(input.maxCostIncreaseRatio === undefined ? {} : { maxCostIncreaseRatio: input.maxCostIncreaseRatio }),
+    ...(input.maxLatencyIncreaseRatio === undefined ? {} : { maxLatencyIncreaseRatio: input.maxLatencyIncreaseRatio }),
+  })
 }
 
 /** 同上，但先按 scoreboard 评测构造两侧输入再比较（供调用方一次写全）。 */

@@ -94,6 +94,56 @@ describe('selfEvolve', () => {
     expect(out.finalScore).toBe(90)
   })
 
+  it('Given 基线与候选同一次运行但来源不完整 When 比较 Then 不推断可比', async () => {
+    const benchmark = { ...config, id: 'frozen-provenance' }
+    const defState = { v: 1 }
+    const state = mkState(() => defState.v, {
+      apply: () => { defState.v++ },
+      rollback: () => { defState.v = 1 },
+    })
+    const propose: Parameters<typeof selfEvolve>[0]['propose'] = async () => ({ description: 'improve', target: 'x', afterState: 2 })
+    const out = await selfEvolve({
+      benchmark,
+      maxRounds: 1,
+      propose,
+      evaluate: evaluateScored(70, 90),
+      state,
+    })
+
+    const records = readScoreboard(benchmark.id).evaluations
+    expect(records.length).toBe(2)
+    for (const record of records) {
+      expect(record.definition?.version).toBe(benchmark.version ?? 1)
+      expect(record.definition?.rubricVersion).toBe(benchmark.rubricVersion ?? 1)
+      expect(record.definition?.definitionHash).toBeTruthy()
+    }
+    // 同一基准定义不能证明素材及实际评判实现相同。
+    const comparison = out.rounds[0]!.comparison
+    expect(comparison?.comparable).toBe(false)
+    expect(comparison?.verdict).toBe('inconclusive')
+    expect(out.rounds[0]!.comparisonSummary).toContain('不可比')
+    // 报告与 scoreboard 是同一份回执：接受时不再产生第二条候选记录。
+    expect(records[1]!.score).toBe(90)
+  })
+
+  it('Given 候选被拒且来源不完整 When 生成报告 Then 保留不可比结论', async () => {
+    const benchmark = { ...config, id: 'rejected-comparison' }
+    const state = mkState(() => 1, { apply: () => undefined, rollback: () => undefined })
+    const propose: Parameters<typeof selfEvolve>[0]['propose'] = async () => ({ description: 'worse', target: 'x', afterState: 2 })
+    const out = await selfEvolve({
+      benchmark,
+      maxRounds: 1,
+      propose,
+      evaluate: evaluateScored(80, 50),
+      state,
+    })
+
+    expect(out.rounds[0]!.accepted).toBe(false)
+    expect(out.rounds[0]!.comparison?.comparable).toBe(false)
+    expect(out.rounds[0]!.comparison?.verdict).toBe('inconclusive')
+    expect(out.rounds[0]!.comparison?.meanDelta).toBeNull()
+  })
+
   it('候选分数不高于 Reference 则回滚，不改 Reference', async () => {
     const histories: number[] = []
     const state = mkState(() => 1, {

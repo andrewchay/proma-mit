@@ -188,10 +188,24 @@ export interface HeldOutReport {
 }
 
 /** 一次完整的评测结果（作为 scoreboard 里一个 evaluation 条目）。 */
+/** 评测记录在写入时冻结的基准来源；不随后续配置变化回填。 */
+export interface EvaluationDefinitionProvenance {
+  /** 基准版本号 */
+  version: number
+  /** rubric 版本号 */
+  rubricVersion: number
+  /** 基准定义（case 集合、rubric 版本、被测对象）的稳定哈希 */
+  definitionHash: string
+  /** 冻结时刻（ISO 时间） */
+  frozenAt: string
+}
+
 export interface BenchmarkEvaluation {
   time: string
   agentVersion: number
   score: number
+  /** 写入时冻结的基准来源；历史记录缺省=来源未知，不能作为对比证据。 */
+  definition?: EvaluationDefinitionProvenance
   costUsd?: number | null
   durationMs?: number | null
   runtime: EvalRuntimeRef
@@ -233,6 +247,10 @@ export interface SelfEvolveRoundResult {
   reason: string
   /** 被拒时是否已回滚 */
   rolledBack: boolean
+  /** 与 Reference 的可比性、差值、资源门禁；不可比时给出原因。 */
+  comparison?: import('./shadow-comparison').ShadowComparison
+  /** 一句话结论（含不可比原因），供报告直接引用。 */
+  comparisonSummary?: string
 }
 
 /** 评测执行输入。 */
