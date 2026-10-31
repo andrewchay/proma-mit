@@ -10,6 +10,7 @@ import { EmployeeCapabilityApprovalDetails } from '../EmployeeCapabilityApproval
 export function ApprovalsTab({ onRefresh }: { onRefresh: () => Promise<void> }): React.ReactElement {
   const [approvals, setApprovals] = useAtom(proactiveApprovalsAtom)
   const [resolvingId, setResolvingId] = React.useState<string | null>(null)
+  const [decisionReasons, setDecisionReasons] = React.useState<Record<string, string>>({})
   const pendingApprovals = approvals.filter((approval) => approval.status === 'pending' || approval.status === 'edited')
 
   const replaceApproval = (updated: ProactiveApproval | null): void => {
@@ -17,10 +18,15 @@ export function ApprovalsTab({ onRefresh }: { onRefresh: () => Promise<void> }):
     setApprovals((current) => current.map((approval) => approval.id === updated.id ? updated : approval))
   }
 
-  const approve = async (id: string): Promise<void> => {
+  const approve = async (id: string, requiresReason: boolean): Promise<void> => {
+    const decisionReason = decisionReasons[id]?.trim() ?? ''
+    if (requiresReason && !decisionReason) {
+      toast.error('请填写能力推广审批理由')
+      return
+    }
     setResolvingId(id)
     try {
-      const updated = await window.electronAPI.proactive?.approveApproval?.(id)
+      const updated = await window.electronAPI.proactive?.approveApproval?.(id, decisionReason || undefined)
       replaceApproval(updated ?? null)
       if (updated?.executionStatus === 'failed') toast.error(updated.executionError ?? '批准后的变更执行失败')
       else toast.success('已批准并执行')
@@ -62,10 +68,11 @@ export function ApprovalsTab({ onRefresh }: { onRefresh: () => Promise<void> }):
         <div className="p-4 space-y-2">
           {pendingApprovals.length === 0 ? <p className="py-10 text-center text-sm text-muted-foreground">没有等待确认的主动变更。</p> : pendingApprovals.map((approval) => {
             const resolving = resolvingId === approval.id
+            const requiresReason = approval.sourceType === 'employee_capability'
             return <div key={approval.id} className="flex items-start gap-3 p-3 rounded-lg bg-foreground/[0.02] border border-border/40">
               <AlertCircle size={16} className="text-orange-500 mt-0.5 flex-shrink-0" />
-              <div className="flex-1 min-w-0"><p className="text-sm font-medium">{approval.title}</p><p className="text-xs text-muted-foreground mt-0.5">{approval.summary}</p><p className="text-[11px] text-muted-foreground mt-1">来源：{approval.sourceType}{approval.status === 'edited' ? ' · 已编辑，需再次确认' : ''}</p><EmployeeCapabilityApprovalDetails approval={approval} /></div>
-              <div className="flex items-center gap-1.5"><Button variant="outline" size="sm" disabled={resolving} onClick={() => void approve(approval.id)}>{resolving ? <LoaderCircle className="mr-1 size-3.5 animate-spin" /> : <CheckCircle className="mr-1 size-3.5" />}同意</Button><Button variant="ghost" size="sm" disabled={resolving} onClick={() => void reject(approval.id)}><XCircle className="mr-1 size-3.5" />拒绝</Button></div>
+              <div className="flex-1 min-w-0"><p className="text-sm font-medium">{approval.title}</p><p className="text-xs text-muted-foreground mt-0.5">{approval.summary}</p><p className="text-[11px] text-muted-foreground mt-1">来源：{approval.sourceType}{approval.status === 'edited' ? ' · 已编辑，需再次确认' : ''}</p><EmployeeCapabilityApprovalDetails approval={approval} />{requiresReason && <label className="mt-3 block text-xs text-muted-foreground">审批理由（必填，最多 1000 字）<textarea className="mt-1 min-h-16 w-full rounded-md border border-border bg-background p-2 text-xs text-foreground" maxLength={1000} value={decisionReasons[approval.id] ?? ''} onChange={(event) => setDecisionReasons((current) => ({ ...current, [approval.id]: event.target.value }))} placeholder="记录核对过的证据，以及允许此次推广的依据" /></label>}</div>
+              <div className="flex items-center gap-1.5"><Button variant="outline" size="sm" disabled={resolving || (requiresReason && !decisionReasons[approval.id]?.trim())} onClick={() => void approve(approval.id, requiresReason)}>{resolving ? <LoaderCircle className="mr-1 size-3.5 animate-spin" /> : <CheckCircle className="mr-1 size-3.5" />}同意</Button><Button variant="ghost" size="sm" disabled={resolving} onClick={() => void reject(approval.id)}><XCircle className="mr-1 size-3.5" />拒绝</Button></div>
             </div>
           })}
         </div>

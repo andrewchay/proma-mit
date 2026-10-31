@@ -2383,7 +2383,7 @@ export interface ElectronAPI {
     listApprovals: () => Promise<import('@gravitas/shared').ProactiveApproval[]>
     getPendingApprovals: () => Promise<import('@gravitas/shared').ProactiveApproval[]>
     createTestMemoryApproval: () => Promise<import('@gravitas/shared').ProactiveApproval>
-    approveApproval: (id: string) => Promise<import('@gravitas/shared').ProactiveApproval | null>
+    approveApproval: (id: string, decisionReason?: string) => Promise<import('@gravitas/shared').ProactiveApproval | null>
     rejectApproval: (id: string) => Promise<import('@gravitas/shared').ProactiveApproval | null>
     // Routines
     listRoutineManifests: () => Promise<unknown[]>
@@ -5197,7 +5197,7 @@ const electronAPI: ElectronAPI = {
     listApprovals: () => ipcRenderer.invoke('proactive:listApprovals'),
     getPendingApprovals: () => ipcRenderer.invoke('proactive:getPendingApprovals'),
     createTestMemoryApproval: () => ipcRenderer.invoke('proactive:createTestMemoryApproval'),
-    approveApproval: (id: string) => ipcRenderer.invoke('proactive:approveApproval', id),
+    approveApproval: (id: string, decisionReason?: string) => ipcRenderer.invoke('proactive:approveApproval', id, decisionReason),
     rejectApproval: (id: string) => ipcRenderer.invoke('proactive:rejectApproval', id),
     // Routines
     listRoutineManifests: () => ipcRenderer.invoke('proactive:listRoutineManifests'),
