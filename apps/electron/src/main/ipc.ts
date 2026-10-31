@@ -285,6 +285,8 @@ import { runAgent, stopAgent, generateAgentTitle, saveFilesToAgentSession, saveF
 import { webBridgeService } from './lib/web-bridge-service'
 import { computerUseService } from './lib/computer-use-service'
 import { exportAgentAuditEvents, listAgentAuditEvents } from './lib/agent-audit-service'
+import { listPendingUnknownActionsForReview } from './lib/agent-runtime/unknown-action-store'
+import { summarizePendingUnknownActions } from './lib/agent-runtime/unknown-action-review'
 import { listAgentSpans } from './lib/agent-span-sink'
 import { getContextCompactionMetrics } from './lib/context-compaction-audit-service'
 import {
@@ -2374,6 +2376,7 @@ export async function registerIpcHandlers(): Promise<void> {
     return next.computerUse ?? { enabled: true, readOnlyOnly: false }
   })
   ipcMain.handle(AGENT_IPC_CHANNELS.LIST_AUDIT_EVENTS, async (_, query: import('@gravitas/shared').AgentAuditQuery) => listAgentAuditEvents(query))
+  ipcMain.handle(AGENT_IPC_CHANNELS.LIST_PENDING_UNKNOWN_ACTIONS, async () => summarizePendingUnknownActions(await listPendingUnknownActionsForReview()))
   ipcMain.handle(AGENT_IPC_CHANNELS.LIST_SESSION_SPANS, async (_, query: import('@gravitas/shared').AgentSpanQuery = {}) => listAgentSpans(query))
   ipcMain.handle(AGENT_IPC_CHANNELS.GET_CONTEXT_COMPACTION_METRICS, async () => getContextCompactionMetrics())
   ipcMain.handle(AGENT_IPC_CHANNELS.EXPORT_AUDIT_EVENTS, async (event, query: import('@gravitas/shared').AgentAuditQuery): Promise<{ canceled: boolean; count: number }> => {

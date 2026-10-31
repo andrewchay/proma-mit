@@ -12,6 +12,7 @@ import {
   findPendingUnknownAction,
   hashDetail,
   listPendingUnknownActions,
+  listPendingUnknownActionsForReview,
   recordUnknownAction,
   resolveUnknownAction,
 } from './unknown-action-store'
@@ -41,6 +42,22 @@ describe('未知动作登记', () => {
     expect(record?.status).toBe('pending')
     expect(record?.reason).toBe('timed out')
     expect(record?.tool).toBe('ComputerUseClick')
+  })
+
+  test('Given 多会话存在待核对动作 When 读取全局摘要 Then 仅展示仍拦截的动作且已生效结论继续保留', async () => {
+    const first = await recordUnknownAction({ sessionId: 's1', tool: 'ComputerUseClick', actionKey: 'click:one', reason: 'timed out' })
+    const second = await recordUnknownAction({ sessionId: 's2', tool: 'McpTool', actionKey: 'mcp:two', reason: 'connection closed' })
+    await confirmUnknownActionApplied({ sessionId: 's2', id: second.id, resolution: '用户已在目标系统核对' })
+    await recordUnknownAction({ sessionId: 's3', tool: 'WebBridgeClick', actionKey: 'web:three', reason: 'timeout' })
+    await resolveUnknownAction({ sessionId: 's3', actionKey: 'web:three', resolution: '用户确认未生效' })
+
+    const records = await listPendingUnknownActionsForReview()
+
+    expect(records).toHaveLength(2)
+    const pending = records.find(({ id }) => id === first.id)
+    const acknowledged = records.find(({ id }) => id === second.id)
+    expect(pending?.sessionId).toBe('s1')
+    expect(acknowledged?.acknowledgedAt).toBeDefined()
   })
 
   test('Given 未登记的动作 When 查询 Then 不拦截', async () => {

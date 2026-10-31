@@ -65,6 +65,15 @@ export interface AgentAuditEvent {
   memberId?: string
 }
 
+/** 本机未知动作待核对队列的安全摘要，不包含参数、动作指纹或错误详情。 */
+export interface PendingUnknownActionSummary {
+  id: string
+  sessionId: string
+  tool: string
+  createdAt: string
+  acknowledgedAt?: string
+}
+
 export interface AgentAuditQuery {
   source?: AgentAuditEvent['source'] | 'all'
   sessionId?: string
@@ -2174,6 +2183,8 @@ export const AGENT_IPC_CHANNELS = {
   SET_COMPUTER_USE_SETTINGS: 'agent:set-computer-use-settings',
   /** 查询本地操作审计 */
   LIST_AUDIT_EVENTS: 'agent:list-audit-events',
+  /** 查询所有会话中仍被重试门禁拦截的未知动作摘要 */
+  LIST_PENDING_UNKNOWN_ACTIONS: 'agent:list-pending-unknown-actions',
   /** 查询仅含元数据的上下文压缩聚合指标 */
   GET_CONTEXT_COMPACTION_METRICS: 'agent:get-context-compaction-metrics',
   /** 导出筛选后的本地操作审计 */
