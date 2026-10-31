@@ -24,7 +24,9 @@ export interface EmployeeCapabilityLedgerEntry {
     reworkRate: number | null
     failureRate: number | null
     decidedSampleCount: number
+    executionDecidedSampleCount: number
     sampleSufficient: boolean
+    executionSampleSufficient: boolean
   }
   /** 评测调用成本（USD）；仅为代理指标，不等于真实 ROI。 */
   evaluationCostUsd: number
@@ -55,7 +57,7 @@ function emptyLedgerEntry(agentId: string, agentName: string): EmployeeCapabilit
     samples: { total: 0, pending: 0, sanitized: 0, excluded: 0, cancelled: 0 },
     decisions: { approved: 0, rejected: 0, pending: 0 },
     rollbacks: 0,
-    observations: { executionCount: 0, reworkRate: null, failureRate: null, decidedSampleCount: 0, sampleSufficient: false },
+    observations: { executionCount: 0, reworkRate: null, failureRate: null, decidedSampleCount: 0, executionDecidedSampleCount: 0, sampleSufficient: false, executionSampleSufficient: false },
     evaluationCostUsd: 0,
     reviewEffortProxy: 0,
   }
@@ -99,7 +101,9 @@ export function buildEmployeeCapabilityLedger(agentId: string, windowDays = 30, 
     reworkRate: activeHealth.length === 1 ? activeHealth[0]!.reworkRate : null,
     failureRate: activeHealth.length === 1 ? activeHealth[0]!.failureRate : null,
     decidedSampleCount: health.reduce((sum, item) => sum + item.decidedSampleCount, 0),
+    executionDecidedSampleCount: activeHealth.length === 1 ? activeHealth[0]!.executionDecidedSampleCount : 0,
     sampleSufficient: activeHealth.length === 1 ? activeHealth[0]!.sampleSufficient : false,
+    executionSampleSufficient: activeHealth.length === 1 ? activeHealth[0]!.executionSampleSufficient : false,
   }
   return entry
 }
@@ -167,7 +171,7 @@ export function reviewReportToMarkdown(report: EmployeeCapabilityLedgerReport): 
       `- 版本：共 ${entry.versions.total} · active ${entry.versions.active} · superseded ${entry.versions.superseded} · rolled_back ${entry.versions.rolledBack}`,
       `- 样本：共 ${entry.samples.total} · 待审核 ${entry.samples.pending} · 已脱敏 ${entry.samples.sanitized} · 已排除 ${entry.samples.excluded} · 取消 ${entry.samples.cancelled}`,
       `- 审批：批准 ${entry.decisions.approved} · 拒绝 ${entry.decisions.rejected} · 待审批 ${entry.decisions.pending}`,
-      `- 滚动窗口执行 ${entry.observations.executionCount} · 返工率 ${percent(entry.observations.reworkRate)} · 失败率 ${percent(entry.observations.failureRate)}${entry.observations.sampleSufficient ? '' : '（样本量不足，结论待观察）'}`,
+      `- 滚动窗口执行 ${entry.observations.executionCount} · Owner 退回修改率 ${percent(entry.observations.reworkRate)}（判断 ${entry.observations.decidedSampleCount} 条${entry.observations.sampleSufficient ? '' : '，样本不足'}） · 执行失败率 ${percent(entry.observations.failureRate)}（执行样本 ${entry.observations.executionDecidedSampleCount}${entry.observations.executionSampleSufficient ? '' : '，样本不足'}）`,
       '',
     )
   }

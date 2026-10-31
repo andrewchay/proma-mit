@@ -4018,22 +4018,26 @@ export function getAgentEmployeeCapabilityHealth(agentId: string, windowDays = 3
     const matchedSamples = observedSamples.filter((sample) => parseJsonArray(sample.capability_version_ids).includes(versionId))
     const eligibleHumanSamples = humanSamples.filter((sample) => sample.capabilityVersionIds.includes(versionId))
     const eligible = matchedSamples.filter((sample) => sample.privacy_status !== 'excluded' && sample.outcome !== 'manual_excluded')
-    const decided = eligible.filter((sample) => sample.privacy_status === 'sanitized' && sample.outcome !== 'cancelled')
-    const rework = decided.filter((sample) => sample.outcome === 'changes_requested').length
-    const failed = decided.filter((sample) => sample.outcome === 'failed').length
+    const executionDecided = eligible.filter((sample) => sample.privacy_status === 'sanitized' && sample.outcome !== 'cancelled')
+    const failed = executionDecided.filter((sample) => sample.outcome === 'failed').length
+    // 执行状态只描述运行结果；返工率必须来自已核验的本机 Owner 判断。
+    const ownerDecisions = eligibleHumanSamples.filter((sample) => sample.capabilityVersionIds.includes(versionId) && sample.ownerJudgment)
+    const ownerRework = ownerDecisions.filter((sample) => sample.ownerJudgment?.outcome === 'changes_requested').length
     const cancelled = eligible.filter((sample) => sample.outcome === 'cancelled').length
     const ratio = (value: number, total: number): number | null => total === 0 ? null : Math.round((value / total) * 1000) / 1000
     return {
       executionCount: matchedExecutions.length,
-      reworkRate: ratio(rework, decided.length),
-      failureRate: ratio(failed, decided.length),
+      reworkRate: ratio(ownerRework, ownerDecisions.length),
+      failureRate: ratio(failed, executionDecided.length),
       cancellationRate: ratio(cancelled, eligible.length),
-      decidedSampleCount: decided.length,
+      decidedSampleCount: ownerDecisions.length,
+      executionDecidedSampleCount: executionDecided.length,
       humanJudgmentEligibleCount: eligibleHumanSamples.length,
       humanAcceptedCount: eligibleHumanSamples.filter((sample) => sample.ownerJudgment?.outcome === 'business_accepted').length,
       humanChangesRequestedCount: eligibleHumanSamples.filter((sample) => sample.ownerJudgment?.outcome === 'changes_requested').length,
-      // 少于 5 条已判定样本时不声称趋势可信。
-      sampleSufficient: decided.length >= 5,
+      // 两类信号分别要求各自样本充足，避免运行状态替代人工判断。
+      sampleSufficient: ownerDecisions.length >= 5,
+      executionSampleSufficient: executionDecided.length >= 5,
       lastExecutedAt: matchedExecutions.length ? Math.max(...matchedExecutions.map((item) => item.completed_at ?? item.started_at)) : undefined,
     }
   }

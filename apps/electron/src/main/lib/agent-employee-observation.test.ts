@@ -20,7 +20,7 @@ afterAll(() => {
 })
 beforeEach(() => resetEmployeeCanaryForTests())
 
-test('样本量不足时不声称趋势可信，且取消不计入失败率', () => {
+test('执行结果不能代替 Owner 判断，且取消不计入执行失败率', () => {
   const employee = createAgentEmployee({ name: '观察', role: '开发', description: '', channelId: 'channel' })
   const version = createAgentEmployeeCapabilityVersion({ agentId: employee.id, versionNumber: 1, scope: 'role', content: '能力', contentHash: 'hash', status: 'active', source: 'manual', activatedAt: Date.now() })
   const project = createProject({ title: '观察项目', description: '' })
@@ -28,7 +28,7 @@ test('样本量不足时不声称趋势可信，且取消不计入失败率', ()
   createAgentEmployeeLearningSample({ agentId: employee.id, executionId: 'obs-run-1', projectId: project.id, taskId: task.id, capabilityVersionIds: [version.id], outcome: 'changes_requested', evidenceSummary: '返工', privacyStatus: 'sanitized' })
   createAgentEmployeeLearningSample({ agentId: employee.id, executionId: 'obs-run-2', projectId: project.id, taskId: task.id, capabilityVersionIds: [version.id], outcome: 'cancelled', evidenceSummary: '用户取消', privacyStatus: 'pending' })
   const health = getAgentEmployeeCapabilityHealth(employee.id, 30).find((item) => item.versionId === version.id)
-  expect(health).toEqual(expect.objectContaining({ decidedSampleCount: 1, sampleSufficient: false, reworkRate: 1, failureRate: 0 }))
+  expect(health).toEqual(expect.objectContaining({ decidedSampleCount: 0, executionDecidedSampleCount: 1, sampleSufficient: false, executionSampleSufficient: false, reworkRate: null, failureRate: 0 }))
 })
 
 test('Given 样本被隐私排除 When 计算健康度 Then 不算业务失败或已判定样本', () => {
@@ -52,7 +52,7 @@ test('同 scope 版本对比标注可比性，样本不足时不制造改善错�
   createAgentEmployeeLearningSample({ agentId: employee.id, executionId: 'cmp-2', projectId: project.id, taskId: task.id, capabilityVersionIds: [candidate.id], outcome: 'accepted', evidenceSummary: '通过', privacyStatus: 'sanitized' })
   const health = getAgentEmployeeCapabilityHealth(employee.id, 30).find((item) => item.versionId === candidate.id)
   expect(health?.comparisonVersionId).toBe(baseline.id)
-  expect(health?.reworkRateDelta).toBe(-1)
+  expect(health?.reworkRateDelta).toBeNull()
   expect(health?.comparisonComparable).toBe(false)
 })
 

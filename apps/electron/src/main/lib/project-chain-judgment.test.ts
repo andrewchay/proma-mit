@@ -38,12 +38,12 @@ test('Given 人工退回并重新验收 When 读取学习样本 Then 判断按�
   expect(rejected.privacyStatus).toBe('pending')
   expect(getAgentEmployeeCapabilityHealth('judgment-agent')[0]).toMatchObject({ humanJudgmentEligibleCount: 0, humanAcceptedCount: 0, humanChangesRequestedCount: 0 })
   reviewAgentEmployeeLearningSample(sample.id, '已脱敏的执行摘要')
-  expect(getAgentEmployeeCapabilityHealth('judgment-agent')[0]).toMatchObject({ humanJudgmentEligibleCount: 1, humanAcceptedCount: 0, humanChangesRequestedCount: 1 })
+  expect(getAgentEmployeeCapabilityHealth('judgment-agent')[0]).toMatchObject({ humanJudgmentEligibleCount: 1, humanAcceptedCount: 0, humanChangesRequestedCount: 1, decidedSampleCount: 1, reworkRate: 1 })
   chain = updateProjectChain(project.id, chain.revision, { ...draft, draftId, changeReason: '调整方向', content: '修订稿' })
   chain = updateProjectChain(project.id, chain.revision, { kind: 'submit', draftId })
   chain = updateProjectChain(project.id, chain.revision, { kind: 'accept', draftId, comment: '已核对', evidence: '人工核对' })
   expect(listAgentEmployeeLearningSamples('judgment-agent')[0]!.ownerJudgment).toMatchObject({ outcome: 'business_accepted', deliveryVersion: 2, actor: 'local-user' })
-  expect(getAgentEmployeeCapabilityHealth('judgment-agent')[0]).toMatchObject({ humanAcceptedCount: 1, humanChangesRequestedCount: 0 })
+  expect(getAgentEmployeeCapabilityHealth('judgment-agent')[0]).toMatchObject({ humanAcceptedCount: 1, humanChangesRequestedCount: 0, decidedSampleCount: 1, reworkRate: 0 })
   expect(getProjectChain(project.id).events.filter(event => event.action === 'reject' || event.action === 'accept')).toHaveLength(2)
   expect(sample.id).toBe(listAgentEmployeeLearningSamples('judgment-agent')[0]!.id)
   expect(getAgentEmployeeCapabilityHealth('judgment-agent', 30, Date.now() + 31 * 86400000)[0]).toMatchObject({ humanAcceptedCount: 0, humanChangesRequestedCount: 0 })
@@ -91,7 +91,7 @@ test('Given 自动验收通过 When 读取学习样本 Then 不生成未经人�
   expect(chain.drafts[0]!.status).toBe('accepted')
   expect(chain.events.some(event => event.action === 'auto_accept')).toBe(true)
   expect(listAgentEmployeeLearningSamples('auto-agent')[0]!.ownerJudgment).toBeUndefined()
-  expect(getAgentEmployeeCapabilityHealth('auto-agent')[0]).toMatchObject({ humanJudgmentEligibleCount: 1, humanAcceptedCount: 0, humanChangesRequestedCount: 0 })
+  expect(getAgentEmployeeCapabilityHealth('auto-agent')[0]).toMatchObject({ humanJudgmentEligibleCount: 1, humanAcceptedCount: 0, humanChangesRequestedCount: 0, decidedSampleCount: 0, reworkRate: null })
 })
 
 
