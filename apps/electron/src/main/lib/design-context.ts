@@ -280,6 +280,9 @@ export function composeOdDesignContext(input: ComposeOdDesignContextInput): stri
           '</od_design_system>',
         ].filter(Boolean).join('\n'),
       )
+      if (!ds.tokensCss) {
+        parts.push('<od_missing_resource type="design_tokens">工作区缺少可用的 tokens.css；请向用户说明设计令牌不可用，不要声称已遵循完整令牌规范。</od_missing_resource>')
+      }
     } else {
       parts.push('<od_missing_resource type="design_system">当前任务要求设计系统，但工作区缺少可用的 DESIGN.md；请向用户说明缺项，不要声称成果符合品牌规范。</od_missing_resource>')
     }
