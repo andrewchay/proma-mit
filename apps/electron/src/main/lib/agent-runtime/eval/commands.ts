@@ -236,6 +236,7 @@ export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummar
           durationMs: null,
           sessionId: runs[0]?.sessionId,
           tracePath: runs[0]?.tracePath,
+          runs: runs.map(run => ({ score: run.score, sessionId: run.sessionId ?? '', tracePath: run.tracePath })),
         }
       }),
     )
