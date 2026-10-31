@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, expect, test } from 'bun:test'
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AgentWorkspace, OwnerRuntimeBinding } from '@gravitas/shared'
-import { createOwnerDesignSystemInstaller } from './opendesign-install-service'
+import { createOwnerDesignSystemInstaller, readBundledReference } from './opendesign-install-service'
 
 let tempRoot = ''
 const projectId = 'project-1'
@@ -30,6 +30,18 @@ beforeEach(() => {
 })
 
 afterEach(() => rmSync(tempRoot, { recursive: true, force: true }))
+
+test('Given Electron extraResources 下的 OpenDesign 资源 When 安装服务读取品牌 Then 从打包资源目录加载目录和参考包', () => {
+  const packagedResources = join(tempRoot, 'resources')
+  const openDesignDir = join(packagedResources, 'opendesign')
+  mkdirSync(openDesignDir, { recursive: true })
+  const sourceDir = new URL('../../../resources/', import.meta.url)
+  for (const file of ['opendesign-brand-catalog.json', 'opendesign-references-0.json', 'opendesign-references-1.json', 'opendesign-references-2.json', 'opendesign-references-3.json']) {
+    copyFileSync(new URL(file, sourceDir), join(openDesignDir, file))
+  }
+
+  expect(readBundledReference('stripe', packagedResources)).toMatchObject({ brandName: 'Stripe', reference: { design: expect.stringContaining('#'), tokens: expect.stringContaining(':root') } })
+})
 
 function createInstaller(currentBinding: OwnerRuntimeBinding | null = binding) {
   return createOwnerDesignSystemInstaller({

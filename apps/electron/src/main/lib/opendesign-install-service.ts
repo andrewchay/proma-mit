@@ -33,8 +33,13 @@ function pathExists(path: string): boolean {
   }
 }
 
-function readBundledReference(brandId: string): { revision: string; brandName: string; reference: DesignReference } {
-  const resourcesDir = [join(__dirname, 'resources'), resolve(__dirname, '../../../resources')].find(path => pathExists(join(path, 'opendesign-brand-catalog.json')))
+export function readBundledReference(brandId: string, packagedResourcesPath = process.resourcesPath): { revision: string; brandName: string; reference: DesignReference } {
+  const resourcesDir = [
+    join(packagedResourcesPath, 'opendesign'),
+    packagedResourcesPath,
+    join(__dirname, 'resources'),
+    resolve(__dirname, '../../../resources'),
+  ].find(path => pathExists(join(path, 'opendesign-brand-catalog.json')))
   if (!resourcesDir) throw new Error('OpenDesign 本地资源不可用')
   const catalog = JSON.parse(readFileSync(join(resourcesDir, 'opendesign-brand-catalog.json'), 'utf8')) as DesignCatalog
   const index = catalog.entries.findIndex(entry => entry.id === brandId)

@@ -31,7 +31,9 @@ test('Given 版本固定的设计参考包 When 查看目录 Then 每个条目�
     expect(Object.keys(bundle.entries)).toEqual(catalog.entries.slice(index * 38, (index + 1) * 38).map(entry => entry.id))
   })
   const builder = readFileSync(new URL('../../../../electron-builder.yml', import.meta.url), 'utf8')
-  expect(builder).toContain('resources/opendesign-LICENSE.txt')
+  for (const file of ['opendesign-brand-catalog.json', 'opendesign-references-0.json', 'opendesign-references-1.json', 'opendesign-references-2.json', 'opendesign-references-3.json', 'opendesign-LICENSE.txt']) {
+    expect(builder).toContain(`resources/${file}`)
+  }
   expect(readFileSync(new URL('../../../../resources/opendesign-LICENSE.txt', import.meta.url), 'utf8')).toContain('Apache License')
   expect(bundles.flatMap(bundle => Object.keys(bundle.entries)).sort()).toEqual(catalog.entries.map(entry => entry.id).sort())
   for (const entry of bundles.flatMap(bundle => Object.values(bundle.entries))) {
