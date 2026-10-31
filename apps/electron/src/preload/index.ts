@@ -2028,6 +2028,8 @@ export interface ElectronAPI {
       getOwnerManagementDelegation: import('@gravitas/shared').OwnerManagementApi['getOwnerManagementDelegation']
       revokeOwnerManagementDelegation: import('@gravitas/shared').OwnerManagementApi['revokeOwnerManagementDelegation']
       getOwnerManagement: import('@gravitas/shared').OwnerManagementApi['getOwnerManagement']
+      previewOwnerDesignSystemInstall: import('@gravitas/shared').OwnerManagementApi['previewOwnerDesignSystemInstall']
+      installOwnerDesignSystem: import('@gravitas/shared').OwnerManagementApi['installOwnerDesignSystem']
       confirmOwnerTeamWorkspaceAccess: import('@gravitas/shared').OwnerManagementApi['confirmOwnerTeamWorkspaceAccess']
       setOwnerManagementStatus: import('@gravitas/shared').OwnerManagementApi['setOwnerManagementStatus']
       getWebWatch: (projectId: string) => Promise<unknown>
@@ -4853,6 +4855,8 @@ const electronAPI: ElectronAPI = {
       getOwnerManagementDelegation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_MANAGEMENT_DELEGATION, request),
       revokeOwnerManagementDelegation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.REVOKE_OWNER_MANAGEMENT_DELEGATION, request),
       getOwnerManagement: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_MANAGEMENT, request),
+      previewOwnerDesignSystemInstall: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_DESIGN_SYSTEM_INSTALL, request),
+      installOwnerDesignSystem: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.INSTALL_OWNER_DESIGN_SYSTEM, request),
       confirmOwnerTeamWorkspaceAccess: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_TEAM_WORKSPACE_ACCESS, request),
       setOwnerManagementStatus: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SET_OWNER_MANAGEMENT_STATUS, request),
       getWebWatch: (projectId) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_WEB_WATCH, projectId),

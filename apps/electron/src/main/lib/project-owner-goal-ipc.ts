@@ -7,6 +7,7 @@ import { getOwnerManagementConversation, answerOwnerManagementQuestion } from '.
 import { assertLocalActorEnabled } from './project-owner-plan-service'
 import { PROJECT_IPC_CHANNELS, type ProjectOwnerGoalResult } from '@gravitas/shared'
 import { getProjectOwnerGoalDraft, ProjectOwnerGoalConflictError, saveProjectOwnerGoalDraft } from './project-owner-goal-service'
+import { installOwnerDesignSystem, previewOwnerDesignSystemInstall } from './opendesign-install-service'
 
 interface GoalIpcRegistrar {
   handle: (channel: string, handler: (event: unknown, request: unknown) => unknown) => void
@@ -55,6 +56,25 @@ export function registerProjectOwnerGoalIpcHandlers(ipc: GoalIpcRegistrar): void
   ipc.handle(PROJECT_IPC_CHANNELS.GET_OWNER_MANAGEMENT, (_, request) => result(() => {
     const value = requestFields(request, ['projectId'])
     return getOwnerManagementConversation(value.projectId as string)
+  }))
+  ipc.handle(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_DESIGN_SYSTEM_INSTALL, (_, request) => result(() => {
+    const value = requestFields(request, ['projectId', 'brandId'])
+    if (typeof value.brandId !== 'string') throw new Error('设计系统身份无效')
+    return previewOwnerDesignSystemInstall(value.projectId as string, value.brandId)
+  }))
+  ipc.handle(PROJECT_IPC_CHANNELS.INSTALL_OWNER_DESIGN_SYSTEM, (_, request) => result(() => {
+    const value = requestFields(request, ['projectId', 'brandId', 'expectedOwnerBindingRevision', 'expectedWorkspaceId', 'expectedReferenceRevision', 'confirmed'])
+    if (typeof value.brandId !== 'string' || typeof value.expectedWorkspaceId !== 'string' || typeof value.expectedReferenceRevision !== 'string'
+      || typeof value.expectedOwnerBindingRevision !== 'number' || value.confirmed !== true) throw new Error('OpenDesign 安装确认无效')
+    assertLocalActorEnabled()
+    return installOwnerDesignSystem({
+      projectId: value.projectId as string,
+      brandId: value.brandId,
+      expectedOwnerBindingRevision: value.expectedOwnerBindingRevision,
+      expectedWorkspaceId: value.expectedWorkspaceId,
+      expectedReferenceRevision: value.expectedReferenceRevision,
+      confirmed: true,
+    })
   }))
   ipc.handle(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_TEAM_WORKSPACE_ACCESS, (_, request) => result(() => {
     const access = require('./project-owner-team-workspace-access') as typeof import('./project-owner-team-workspace-access')

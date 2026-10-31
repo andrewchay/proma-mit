@@ -226,6 +226,8 @@ export const PROJECT_IPC_CHANNELS = {
   GET_OWNER_MANAGEMENT_DELEGATION: 'project:get-owner-management-delegation',
   REVOKE_OWNER_MANAGEMENT_DELEGATION: 'project:revoke-owner-management-delegation',
   GET_OWNER_MANAGEMENT: 'project:get-owner-management',
+  PREVIEW_OWNER_DESIGN_SYSTEM_INSTALL: 'project:preview-owner-design-system-install',
+  INSTALL_OWNER_DESIGN_SYSTEM: 'project:install-owner-design-system',
   CONFIRM_OWNER_TEAM_WORKSPACE_ACCESS: 'project:confirm-owner-team-workspace-access',
   SEND_OWNER_MANAGEMENT_MESSAGE: 'project:send-owner-management-message',
   /** 用户显式要求按当前已确认方案重新安排人员；消耗既有管理额度。 */

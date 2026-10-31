@@ -92,6 +92,7 @@ async function executeSkillUnchecked(input: unknown, ctx: ToolContext): Promise<
             getDefaultSkillsDir,
           }),
           cwd: ctx.cwd,
+          workspaceSlug: ctx.workspaceSlug,
         })
         if (odContext) {
           content = `${content}\n\n---\n\n${odContext}`
