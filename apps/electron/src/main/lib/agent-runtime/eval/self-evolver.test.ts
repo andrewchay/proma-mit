@@ -94,7 +94,7 @@ describe('selfEvolve', () => {
     expect(out.finalScore).toBe(90)
   })
 
-  it('Given 基线与候选同一次运行 When 落盘评测 Then 冻结基准来源并给出可比对比报告', async () => {
+  it('Given 基线与候选同一次运行但来源不完整 When 比较 Then 不推断可比', async () => {
     const benchmark = { ...config, id: 'frozen-provenance' }
     const defState = { v: 1 }
     const state = mkState(() => defState.v, {
@@ -117,16 +117,16 @@ describe('selfEvolve', () => {
       expect(record.definition?.rubricVersion).toBe(benchmark.rubricVersion ?? 1)
       expect(record.definition?.definitionHash).toBeTruthy()
     }
-    // 同一次运行的两侧用同一份冻结定义：对比必须可比，且给出差值结论。
+    // 同一基准定义不能证明素材及实际评判实现相同。
     const comparison = out.rounds[0]!.comparison
-    expect(comparison?.comparable).toBe(true)
-    expect(comparison?.verdict).toBe('candidate_better')
-    expect(out.rounds[0]!.comparisonSummary).toContain('更好')
+    expect(comparison?.comparable).toBe(false)
+    expect(comparison?.verdict).toBe('inconclusive')
+    expect(out.rounds[0]!.comparisonSummary).toContain('不可比')
     // 报告与 scoreboard 是同一份回执：接受时不再产生第二条候选记录。
     expect(records[1]!.score).toBe(90)
   })
 
-  it('Given 候选被拒 When 生成对比报告 Then 仍给出差值且不影响接受结论', async () => {
+  it('Given 候选被拒且来源不完整 When 生成报告 Then 保留不可比结论', async () => {
     const benchmark = { ...config, id: 'rejected-comparison' }
     const state = mkState(() => 1, { apply: () => undefined, rollback: () => undefined })
     const propose: Parameters<typeof selfEvolve>[0]['propose'] = async () => ({ description: 'worse', target: 'x', afterState: 2 })
@@ -139,9 +139,9 @@ describe('selfEvolve', () => {
     })
 
     expect(out.rounds[0]!.accepted).toBe(false)
-    expect(out.rounds[0]!.comparison?.comparable).toBe(true)
-    expect(out.rounds[0]!.comparison?.verdict).toBe('candidate_worse')
-    expect(out.rounds[0]!.comparison?.meanDelta).toBeLessThan(0)
+    expect(out.rounds[0]!.comparison?.comparable).toBe(false)
+    expect(out.rounds[0]!.comparison?.verdict).toBe('inconclusive')
+    expect(out.rounds[0]!.comparison?.meanDelta).toBeNull()
   })
 
   it('候选分数不高于 Reference 则回滚，不改 Reference', async () => {

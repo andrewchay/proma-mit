@@ -164,10 +164,10 @@ describe('runImprove', () => {
     expect(phases).toContain("case_complete")
     // 每轮都要给出与 Reference 的对比报告，而不是只有总分。
     expect(out.rounds.length).toBe(out.totalRounds)
-    expect(out.rounds[0]!.comparable).toBe(true)
-    expect(out.rounds[0]!.verdict).toBe('candidate_better')
-    expect(out.rounds[0]!.meanDelta).toBeGreaterThan(0)
-    expect(out.rounds[0]!.summary).toContain('更好')
+    expect(out.rounds[0]!.comparable).toBe(false)
+    expect(out.rounds[0]!.verdict).toBe('inconclusive')
+    expect(out.rounds[0]!.meanDelta).toBeNull()
+    expect(out.rounds[0]!.summary).toContain('不可比')
   })
 
   it('Given 配置成本门禁但评测未记录成本 When 生成报告 Then 门禁标注未核验而不是通过', async () => {

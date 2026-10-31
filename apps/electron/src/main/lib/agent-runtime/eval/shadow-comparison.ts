@@ -344,16 +344,18 @@ export interface RecordedEvaluationComparisonInput {
 }
 
 /**
- * 用两条评测记录各自冻结的来源比较。
+ * 用两条评测记录各自保存的来源检查可比性。
  *
  * 与 `compareShadowRuns` 的区别：版本与基准定义不取「当前配置」，而取记录写入时
  * 冻结的哈希；任一侧没有冻结来源、或两侧哈希不一致，都判为不可比并写明原因——
- * 历史评测没有被追认的可能，当前配置也不能回填成历史事实。
+ * 当前来源未覆盖案例素材和评判实现，因此所有记录暂判不可比；历史不回填。
  */
 export function compareRecordedEvaluations(input: RecordedEvaluationComparisonInput): ShadowComparison {
   const baselineDefinition = input.baseline.definition
   const candidateDefinition = input.candidate.definition
   const reasons: string[] = []
+  // 现有来源仅覆盖题目与评分规则，不覆盖案例素材及实际评判实现，不能据此认定完整输入一致。
+  reasons.push('案例素材与评判实现的完整来源尚未冻结，不能确认评测可比')
   if (!baselineDefinition || !candidateDefinition) {
     reasons.push('评测记录未冻结基准来源，不能作为对比证据')
   } else {
@@ -365,6 +367,16 @@ export function compareRecordedEvaluations(input: RecordedEvaluationComparisonIn
     }
     if (baselineDefinition.rubricVersion !== candidateDefinition.rubricVersion) {
       reasons.push(`rubric 版本不同：${baselineDefinition.rubricVersion} vs ${candidateDefinition.rubricVersion}`)
+    }
+  }
+  for (const baselineCase of input.baseline.cases) {
+    const candidateCase = input.candidate.cases.find(item => item.caseId === baselineCase.caseId)
+    if (!candidateCase) continue
+    const hashes = [...baselineCase.runs, ...candidateCase.runs].map(run => run.caseTextRubricSha256)
+    if (!baselineCase.runs.length || !candidateCase.runs.length || hashes.some(hash => !hash || !/^[a-f0-9]{64}$/.test(hash))) {
+      reasons.push(`case ${baselineCase.caseId} 缺少有效的题目与评分规则摘要`)
+    } else if (new Set(hashes).size !== 1) {
+      reasons.push(`case ${baselineCase.caseId} 的题目或评分规则摘要不一致`)
     }
   }
   const benchmarkVersion = baselineDefinition?.version ?? 0
@@ -394,8 +406,7 @@ export interface ScoreboardShadowInput {
 /**
  * 用评测记录自身冻结的来源比较两条已落盘评测（基线版本 vs 候选版本）。
  *
- * 历史评测没有冻结来源，仍返回不可比（原因写明「未冻结基准来源」）；新评测在写入时
- * 冻结 version / rubricVersion / definitionHash，因此同一基准下的两条新记录可以比较。
+ * 当前记录缺少完整素材和评判来源，新旧评测均暂不可比。
  */
 export function compareScoreboardEvaluations(input: ScoreboardShadowInput): ShadowComparison {
   return compareRecordedEvaluations({
