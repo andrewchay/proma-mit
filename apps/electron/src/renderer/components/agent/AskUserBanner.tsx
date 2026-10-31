@@ -15,14 +15,9 @@ import remarkGfm from 'remark-gfm'
 import { Button } from '@/components/ui/button'
 import { allPendingAskUserRequestsAtom, agentStreamingStatesAtom, finalizeStreamingActivities } from '@/atoms/agent-atoms'
 import type { AskUserQuestion } from '@gravitas/shared'
+import { createInitialAskUserAnswer, type AskUserAnswerState } from './ask-user-banner-state'
 
-interface QuestionAnswer {
-  selected: string[]
-  customText: string
-  showCustom: boolean
-}
-
-const EMPTY_ANSWER: QuestionAnswer = { selected: [], customText: '', showCustom: false }
+const EMPTY_ANSWER: AskUserAnswerState = { selected: [], customText: '', showCustom: false }
 
 const PREVIEW_REMARK_PLUGINS = [remarkGfm]
 
@@ -40,7 +35,7 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
   const [allRequests, setAllRequests] = useAtom(allPendingAskUserRequestsAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const requests = allRequests.get(sessionId) ?? []
-  const [answers, setAnswers] = React.useState<Map<number, QuestionAnswer>>(new Map())
+  const [answers, setAnswers] = React.useState<Map<number, AskUserAnswerState>>(new Map())
   const [submitting, setSubmitting] = React.useState(false)
   const [activeTab, setActiveTab] = React.useState(0)
   const [focusedOptIdx, setFocusedOptIdx] = React.useState(-1)
@@ -49,6 +44,7 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
   const hasRequest = request !== null
   const questions = request?.questions ?? []
   const isTakeover = request?.kind === 'computer_use_takeover'
+  const isUnknownActionResolution = request?.kind === 'unknown_action_resolution'
   const isLastTab = activeTab >= questions.length - 1
 
   // ===== Refs：确保 keydown handler 始终读取最新值，消除闭包过期问题 =====
@@ -102,24 +98,24 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
     clearAutoAdvanceTimer()
     setActiveTab(0)
     setFocusedOptIdx(-1)
-    const firstOpt = questions[0]?.options[0]
-    setAnswers(firstOpt
-      ? new Map([[0, { ...EMPTY_ANSWER, selected: [firstOpt.label] }]])
+    const firstQuestion = questions[0]
+    setAnswers(firstQuestion
+      ? new Map([[0, createInitialAskUserAnswer(request?.kind, firstQuestion)]])
       : new Map())
-  }, [clearAutoAdvanceTimer, request?.requestId, questions])
+  }, [clearAutoAdvanceTimer, request?.kind, request?.requestId, questions])
 
-  // 切换 Tab 时重置焦点并默认选中第一个选项
+  // 切换 Tab 时重置焦点；安全核对请求保持未选中状态。
   React.useEffect(() => {
     setFocusedOptIdx(-1)
     setAnswers((prev) => {
       if (prev.has(activeTab)) return prev
-      const firstOpt = questions[activeTab]?.options[0]
-      if (!firstOpt) return prev
+      const question = questions[activeTab]
+      if (!question) return prev
       const map = new Map(prev)
-      map.set(activeTab, { ...EMPTY_ANSWER, selected: [firstOpt.label] })
+      map.set(activeTab, createInitialAskUserAnswer(request?.kind, question))
       return map
     })
-  }, [activeTab, questions])
+  }, [activeTab, questions, request?.kind])
 
   // 键盘导航：只在 requestId 变化时重建 handler，内部通过 ref 读取最新值
   React.useEffect(() => {
@@ -194,7 +190,7 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
     window.electronAPI.stopAgent(sessionId).catch(console.error)
   }
 
-  const getAnswer = (idx: number): QuestionAnswer => answers.get(idx) ?? EMPTY_ANSWER
+  const getAnswer = (idx: number): AskUserAnswerState => answers.get(idx) ?? EMPTY_ANSWER
 
   const buildAnswersRecord = (): Record<string, string> => {
     const answersRecord: Record<string, string> = {}
@@ -250,13 +246,13 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
   if (!hasRequest || !currentQuestion) return null
 
   return (
-    <div className={`mx-4 mb-3 rounded-xl bg-card shadow-lg overflow-hidden animate-in slide-in-from-bottom-2 duration-200 border border-border/50 ${isTakeover ? 'ring-1 ring-amber-500/40' : ''}`}>
+    <div className={`mx-4 mb-3 rounded-xl bg-card shadow-lg overflow-hidden animate-in slide-in-from-bottom-2 duration-200 border border-border/50 ${isTakeover || isUnknownActionResolution ? 'ring-1 ring-amber-500/50' : ''}`}>
       {/* 头部 + Tab 栏 */}
       <div className="px-4 pt-3 pb-2">
         <div className="flex items-center justify-between mb-2">
           <span className="flex items-center gap-2 text-sm font-semibold text-foreground">
             {isTakeover && <Hand className="size-4 text-amber-600" />}
-            {isTakeover ? '请你接管敏感操作' : 'Gravitas Agent 需要你的输入'}
+            {isTakeover ? '请你接管敏感操作' : isUnknownActionResolution ? '未知动作需要人工核对' : 'Gravitas Agent 需要你的输入'}
           </span>
           <div className="flex items-center gap-1.5">
             {requests.length > 1 && (
@@ -306,6 +302,12 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
       {isTakeover && (
         <div className="mx-4 mb-3 rounded-lg bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-900 dark:text-amber-200">
           Agent 已暂停。请自行完成密码、验证码、支付、授权或最终提交；不要把敏感信息发给 Agent。完成后选择“我已完成，可继续”。
+        </div>
+      )}
+
+      {isUnknownActionResolution && (
+        <div className="mx-4 mb-3 rounded-lg bg-amber-500/10 px-3 py-2 text-xs leading-5 text-amber-900 dark:text-amber-200">
+          动作可能已经生效。请先到目标系统独立核对；只有确认未生效时，才选择允许重试。确认已生效或暂不处理都会继续拦截重复动作。
         </div>
       )}
 
@@ -387,7 +389,7 @@ function QuestionCard({
 }: {
   question: AskUserQuestion
   questionIndex: number
-  answer: QuestionAnswer
+  answer: AskUserAnswerState
   focusedIndex: number
   showBadge: boolean
   onToggleOption: (label: string) => void

@@ -1896,8 +1896,8 @@ export interface AskUserRequest {
   requestId: string
   /** 会话 ID */
   sessionId: string
-  /** 交互类型；接管状态使用专用 UI，避免被当作普通问答。 */
-  kind?: 'question' | 'computer_use_takeover'
+  /** 交互类型；系统接管与未知动作核对使用专用安全 UI。 */
+  kind?: 'question' | 'computer_use_takeover' | 'unknown_action_resolution'
   /** 问题列表 */
   questions: AskUserQuestion[]
   /** 工具原始输入（用于构建 updatedInput） */
