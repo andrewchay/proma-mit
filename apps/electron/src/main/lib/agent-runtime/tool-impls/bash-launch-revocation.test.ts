@@ -24,6 +24,8 @@ mock.module('./bash-termination.ts', () => ({
   runBashCommand: async () => { launches++; return { stdout: '', stderr: '', evidence: {} } },
 }))
 mock.module('../../project-owner-execution-gates', () => ({
+  // 本用例只验证「启动检查期间撤权」窗口，绑定校验在真实模块内由适配器保证，这里放行。
+  assertBoundToolSession: () => undefined,
   assertToolAllowedForSessionPurpose: () => { if (!authorized) throw new Error('授权已撤销') },
 }))
 

@@ -51,8 +51,9 @@ export async function executeEditTool(input: unknown, ctx: ToolContext): Promise
   }
 
   try {
+    const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+    gates.assertBoundToolSession(ctx)
     if (requiresOwnerToolGate(ctx.sessionId, ctx.ownerWorkspaceWrite)) {
-      const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
       const toolInput = input as Record<string, unknown>
       gates.assertOwnerToolWorkingDirectory(ctx.sessionId, ctx.cwd)
       gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Edit', toolInput)

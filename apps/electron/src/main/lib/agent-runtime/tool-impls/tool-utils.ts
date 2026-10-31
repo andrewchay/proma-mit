@@ -127,7 +127,12 @@ export function assertOwnerToolPermission(sessionId: string, ownerMarker: boolea
 export function guardOwnerTool(toolName: string, execute: (input: unknown, ctx: ToolContext) => Promise<ToolResult>): (input: unknown, ctx: ToolContext) => Promise<ToolResult> {
   return async (input, ctx) => {
     const args = input && typeof input === 'object' && !Array.isArray(input) ? input as Record<string, unknown> : {}
-    try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, toolName, args, { recordKnowledgeRead: false }) }
+    try {
+      // 先校验运行时时绑定的会话身份，再校验用途：调用方替换 sessionId 不能绕过 Owner 门禁。
+      const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+      gates.assertBoundToolSession(ctx)
+      assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, toolName, args, { recordKnowledgeRead: false })
+    }
     catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
     return execute(input, ctx)
   }

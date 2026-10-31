@@ -78,6 +78,8 @@ interface ToolCallExecutionCtx {
   sessionId: string
   /** 已绑定会话身份的活动会话对象；工具执行前用它做身份复核（fail-closed）。 */
   sessionOwner?: object
+  /** 传给工具实现的同一个活动会话对象；工具入口门禁据此校验绑定身份。 */
+  boundSession?: object
   abortSignal?: AbortSignal
   permissionMode?: PromaPermissionMode
   planModeEntered?: boolean
@@ -543,6 +545,8 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           cwd,
           sessionId,
           sessionOwner: activeSession,
+          // 传给工具的绑定对象：工具入口据此复核身份，不信任调用链上携带的 sessionId。
+          boundSession: activeSession,
           abortSignal: controller.signal,
           permissionMode: activeSession.permissionMode,
           planModeEntered,

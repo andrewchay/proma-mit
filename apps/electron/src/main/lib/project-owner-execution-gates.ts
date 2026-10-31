@@ -13,6 +13,7 @@ import { getChannelById } from './channel-manager'
 import { isProtectedDevelopmentPath, normalizeRepoRelativePath, pathWithinAllowed } from './development-task-service'
 import * as store from './project-sqlite-store'
 import { getAgentSessionMeta } from './agent-session-manager'
+import { getRuntimeSessionIdentity } from './agent-runtime/runtime-session-identity'
 import {
   hasOwnerBusinessSessionEvidence,
   assertNoOwnerBusinessSession,
@@ -232,6 +233,24 @@ export function classifyOwnerWorkspaceWrite(sessionId: string, toolName: string,
 /** 权限层用：Owner 工作区内低风险新建可直接执行，高风险仍走逐次人工审批。 */
 export function isOwnerAutoAllowedWorkspaceWrite(sessionId: string, toolName: string, args?: Record<string, unknown>): boolean {
   return classifyOwnerWorkspaceWrite(sessionId, toolName, args) === 'normal'
+}
+
+/**
+ * 工具执行入口的绑定校验：有绑定对象就严格比对；Owner 受控会话缺绑定直接拒绝。
+ *
+ * 绑定对象只用于读取「运行时时写入的身份」，调用方携带的 sessionId / cwd 只参与比对，
+ * 不能改写绑定；因此替换 sessionId 冒充普通会话无法绕过 Owner 门禁。
+ */
+export function assertBoundToolSession(ctx: { sessionId: string; cwd?: string; boundSession?: object }): void {
+  const bound = ctx.boundSession ? getRuntimeSessionIdentity(ctx.boundSession) : undefined
+  if (ctx.boundSession) {
+    if (!bound || bound.revoked) throw new Error('会话身份绑定已失效，拒绝执行工具')
+    if (bound.sessionId !== ctx.sessionId) throw new Error('工具执行会话身份与会话不一致，拒绝执行')
+    if (ctx.cwd !== undefined && bound.cwd !== resolve(ctx.cwd)) throw new Error('工具执行工作目录与会话身份不一致，拒绝执行')
+    return
+  }
+  // 无绑定对象：普通会话行为不变，Owner 受控会话一律拒绝。
+  if (resolveOwnerExecutionGateSession(ctx.sessionId).kind !== 'unrestricted') throw new Error('Owner 受控会话缺少已绑定的执行身份，拒绝执行工具')
 }
 
 export function assertToolAllowedForSessionPurpose(sessionId: string, toolName: string, args?: Record<string, unknown>, options?: { recordKnowledgeRead?: boolean }): void {

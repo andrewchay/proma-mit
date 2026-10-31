@@ -72,6 +72,20 @@ export function bindRuntimeSessionIdentity(owner: object, identity: RuntimeSessi
   if (!previous) identities.set(owner, next)
 }
 
+export interface RuntimeSessionIdentitySnapshot {
+  sessionId: string
+  cwd: string
+  runtime: AgentRuntimeKind
+  revoked: boolean
+}
+
+/** 只读快照；未绑定返回 undefined。不得据此修改绑定。 */
+export function getRuntimeSessionIdentity(owner: object): RuntimeSessionIdentitySnapshot | undefined {
+  const bound = identities.get(owner)
+  if (!bound) return undefined
+  return { sessionId: bound.sessionId, cwd: bound.cwd, runtime: bound.runtime, revoked: bound.revoked }
+}
+
 /** 会话结束后保留撤销标记，防止旧对象重新绑定其他身份。 */
 export function revokeRuntimeSessionIdentity(owner: object): void {
   const identity = identities.get(owner)
