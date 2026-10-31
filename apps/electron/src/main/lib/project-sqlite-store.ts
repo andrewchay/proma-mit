@@ -3915,13 +3915,16 @@ export function getAgentEmployeeCapabilityDependencyGraph(agentId: string): { no
   return { nodes, blockedBy }
 }
 
-export function adoptAgentEmployeeCapabilityVersion(input: Omit<import('./project-types').AgentEmployeeCapabilityVersion, 'id' | 'createdAt' | 'status' | 'activatedAt'>, validateEvidence?: () => void): import('./project-types').AgentEmployeeCapabilityVersion {
+export function adoptAgentEmployeeCapabilityVersion(
+  input: Omit<import('./project-types').AgentEmployeeCapabilityVersion, 'id' | 'createdAt' | 'status' | 'activatedAt'>,
+  options: { validateEvidence?: () => void; auditReason?: string } = {},
+): import('./project-types').AgentEmployeeCapabilityVersion {
   const { detectCapabilityConflicts, formatConflictMessage, hasBlockingConflict } = require('./agent-employee-capability-conflict') as typeof import('./agent-employee-capability-conflict')
   const database = getProjectDb()
   let adopted: import('./project-types').AgentEmployeeCapabilityVersion | undefined
 
   database.transaction(() => {
-    validateEvidence?.()
+    options.validateEvidence?.()
     // 冲突检查必须与 CAS 和写入处于同一事务，避免检查后 peer 被并发替换。
     const activeRows = database.prepare("SELECT * FROM agent_employee_capability_versions WHERE agent_id = ? AND status = 'active'").all(input.agentId) as CapabilityVersionRow[]
     const activeVersions = activeRows.map(rowToCapabilityVersion)
@@ -3944,6 +3947,9 @@ export function adoptAgentEmployeeCapabilityVersion(input: Omit<import('./projec
       const findings = detectCapabilityConflicts(pair)
       if (hasBlockingConflict(findings)) throw new Error(`能力组合校验未通过：\n${formatConflictMessage(findings)}`)
     }
+
+    const auditReason = options.auditReason?.trim()
+    if (input.source === 'evolution' && (!auditReason || auditReason.length > 1000)) throw new Error('能力推广必须记录审批理由，且不能超过 1000 字')
 
     const timestamp = Date.now()
     if (sameScope) {
@@ -3969,6 +3975,11 @@ export function adoptAgentEmployeeCapabilityVersion(input: Omit<import('./projec
     )
     const row = database.prepare('SELECT * FROM agent_employee_capability_versions WHERE id = ?').get(id) as CapabilityVersionRow
     adopted = rowToCapabilityVersion(row)
+    if (input.source === 'evolution') {
+      database.prepare("INSERT INTO agent_employee_capability_audits (id, agent_id, scope, workspace_id, from_version_id, to_version_id, action, reason, actor_id, created_at) VALUES (?, ?, ?, ?, ?, ?, 'adopt', ?, 'local-user', ?)").run(
+        randomUUID(), input.agentId, input.scope, input.workspaceId ?? null, input.parentVersionId ?? 'baseline', id, auditReason!, timestamp,
+      )
+    }
   })()
 
   return adopted!
