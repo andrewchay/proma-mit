@@ -1602,7 +1602,9 @@ interface ProjectWebWatchRunView {
   startedAt: number
   coverageFrom: number
   coverageTo: number
-  status: 'success' | 'failed'
+  status: 'success' | 'failed' | 'skipped'
+  skipReason?: 'budget_exhausted'
+  judgment?: string
   sources: Array<{ title: string; url: string; snippet: string; publishedAt?: string }>
   newSources: Array<{ title: string; url: string; snippet: string; publishedAt?: string }>
   analysis?: string
@@ -1671,7 +1673,7 @@ function ProjectWebWatchPanel({ projectId, projectTitle, projectDescription }: {
       <h3 className="font-medium">扫描历史</h3>
       {runs.length === 0 && <p className="text-sm text-muted-foreground">还没有扫描记录。</p>}
       {runs.map((run) => <article key={run.id} className="rounded-xl bg-card p-4 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-2 text-sm"><strong>{new Date(run.startedAt).toLocaleString()}</strong><span className={run.status === 'success' ? 'text-emerald-600' : 'text-red-600'}>{run.status === 'success' ? `成功 · ${run.newSources.length} 条新来源` : '失败'}</span></div>
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm"><strong>{new Date(run.startedAt).toLocaleString()}</strong><span className={run.status === 'success' ? 'text-emerald-600' : run.status === 'skipped' ? 'text-muted-foreground' : 'text-red-600'}>{run.status === 'success' ? `成功 · ${run.newSources.length} 条新来源${run.judgment ? ` · ${run.judgment}` : ''}` : run.status === 'skipped' ? '已跳过：Owner 模型额度不足，未做任何外部请求' : '失败'}</span></div>
         <p className="mt-1 text-xs text-muted-foreground">覆盖：{new Date(run.coverageFrom).toLocaleString()} 至 {new Date(run.coverageTo).toLocaleString()}</p>
         {run.error && <p className="mt-3 text-sm text-red-600">{run.error}</p>}
         {run.analysis && <pre className="mt-3 whitespace-pre-wrap text-sm leading-6">{run.analysis}</pre>}

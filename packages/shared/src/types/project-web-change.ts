@@ -8,6 +8,8 @@ export interface ProjectWebChangeFact {
   url: string
   /** 归一化后的来源标识，由服务端计算，不接受模型输入。 */
   sourceId: string
+  /** 该来源摘要内容的哈希；用于跨扫描判断"同源是否真有新内容"，不依赖扫描流水保留窗口。 */
+  snippetDigest: string | null
   /** 无法确认发布时间时必须为 null，不得用扫描日期顶替。 */
   publishedAt: string | null
   /** 事实必须带原文引用；推断可为空。 */

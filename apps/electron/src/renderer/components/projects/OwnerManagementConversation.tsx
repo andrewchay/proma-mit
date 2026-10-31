@@ -15,6 +15,7 @@ import { OwnerDesignHistory, designDeliveryAnchor } from './OwnerDesignHistory'
 import { OwnerDesignBrief } from './OwnerDesignBrief'
 import { findReferencedDelivery } from './owner-delivery-reference'
 import { OwnerManagementQuestions } from './OwnerManagementQuestions'
+import { WebChangeObservationCard } from './WebChangeObservationCard'
 import { isOwnerWaitingForUser } from './project-owner-progress-state'
 import { CornerDownLeft } from 'lucide-react'
 import { sendWithCmdEnterAtom } from '../../atoms/shortcut-atoms'
@@ -216,6 +217,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
             </>
           })()}
         </section>}
+        {message.kind === 'web_change_observation' && message.webChangeObservationId && <WebChangeObservationCard projectId={projectId} observationId={message.webChangeObservationId} fallbackText={ownerFacingMessage(message.content)} />}
         {message.kind === 'delivery' && message.delivery && <section className="mt-3 space-y-2" aria-label="已验收成果">
           {message.delivery.items.map(item => <div key={item.stepKey} id={designDeliveryAnchor(message.id, item.stepKey, item.artifactHash)} tabIndex={-1}><OwnerDeliveredArtifact item={item} feedbackCapacity={4000 - composer.text.length} feedbackDisabled={composer.sending || Boolean(composer.pending) || !editor.view?.manager} onRequestChanges={(excerpt) => { const text = excerpt ? `${composer.text}${composer.text.trim() ? '\n\n' : ''}针对这段内容提出修改：\n“${excerpt}”\n` : composer.text; if (text.length > 4000) return; edit({ subject, text, deliveryReference: { messageId: message.id, artifactHash: item.artifactHash, stepKey: item.stepKey } }); focusReplyComposer() }} /></div>)}
         </section>}

@@ -39,8 +39,8 @@ export interface RecordWebChangeObservationInput {
   runId: string
   judgment: WebChangeJudgment
   facts: Array<{ title: string; url: string; quote?: string; publishedAt?: string | null; isInference: boolean }>
-  /** 本次扫描的新来源；观察只能引用这里出现过的链接。 */
-  knownSources: Array<{ url: string }>
+  /** 本次扫描的新来源；观察只能引用这里出现过的链接。snippet 用于计算同源内容是否变化。 */
+  knownSources: Array<{ url: string; snippet?: string }>
   impact?: string | null
   suggestion?: string | null
   question?: string | null
@@ -99,7 +99,15 @@ function integer(value: unknown, field: string, min: number): number {
   return value
 }
 
-function normalizeFacts(input: unknown, knownSourceIds: ReadonlySet<string>): ProjectWebChangeFact[] {
+/** 来源摘要的内容指纹：空白归一后取哈希。空摘要返回 null，表示无法判断内容是否变化。 */
+export function snippetDigestOf(snippet: string | undefined): string | null {
+  if (typeof snippet !== 'string') return null
+  const normalized = snippet.replace(/\s+/g, ' ').trim()
+  if (!normalized) return null
+  return createHash('sha256').update(normalized).digest('hex')
+}
+
+function normalizeFacts(input: unknown, knownSources: ReadonlyMap<string, string | undefined>): ProjectWebChangeFact[] {
   if (input === undefined || input === null) return []
   if (!Array.isArray(input)) throw new Error('观察事实必须是数组')
   if (input.length > MAX_WEB_CHANGE_FACTS) throw new Error(`单次观察最多 ${MAX_WEB_CHANGE_FACTS} 条事实`)
@@ -113,9 +121,9 @@ function normalizeFacts(input: unknown, knownSourceIds: ReadonlySet<string>): Pr
     const url = text(item.url, '来源链接', MAX_URL, true)!
     const sourceId = normalizeWebSourceId(url)
     if (!sourceId) throw new Error('来源链接必须是 http/https 地址')
-    if (!knownSourceIds.has(sourceId)) throw new Error('来源链接不在本次扫描结果内，拒绝记录')
-    if (seen.has(sourceId)) throw new Error('同一次观察不能重复引用同一来源')
-    seen.add(sourceId)
+    if (!knownSources.has(sourceId)) throw new Error('来源链接不在本次扫描结果内，拒绝记录')
+    if (seen.has(`${sourceId}:${item.isInference}`)) throw new Error('同一次观察不能重复引用同一来源的同类内容')
+    seen.add(`${sourceId}:${item.isInference}`)
     const quote = text(item.quote, '来源引用', MAX_QUOTE, !item.isInference) ?? ''
     const publishedRaw = item.publishedAt
     let publishedAt: string | null = null
@@ -123,7 +131,7 @@ function normalizeFacts(input: unknown, knownSourceIds: ReadonlySet<string>): Pr
       if (typeof publishedRaw === 'string' && /^\d{4}-\d{2}-\d{2}(?:T[\d:.+-]+Z?)?$/.test(publishedRaw.trim())) publishedAt = publishedRaw.trim()
       else throw new Error('发布时间必须是 ISO 日期或留空')
     }
-    facts.push({ title, url, sourceId, publishedAt, quote, isInference: item.isInference })
+    facts.push({ title, url, sourceId, snippetDigest: snippetDigestOf(knownSources.get(sourceId)), publishedAt, quote, isInference: item.isInference })
   }
   return facts
 }
@@ -145,12 +153,15 @@ export function recordProjectWebChangeObservation(input: RecordWebChangeObservat
   const runId = text(input.runId, '扫描批次', MAX_ID, true)!
   if (!JUDGMENTS.includes(input.judgment)) throw new Error('观察判定无效')
   const judgment = input.judgment
-  const knownSourceIds = new Set(
-    input.knownSources.map((source) => normalizeWebSourceId(source.url)).filter((value): value is string => Boolean(value)),
-  )
-  const facts = normalizeFacts(input.facts, knownSourceIds)
+  const knownSources = new Map<string, string | undefined>()
+  for (const source of input.knownSources) {
+    const sourceId = normalizeWebSourceId(source.url)
+    if (sourceId) knownSources.set(sourceId, source.snippet)
+  }
+  const facts = normalizeFacts(input.facts, knownSources)
 
-  if ((judgment === 'attention' || judgment === 'decision_required' || judgment === 'record_only') && facts.length === 0) {
+  // record_only 允许零引用：覆盖"本期未发现相关变化"这一正常结论，来源数量记在 evaluation。
+  if ((judgment === 'attention' || judgment === 'decision_required') && facts.length === 0) {
     throw new Error('该判定必须至少引用一条来源')
   }
   const question = text(input.question, '待决问题', MAX_QUESTION, judgment === 'decision_required')
@@ -241,7 +252,8 @@ export function getAuthorizedProjectWebChangeObservation(projectId: string, id: 
   if (observationIdentity({ projectId: value.projectId, runId: value.runId, judgment: value.judgment, facts: value.facts, duplicateOf: value.duplicateOf }) !== value.id) return null
   const { id: actualId, contentHash, createdAt: _createdAt, ...content } = value
   if (actualId !== id || digest(content) !== contentHash) return null
-  if (value.facts.some((fact) => normalizeWebSourceId(fact.url) !== fact.sourceId)) return null
+  if (value.facts.some((fact) => normalizeWebSourceId(fact.url) !== fact.sourceId
+    || (fact.snippetDigest !== null && !/^[0-9a-f]{64}$/.test(fact.snippetDigest)))) return null
   return value
 }
 
@@ -266,4 +278,93 @@ export function pruneProjectWebChangeObservations(projectId: string, now = Date.
   const overflow = database.prepare('DELETE FROM project_web_change_observations WHERE project_id = ? AND id NOT IN (SELECT id FROM project_web_change_observations WHERE project_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?)')
     .run(projectId, projectId, RETENTION_COUNT).changes
   return expired + overflow
+}
+
+/**
+ * 确定性去重层：只比对账本，不依赖扫描流水的保留窗口。
+ *
+ * 判据是「同一来源标识 + 来源摘要指纹」。摘要变化即视为新内容，只关联不覆盖；
+ * 摘要指纹缺失（旧记录或搜索服务未给摘要）时保守按同源重复处理，宁可少提醒。
+ */
+export interface WebChangeDedupInput {
+  projectId: string
+  judgment: WebChangeJudgment
+  facts: Array<{ url: string }>
+  sources: Array<{ url: string; snippet?: string }>
+  relatedObservationIds?: string[]
+  duplicateOf?: string | null
+  duplicateReason?: WebChangeDuplicateReason | null
+}
+
+export interface WebChangeDedupResult {
+  judgment: WebChangeJudgment
+  duplicateOf: string | null
+  duplicateReason: WebChangeDuplicateReason | null
+  relatedObservationIds: string[]
+  /** 本次与既有观察重复的来源标识，供提示词与诊断使用。 */
+  repeatedSourceIds: string[]
+}
+
+/** 每个来源最近一次有实质内容的观察；重复判定记录本身不参与，避免指针链越拉越长。 */
+export function listPriorObservationsBySource(projectId: string, limit = 200): Map<string, ProjectWebChangeObservation> {
+  const prior = new Map<string, ProjectWebChangeObservation>()
+  for (const observation of listProjectWebChangeObservations(projectId, limit)) {
+    if (observation.judgment === 'duplicate') continue
+    for (const fact of observation.facts) {
+      if (!prior.has(fact.sourceId)) prior.set(fact.sourceId, observation)
+    }
+  }
+  return prior
+}
+
+function priorFact(observation: ProjectWebChangeObservation, sourceId: string): ProjectWebChangeFact | undefined {
+  return observation.facts.find((fact) => fact.sourceId === sourceId)
+}
+
+export function applyDeterministicDedup(input: WebChangeDedupInput): WebChangeDedupResult {
+  const prior = listPriorObservationsBySource(input.projectId)
+  const snippets = new Map<string, string | undefined>()
+  for (const source of input.sources) {
+    const sourceId = normalizeWebSourceId(source.url)
+    if (sourceId) snippets.set(sourceId, source.snippet)
+  }
+
+  const repeated: Array<{ sourceId: string; observationId: string; reason: WebChangeDuplicateReason }> = []
+  const related = new Set(input.relatedObservationIds ?? [])
+  for (const fact of input.facts) {
+    const sourceId = normalizeWebSourceId(fact.url)
+    if (!sourceId) continue
+    const previous = prior.get(sourceId)
+    if (!previous) continue
+    const previousDigest = priorFact(previous, sourceId)?.snippetDigest ?? null
+    const currentDigest = snippetDigestOf(snippets.get(sourceId))
+    if (currentDigest && previousDigest && currentDigest !== previousDigest) {
+      // 同源出现新内容：不是重复，只建立关联。
+      related.add(previous.id)
+      continue
+    }
+    const reason: WebChangeDuplicateReason = currentDigest && previousDigest ? 'no_new_content' : 'same_source'
+    repeated.push({ sourceId, observationId: previous.id, reason })
+    related.add(previous.id)
+  }
+
+  // 模型已判定重复且指向有效时，尊重模型结论，只补齐关联。
+  if (input.judgment === 'duplicate' && input.duplicateOf && getAuthorizedProjectWebChangeObservation(input.projectId, input.duplicateOf)) {
+    return { judgment: 'duplicate', duplicateOf: input.duplicateOf, duplicateReason: input.duplicateReason ?? 'same_source', relatedObservationIds: [...related].slice(0, MAX_RELATED), repeatedSourceIds: repeated.map((item) => item.sourceId) }
+  }
+
+  const allRepeated = input.facts.length > 0 && repeated.length === input.facts.length
+  const first = repeated[0]
+  if (allRepeated && first && (input.judgment === 'attention' || input.judgment === 'decision_required' || input.judgment === 'record_only')) {
+    const reason = repeated.every((item) => item.reason === 'no_new_content') ? 'no_new_content' : 'same_source'
+    return { judgment: 'duplicate', duplicateOf: first.observationId, duplicateReason: reason, relatedObservationIds: [...related].filter((id) => id !== first.observationId).slice(0, MAX_RELATED), repeatedSourceIds: repeated.map((item) => item.sourceId) }
+  }
+
+  return {
+    judgment: input.judgment,
+    duplicateOf: input.judgment === 'duplicate' ? input.duplicateOf ?? null : null,
+    duplicateReason: input.judgment === 'duplicate' ? input.duplicateReason ?? null : null,
+    relatedObservationIds: [...related].slice(0, MAX_RELATED),
+    repeatedSourceIds: repeated.map((item) => item.sourceId),
+  }
 }
