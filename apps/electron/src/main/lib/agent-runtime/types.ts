@@ -57,6 +57,8 @@ export interface ToolContext {
   cwd: string
   /** 会话 ID */
   sessionId: string
+  /** Runtime 绑定的活动会话对象；门禁据此校验会话身份，防止调用方替换 sessionId。 */
+  boundSession?: object
   /** 中止信号 */
   abortSignal?: AbortSignal
   /** 当前权限模式（Plan 模式判断用） */

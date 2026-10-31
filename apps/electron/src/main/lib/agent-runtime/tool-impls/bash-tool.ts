@@ -65,8 +65,10 @@ export async function executeBashToolOnPlatform(input: unknown, ctx: ToolContext
   let sandbox: Awaited<ReturnType<typeof prepareBashSandbox>> | undefined
   try {
     const assertOwnerGate = () => {
-      if (!requiresOwnerToolGate(ctx.sessionId, ctx.ownerWorkspaceWrite)) return
       const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+      // 绑定身份先于用途判定：调用方替换 sessionId 不能把 Owner 会话降级成普通会话。
+      gates.assertBoundToolSession(ctx)
+      if (!requiresOwnerToolGate(ctx.sessionId, ctx.ownerWorkspaceWrite)) return
       gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Bash', { command })
     }
     assertOwnerGate()

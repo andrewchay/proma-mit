@@ -40,6 +40,7 @@ const stopModule = await import('./project-owner-execution-stop')
 const startModule = await import('./project-owner-execution-start')
 const actionApproval = await import('./project-owner-action-approval')
 const executionGates = await import('./project-owner-execution-gates')
+const { bindRuntimeSessionIdentity } = await import('./agent-runtime/runtime-session-identity')
 const { executeWriteTool } = await import('./agent-runtime/tool-impls/write-tool')
 const { executeEditTool } = await import('./agent-runtime/tool-impls/edit-tool')
 const { handlePermissionResponse } = await import('./agent-permission-response')
@@ -49,6 +50,13 @@ const evidence = await import('./project-owner-execution-preparation-evidence')
 const scheduler = await import('./project-owner-autonomous-scheduler')
 const schedulerEvents = await import('./project-owner-autonomous-scheduler-events')
 let policy: typeof import('./project-pilot-policy')
+/** 模拟 Runtime 适配器注入：绑定会话身份并自引用写入 boundSession，否则 Owner 受控会话会被门禁直接拒绝。 */
+function boundToolCtx(cwd: string, sessionId: string) {
+  const ctx: { cwd: string; sessionId: string; boundSession?: object; ownerWorkspaceWrite?: boolean } = { cwd, sessionId, ownerWorkspaceWrite: true }
+  bindRuntimeSessionIdentity(ctx, { sessionId, cwd, runtime: 'ai-sdk' })
+  ctx.boundSession = ctx
+  return ctx
+}
 beforeAll(async () => { await store.initProjectDb(); policy = await import('./project-pilot-policy') })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
 function fixture(modelId = 'glm-5.3-flash', dispatchMode: 'manual' | 'autonomous' = 'manual', withDependentTask = false, baseUrl = 'https://example.invalid', splitRoleEmployee = false, provider: ProviderType = 'openai', maxRework = 0, maxRuns?: number, maxCostMicros = 1000000, roleBudgetCapMicros?: number, independentTasks = false, taskScopedGoal = false) {
@@ -153,16 +161,16 @@ test('Given真实Owner命令进入运行态 When审批精确工具动作 Then仅
   actionApproval.recordOwnerActionApprovalRequest({ commandId, executionId, sessionId }, writeRequest)
   actionApproval.decideOwnerActionApproval(writeRequest, 'allow', { commandId, executionId, sessionId })
   const cwd = getAgentWorkspaceCwd(f.workspace, sessionId)
-  const firstWrite = await executeWriteTool(writeRequest.toolInput, { cwd, sessionId, ownerWorkspaceWrite: true })
+  const firstWrite = await executeWriteTool(writeRequest.toolInput, boundToolCtx(cwd, sessionId))
   expect(firstWrite.isError).toBeFalsy()
-  const replay = await executeWriteTool(writeRequest.toolInput, { cwd, sessionId, ownerWorkspaceWrite: true })
+  const replay = await executeWriteTool(writeRequest.toolInput, boundToolCtx(cwd, sessionId))
   expect(replay.isError).toBe(true)
   expect(command.listOwnerExecutionCommands(f.subject).find(item => item.commandId === commandId)?.actionApprovals?.find(item => item.requestId === writeRequest.requestId)?.consumedAt).toEqual(expect.any(Number))
   const editRequest = { ...request, requestId: randomUUID(), toolName: 'Edit', toolInput: { file_path: 'result.md', old_string: 'not-present', new_string: 'replacement' } }
   actionApproval.recordOwnerActionApprovalRequest({ commandId, executionId, sessionId }, editRequest)
   actionApproval.decideOwnerActionApproval(editRequest, 'allow', { commandId, executionId, sessionId })
-  expect((await executeEditTool(editRequest.toolInput, { cwd, sessionId, ownerWorkspaceWrite: true })).content).toContain('未找到')
-  expect((await executeEditTool(editRequest.toolInput, { cwd, sessionId, ownerWorkspaceWrite: true })).isError).toBe(true)
+  expect((await executeEditTool(editRequest.toolInput, boundToolCtx(cwd, sessionId))).content).toContain('未找到')
+  expect((await executeEditTool(editRequest.toolInput, boundToolCtx(cwd, sessionId))).isError).toBe(true)
 
   const staleRequest = { ...request, requestId: randomUUID() }
   actionApproval.recordOwnerActionApprovalRequest({ commandId, executionId, sessionId }, staleRequest)

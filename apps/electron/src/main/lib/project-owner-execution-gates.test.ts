@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext } from './agent-runtime/types'
+import { bindRuntimeSessionIdentity } from './agent-runtime/runtime-session-identity'
 import { buildElectronMock } from './testing/electron-mock'
 const directory = mkdtempSync(join(tmpdir(), 'owner-execution-gates-')), previous = process.env.PROMA_TEST_CONFIG_DIR
 process.env.PROMA_TEST_CONFIG_DIR = directory
@@ -44,6 +45,16 @@ const { executeWebFetchTool } = await import('./agent-runtime/tool-impls/web-fet
 const { executeWebSearchTool } = await import('./agent-runtime/tool-impls/web-search-tool')
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
+/**
+ * 模拟 Runtime 适配器的注入方式：把会话身份绑定到上下文对象并自引用传给工具。
+ * 新门禁要求工具上下文携带「运行时时绑定的会话对象」，否则 Owner 受控会话直接拒绝；
+ * 这些用例验证的是各自原有的门禁规则，因此必须先给出合法绑定，避免退化成"只因缺绑定被拒"。
+ */
+function bindCtx<T extends { cwd: string; sessionId: string }>(ctx: T): T & { boundSession: object } {
+  bindRuntimeSessionIdentity(ctx, { sessionId: ctx.sessionId, cwd: ctx.cwd, runtime: 'ai-sdk' })
+  return Object.assign(ctx, { boundSession: ctx })
+}
+const ownerCtx = (cwd: string, sessionId: string) => bindCtx({ cwd, sessionId })
 function fixture(single = false, textDelivery = false) {
   const project = store.createProject({ title: 'Owner门禁fixture', description: '' })
   const target = single ? store.createTask(project.id, { title: '单任务', description: '' }) : null
@@ -110,9 +121,43 @@ test('Given 已准入的 Owner 业务会话 When 直接调用 Bash 工具 Then �
     const mismatched = await executeBashToolOnPlatform({ command: `touch '${marker}'` }, { cwd: work, sessionId: randomUUID(), ownerWorkspaceWrite: true }, 'darwin')
     expect(mismatched.isError).toBe(true)
     expect(existsSync(marker)).toBe(false)
-    const result = await executeBashToolOnPlatform({ command: `touch '${marker}'` }, { cwd: work, sessionId }, 'darwin')
+    const result = await executeBashToolOnPlatform({ command: `touch '${marker}'` }, ownerCtx(work, sessionId), 'darwin')
     expect(result.isError).toBe(true)
     expect(result.content).toContain('Owner')
+    expect(existsSync(marker)).toBe(false)
+  } finally { rmSync(work, { recursive: true, force: true }) }
+})
+test('Given 已准入的 Owner 业务会话 When 工具上下文未携带绑定身份 Then 拒绝且不产生副作用', async () => {
+  const f = fixture(), sessionId = syntheticRunningExecution(f)
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  const work = mkdtempSync(join(tmpdir(), 'owner-unbound-work-'))
+  try {
+    const marker = join(work, 'marker')
+    // 调用方只带 sessionId、不带运行时时绑定的会话对象：Bash 拒绝且不执行命令。
+    const bash = await executeBashToolOnPlatform({ command: `touch '${marker}'` }, { cwd: work, sessionId }, 'darwin')
+    expect(bash.isError).toBe(true)
+    expect(bash.content).toContain('缺少已绑定的执行身份')
+    expect(existsSync(marker)).toBe(false)
+    // Write 同样在工具入口被拒，文件不落地。
+    const write = await executeWriteTool({ file_path: 'unbound.txt', content: 'unexpected' }, { cwd: work, sessionId })
+    expect(write.isError).toBe(true)
+    expect(write.content).toContain('缺少已绑定的执行身份')
+    expect(existsSync(join(work, 'unbound.txt'))).toBe(false)
+  } finally { rmSync(work, { recursive: true, force: true }) }
+})
+test('Given 已准入的 Owner 业务会话 When 携带绑定身份直接调用 Bash Then 用途门禁仍拒绝且不执行命令', async () => {
+  const f = fixture(), sessionId = syntheticRunningExecution(f)
+  const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
+  gates.admitOwnerExecutionGateSession(executionId, sessionId)
+  const work = mkdtempSync(join(tmpdir(), 'owner-bound-bash-'))
+  try {
+    const marker = join(work, 'marker')
+    // 绑定身份合法：拒绝来自 Owner 用途门禁，而不是"缺绑定"；命令在沙箱准备前就被拦下。
+    const result = await executeBashToolOnPlatform({ command: `touch '${marker}'` }, ownerCtx(work, sessionId), 'darwin')
+    expect(result.isError).toBe(true)
+    expect(result.content).toContain('Owner')
+    expect(result.content).not.toContain('缺少已绑定的执行身份')
     expect(existsSync(marker)).toBe(false)
   } finally { rmSync(work, { recursive: true, force: true }) }
 })
@@ -123,11 +168,11 @@ test('Given 未经逐次审批的 Owner 业务会话 When 直接调用 Edit Then
   const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
   try {
     writeFileSync(join(work, 'file.txt'), 'original')
-    const result = await executeEditTool({ file_path: 'file.txt', old_string: 'original', new_string: 'changed' }, { cwd: work, sessionId })
+    const result = await executeEditTool({ file_path: 'file.txt', old_string: 'original', new_string: 'changed' }, ownerCtx(work, sessionId))
     expect(result.isError).toBe(true)
     expect(result.content).toContain('Owner')
     expect(readFileSync(join(work, 'file.txt'), 'utf8')).toBe('original')
-    const write = await executeWriteTool({ file_path: 'file.txt', content: 'changed' }, { cwd: work, sessionId })
+    const write = await executeWriteTool({ file_path: 'file.txt', content: 'changed' }, ownerCtx(work, sessionId))
     expect(write.isError).toBe(true)
     expect(readFileSync(join(work, 'file.txt'), 'utf8')).toBe('original')
   } finally { rmSync(join(work, 'file.txt'), { force: true }) }
@@ -139,10 +184,10 @@ test('Given Owner 未冻结研发读取范围 When 直接调用 Read Then 工具
   const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
   try {
     writeFileSync(join(work, 'file.txt'), 'private-content')
-    const result = await executeReadTool({ file_path: 'file.txt' }, { cwd: work, sessionId })
+    const result = await executeReadTool({ file_path: 'file.txt' }, ownerCtx(work, sessionId))
     expect(result.isError).toBe(true)
     expect(result.content).not.toContain('private-content')
-    const grep = await executeGrepTool({ regex: 'private-content' }, { cwd: work, sessionId })
+    const grep = await executeGrepTool({ regex: 'private-content' }, ownerCtx(work, sessionId))
     expect(grep.isError).toBe(true)
     expect(grep.content).not.toContain('private-content')
   } finally { rmSync(join(work, 'file.txt'), { force: true }) }
@@ -153,7 +198,7 @@ test('Given Owner 会话未带标记 When 直接委派子代理 Then 不启动�
   gates.admitOwnerExecutionGateSession(executionId, sessionId)
   const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
   let calls = 0
-  const result = await executeAgentTool({ agent_name: 'explorer', task: '检查项目' }, { cwd: work, sessionId, runSubAgent: async () => { calls++; return 'unexpected' } })
+  const result = await executeAgentTool({ agent_name: 'explorer', task: '检查项目' }, { ...ownerCtx(work, sessionId), runSubAgent: async () => { calls++; return 'unexpected' } })
   expect(result.isError).toBe(true)
   expect(calls).toBe(0)
 })
@@ -162,7 +207,7 @@ test('Given Owner 会话未带标记 When 直接请求成员互调 Then 拒绝�
   const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
   gates.admitOwnerExecutionGateSession(executionId, sessionId)
   const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
-  const result = await executeInvokeAgentTool({ toMemberId: 'agent-example', task: '检查项目' }, { cwd: work, sessionId })
+  const result = await executeInvokeAgentTool({ toMemberId: 'agent-example', task: '检查项目' }, ownerCtx(work, sessionId))
   expect(result.isError).toBe(true)
   expect(result.content).toContain('Owner')
 })
@@ -171,7 +216,7 @@ test('Given Owner 会话未带标记 When 直接调用跨会话记忆 Then 在�
   const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
   gates.admitOwnerExecutionGateSession(executionId, sessionId)
   const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
-  for (const result of [await executeRecallMemoryTool({ query: '偏好' }, { cwd: work, sessionId }), await executeAddMemoryTool({ userMessage: '偏好' }, { cwd: work, sessionId })]) {
+  for (const result of [await executeRecallMemoryTool({ query: '偏好' }, ownerCtx(work, sessionId)), await executeAddMemoryTool({ userMessage: '偏好' }, ownerCtx(work, sessionId))]) {
     expect(result.isError).toBe(true)
     expect(result.content).toContain('Owner')
   }
@@ -183,7 +228,7 @@ test('Given Owner 会话未带标记 When 直接调用浏览器工具 Then 在�
   const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
   const tools = [bridge.executeWebBridgeNavigateTool, bridge.executeWebBridgeSnapshotTool, bridge.executeWebBridgeScreenshotTool, bridge.executeWebBridgeClickTool, bridge.executeWebBridgeTypeTool, bridge.executeWebBridgeScrollTool, bridge.executeWebBridgeChromeTargetsTool, bridge.executeWebBridgeConnectChromeTool, bridge.executeWebBridgeDownloadTool, bridge.executeWebBridgeUploadTool, bridge.executeWebBridgeStatusTool, bridge.executeWebBridgeObserveTool, bridge.executeWebBridgeNewTabTool, bridge.executeWebBridgeListTabsTool, bridge.executeWebBridgeSelectTabTool, bridge.executeWebBridgeCloseTabTool]
   for (const tool of tools) {
-    const result = await tool({ url: 'https://example.invalid', element_id: 'example', text: 'example', tab_id: 'example' }, { cwd: work, sessionId })
+    const result = await tool({ url: 'https://example.invalid', element_id: 'example', text: 'example', tab_id: 'example' }, ownerCtx(work, sessionId))
     expect(result.isError).toBe(true)
     expect(result.content).toContain('Owner')
   }
@@ -195,7 +240,7 @@ test('Given Owner 会话未带标记 When 直接调用桌面工具 Then 在读�
   const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
   const tools = [computer.executeComputerUseStatusTool, computer.executeComputerUseCapabilitiesTool, computer.executeComputerUseFrontmostApplicationTool, computer.executeComputerUseFrontmostWindowTool, computer.executeComputerUseDisplaysTool, computer.executeComputerUseRequestPermissionsTool, computer.executeComputerUseScreenshotTool, computer.executeComputerUseClickTool, computer.executeComputerUseMoveTool, computer.executeComputerUseDoubleClickTool, computer.executeComputerUseTypeTool, computer.executeComputerUseScrollTool, computer.executeComputerUseDragTool, computer.executeComputerUseKeyComboTool]
   for (const tool of tools) {
-    const result = await tool({ x: 1, y: 1, text: 'example' }, { cwd: work, sessionId })
+    const result = await tool({ x: 1, y: 1, text: 'example' }, ownerCtx(work, sessionId))
     expect(result.isError).toBe(true)
     expect(result.content).toContain('Owner')
   }
@@ -206,7 +251,7 @@ test('Given Owner 会话未带标记 When 直接读取上下文和费用 Then �
   gates.admitOwnerExecutionGateSession(executionId, sessionId)
   const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
   for (const tool of [executeExploreContextTool, executeProposeAssetTool, executeCostAuditTool, executeTodoContextTool]) {
-    const result = await tool({ entityType: 'session', entityId: 'other', sessionId: 'other', todoId: 'other' }, { cwd: work, sessionId })
+    const result = await tool({ entityType: 'session', entityId: 'other', sessionId: 'other', todoId: 'other' }, ownerCtx(work, sessionId))
     expect(result.isError).toBe(true)
     expect(result.content).toContain('Owner')
   }
@@ -217,7 +262,7 @@ test('Given Owner 会话未带标记 When 直接读取 Skill Then 在读取工�
   gates.admitOwnerExecutionGateSession(executionId, sessionId)
   const workspace = getAgentWorkspace(f.record.source.workspaceId)!
   const work = getAgentWorkspaceCwd(workspace, sessionId)
-  const result = await executeSkillTool({ skill_slug: 'anything' }, { cwd: work, sessionId, workspaceSlug: workspace.slug })
+  const result = await executeSkillTool({ skill_slug: 'anything' }, { ...ownerCtx(work, sessionId), workspaceSlug: workspace.slug })
   expect(result.isError).toBe(true)
   expect(result.content).toContain('Owner')
 })
@@ -226,7 +271,7 @@ test('Given Owner 会话未带标记 When 直接读取项目记忆 Then 在读�
   const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
   gates.admitOwnerExecutionGateSession(executionId, sessionId)
   const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
-  for (const result of [await executeSearchProjectMemoryTool({ query: '项目' }, { cwd: work, sessionId }), await executeReadProjectMemoryTool({ memoryId: 'other' }, { cwd: work, sessionId })]) {
+  for (const result of [await executeSearchProjectMemoryTool({ query: '项目' }, ownerCtx(work, sessionId)), await executeReadProjectMemoryTool({ memoryId: 'other' }, ownerCtx(work, sessionId))]) {
     expect(result.isError).toBe(true)
     expect(result.content).toContain('Owner')
   }
@@ -238,7 +283,7 @@ test('Given Owner 会话未带标记 When 直接读取 MCP 资源 Then 不调用
   const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
   let calls = 0
   const mcpManager = { listAllResources: async () => { calls++; return [] }, readResource: async () => { calls++; return null } } as unknown as ToolContext['mcpManager']
-  const context = { cwd: work, sessionId, mcpManager }
+  const context = { ...ownerCtx(work, sessionId), mcpManager }
   expect((await createListMcpResourcesToolDefinition().execute({}, context)).isError).toBe(true)
   expect((await createReadMcpResourceToolDefinition().execute({ uri: 'example:test' }, context)).isError).toBe(true)
   expect(calls).toBe(0)
@@ -249,7 +294,7 @@ test('Given Owner 会话 When 直接请求桌面接管 Then 不弹出用户请�
   gates.admitOwnerExecutionGateSession(executionId, sessionId)
   const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
   let calls = 0
-  const result = await computer.executeComputerUseRequestTakeoverTool({ reason: '验证', instruction: '请继续' }, { cwd: work, sessionId, abortSignal: new AbortController().signal, onAskUser: async () => { calls++; return { behavior: 'deny', message: '取消' } } })
+  const result = await computer.executeComputerUseRequestTakeoverTool({ reason: '验证', instruction: '请继续' }, { ...ownerCtx(work, sessionId), abortSignal: new AbortController().signal, onAskUser: async () => { calls++; return { behavior: 'deny', message: '取消' } } })
   expect(result.isError).toBe(true)
   expect(calls).toBe(0)
 })
@@ -259,7 +304,7 @@ test('Given Owner 会话 When 直接提问 Then 正常问题可继续而接管�
   gates.admitOwnerExecutionGateSession(executionId, sessionId)
   const work = getAgentWorkspaceCwd(getAgentWorkspace(f.record.source.workspaceId)!, sessionId)
   let calls = 0
-  const ctx = { cwd: work, sessionId, onAskUser: async () => { calls++; return { behavior: 'allow' as const, answers: { '问题': '回答' } } } }
+  const ctx = { ...ownerCtx(work, sessionId), onAskUser: async () => { calls++; return { behavior: 'allow' as const, answers: { '问题': '回答' } } } }
   const questions = [{ question: '问题' }]
   expect((await executeAskUserQuestionTool({ questions }, ctx)).content).toContain('回答')
   expect((await executeAskUserQuestionTool({ questions, interactionType: 'computer_use_takeover' }, ctx)).isError).toBe(true)
@@ -274,8 +319,8 @@ test('Given Owner 会话未带标记 When 直接调用网络工具 Then 不发�
   let calls = 0
   globalThis.fetch = (async () => { calls++; return new Response('unexpected') }) as unknown as typeof fetch
   try {
-    expect((await executeWebFetchTool({ url: 'https://example.invalid' }, { cwd: work, sessionId })).isError).toBe(true)
-    expect((await executeWebSearchTool({ query: 'private query' }, { cwd: work, sessionId })).isError).toBe(true)
+    expect((await executeWebFetchTool({ url: 'https://example.invalid' }, ownerCtx(work, sessionId))).isError).toBe(true)
+    expect((await executeWebSearchTool({ query: 'private query' }, ownerCtx(work, sessionId))).isError).toBe(true)
     expect(calls).toBe(0)
   } finally { globalThis.fetch = previousFetch }
 })
