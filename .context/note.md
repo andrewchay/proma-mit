@@ -1,5 +1,39 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-10-31 五路线剩余工作量评估（基线 main 85a321c6，含 #79–#93）
+
+- 用户表格以 #78 为基线，已过期：#79/80/81/84 三 Runtime 身份绑定且缺绑定一律拒绝；#83 Bash 纳入未知门禁；
+  #87 未知动作确认展示标识/时间/重试后果；#85/#91 题目+规则摘要、定义哈希、逐轮对比报告进 EvalPanel；
+  #86 令牌缺项提示；#92 asar 硬链接扫描；#93 沙箱保留 Git 身份。
+- Git 词法门禁误拒已实测复现：grep 搜索门禁报错原文即被拒（GIT_INIT + SHELL_COMPOSITION 对整串正则匹配，
+  不区分引号/heredoc/参数文本）。git-command-boundary.ts 仅 31 行。
+- 编排层 canUseTool（agent-orchestrator.ts:798）仍只按 sessionId 复核，无绑定对象。
+- RSI：对比报告已接通，但 compareRecordedEvaluations 因素材/评判者/运行配置未冻结而保守全部不可比。
+- OpenDesign：现有设计明确「不安装、不覆盖工作区文件」，用户需手动下载放入根目录；design-context 已能读取并刷新。
+- Enterprise：成员登记不授予工作区/Runtime 权限（sharedAccessEnabled:false），集中授权是最大块。
+- 评估结论：OpenDesign M｜受控自主 L（含固定构建真实验收则 XL）｜RSI 可比性 M、影子流量等 L 且依赖费用授权｜
+  Harness L（另拆 Git 门禁误拒 S–M 优先）｜Enterprise 代码 L + 客户验收外部依赖。
+
+## 2026-10-31 外网扫描与 Owner 的实际耦合度（评审核查结论）
+
+方案文档《Project Owner 外部变化观察与建议》评审时的核查结论，证据在
+`.context/plan/project-owner-external-watch-p1.md`。
+
+- **外网扫描与 Project Owner 零耦合**：`project-web-watch-service.ts` 只写
+  `projects/web-watch/{id}.json`/`.jsonl`，并在 `ProjectView.tsx` 的「外网扫描」面板展示；
+  `main/lib` 下没有任何 owner 模块引用它。扫描结果进不了 Owner 对话，也不看 goal/plan/授权。
+- **判断是自由文本**：`ProjectWebWatchRun.analysis` 由一次性 LLM 调用产出，无结构化状态；
+  是否通知取决于 `analysis.includes('本次未发现足够相关的新信息')` 的字面匹配（:148）。
+- **去重窗口只有 30 次运行**：`listProjectWebWatchRuns` 按 startedAt 排序截断 30 条（:89），
+  增量判定依赖这份截断后的 `knownVersions`（:138）。
+- **JSONL 只追加不轮转**，读取时截断；磁盘无上界。
+- **同族样板是 `file_change_observation`**：SQLite 表 + hash 身份 + 使用前授权复核 +
+  `recordOwnerConversationMessage` + 协议字段白名单 + 只允许 `conversation_reply`。
+  新增系统来源观察应复制这条链路（六处改动点：shared kind 联合、store 幂等比对、
+  conversation `:125` 触发白名单、planning-protocol 四处、renderer 卡片）。
+- **没有用户反馈机制**：全仓无「有帮助/不相关/暂不关注」实现；`project-owner-delivery-feedback.ts`
+  是把交付意见写进 Goal 草稿约束，不是观察相关性反馈。
+
 ## 2026-10-30 macOS 打包缺 node-pty spawn-helper（PR #73）
 
 ### 现象
