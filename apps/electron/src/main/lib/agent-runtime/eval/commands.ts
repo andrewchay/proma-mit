@@ -47,7 +47,7 @@ async function evaluateCaseAcrossRuns(
   agentVersion: number,
   delegate: SubAgentDelegate,
   opts: { scoreDelegate?: ScoreDelegate; abortSignal?: AbortSignal; systemPrompt?: string } = {},
-): Promise<{ score: number; complete: boolean; runs: Array<{ score: number; run: number; sessionId?: string; tracePath?: string }> }> {
+): Promise<{ score: number; complete: boolean; runs: Array<{ score: number; run: number; sessionId?: string; tracePath?: string; caseTextRubricSha256?: string }> }> {
   const runsCount = Math.max(1, benchmark.runsPerCase ?? 1)
   const allRuns = []
   for (let i = 0; i < runsCount; i++) {
@@ -59,7 +59,7 @@ async function evaluateCaseAcrossRuns(
     allRuns.push(run)
   }
   const scored = allRuns.filter((r) => r.status === 'ok')
-  const runs = allRuns.map((r) => ({ score: r.status === 'ok' ? r.score : 0, run: r.run, sessionId: r.sessionId, tracePath: r.tracePath }))
+  const runs = allRuns.map((r) => ({ score: r.status === 'ok' ? r.score : 0, run: r.run, sessionId: r.sessionId, tracePath: r.tracePath, caseTextRubricSha256: r.caseTextRubricSha256 }))
   const caseScore = scored.length === 0
     ? 0
     : scored.reduce((s, r) => s + r.score, 0) / scored.length
@@ -80,7 +80,7 @@ function assertEvaluationCases(benchmark: BenchmarkConfig, includeHeldOut?: bool
 export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineSummary> {
   assertEvaluationCases(opts.benchmark, opts.includeHeldOut)
   const before = readScoreboard(opts.benchmark.id).evaluations.length
-  const byCase: Array<{ caseId: string; score: number; runs: Array<{ score: number; run: number; sessionId?: string; tracePath?: string }> }> = []
+  const byCase: Array<{ caseId: string; score: number; runs: Array<{ score: number; run: number; sessionId?: string; tracePath?: string; caseTextRubricSha256?: string }> }> = []
   for (const [index, caseId] of opts.benchmark.cases.entries()) {
     opts.onProgress?.({
       benchmarkId: opts.benchmark.id,
@@ -132,7 +132,7 @@ export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineSum
         caseId: c.caseId,
         score: c.score,
         scoreStd: meanStd(c.runs.map((r) => r.score)).std,
-        runs: c.runs.map((r) => ({ score: r.score, sessionId: r.sessionId ?? '', tracePath: r.tracePath })),
+        runs: c.runs.map((r) => ({ score: r.score, sessionId: r.sessionId ?? '', tracePath: r.tracePath, caseTextRubricSha256: r.caseTextRubricSha256 })),
       })),
     }
   }
@@ -150,7 +150,7 @@ export async function runBaseline(opts: RunBaselineOptions): Promise<BaselineSum
       score: c.score,
       // 方差报告：多次 run 分数的总体标准差（n<2 → null）
       scoreStd: meanStd(c.runs.map((r) => r.score)).std,
-      runs: c.runs.map((r) => ({ score: r.score, sessionId: r.sessionId ?? '', tracePath: r.tracePath })),
+      runs: c.runs.map((r) => ({ score: r.score, sessionId: r.sessionId ?? '', tracePath: r.tracePath, caseTextRubricSha256: r.caseTextRubricSha256 })),
     })),
   }
   appendEvaluation(opts.benchmark.id, evaluation)
@@ -236,7 +236,7 @@ export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummar
           durationMs: null,
           sessionId: runs[0]?.sessionId,
           tracePath: runs[0]?.tracePath,
-          runs: runs.map(run => ({ score: run.score, sessionId: run.sessionId ?? '', tracePath: run.tracePath })),
+          runs: runs.map(run => ({ score: run.score, sessionId: run.sessionId ?? '', tracePath: run.tracePath, caseTextRubricSha256: run.caseTextRubricSha256 })),
         }
       }),
     )

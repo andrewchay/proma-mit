@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { existsSync, rmSync, writeFileSync } from 'node:fs'
 import { createBenchmark } from './benchmark-store'
 import { evaluateCaseRun } from './evaluator'
+import { getBenchmarkCaseRubricPath, getBenchmarkCaseStatementPath } from '../../config-paths'
 import type { SubAgentDelegate } from './evaluator'
 import type { BenchmarkConfig, Rubric } from './types'
 
@@ -79,6 +80,23 @@ async function delegateStub(input: { text?: string; workspaceDir: string }) {
 }
 
 describe('evaluateCaseRun', () => {
+  it('Given 执行期间题目发生变化 When 评测结束 Then 摘要对应本次读取的内容', async () => {
+    const benchmark = { ...config, id: 'snapshot-change' }
+    createBenchmark(benchmark, [{ caseId: 'CASE-001', statement: 'original task', rubric }])
+    const path = getBenchmarkCaseStatementPath(benchmark.id, 'CASE-001')
+    const first = await evaluateCaseRun(benchmark, 'CASE-001', 1, 1, async () => {
+      writeFileSync(path, 'changed task')
+      return { text: 'result' }
+    })
+    const second = await evaluateCaseRun(benchmark, 'CASE-001', 2, 1, async () => ({ text: 'result' }))
+    expect(first.caseTextRubricSha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(second.caseTextRubricSha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(first.caseTextRubricSha256).not.toBe(second.caseTextRubricSha256)
+    writeFileSync(getBenchmarkCaseRubricPath(benchmark.id, 'CASE-001'), JSON.stringify({ ...rubric, version: 2 }))
+    const third = await evaluateCaseRun(benchmark, 'CASE-001', 3, 1, async () => ({ text: 'result' }))
+    expect(third.caseTextRubricSha256).not.toBe(second.caseTextRubricSha256)
+  })
+
   it('对高质量输出打出高分（规则打分）', async () => {
     const output = [
       '### 审查结果\n',
