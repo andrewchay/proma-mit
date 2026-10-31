@@ -15,9 +15,8 @@
  * 注入顺序对齐 OD prompt 组装：设计系统正文 → tokens.css → craft 各节。
  * craft 节缺失时保留可用内容，并明确提示所声明的缺项。
  *
- * 激活设计系统约定：工作区 cwd 根目录存在 `DESIGN.md` 即视为激活
- * （本地项目=项目根；隔离工作区=会话目录），同级 `tokens.css` 一并注入。
- * 用户经 design-system-library Skill 获取设计系统后保存为这两个文件即可。
+ * cwd 根目录已有 `DESIGN.md` 或 `tokens.css` 时优先使用用户文件；
+ * 否则可回退到 Owner 工作区里用户确认安装且摘要有效的 OpenDesign 参考。
  *
  * 组合结果由三个 runtime 消费：
  * - AI SDK：ReadSkill 读取 SKILL.md 时追加到工具结果（激活点精确注入）
@@ -27,6 +26,8 @@
 
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { getAgentWorkspacePath } from './config-paths'
+import { readInstalledOpenDesign } from './opendesign-install-store'
 
 /** 单个 Skill 的 od: 需求声明 */
 export interface OdSkillRequirements {
@@ -202,16 +203,29 @@ export interface ActiveDesignSystem {
   title: string
   body: string
   tokensCss?: string
+  origin?: string
 }
 
 /**
- * 解析激活设计系统：cwd 根目录 DESIGN.md 即激活；同级 tokens.css 一并读取。
- * 不存在时返回 undefined（调用方不注入，保持零开销）。
+ * 解析 cwd 本地设计系统或用户确认的 Owner 工作区安装。
+ * 都不存在时返回 undefined（调用方不注入，保持零开销）。
  */
-export function resolveActiveDesignSystem(cwd: string | undefined): ActiveDesignSystem | undefined {
-  if (!cwd) return undefined
-  const designMdPath = join(cwd, 'DESIGN.md')
-  if (!existsSync(designMdPath)) return undefined
+export function resolveActiveDesignSystem(cwd: string | undefined, workspaceSlug?: string): ActiveDesignSystem | undefined {
+  const designMdPath = cwd ? join(cwd, 'DESIGN.md') : ''
+  const tokensPath = cwd ? join(cwd, 'tokens.css') : ''
+  const hasLocalDesign = Boolean(cwd && (existsSync(designMdPath) || existsSync(tokensPath)))
+  if (!hasLocalDesign && workspaceSlug) {
+    try {
+      const installed = readInstalledOpenDesign(join(getAgentWorkspacePath(workspaceSlug), 'workspace-files'), workspaceSlug)
+      if (installed) return {
+        title: installed.brandName,
+        body: installed.design,
+        tokensCss: installed.tokens,
+        origin: `OpenDesign ${installed.brandId} ${installed.referenceRevision}`,
+      }
+    } catch { /* 安装目录读取失败时不降级成可信资源 */ }
+  }
+  if (!cwd || !existsSync(designMdPath)) return undefined
 
   let body: string
   try {
@@ -226,7 +240,6 @@ export function resolveActiveDesignSystem(cwd: string | undefined): ActiveDesign
   const title = titleMatch?.[1]?.trim() || 'DESIGN.md'
 
   let tokensCss: string | undefined
-  const tokensPath = join(cwd, 'tokens.css')
   if (existsSync(tokensPath)) {
     try {
       const text = readFileSync(tokensPath, 'utf-8').trim()
@@ -245,6 +258,8 @@ export interface ComposeOdDesignContextInput {
   craftDir?: string
   /** 工作区 cwd（激活设计系统探测根） */
   cwd?: string
+  /** Owner 绑定工作区的稳定身份；用于读取用户明确安装的 OpenDesign 参考。 */
+  workspaceSlug?: string
   /** 传入 true 时跳过设计系统探测（cwd 不可用或调用方已判定） */
   skipDesignSystem?: boolean
 }
@@ -259,11 +274,11 @@ export function composeOdDesignContext(input: ComposeOdDesignContextInput): stri
   const parts: string[] = []
 
   if (requirements.designSystemRequires && !skipDesignSystem) {
-    const ds = resolveActiveDesignSystem(cwd)
+    const ds = resolveActiveDesignSystem(cwd, input.workspaceSlug)
     if (ds) {
       parts.push(
         [
-          `<od_design_system source="${escapeAttr(ds.title)}">`,
+          `<od_design_system source="${escapeAttr(ds.title)}"${ds.origin ? ` origin="${escapeAttr(ds.origin)}"` : ''}>`,
           'Treat the following DESIGN.md as authoritative for color, typography, spacing, and component rules. Do not invent tokens outside this palette.',
           '',
           ds.body,

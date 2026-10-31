@@ -20,6 +20,8 @@ import {
 import { getWorkspaceSkillsDir, getDefaultSkillsDir } from './config-paths'
 import { executeSkillTool } from './agent-runtime/tool-impls/skill-tool'
 import { bindTestToolContext } from './testing/bound-tool-context'
+import { createHash } from 'node:crypto'
+import { installOpenDesignFiles } from './opendesign-install-store'
 
 // 测试经 getWorkspaceSkillsDir 闭包注入工作区 skills 目录（见 resolveDesignCraftDir 调用处）
 
@@ -179,6 +181,35 @@ describe('resolveActiveDesignSystem', () => {
     const ds = resolveActiveDesignSystem(cwd)
     expect(ds?.body).toContain('Body.')
     expect(ds?.tokensCss).toBeUndefined()
+  })
+
+  test('Given Owner 工作区已安装 OpenDesign 且 cwd 无本地规范 When 解析 Then 回退到完整已安装资源并保留来源', () => {
+    const filesDir = join(process.env.PROMA_TEST_CONFIG_DIR!, 'agent-workspaces', WORKSPACE_SLUG, 'workspace-files')
+    mkdirSync(filesDir, { recursive: true })
+    const design = '# Stripe Design System\n\nUse Stripe palette.\n', tokens = ':root { --brand: #635bff; }\n'
+    const digest = (value: string) => createHash('sha256').update(value).digest('hex')
+    installOpenDesignFiles(filesDir, {
+      schemaVersion: 1, source: 'OpenDesign', license: 'Apache-2.0', projectId: 'project-1', workspaceId: 'workspace-1',
+      workspaceSlug: WORKSPACE_SLUG, brandId: 'stripe', brandName: 'Stripe', referenceRevision: 'catalog-r1', installedAt: 123,
+      actor: 'local-user', files: { 'DESIGN.md': digest(design), 'tokens.css': digest(tokens) },
+    }, design, tokens)
+
+    const ds = resolveActiveDesignSystem(join(tempHomeDir, 'owner-session'), WORKSPACE_SLUG)
+    expect(ds).toMatchObject({ title: 'Stripe', body: design, tokensCss: tokens, origin: 'OpenDesign stripe catalog-r1' })
+    const context = composeOdDesignContext({ requirements: { craftRequires: [], designSystemRequires: true }, cwd: join(tempHomeDir, 'owner-session'), workspaceSlug: WORKSPACE_SLUG })
+    expect(context).toContain('origin="OpenDesign stripe catalog-r1"')
+    expect(context).toContain('--brand: #635bff')
+    rmSync(join(filesDir, '.opendesign'), { recursive: true, force: true })
+  })
+
+  test('Given 会话 cwd 已有用户设计规范 When 解析工作区安装 Then 保留 cwd 规范优先级', () => {
+    const cwd = join(tempHomeDir, 'ds-user-priority')
+    mkdirSync(cwd, { recursive: true })
+    writeFileSync(join(cwd, 'DESIGN.md'), '# User Design\n\nKeep this.\n')
+    const ds = resolveActiveDesignSystem(cwd, WORKSPACE_SLUG)
+    expect(ds?.title).toBe('User Design')
+    expect(ds?.body).toContain('Keep this.')
+    expect(ds?.origin).toBeUndefined()
   })
 })
 

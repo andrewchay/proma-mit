@@ -180,6 +180,38 @@ export interface OwnerManagementApi {
   confirmOwnerTeamWorkspaceAccess: (request: ConfirmOwnerTeamWorkspaceAccessRequest) => Promise<ProjectOwnerGoalResult<void>>
   /** 仅暂停/恢复管理循环，不代表撤销业务授权或停止已启动员工。 */
   setOwnerManagementStatus: (request: { projectId: string; expectedRevision: number; status: 'active' | 'paused' }) => Promise<ProjectOwnerGoalResult<ProjectOwnerManager>>
+  previewOwnerDesignSystemInstall: (request: { projectId: string; brandId: string }) => Promise<ProjectOwnerGoalResult<ProjectOwnerDesignSystemInstallPreview>>
+  installOwnerDesignSystem: (request: ProjectOwnerDesignSystemInstallRequest) => Promise<ProjectOwnerGoalResult<ProjectOwnerDesignSystemInstallResult>>
+}
+
+export interface ProjectOwnerDesignSystemInstallPreview {
+  projectId: string
+  brandId: string
+  brandName: string
+  referenceRevision: string
+  ownerBindingRevision: number
+  workspaceId: string
+  workspaceName: string
+  canInstall: boolean
+  conflictNames: string[]
+}
+
+export interface ProjectOwnerDesignSystemInstallRequest {
+  projectId: string
+  brandId: string
+  expectedOwnerBindingRevision: number
+  expectedWorkspaceId: string
+  expectedReferenceRevision: string
+  confirmed: true
+}
+
+export interface ProjectOwnerDesignSystemInstallResult {
+  brandId: string
+  brandName: string
+  referenceRevision: string
+  workspaceId: string
+  workspaceName: string
+  fileHashes: { 'DESIGN.md': string; 'tokens.css': string }
 }
 
 /** 保存模型提出的完整问题与来源；状态从精确答复及当前来源派生。 */

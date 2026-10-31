@@ -178,7 +178,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     <section className="space-y-4 rounded-2xl bg-muted/20 p-4 sm:p-5" aria-label="项目历史与事实">
     <div><h3 className="text-base font-semibold">项目记录</h3><p className="mt-1 text-xs text-muted-foreground">已确认的目标、范围、方案和结果，以及之后发生的对话。</p></div>
     {historyFacts}
-    {editor.view?.manager && <OwnerDesignBrief key={JSON.stringify([projectId, taskId ?? null])} disabled={composer.sending || Boolean(composer.pending)} onAdd={text => {
+    {editor.view?.manager && <OwnerDesignBrief key={JSON.stringify([projectId, taskId ?? null])} projectId={projectId} disabled={composer.sending || Boolean(composer.pending)} onAdd={text => {
       const next = composer.text.trim() ? `${composer.text}\n\n${text}` : text
       if (next.length > 4000) return false
       edit({ subject, text: next }); focusReplyComposer(); return true

@@ -652,6 +652,7 @@ export function buildOdContextForActiveSkills(
     },
     craftDir: resolveDesignCraftDir({ workspaceSlug, getWorkspaceSkillsDir, getDefaultSkillsDir }),
     cwd: agentCwd,
+    workspaceSlug,
   })
 
   return odContext
