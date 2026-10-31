@@ -147,7 +147,9 @@ node-pty 也无法真正起 shell（仓库内短路径同样 `posix_spawnp faile
 - [x] 模块级 11 条用例覆盖未绑定/不匹配/撤销/幂等/跨 Runtime；
       适配器级四条路径用例未补（需 electron mock 脚手架）
 - [x] typecheck 9 包全通过；身份测试 32 pass；两个适配器测试 61 pass；biome 通过
-- [ ] 分支推送与 PR
+- [x] PR #79 已开：三平台包烟测 + quality + executor + golden 全绿（head 0c3af055）
+- [x] 首轮 quality 因 UI 时序 flake（OwnerManagementConversation.browser.test.ts）失败，重跑通过
+- [ ] 等待合并决定；下一片计划见 `.context/plan/p1-identity-next.md`
 
 ## 边界
 - 不改普通会话行为；只让身份缺失/不匹配时拒绝
