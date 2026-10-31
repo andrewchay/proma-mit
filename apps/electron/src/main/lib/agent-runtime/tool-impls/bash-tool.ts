@@ -8,7 +8,15 @@ import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
 import { formatToolError, truncateOutput, requiresOwnerToolGate } from './tool-utils.ts'
 import { prepareBashSandbox, quarantineNewGitArtifacts } from './bash-sandbox.ts'
-import { describeBashTermination, runBashCommand } from './bash-termination.ts'
+import { describeBashTermination, runBashCommand, type BashTerminationEvidence } from './bash-termination.ts'
+import {
+  beginTrackedAction,
+  blockIfUnknownAction,
+  buildActionKey,
+  finishTrackedAction,
+  hashDetail,
+  type UnknownActionRecord,
+} from '../unknown-action-store'
 import { findGitCommandBoundaryViolation } from './git-command-boundary.ts'
 
 export interface BashToolInput {
@@ -77,15 +85,47 @@ export async function executeBashToolOnPlatform(input: unknown, ctx: ToolContext
     assertOwnerGate()
     await sandbox.assertLaunchSafe()
     assertOwnerGate()
+    // 超时或中止后命令可能已产生副作用，且无法从退出码判断做到哪一步：
+    // 同一命令在用户核对前禁止重发，避免模型把未知结果当成失败直接重跑。
+    const actionKey = buildActionKey('Bash', hashDetail({ command, cwd: ctx.cwd }))
+    const blocked = await blockIfUnknownAction({
+      sessionId: ctx.sessionId,
+      tool: 'Bash',
+      actionKey,
+      confirmHint: '请先由用户核对命令是否已生效（检查产物或仓库状态），再决定是否继续。',
+    })
+    if (blocked) return { toolCallId: '', content: blocked, isError: true }
+    let tracked: UnknownActionRecord | undefined = await beginTrackedAction({
+      sessionId: ctx.sessionId,
+      tool: 'Bash',
+      actionKey,
+      detail: { command, cwd: ctx.cwd },
+      reason: '命令已派发，结果待确认',
+    })
+    if (!tracked) return { toolCallId: '', content: '同一命令正在执行或等待结果核对，禁止重复派发', isError: true }
+
     // 以独立进程组运行并接入会话中止信号：终止对整组下发，且只有在进程组确认消失后
     // 才把结果写成"已终止"，否则标记 unconfirmed。
-    const run = await runBashCommand({
-      argv: [...sandbox.argv, command],
-      cwd: ctx.cwd,
-      env: sandbox.env,
-      timeout,
-      abortSignal: ctx.abortSignal,
-    })
+    let evidence: BashTerminationEvidence | undefined
+    let run: Awaited<ReturnType<typeof runBashCommand>>
+    try {
+      run = await runBashCommand({
+        argv: [...sandbox.argv, command],
+        cwd: ctx.cwd,
+        env: sandbox.env,
+        timeout,
+        abortSignal: ctx.abortSignal,
+      })
+      evidence = run.evidence
+    } finally {
+      // 没有证据（执行抛出异常）同样按未知处理：无法证明命令没有生效。
+      const confirmed = evidence !== undefined && (evidence.status === 'exited' || evidence.pgid <= 0)
+      const reason = evidence === undefined
+        ? 'Bash 命令执行抛出异常，结果未知'
+        : `Bash 命令结果未知（${describeBashTermination(evidence) ?? evidence.status}）`
+      await finishTrackedAction(tracked, confirmed, confirmed ? undefined : reason)
+      tracked = undefined
+    }
 
     const notices: string[] = []
     const termination = describeBashTermination(run.evidence)
