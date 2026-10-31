@@ -37,6 +37,7 @@ import type {
   ThinkingBlock,
 } from '@gravitas/core'
 import { assertRuntimePolicy } from '../agent-runtime/harness-policy'
+import { assertRuntimeSessionIdentity, bindRuntimeSessionIdentity, revokeRuntimeSessionIdentity } from '../agent-runtime/runtime-session-identity'
 import { getAdapter, streamSSE } from '@gravitas/core'
 import { getFetchFn } from '../proxy-fetch'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
@@ -75,6 +76,8 @@ export type CanUseToolCallback = (
 interface ToolCallExecutionCtx {
   cwd: string
   sessionId: string
+  /** 已绑定会话身份的活动会话对象；工具执行前用它做身份复核（fail-closed）。 */
+  sessionOwner?: object
   abortSignal?: AbortSignal
   permissionMode?: PromaPermissionMode
   planModeEntered?: boolean
@@ -258,6 +261,9 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       controller,
       permissionMode: input.permissionMode ?? 'auto',
     }
+    // 会话身份绑定到活动会话对象：工具执行入口据此 fail-closed（缺失/不匹配/已撤销即拒绝）。
+    const promaSessionIdentity = { sessionId, cwd, runtime: 'proma' as const }
+    bindRuntimeSessionIdentity(activeSession, promaSessionIdentity)
     this.activeSessions.set(sessionId, activeSession)
     if (this.pendingStarts.get(sessionId) === startController) this.pendingStarts.delete(sessionId)
 
@@ -531,9 +537,12 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         }
 
         // 执行工具调用（带权限检查）
+        // 进入工具执行前复核会话身份：流式/审批等待期间会话可能已结束或被改写。
+        assertRuntimeSessionIdentity(activeSession, promaSessionIdentity)
         const toolResults = await this.executeToolCalls(currentToolCalls, toolMap, {
           cwd,
           sessionId,
+          sessionOwner: activeSession,
           abortSignal: controller.signal,
           permissionMode: activeSession.permissionMode,
           planModeEntered,
@@ -670,6 +679,8 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       yield resultMessage as unknown as SDKMessage
     } finally {
       if (this.activeSessions.get(sessionId) === activeSession) this.activeSessions.delete(sessionId)
+      // 会话结束即撤销身份：迟到/挂起的工具调用此后一律 fail-closed。
+      revokeRuntimeSessionIdentity(activeSession)
       // 释放缓存引用（缓存负责实际断开连接）
       mcpRelease?.()
     }
@@ -684,6 +695,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       session.controller.abort()
       session.resolveQueuedMessage?.()
       this.activeSessions.delete(sessionId)
+      revokeRuntimeSessionIdentity(session)
     }
   }
 
@@ -736,6 +748,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
     for (const [sessionId, session] of this.activeSessions) {
       session.controller.abort()
       this.activeSessions.delete(sessionId)
+      revokeRuntimeSessionIdentity(session)
     }
   }
 
@@ -1040,6 +1053,17 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         toolCallId: tc.id,
         content: permission.message || `权限被拒绝：${tc.name}`,
         isError: true,
+      }
+    }
+
+    // 权限回调（可能等待用户审批）返回后、真正执行工具前复核会话身份：
+    // 期间会话可能已结束或被改写，身份缺失/不匹配即拒绝（fail-closed）。
+    if (ctx.sessionOwner) {
+      try {
+        assertRuntimeSessionIdentity(ctx.sessionOwner, { sessionId: ctx.sessionId, cwd: ctx.cwd, runtime: 'proma' })
+      } catch (error) {
+        // 身份复核失败只拒绝本次工具调用，不改变既有权限语义。
+        return { toolCallId: tc.id, content: `工具执行失败: ${getErrorMessage(error)}`, isError: true }
       }
     }
 
