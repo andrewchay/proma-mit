@@ -181,6 +181,27 @@ export interface RunImproveOptions {
   onProgress?: EvalProgressCallback
   /** 每接受一个候选时回调其 afterState（供调用方捕获最佳改进，用于“采纳写回”） */
   onAcceptedCandidate?: (candidate: SelfEvolveChange) => void
+  /** 影子对比的分数差值阈值（默认 0.02，用于区分噪声与提升） */
+  comparisonDeltaThreshold?: number
+  /** 候选相对 Reference 允许的成本增幅；超出时报告标注 cost_exceeded */
+  maxCostIncreaseRatio?: number
+  /** 候选相对 Reference 允许的耗时增幅；超出时报告标注 latency_exceeded */
+  maxLatencyIncreaseRatio?: number
+}
+
+/** 单轮候选与 Reference 的对比报告（可比性、差值、资源门禁）。 */
+export interface ImproveRoundReport {
+  round: number
+  accepted: boolean
+  score: number
+  /** null = 没有候选评测，未生成报告 */
+  comparable: boolean | null
+  verdict: string | null
+  meanDelta: number | null
+  /** 资源门禁：pass / cost_exceeded / latency_exceeded / unverified；未生成报告为 null */
+  gate: string | null
+  /** 一句话结论，含不可比原因 */
+  summary: string | null
 }
 
 export interface ImproveSummary {
@@ -191,6 +212,8 @@ export interface ImproveSummary {
   finalVersion: number
   /** 评分最高的被接受候选的 prompt（供 UI「审查并采纳」展示；无则缺省） */
   bestAcceptedPrompt?: string
+  /** 每轮与 Reference 的对比报告；不可比时如实给出原因，不退化成「无差异」 */
+  rounds: ImproveRoundReport[]
 }
 
 /** 跑一次 Improve 闭环。 */
@@ -254,6 +277,9 @@ export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummar
     state: opts.state,
     judge: opts.judge,
     evaluateHeldOut,
+    ...(opts.comparisonDeltaThreshold === undefined ? {} : { comparisonDeltaThreshold: opts.comparisonDeltaThreshold }),
+    ...(opts.maxCostIncreaseRatio === undefined ? {} : { maxCostIncreaseRatio: opts.maxCostIncreaseRatio }),
+    ...(opts.maxLatencyIncreaseRatio === undefined ? {} : { maxLatencyIncreaseRatio: opts.maxLatencyIncreaseRatio }),
   })
 
   // 把每个被接受候选的 afterState 回调出去（供“采纳写回”捕获最佳改进）
@@ -286,6 +312,16 @@ export async function runImprove(opts: RunImproveOptions): Promise<ImproveSummar
     totalRounds: out.rounds.length,
     finalVersion: out.finalAcceptedVersion,
     bestAcceptedPrompt: bestPrompt,
+    rounds: out.rounds.map((round, index) => ({
+      round: index + 1,
+      accepted: round.accepted,
+      score: Math.round(round.score * 100) / 100,
+      comparable: round.comparison?.comparable ?? null,
+      verdict: round.comparison?.verdict ?? null,
+      meanDelta: round.comparison?.meanDelta ?? null,
+      gate: round.comparison?.resources.gate ?? null,
+      summary: round.comparisonSummary ?? null,
+    })),
   }
 }
 
