@@ -11,11 +11,18 @@
 
 import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, realpathSync } from 'node:fs'
-import { chmod, copyFile, lstat, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
+import { lstat, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
+import * as fsPromises from 'node:fs/promises'
 import { isAbsolute, join, relative, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { getConfigDir } from '../../config-paths'
+import { startPerformanceDiagnostic } from '../../performance-diagnostics'
 import { buildSeatbeltProfile, SANDBOX_EXEC_PATH, type SeatbeltPolicy } from '../../pinned-verifier-sandbox'
+
+// Electron 的 fs 会将 asar 文件展开为虚拟目录；硬链接检查必须检查磁盘上的真实 inode。
+const hardlinkFs: typeof import('node:fs/promises') = process.versions.electron
+  ? (require('original-fs') as typeof import('node:fs')).promises
+  : fsPromises
 
 export interface GitLayout {
   /** 主仓库的 .git 目录（对象库、引用、hooks、config 所在）。 */
@@ -189,12 +196,18 @@ export function buildBashSandboxPolicy(input: {
  * 两次扫描之间及复核之后的系统外并发进程仍不受本模块控制，不能视为操作系统级原子隔离。
  */
 async function scanWritableHardlinks(policy: SeatbeltPolicy, mode: 'quarantine' | 'reject'): Promise<void> {
+  const finishDiagnostic = startPerformanceDiagnostic(`bash-hardlinks-${mode}`)
+  let visited = 0
+  let directories = 0
+  let hardlinks = 0
+  let status: 'ok' | 'error' = 'error'
   const roots = [...policy.writableRoots, ...(policy.writableLiterals ?? [])]
   let seq = 0
   const visit = async (path: string): Promise<void> => {
+    if (finishDiagnostic) visited++
     let st
     try {
-      st = await lstat(path)
+      st = await hardlinkFs.lstat(path)
     } catch (error) {
       // 扫描期间被删除属于正常竞态；其余错误按失败关闭处理。
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
@@ -202,9 +215,10 @@ async function scanWritableHardlinks(policy: SeatbeltPolicy, mode: 'quarantine' 
     }
     if (st.isSymbolicLink()) return
     if (st.isDirectory()) {
+      if (finishDiagnostic) directories++
       let names: string[]
       try {
-        names = await readdir(path)
+        names = await hardlinkFs.readdir(path)
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
         throw error
@@ -213,19 +227,25 @@ async function scanWritableHardlinks(policy: SeatbeltPolicy, mode: 'quarantine' 
       return
     }
     if (!st.isFile() || st.nlink <= 1) return
+    if (finishDiagnostic) hardlinks++
     if (mode === 'reject') throw new Error(`Bash 启动前复核：可写范围出现硬链接，已拒绝执行：${path}`)
     // 同目录临时文件 + 原子重命名，保证替换后是独立 inode；权限位按原文件恢复。
     const temp = `${path}.gravitas-quarantine-${process.pid}-${seq++}`
     try {
-      await copyFile(path, temp)
-      await chmod(temp, st.mode & 0o7777)
-      await rename(temp, path)
+      await hardlinkFs.copyFile(path, temp)
+      await hardlinkFs.chmod(temp, st.mode & 0o7777)
+      await hardlinkFs.rename(temp, path)
     } catch (error) {
-      await unlink(temp).catch(() => {})
+      await hardlinkFs.unlink(temp).catch(() => {})
       throw error
     }
   }
-  for (const root of roots) await visit(root)
+  try {
+    for (const root of roots) await visit(root)
+    status = 'ok'
+  } finally {
+    finishDiagnostic?.(status, { visited, directories, hardlinks })
+  }
 }
 
 export async function quarantineWritableHardlinks(policy: SeatbeltPolicy): Promise<void> {

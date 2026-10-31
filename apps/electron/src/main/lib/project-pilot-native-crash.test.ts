@@ -51,7 +51,7 @@ const source = join(import.meta.dir, 'project-pilot-native-crash-child.ts')
 buildSync({ entryPoints: [source], outfile: childFile, bundle: true, platform: 'node', format: 'cjs',
   target: 'node24', absWorkingDir: process.cwd(),
   // 生产依赖在运行时由 NODE_PATH 解析；playwright/fsevents 等重依赖不参与打包。
-  external: ['better-sqlite3', 'electron', 'playwright-core', 'playwright', 'fsevents', 'chromium-bidi'] })
+  external: ['better-sqlite3', 'electron', 'original-fs', 'playwright-core', 'playwright', 'fsevents', 'chromium-bidi'] })
 
 interface Identity {
   projectId: string

@@ -959,7 +959,7 @@ test('Given旧Runtime回调仍滞留 When独立进程重启恢复后回调晚到
     const nativeRecoveryPath = join(directory, `native-recovery-${randomUUID()}.cjs`)
     buildSync({ entryPoints: [join(import.meta.dir, 'project-owner-native-recovery-child.ts')], outfile: nativeRecoveryPath,
       bundle: true, platform: 'node', format: 'cjs', target: 'node24', absWorkingDir: process.cwd(),
-      external: ['better-sqlite3', 'electron', 'fsevents', 'playwright-core'] })
+      external: ['better-sqlite3', 'electron', 'original-fs', 'fsevents', 'playwright-core'] })
     const nativeNodeBinary = execFileSync('node', ['-p', 'process.execPath'], { encoding: 'utf8' }).trim()
     const nodePath = [join(process.cwd(), 'node_modules'), join(process.cwd(), 'apps/electron/node_modules')].join(':')
     const childOutput = execFileSync(nativeNodeBinary, [nativeRecoveryPath, 'recover', executionId], {
