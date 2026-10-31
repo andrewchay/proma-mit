@@ -10,6 +10,7 @@
  * 本模块为纯新增；不直接依赖 SDK，只依赖注入的委派函数，便于单测。
  */
 
+import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { copyFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -104,6 +105,7 @@ export async function evaluateCaseRun(
   if (!statement) return { protocolVersion: 1, caseId, run: runIndex, agentVersion, status: 'failed', score: 0, failureCode: 'invalid_request' }
   if (!rubric) return { protocolVersion: 1, caseId, run: runIndex, agentVersion, status: 'failed', score: 0, failureCode: 'benchmark_invalid' }
   assertRubricTotals100(rubric)
+  const caseTextRubricSha256 = createHash('sha256').update(JSON.stringify({ statement, rubric })).digest('hex')
 
   // 1) 准备隔离沙箱：只拷入该 Case 公开素材
   const runId = `eval-${benchmark.id}-${caseId}-${runIndex}-${Date.now()}`
@@ -156,6 +158,7 @@ export async function evaluateCaseRun(
     score,
     durationMs,
     sessionId: runId,
+    caseTextRubricSha256,
     tracePath: runTracePath,
     failureCode: undefined,
   }

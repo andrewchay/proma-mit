@@ -148,6 +148,8 @@ export interface EvalRunResult {
   costUsd?: number
   durationMs?: number
   sessionId?: string
+  /** 本次读取的题目文本与评分规则摘要；不包含案例素材文件。 */
+  caseTextRubricSha256?: string
   /** 该 run 的决策 trace 文件路径（append-only JSONL，含完整工具序列） */
   tracePath?: string
   /** failed 时的稳定错误码 */
@@ -160,6 +162,8 @@ export interface ScoreboardCaseRun {
   costUsd?: number | null
   durationMs?: number | null
   sessionId: string
+  /** 本次读取的题目文本与评分规则摘要；历史记录可能缺失。 */
+  caseTextRubricSha256?: string
   /** 该 run 的 trace 文件路径（可选） */
   tracePath?: string
 }
