@@ -94,6 +94,56 @@ describe('selfEvolve', () => {
     expect(out.finalScore).toBe(90)
   })
 
+  it('Given 基线与候选同一次运行 When 落盘评测 Then 冻结基准来源并给出可比对比报告', async () => {
+    const benchmark = { ...config, id: 'frozen-provenance' }
+    const defState = { v: 1 }
+    const state = mkState(() => defState.v, {
+      apply: () => { defState.v++ },
+      rollback: () => { defState.v = 1 },
+    })
+    const propose: Parameters<typeof selfEvolve>[0]['propose'] = async () => ({ description: 'improve', target: 'x', afterState: 2 })
+    const out = await selfEvolve({
+      benchmark,
+      maxRounds: 1,
+      propose,
+      evaluate: evaluateScored(70, 90),
+      state,
+    })
+
+    const records = readScoreboard(benchmark.id).evaluations
+    expect(records.length).toBe(2)
+    for (const record of records) {
+      expect(record.definition?.version).toBe(benchmark.version ?? 1)
+      expect(record.definition?.rubricVersion).toBe(benchmark.rubricVersion ?? 1)
+      expect(record.definition?.definitionHash).toBeTruthy()
+    }
+    // 同一次运行的两侧用同一份冻结定义：对比必须可比，且给出差值结论。
+    const comparison = out.rounds[0]!.comparison
+    expect(comparison?.comparable).toBe(true)
+    expect(comparison?.verdict).toBe('candidate_better')
+    expect(out.rounds[0]!.comparisonSummary).toContain('更好')
+    // 报告与 scoreboard 是同一份回执：接受时不再产生第二条候选记录。
+    expect(records[1]!.score).toBe(90)
+  })
+
+  it('Given 候选被拒 When 生成对比报告 Then 仍给出差值且不影响接受结论', async () => {
+    const benchmark = { ...config, id: 'rejected-comparison' }
+    const state = mkState(() => 1, { apply: () => undefined, rollback: () => undefined })
+    const propose: Parameters<typeof selfEvolve>[0]['propose'] = async () => ({ description: 'worse', target: 'x', afterState: 2 })
+    const out = await selfEvolve({
+      benchmark,
+      maxRounds: 1,
+      propose,
+      evaluate: evaluateScored(80, 50),
+      state,
+    })
+
+    expect(out.rounds[0]!.accepted).toBe(false)
+    expect(out.rounds[0]!.comparison?.comparable).toBe(true)
+    expect(out.rounds[0]!.comparison?.verdict).toBe('candidate_worse')
+    expect(out.rounds[0]!.comparison?.meanDelta).toBeLessThan(0)
+  })
+
   it('候选分数不高于 Reference 则回滚，不改 Reference', async () => {
     const histories: number[] = []
     const state = mkState(() => 1, {

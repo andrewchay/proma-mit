@@ -78,3 +78,37 @@ scoreboard 对比还会将两侧案例清单分别与调用方提供的基准案
 ## 历史来源缺失时不推断可比
 
 scoreboard 条目没有记录评测时的基准及评分规则来源，当前基准版本不能证明历史定义。`compareScoreboardEvaluations` 因此在来源机制建立前一律返回不可比、无均值结论和资源门禁未核验，仍保留可读的案例及资源原始明细；不回填、改写或删除已有记录。纯 `compareShadowRuns` 的版本由调用方提供，无法自行验证来源。新增行为测试先复现错误再验证保护，真实 Provider、独立评判与人工验收尚未完成。后续应冻结并记录评测实际使用的案例与评分规则内容及版本，并验证执行过程中没有漂移，再设计新记录的可比路径；历史缺失不能补造。
+
+## 2026-10-31 评测来源冻结与新记录可比路径
+
+上一节的结论是「在来源机制建立前一律不可比」。本切片建立该机制，并把对比接到真实调用方。
+
+### 改动
+
+- **写入时冻结来源**：`BenchmarkEvaluation.definition` 现在记录 `version`、`rubricVersion`、
+  `definitionHash`（`hashBenchmarkDefinition`：case 集合 + rubric 版本 + 被测对象）与 `frozenAt`。
+  `freezeEvaluationDefinition(benchmark)` 只在写入评测时调用，后续配置变化不回填历史。
+- **对比按记录自身来源判定**：新增 `compareRecordedEvaluations`，两侧都冻结了来源且哈希、版本、
+  rubric 版本一致才可比；任一侧缺失 → 「评测记录未冻结基准来源，不能作为对比证据」；
+  哈希不同 → 「两侧基准定义不同」。`compareScoreboardEvaluations` 改为委托该函数，
+  不再固定返回不可比。
+- **接上生产调用方**：`selfEvolve` 每轮把 Reference 与候选放在同一次运行、同一份冻结基准下比较，
+  轮次结果新增 `comparison`（可比性、差值、改善/持平/退步计数、资源门禁）与 `comparisonSummary`。
+  被拒候选同样产出报告——拒绝结论与差值证据并列，不互相替代。
+- 接受候选时直接用与报告同一条评测记录落盘，避免 scoreboard 与报告出现两份不同回执。
+
+### 验证
+
+- `shadow-comparison.test.ts` 36 项：新增「两侧同源 → 可比并给出差值」「哈希不同 → 不可比并写明原因」
+  「仅一侧冻结 → 不可比」；历史无来源用例改为断言新文案「未冻结基准来源」。
+- `self-evolver.test.ts` 12 项：新增「落盘评测冻结来源 + 轮次给出可比报告」「被拒候选仍给出差值报告」。
+- 关联回归：`benchmark-versioning`、`benchmark-store`、`held-out`、`commands` 共 28 项零失败；
+  `bun run typecheck` 9 个包通过。
+
+### 边界（不变）
+
+- **历史评测仍不可比**：没有 `definition` 的旧记录不补造来源，也不能用当前配置追认。
+- **不是影子流量**：比较的仍是批量评测结果，没有旁路真实流量。
+- **不做统计显著性**：阈值法仍是产品口径的最小有意义差值。
+- **成本仍是评测估算**，不是 Provider 账单。
+- **未接入 UI/审批**：报告目前随 `selfEvolve` 返回值提供，尚无界面呈现与人工签收。

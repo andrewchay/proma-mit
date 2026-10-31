@@ -11,6 +11,8 @@
  */
 
 import { appendEvaluation } from './benchmark-store'
+import { freezeEvaluationDefinition } from './benchmark-versioning'
+import { compareRecordedEvaluations, describeShadowComparison } from './shadow-comparison'
 import { meanStd } from './evaluator'
 import type { BenchmarkConfig, BenchmarkEvaluation, HeldOutReport, JudgeIdentity, ScoreboardCaseRun, SelfEvolveChange, SelfEvolveRoundResult } from './types'
 
@@ -58,6 +60,12 @@ export interface EvolveInput {
   evaluateHeldOut?: EvaluateState
   /** held-out 分数相较于 baseline/reference 允许的最大下降；缺省 0，即不得下降。 */
   heldOutMaxRegression?: number
+  /** 影子对比的分数差值阈值（默认 0.02）；用于区分噪声与提升。 */
+  comparisonDeltaThreshold?: number
+  /** 候选相对 Reference 允许的成本增幅；超出时对比报告标注 cost_exceeded。 */
+  maxCostIncreaseRatio?: number
+  /** 候选相对 Reference 允许的耗时增幅；超出时对比报告标注 latency_exceeded。 */
+  maxLatencyIncreaseRatio?: number
 }
 
 export interface EvolveOutput {
@@ -116,6 +124,8 @@ function buildEvaluation(
   return {
     time,
     agentVersion,
+    // 写入时冻结基准来源：后续配置变化不回填，影子对比据此判断两侧是否同一份基准。
+    definition: freezeEvaluationDefinition(benchmark, time),
     score: Math.round(total * 100) / 100,
     costUsd: byCase.some((c) => c.costUsd != null) ? byCase.filter((c) => c.costUsd != null).reduce((s, c) => s + (c.costUsd as number), 0) : null,
     durationMs: byCase.some((c) => c.durationMs != null) ? byCase.filter((c) => c.durationMs != null).reduce((s, c) => s + (c.durationMs as number), 0) : null,
@@ -149,7 +159,8 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
   // held-out baseline 同时用于记录与候选门禁，避免同一轮重复消耗评测预算。
   const heldOutBaseline = input.evaluateHeldOut ? await input.evaluateHeldOut(undefined, input.benchmark) : null
   // 每次实际完成的基线都是独立观测，即使被测版本相同也保留。
-  appendEvaluation(input.benchmark.id, buildEvaluation(input.benchmark, baselineVersion, baselineByCase, new Date().toISOString(), input.judge, heldOutBaseline))
+  const baselineEvaluation = buildEvaluation(input.benchmark, baselineVersion, baselineByCase, new Date().toISOString(), input.judge, heldOutBaseline)
+  appendEvaluation(input.benchmark.id, baselineEvaluation)
 
   // 2) 迭代候选
   const rounds: SelfEvolveRoundResult[] = []
@@ -171,11 +182,16 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
     let rolledBack = false
     let candidateScore = currentScore
     let reason = ''
+    let candidateEvaluation: BenchmarkEvaluation | undefined
 
     try {
       const candidateByCase = await input.evaluate(change.afterState, input.benchmark)
       const candidateTotal = completeCaseScore(candidateByCase, input.benchmark.cases)
       candidateScore = candidateTotal ?? 0
+      if (candidateTotal !== null) {
+        // 与 Reference 同一份冻结基准：这是影子对比唯一来源可信的场景，因此在这里落地报告。
+        candidateEvaluation = buildEvaluation(input.benchmark, candidateVersion, candidateByCase, new Date().toISOString(), input.judge, null)
+      }
       if (candidateTotal === null) {
         reason = '候选评测无效（无有效分数）'
         // 回滚到 Reference
@@ -196,7 +212,10 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
           await input.state.restore()
           rolledBack = true
         } else {
-          appendEvaluation(input.benchmark.id, buildEvaluation(input.benchmark, candidateVersion, candidateByCase, new Date().toISOString(), input.judge, heldOutCandidate))
+          // 用与对比报告同一条记录落盘，避免报告与 scoreboard 出现两份不同回执。
+          const acceptedEvaluation = { ...candidateEvaluation!, heldOut: heldOutCandidate ? toHeldOutReport(heldOutCandidate, input.benchmark.heldOutCases) : null }
+          candidateEvaluation = acceptedEvaluation
+          appendEvaluation(input.benchmark.id, acceptedEvaluation)
           accepted = true
           reason = `接受：${candidateTotal.toFixed(2)} > Reference ${currentScore.toFixed(2)}；held-out 门禁通过`
           currentScore = candidateTotal
@@ -213,6 +232,16 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
       rolledBack = true
     }
 
+    const comparison = candidateEvaluation
+      ? compareRecordedEvaluations({
+          baseline: baselineEvaluation,
+          candidate: candidateEvaluation,
+          expectedCaseIds: input.benchmark.cases,
+          ...(input.comparisonDeltaThreshold === undefined ? {} : { deltaThreshold: input.comparisonDeltaThreshold }),
+          ...(input.maxCostIncreaseRatio === undefined ? {} : { maxCostIncreaseRatio: input.maxCostIncreaseRatio }),
+          ...(input.maxLatencyIncreaseRatio === undefined ? {} : { maxLatencyIncreaseRatio: input.maxLatencyIncreaseRatio }),
+        })
+      : undefined
     rounds.push({
       agentVersion: candidateVersion,
       change,
@@ -220,6 +249,7 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
       accepted,
       reason,
       rolledBack,
+      ...(comparison ? { comparison, comparisonSummary: describeShadowComparison(comparison) } : {}),
     })
   }
 
