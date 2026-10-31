@@ -87,7 +87,7 @@ async function executeResolveUnknownActionUnchecked(input: unknown, ctx: ToolCon
   const record = (await listPendingUnknownActions(ctx.sessionId)).find((item) => item.actionKey === actionKey)
   if (!record) return error(`没有找到待处理的未知动作：${actionKey}`)
 
-  const question = `动作「${record.tool}」此前结果未知（${record.reason}）。请在目标系统核对后选择：`
+  const question = `动作「${record.tool}」此前结果未知（${record.reason}）。\n动作标识：${record.actionKey}\n记录时间：${record.createdAt}\n请在目标系统核对这条动作后选择：`
   let answer: string | undefined
   try {
     const response = await ctx.onAskUser(
@@ -97,7 +97,11 @@ async function executeResolveUnknownActionUnchecked(input: unknown, ctx: ToolCon
           {
             question,
             header: '未知动作待核对',
-            options: [{ label: NOT_APPLIED }, { label: APPLIED }, { label: DEFERRED }],
+            options: [
+              { label: NOT_APPLIED, description: '解除此动作的拦截，后续可以重试。' },
+              { label: APPLIED, description: '保存已生效的结论，继续拦截重复动作。' },
+              { label: DEFERRED, description: '保留未知状态和重试拦截。' },
+            ],
           },
         ],
       },

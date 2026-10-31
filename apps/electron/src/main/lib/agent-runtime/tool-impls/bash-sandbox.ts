@@ -84,6 +84,42 @@ export function sanitizeBashGitEnvironment(source: NodeJS.ProcessEnv): NodeJS.Pr
   return env
 }
 
+/** 只复制 Git 身份键；保留 -c 和显式 author/committer 环境变量的优先级。 */
+export function resolveGitIdentityEnvironment(cwd: string, source: NodeJS.ProcessEnv): Promise<NodeJS.ProcessEnv> {
+  const readEnv = sanitizeBashGitEnvironment(source)
+  for (const key of ['GIT_CONFIG_GLOBAL', 'GIT_CONFIG_SYSTEM', 'GIT_CONFIG_NOSYSTEM'] as const) {
+    if (source[key] === undefined) delete readEnv[key]
+    else readEnv[key] = source[key]
+  }
+  return new Promise(resolve => {
+    execFile('git', ['-C', cwd, 'config', '--includes', '--null', '--get-regexp', '^(user\\.(name|email|useconfigonly)|author\\.(name|email)|committer\\.(name|email))$'], {
+      encoding: 'utf8', env: readEnv, timeout: 5000, maxBuffer: 64 * 1024,
+    }, (error, stdout) => {
+      const values = new Map<string, string>()
+      for (const entry of (error ? '' : stdout).split('\0')) {
+        const separator = entry.indexOf('\n')
+        if (separator < 0) continue
+        const key = entry.slice(0, separator).toLowerCase()
+        if (!/^(user\.(name|email|useconfigonly)|author\.(name|email)|committer\.(name|email))$/.test(key)) continue
+        values.set(key, entry.slice(separator + 1))
+      }
+      const hasIdentity = (kind: 'author' | 'committer', field: 'name' | 'email'): boolean =>
+        Boolean(source[`GIT_${kind.toUpperCase()}_${field.toUpperCase()}`] || values.get(`${kind}.${field}`) || values.get(`user.${field}`))
+      if (!hasIdentity('author', 'name') || !hasIdentity('author', 'email') || !hasIdentity('committer', 'name') || !hasIdentity('committer', 'email')) {
+        values.set('user.useconfigonly', 'true')
+      }
+      const env: NodeJS.ProcessEnv = { GIT_CONFIG_COUNT: String(values.size) }
+      let index = 0
+      for (const [key, value] of values) {
+        env[`GIT_CONFIG_KEY_${index}`] = key
+        env[`GIT_CONFIG_VALUE_${index}`] = value
+        index++
+      }
+      resolve(env)
+    })
+  })
+}
+
 /** 解析 git 布局；cwd 不在 git 仓库中时返回 undefined。 */
 export function resolveGitLayout(cwd: string): Promise<GitLayout | undefined> {
   return new Promise((resolve) => {
@@ -230,6 +266,7 @@ export async function prepareBashSandbox(cwd: string, sessionId: string): Promis
 }> {
   const scratchDir = scratchDirFor(sessionId)
   const git = await resolveGitLayout(cwd)
+  const gitIdentity = await resolveGitIdentityEnvironment(cwd, process.env)
   // 与策略口径一致：已有仓库或已有 .git 入口都算"命令前已存在"，其后 hooks/config 由策略拒写。
   const gitWasPresent = Boolean(git) || existsSync(join(realOrSelf(cwd), '.git'))
   const policy = buildBashSandboxPolicy({ cwd, scratchDir, git, configDirs: [getConfigDir()] })
@@ -240,6 +277,7 @@ export async function prepareBashSandbox(cwd: string, sessionId: string): Promis
     argv: [SANDBOX_EXEC_PATH, '-p', profile, '/bin/sh', '-c'],
     env: {
       ...sanitizeBashGitEnvironment(process.env),
+      ...gitIdentity,
       TMPDIR: scratchDir,
       BUN_INSTALL_CACHE_DIR: join(scratchDir, 'bun-cache'),
       npm_config_cache: join(scratchDir, 'npm-cache'),
