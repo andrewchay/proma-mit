@@ -177,6 +177,8 @@ export const PROJECT_IPC_CHANNELS = {
   SAVE_WEB_WATCH: 'project:save-web-watch',
   RUN_WEB_WATCH: 'project:run-web-watch',
   LIST_WEB_WATCH_RUNS: 'project:list-web-watch-runs',
+  GET_WEB_CHANGE_OBSERVATION: 'project:get-web-change-observation',
+  RECORD_WEB_OBSERVATION_FEEDBACK: 'project:record-web-observation-feedback',
   /** 无费用规划草案入口：读取/保存都不创建执行授权或派发。 */
   GET_OWNER_EXECUTION_GRANT: 'project:get-owner-execution-grant',
   LIST_OWNER_EXECUTION_GRANT_HISTORY: 'project:list-owner-execution-grant-history',

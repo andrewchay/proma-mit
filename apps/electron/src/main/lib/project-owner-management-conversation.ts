@@ -67,8 +67,12 @@ export function withOwnerConversationContext(context: ProjectOwnerPlanningContex
   const employee = message?.kind === 'employee_interaction' && message.role === 'assistant' ? message.employeeInteraction : undefined
   const fileObservation = message?.kind === 'file_change_observation' && message.role === 'assistant' && message.fileChangeObservationId ? (require('./project-file-change-observations') as typeof import('./project-file-change-observations')).getAuthorizedProjectFileChangeObservation(projectId, message.fileChangeObservationId) : null
   if (message?.kind === 'file_change_observation' && !fileObservation) throw new Error('文件变化观察的授权已失效')
+  const webObservation = message?.kind === 'web_change_observation' && message.role === 'assistant' && message.webChangeObservationId
+    ? (require('./project-web-change-observations') as typeof import('./project-web-change-observations')).getAuthorizedProjectWebChangeObservation(projectId, message.webChangeObservationId)
+    : null
+  if (message?.kind === 'web_change_observation' && !webObservation) throw new Error('外部变化观察的账本记录已失效')
   const observation = message?.kind === 'execution_observation' && message.role === 'assistant' ? message.executionObservation : undefined
-  if (!manager || !message || (!employee && !observation && !fileObservation && (message.role !== 'user' || message.kind !== 'conversation')) || message.taskId !== taskId || message.goalRevision !== context.goal.revision) throw new Error('Owner对话来源与当前目标不一致')
+  if (!manager || !message || (!employee && !observation && !fileObservation && !webObservation && (message.role !== 'user' || message.kind !== 'conversation')) || message.taskId !== taskId || message.goalRevision !== context.goal.revision) throw new Error('Owner对话来源与当前目标不一致')
   if (employee) {
     const current = (require('./project-owner-employee-interactions') as typeof import('./project-owner-employee-interactions')).getOwnerEmployeeInteraction(projectId, employee.id)
     if (!current || current.requestHash !== employee.requestHash) throw new Error('员工待决事项已更新')
@@ -79,13 +83,13 @@ export function withOwnerConversationContext(context: ProjectOwnerPlanningContex
   }
   const historyEnd = historyThroughMessageId ? getOwnerManagementMessage(projectId, historyThroughMessageId) : null
   if (historyThroughMessageId && (!historyEnd || historyEnd.taskId !== taskId)) throw new Error('Owner对话历史边界无效')
-  const latest = historyEnd ?? (observation || employee || fileObservation ? message : (() => {
+  const latest = historyEnd ?? (observation || employee || fileObservation || webObservation ? message : (() => {
     const row = store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id = ? AND json_extract(payload, '$.taskId') IS ? ORDER BY rowid DESC LIMIT 1").get(projectId, taskId ?? null) as { id: string } | undefined
     return row ? getOwnerManagementMessage(projectId, row.id) : null
   })())
   if (!latest) throw new Error('Owner对话历史为空')
   // 反馈只绑定一项成果；同时保留同轮目录，避免把最后一份说明当成全部交付。
-  const deliveryRow = includeDeliveryCatalog && !observation && !employee && !fileObservation ? store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id = ? AND json_extract(payload, '$.taskId') IS ? AND json_extract(payload, '$.kind') = 'delivery' AND rowid <= (SELECT rowid FROM project_owner_management_messages WHERE id = ?) ORDER BY rowid DESC LIMIT 1").get(projectId, taskId ?? null, latest.id) as { id: string } | undefined : undefined
+  const deliveryRow = includeDeliveryCatalog && !observation && !employee && !fileObservation && !webObservation ? store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id = ? AND json_extract(payload, '$.taskId') IS ? AND json_extract(payload, '$.kind') = 'delivery' AND rowid <= (SELECT rowid FROM project_owner_management_messages WHERE id = ?) ORDER BY rowid DESC LIMIT 1").get(projectId, taskId ?? null, latest.id) as { id: string } | undefined : undefined
   const deliveryMessage = deliveryRow ? getOwnerManagementMessage(projectId, deliveryRow.id) : null
   const deliveredArtifacts = deliveryMessage?.delivery ? { version: 1 as const, messageId: deliveryMessage.id, planVersion: deliveryMessage.delivery.planVersion,
     items: deliveryMessage.delivery.items.map(({ stepKey, title, artifactHash }) => ({ stepKey, title, artifactHash })) } : undefined
@@ -106,7 +110,7 @@ export function withOwnerConversationContext(context: ProjectOwnerPlanningContex
   const employeeInteractions = employeeInteractionVersion === 1
     ? frozenEmployeeInteractions ?? (require('./project-owner-employee-interactions') as typeof import('./project-owner-employee-interactions')).listOwnerEmployeeInteractions(projectId).filter(item => ['pending_owner', 'discussing_user'].includes(item.state))
     : undefined
-  const result = { ...context, conversation: { ...(fileObservation ? { fileChangeObservation: fileObservation } : {}), ...(fileObservation ? { fileChangeObservation: fileObservation } : {}), ...(deliveredArtifacts ? { deliveredArtifacts } : {}), ...(employeeInteractions ? { employeeInteractionVersion: 1 as const, employeeInteractions } : {}), ...(deliveryFeedback ? { deliveryFeedback } : {}), ...(observation ? { executionObservation: observation, ...(messageBindingVersion === 1 ? { observationMessageBindingVersion: 1 as const } : {}), ...(deliveryVersion === 1 ? { deliveryReview: readOwnerManagementDelivery(projectId, observation, frozenDeliveryReview === undefined ? undefined : { qualityRecovery: frozenDeliveryReview.qualityRecovery }) } : {}) } : interactionVersion === 2 ? { interactionVersion: 2 as const, openQuestions: questionSources.getOwnerConversationQuestionSources(context, latest.id) } : {}), conversationId: manager.conversationId, throughMessageId: messageId, historyThroughMessageId: latest.id, messages: messages.reverse(), truncated: messages.length < rows.length, currentPlan: plan ? { revision: plan.revision, state: plan.state, proposal: plan.proposal } : null, tasks: tasks.slice(0, 30).map(({ id, title, status }) => ({ id, title, status })), tasksTruncated: tasks.length > 30 } }
+  const result = { ...context, conversation: { ...(fileObservation ? { fileChangeObservation: fileObservation } : {}), ...(webObservation ? { webChangeObservation: { id: webObservation.id, projectId: webObservation.projectId, runId: webObservation.runId, judgment: webObservation.judgment, facts: webObservation.facts.map(({ title, url, sourceId, snippetDigest, publishedAt, quote, isInference }) => ({ title, url, sourceId, snippetDigest, publishedAt, quote, isInference })), impact: webObservation.impact, suggestion: webObservation.suggestion, question: webObservation.question, uncertainty: webObservation.uncertainty, failureReason: webObservation.failureReason, createdAt: webObservation.createdAt, contentHash: webObservation.contentHash } } : {}), ...(deliveredArtifacts ? { deliveredArtifacts } : {}), ...(employeeInteractions ? { employeeInteractionVersion: 1 as const, employeeInteractions } : {}), ...(deliveryFeedback ? { deliveryFeedback } : {}), ...(observation ? { executionObservation: observation, ...(messageBindingVersion === 1 ? { observationMessageBindingVersion: 1 as const } : {}), ...(deliveryVersion === 1 ? { deliveryReview: readOwnerManagementDelivery(projectId, observation, frozenDeliveryReview === undefined ? undefined : { qualityRecovery: frozenDeliveryReview.qualityRecovery }) } : {}) } : interactionVersion === 2 ? { interactionVersion: 2 as const, openQuestions: questionSources.getOwnerConversationQuestionSources(context, latest.id) } : {}), conversationId: manager.conversationId, throughMessageId: messageId, historyThroughMessageId: latest.id, messages: messages.reverse(), truncated: messages.length < rows.length, currentPlan: plan ? { revision: plan.revision, state: plan.state, proposal: plan.proposal } : null, tasks: tasks.slice(0, 30).map(({ id, title, status }) => ({ id, title, status })), tasksTruncated: tasks.length > 30 } }
   if (JSON.stringify(result).length > 280000) throw new Error('Owner对话与资料合计过长，请精简当前资料后继续')
   return result
 }
@@ -122,7 +126,7 @@ export function chooseOwnerPendingSource(input: { hasUser: boolean; userPrepared
 
 /** 已落库但尚未建立Owner请求的员工结果，重启后仍须补齐交接。 */
 function pendingOwnerObservation(projectId: string, taskId?: string): { id: string } | undefined {
-  return store.getProjectDb().prepare("SELECT m.id FROM project_owner_management_messages m WHERE m.project_id=? AND json_extract(m.payload, '$.kind') IN ('execution_observation','employee_interaction','file_change_observation') AND json_extract(m.payload, '$.taskId') IS ? AND NOT EXISTS (SELECT 1 FROM project_owner_management_messages ignored WHERE ignored.project_id=m.project_id AND ignored.event_id='conversation-stale:' || m.id) AND NOT EXISTS (SELECT 1 FROM project_owner_planning_links l WHERE l.project_id=m.project_id AND json_extract(l.payload, '$.conversationMessageId')=m.id) ORDER BY m.rowid LIMIT 1").get(projectId, taskId ?? null) as { id: string } | undefined
+  return store.getProjectDb().prepare("SELECT m.id FROM project_owner_management_messages m WHERE m.project_id=? AND json_extract(m.payload, '$.kind') IN ('execution_observation','employee_interaction','file_change_observation','web_change_observation') AND json_extract(m.payload, '$.taskId') IS ? AND NOT EXISTS (SELECT 1 FROM project_owner_management_messages ignored WHERE ignored.project_id=m.project_id AND ignored.event_id='conversation-stale:' || m.id) AND NOT EXISTS (SELECT 1 FROM project_owner_planning_links l WHERE l.project_id=m.project_id AND json_extract(l.payload, '$.conversationMessageId')=m.id) ORDER BY m.rowid LIMIT 1").get(projectId, taskId ?? null) as { id: string } | undefined
 }
 
 /** 新消息串行交给同一管理主体；运行期间只落消息，结果回调后再准备后续批次。 */
@@ -149,11 +153,15 @@ export function preparePendingOwnerConversation(projectId: string, taskId?: stri
       return outcome && ['replied', 'proposed', 'needs_clarification'].includes(outcome.state)
     }))
     if (handled) return false
-    appendOwnerManagementMessage({ projectId, eventId: `conversation-stale:${message.id}`, role: 'assistant', kind: 'attention', ...(taskId ? { taskId } : {}), content: message.kind === 'file_change_observation' ? '文件变化观察记录后项目目标已更新，我不会把旧观察套用到新目标。' : '这条消息保存后，项目目标已更新。我保留了原文，但不会把它套用到新目标；请在当前目标下补充你的想法。' })
+    appendOwnerManagementMessage({ projectId, eventId: `conversation-stale:${message.id}`, role: 'assistant', kind: 'attention', ...(taskId ? { taskId } : {}), content: message.kind === 'file_change_observation' ? '文件变化观察记录后项目目标已更新，我不会把旧观察套用到新目标。' : message.kind === 'web_change_observation' ? '外部变化观察记录后项目目标已更新，我不会把旧观察套用到新目标。' : '这条消息保存后，项目目标已更新。我保留了原文，但不会把它套用到新目标；请在当前目标下补充你的想法。' })
     return false
   }
   if (message.kind === 'file_change_observation' && (!message.fileChangeObservationId || !(require('./project-file-change-observations') as typeof import('./project-file-change-observations')).getAuthorizedProjectFileChangeObservation(projectId, message.fileChangeObservationId))) {
     appendOwnerManagementMessage({ projectId, eventId: `conversation-stale:${message.id}`, role: 'assistant', kind: 'attention', content: '文件变化分析授权已撤销，未启动该观察的模型分析。' })
+    return false
+  }
+  if (message.kind === 'web_change_observation' && (!message.webChangeObservationId || !(require('./project-web-change-observations') as typeof import('./project-web-change-observations')).getAuthorizedProjectWebChangeObservation(projectId, message.webChangeObservationId))) {
+    appendOwnerManagementMessage({ projectId, eventId: `conversation-stale:${message.id}`, role: 'assistant', kind: 'attention', content: '外部变化观察的账本记录已失效，未启动该观察的模型分析。' })
     return false
   }
   const delegation = getOwnerManagementDelegation(projectId, taskId)
@@ -224,7 +232,7 @@ export function preparePendingOwnerConversation(projectId: string, taskId?: stri
       && source.planRevision === (plan?.revision ?? 0) && source.contextFingerprint === context.fingerprint) return true
   }
   const link = prepareOwnerPlanning(projectId, { requestId: `conversation:${message.id}${previousLink ? `:recovered:${binding.revision}:${goal.revision}:${plan?.revision ?? 0}` : ''}`, ...(taskId ? { taskId } : {}), conversationMessageId: message.id, expectedBindingRevision: binding.revision, expectedGoalRevision: goal.revision, expectedPlanRevision: plan?.revision ?? 0, expectedContextFingerprint: context.fingerprint })
-  appendOwnerManagementMessage({ projectId, eventId: `conversation-ready:${message.id}:${link.planningTaskId}`, role: 'assistant', kind: message.executionObservation || message.kind === 'file_change_observation' ? 'management_progress' : 'planning_confirmation', ...(taskId ? { taskId } : {}), planningTaskId: link.planningTaskId, content: message.kind === 'file_change_observation' ? '文件变化观察已记录。我会在已确认的管理范围内分析可能影响；许可不可用时保留观察并停等。' : message.executionObservation ? '员工的最新情况已记录。我会在已确认的管理范围内分析进展与问题；许可不可用时保留结果并停等。' : '消息已保存。我正在结合当前目标、方案和项目状态回应；若授权或费用状态阻止继续，我会在这里说明具体原因。聊天本身不修改目标、方案或执行许可。' })
+  appendOwnerManagementMessage({ projectId, eventId: `conversation-ready:${message.id}:${link.planningTaskId}`, role: 'assistant', kind: message.executionObservation || message.kind === 'file_change_observation' ? 'management_progress' : 'planning_confirmation', ...(taskId ? { taskId } : {}), planningTaskId: link.planningTaskId, content: message.kind === 'file_change_observation' ? '文件变化观察已记录。我会在已确认的管理范围内分析可能影响；许可不可用时保留观察并停等。' : message.kind === 'web_change_observation' ? '外部变化观察已记录。我会在已确认的管理范围内分析可能影响；许可不可用时保留观察并停等。' : message.executionObservation ? '员工的最新情况已记录。我会在已确认的管理范围内分析进展与问题；许可不可用时保留结果并停等。' : '消息已保存。我正在结合当前目标、方案和项目状态回应；若授权或费用状态阻止继续，我会在这里说明具体原因。聊天本身不修改目标、方案或执行许可。' })
   return true
 }
 

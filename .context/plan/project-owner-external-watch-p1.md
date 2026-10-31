@@ -232,77 +232,184 @@ interface ProjectWebChangeObservation {
 未接线说明：本切片只是账本，`recordProjectWebChangeObservation` 目前没有调用方，
 要等 S4 改造扫描链路才会产生真实记录。这是预期状态，不是遗漏。
 
-### S2 判断协议（L）
+### S2 判断协议（L）— 已完成 2026-11-01
+
+新增：
+- `apps/electron/src/main/lib/project-web-observation-prompt.ts`
+- `apps/electron/src/main/lib/project-web-observation-parse.ts`
+- `apps/electron/src/main/lib/project-web-observation-protocol.test.ts`（15 项）
+
+提示词（`buildWebObservationPrompt`）：
+- 可信区（项目、目标与约束、完成标准、当前方案、未完成工作、历史观察、用户反馈）在前，
+  不可信区 `<untrusted_web_sources>` 在后，网页正文只落在包裹内。
+- 时间规则写死：发布时间只认来源对象的 `publishedAt`，为空时必须写 null，
+  不得用扫描日期、相对时间或推测日期顶替。
+- 相关性规则写死：必须点名受影响的目标/约束/完成标准/未完成工作；关键词相似不算相关。
+- 权限边界写死：不制定计划、不派工、不执行工具、不写文件、不联系他人、不改目标或授权。
+- 输出字段逐个列出并要求"多一个字段都无效"；协议版本 `WEB_OBSERVATION_PROMPT_VERSION = 1`。
+- 截断：来源 ≤30 条、单条摘要 ≤1200 字、来源块 ≤24k 字，超出返回 `truncated: true`
+  且必须原样写进观察记录的 `evaluation.truncated`。
+
+解析（`parseWebObservationResponse`）：
+- 顶层与事实两级字段白名单，出现未知字段直接失败（模型无法夹带 `authorized` 之类字段）。
+- 来源归属由本机复核：链接归一化后必须在本次来源里，否则丢弃该条；全丢则判定失败。
+- 发布时间以来源为准：来源没有就清空并计数，模型写的日期与来源不一致时采用来源值并计数。
+- 事实必须带原文引用，推断必须不带引用，两类分开存；同一来源允许一条事实 + 一条推断。
+- `decision_required` 必带问题、`insufficient_evidence` 必带原因、`duplicate` 必须指向
+  历史里真实存在的观察 id；关联观察只保留历史中存在的 id。
+- 任何失败都返回 `{ ok: false, failureReason }`，由 `insufficientEvidenceCandidate()`
+  转成只带原因的候选，不抛到扫描层、不伪造结论。
+
+对 S1 的两处修正（同步改了账本，单测已覆盖）：
+1. `record_only` 允许零引用。原规则要求至少一条来源，但"本期未发现相关变化"本来就没有来源。
+2. 同源去重从 `sourceId` 改为 `sourceId + 事实/推断性质`。原规则会把同一来源的推断一并丢掉。
+
+验收：
+- 15 项新单测 + 既有 11 项全部通过（26 pass / 0 fail）。
+- `typecheck` 9 包 exit 0；`biome check` 4 个文件通过；`docs:check` 通过。
+- 覆盖了方案 §11 里三类场景：来源含操控指令、发布时间无法确认、关键词相似但无关。
+
+未接线说明：判断链路仍未接进扫描服务，`buildWebObservationPrompt` 与
+`recordProjectWebChangeObservation` 之间还差 S4 的调用点。
+
+### S3 确定性去重（M）— 已完成 2026-11-01
+
+做法：**把"同源是否真有新内容"变成可离线核对的指纹，不再依赖扫描流水。**
+
+- `ProjectWebChangeFact` 新增 `snippetDigest`：来源摘要空白归一后的 SHA-256，空摘要为 null。
+  这样判断"内容变没变"只看账本，与 JSONL 保留 30 次还是 90 次无关。
+- `snippetDigestOf(snippet)`：单一实现，账本与去重共用。
+- `listPriorObservationsBySource(projectId, limit)`：每个来源最近一次**有实质内容**的观察；
+  重复判定记录本身不参与，避免 `duplicateOf` 链越拉越长。
+- `applyDeterministicDedup(input)`：返回调整后的判定、重复指向、重复原因、关联 id、重复来源列表。
+
+判定规则：
+
+| 情况 | 结果 |
+| --- | --- |
+| 同来源 + 摘要相同 | `duplicate`，原因 `no_new_content` |
+| 同来源 + 摘要不同 | 不是重复，保留原判定，只加关联指针 |
+| 同来源但旧记录没有摘要指纹 | 保守判 `same_source` 重复（宁可少提醒） |
+| 所有事实都重复 | 整个判定降为 `duplicate` |
+| 只有部分事实重复 | 保留原判定，关联只指向真实重复的记录 |
+| 模型已判 `duplicate` 且指向有效 | 尊重模型结论，只补齐关联 |
+
+验收：
+- 10 项新单测 + 既有 26 项，共 **36 pass / 0 fail**。
+- 覆盖"40 次扫描后仍命中最早来源"，证明去重不依赖流水窗口。
+- `typecheck` 9 包 exit 0；`biome check` 通过；`docs:check` 通过。
+
+已知边界：`same_event`（多 URL 同事件）仍留给模型判断，本层不做语义归并。
+
+### S4 扫描链路改造（M）— 已完成 2026-11-01（预算结算除外）
 
 改动：
-- `project-web-observation-prompt.ts`（新建）
-- `project-web-observation-parse.ts`（新建，字段白名单 + 归一化）
+- `project-web-watch-store.ts`（新建）：路径与删除清理，脱离项目服务，避免循环引用。
+- `project-web-change-judgment.ts`（新建）：解析 → 去重 → 落账的一次编排，不碰网络，可单测。
+- `project-web-watch-service.ts`：删除自由文本分析，改为「装配上下文 → 判断提示词 → 模型 → 判断落账」。
+- `project-service.ts`：项目删除时清理本机扫描文件。
+- `ProjectView.tsx`：`skipped` 不再显示为"失败"。
 
-内容：
-- 结构化输出提示词，未信区块包裹，时间与引用规则写死。
-- 解析失败 → `insufficient_evidence` + `failureReason`，不抛到 run 层。
+落地的行为：
+
+| 情况 | 记录方式 |
+| --- | --- |
+| 搜索成功 + 判断成功 | run.status `success`，带 `observationId` 与 `judgment` |
+| 搜索成功 + 模型/解析失败 | run.status 仍 `success`，观察记 `insufficient_evidence` 并保留原因 |
+| 搜索失败（网络、无渠道） | run.status `failed` + error |
+| Owner 模型额度已用尽 | run.status `skipped`，`skipReason: budget_exhausted`，**搜索前**即返回，不产生观察 |
+
+其他：
+- `run.analysis` 保留为兼容字段，但内容改为由结构化结论生成的一句话，不再回传模型自由文本。
+- 通知条件从"有新来源且没有那句固定措辞"改为 `judgment` 是 `attention` / `decision_required`。
+- 扫描流水保留 90 次，每轮结束自动轮转（`rotateProjectWebWatchRuns`）。
+- 项目删除时清理 `projects/web-watch/{id}.json` 与 `.jsonl`（S0 发现的泄漏）。
 
 验收：
-- 8 个质量场景里"来源含操控指令""发布时间无法确认""与项目无关但关键词相似"三类的单测。
+- 7 项新单测 + 既有 41 项，共 **48 pass / 0 fail**。
+- `typecheck` 9 包 exit 0；`biome check` 6 文件通过；`docs:check` 通过。
 
-### S3 确定性去重（M）
+两处未闭环，不得当成已完成：
 
-改动：`project-web-change-observations.ts` 增加 `findDuplicateObservation()`、URL 归一化工具。
+1. **模型选择仍未复用 Owner 配置**。仓库里没有项目级的 Owner 模型访问器：模型只出现在每次规划运行的 admission 绑定里
+   （`carrierId/channelId/modelId`），没有可读的项目级设置。当前仍取第一个启用渠道，但把 `modelId` 写进
+   `evaluation.modelId` 以便追溯。要真正复用，需要先有 Owner 模型绑定的读取入口。
+2. **预算门禁是只读的**。Owner 的"项目预算"实际挂在管理委托的 `maxCostMicros` 上，
+   `getOwnerModelBudgetUsage` 只统计委托认领的模型开销。扫描自身的费用**没有写入这条账本**，
+   所以门禁只能在"Owner 额度已满"时拦住扫描，无法让扫描消耗被记账。
+   要做到真正"走 Owner 现有预算"，需要决定是否给扫描建认领与结算记录；未决定前保持只读门禁。
+
+### S5 投递到项目对话（L）— 已完成 2026-11-01
+
+改动（八处，少一处就断链）：
+- `packages/shared/src/types/project-owner-management.ts`：kind 加 `web_change_observation`，消息加 `webChangeObservationId`
+- `packages/shared/src/types/project-owner.ts`：`OwnerPlanningConversationContext` 加 `webChangeObservation`（事实、影响、问题、不确定性、哈希）
+- `packages/shared/src/types/work-module.ts`：新增 `GET_WEB_CHANGE_OBSERVATION` 通道
+- `project-owner-management-store.ts`：`assertDeliveryMessage` 校验该 id 只能出现在 assistant 的 `web_change_observation` 上；幂等比对补字段
+- `project-owner-management-conversation.ts`：读取并复核账本、来源校验、`latest` 计算、交付目录判定、
+  触发白名单、目标变更分支、授权失效分支、就绪文案
+- `project-owner-planning-protocol.ts`：字段白名单、子结构校验、`throughMessageId` 允许 assistant 观察消息、
+  专用提示词（只允许 `conversation_reply`）、解析阶段拒绝其他 kind
+- `project-web-change-observation-delivery.ts`（新建）：投递判定与摘要文案
+- `WebChangeObservationCard.tsx`（新建）+ `OwnerManagementConversation.tsx`：观察卡片，按 id 拉取明细并展示来源链接
+
+投递规则：
+
+| 判定 | 是否进对话 |
+| --- | --- |
+| `attention` / `decision_required` | 进，一条系统来源消息 |
+| `record_only` / `duplicate` / `insufficient_evidence` | 不进，只留项目页账本 |
+| 目标版本已变 | 不套用旧观察，改写一条 attention 提示（eventId `web-change-stale:{id}`） |
+| 账本记录被改写 / 失效 | 构造请求时抛错，不静默使用 |
+| 重复投递 | 幂等，不产生第二条消息 |
 
 验收：
-- 同 URL 同 snippet → `duplicate`，`duplicateOf` 指向旧记录。
-- 同 URL 不同 snippet → 新记录，`relatedObservationIds` 含旧记录。
-- 30 次运行窗口外的旧记录仍能命中（改为直接查账本表，不依赖 JSONL 截断）。
+- 新增 4 项对话链路单测，连同既有共 **77 pass / 0 fail**（6 个文件）。
+- 覆盖：只投递需要人看的判定、重复投递幂等、无预算时只落消息不调模型、目标变更改提示、
+  上下文注入来源、协议只允许分析回应、篡改账本被拒。
+- `typecheck` 9 包 exit 0；`biome check` 12 文件通过。
 
-### S4 扫描链路改造（M）
+未覆盖：观察卡片的浏览器用例暂未补（现有 `.browser.test.ts` 需要界面环境），
+卡片在无数据时回退为对话内摘要文本，不会空白。
+
+### S6 用户反馈（M）— 已完成 2026-11-01
 
 改动：
-- `project-web-watch-service.ts`：把 `analysis` 自由文本替换为"生成观察记录"；`analysis` 字段保留为兼容（可放一句摘要）。
-- `project-web-watch-policy.ts`：预算不足时跳过。
+- `project-web-observation-feedback.ts`（新建）+ 新表 `project_web_observation_feedback`（项目删除时级联清理）
+- `project-web-change-judgment.ts`：判为需要关注但来源已被静音时，降级 `record_only` 并在 `uncertainty` 写明原因
+- `project-web-watch-service.ts`：把最近 20 条反馈送进判断提示词（原来传空数组）
+- IPC 四段式（shared 通道 → 主进程 handler → preload → 卡片按钮）
 
-验收：
-- 扫描成功必定产生 ≥1 条观察记录（含 `insufficient_evidence`）。
-- 扫描失败 / 模型失败 / 预算不足三种情况在 run 与观察记录上可区分。
+规则：
+- `helpful`：只计数，不静音。
+- `irrelevant`：该来源长期静音（不设过期）。
+- `snooze`：默认 7 天，可设 1–90 天，到点自动失效。
+- 同一观察同一结论重复提交幂等，不覆盖首次时间与原因。
+- 反馈只影响提醒，不改项目目标、授权，也不写全局记忆。
 
-### S5 投递到项目对话（L）
+验收：5 项新单测；覆盖不相关长期静音、暂不关注到期失效、静音降级 `record_only`、重复提交幂等、观察不存在时不落库。
 
-改动（这五处必须同时改，少一处就断链）：
-- `packages/shared/src/types/project-owner-management.ts:32`：kind 加 `web_change_observation`，消息加 `webChangeObservationId`
-- `project-owner-management-store.ts`：`assertDeliveryMessage` 与幂等比对字段
-- `project-owner-management-conversation.ts`：`:68-69` 读取校验、`:125` 触发白名单、`:152-155` 失效与陈旧分支、`:227` 就绪文案
-- `project-owner-planning-protocol.ts`：`:187` 字段白名单、`:222` 子结构校验、`:294` 注入防护措辞、`:474` 只允许 `conversation_reply`（`decision_required` 允许 `needs_clarification`）
-- `OwnerManagementConversation.tsx`：新增卡片
+### S7 通知收敛（S）— 已完成 2026-11-01
 
-验收：
-- 只有 `attention` / `decision_required` 投递；`record_only` / `duplicate` 不进对话。
-- 观察消息不会抢占用户消息（沿用 `chooseOwnerPendingSource` 的既有公平规则）。
-- 观察失效（授权撤销/目标版本变更）时给出明确提示，不静默丢弃，也不套用新目标。
+改动：
+- `project-web-watch-policy.ts`：新增 `shouldNotifySuccess` / `shouldNotifyFailure`（纯函数，便于测试）
+- `project-web-watch-service.ts`：配置新增 `lastNotifiedAt` / `lastFailureNotifiedAt` / `consecutiveFailures`；
+  成功提醒按"当天是否已提醒"去重；失败提醒 24 小时一条，连续 3 次后降级为只在项目页显示；成功一轮重置失败计数
 
-### S6 用户反馈（M）
+验收：7 项新 policy 单测（同日去重、跨日允许、24 小时节流、连续失败降级、非法次数不提醒）。
 
-改动：表 + IPC 四段式（shared 常量 → `ipc.ts` → `preload` → renderer）+ 卡片按钮 + 反馈进判断上下文。
+### S8 真实项目观察（人工）— 未执行，需真实环境
 
-验收：
-- 反馈写入后可被下一轮判断读到（同项目、最近 20 条）。
-- `snooze` 生效期内同类 `sourceId` 不产生 `attention`。
-- 反馈不触发目标修改。
+**没有执行，也不假装执行过。** 本机没有真实 Provider、搜索凭据与带外部变化的真实项目，
+真实扫描会产生第三方费用，必须由你确认。
 
-### S7 通知收敛（S）
+已交付：
+- `.context/plan/web-observation-s8-runbook.md`：前置条件、7 天执行步骤、记录表、质量结论模板、已知限制
+- `project-web-observation-metrics.ts`（新建）：`summarizeWebObservationQuality(projectId, since)`，
+  输出五态分布、重复率、证据不足率、发布时间缺失比、截断次数、反馈分布；无数据时比率为 `null` 而不是 0
+- 4 项单测覆盖汇总口径
 
-改动：`project-web-watch-service.ts` 两处 `sendSystemNotification`；新增项目级失败限流状态。
-
-验收：一天多条合并一条；24 小时失败上限 1 条；无 `attention` 时无通知。
-
-### S8 真实项目观察（人工，S+L 时间跨度）
-
-选一个有真实目标、近期确有外部变化的项目，连续观察 ≥7 次扫描，记录：
-- 新来源数 / 真正新变化数
-- `attention` 比例、用户反馈分布
-- 遗漏的重要变化
-- 事实、推断、时间、来源的准确性
-- 提醒次数与处理成本
-
-产出：一份观察结果文档，标注哪些规则需要调整。**未得到这份结果前，不进入方案第四批。**
+硬条件不变：**未拿到真实观察结论前，不设计第四批（受控行动）。**
 
 ---
 

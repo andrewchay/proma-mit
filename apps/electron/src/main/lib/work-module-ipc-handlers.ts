@@ -24,6 +24,8 @@ import { confirmPilotGrantIssue, previewPilotGrantIssue } from './project-pilot-
 import { confirmPilotGrantPauseAndRequestStops, previewPilotGrantPauseImpact } from './project-pilot-grant-pause'
 import { savePilotPolicyDraft } from './project-pilot-policy'
 import { getProjectWebWatchConfig, listProjectWebWatchRuns, runProjectWebWatch, saveProjectWebWatchConfig } from './project-web-watch-service'
+import { getAuthorizedProjectWebChangeObservation } from './project-web-change-observations'
+import { recordWebObservationFeedback } from './project-web-observation-feedback'
 import {
   SCHEDULE_IPC_CHANNELS,
   CALENDAR_SYNC_IPC_CHANNELS,
@@ -457,6 +459,8 @@ export function registerWorkModuleIpcHandlers(): void {
   ipcMain.handle(PROJECT_IPC_CHANNELS.SAVE_WEB_WATCH, (_, input: Parameters<typeof saveProjectWebWatchConfig>[0]) => saveProjectWebWatchConfig(input))
   ipcMain.handle(PROJECT_IPC_CHANNELS.RUN_WEB_WATCH, async (_, projectId: string) => runProjectWebWatch(projectId))
   ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_WEB_WATCH_RUNS, (_, projectId: string) => listProjectWebWatchRuns(projectId))
+  ipcMain.handle(PROJECT_IPC_CHANNELS.GET_WEB_CHANGE_OBSERVATION, (_, projectId: string, id: string) => getAuthorizedProjectWebChangeObservation(projectId, id))
+  ipcMain.handle(PROJECT_IPC_CHANNELS.RECORD_WEB_OBSERVATION_FEEDBACK, (_, input: Parameters<typeof recordWebObservationFeedback>[0]) => recordWebObservationFeedback(input))
   ipcMain.handle(PROJECT_IPC_CHANNELS.OBSERVE_PILOT, async (_, projectId: string) => {
     return observeProjectPilot(projectId)
   })

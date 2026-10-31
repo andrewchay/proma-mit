@@ -353,3 +353,129 @@ node-pty 也无法真正起 shell（仓库内短路径同样 `posix_spawnp faile
 - 11 项单测全通过；typecheck 9 包 exit 0；biome 5 文件通过；docs:check 通过（已重新生成 repository-facts）
 - 既有回归：project-file-change-policy 9 项、project-web-watch-service 5 项全通过
 - 实现期修正：contentHash 不覆盖 createdAt（否则重复写入会误报内容不一致）
+
+---
+
+# 外部变化观察 S2：判断协议（2026-11-01 00:04 起）
+
+## 状态：已完成（未提交）
+
+- [x] `project-web-observation-prompt.ts`：可信区/不可信包裹、时间与相关性规则、截断标注、协议版本 1
+- [x] `project-web-observation-parse.ts`：两级字段白名单、来源归属复核、发布时间归属、降级候选、账本入参转换
+- [x] 15 项单测（含端到端落库、降级落库、零引用 record_only）
+- [x] S1 两处修正：record_only 允许零引用；同源去重改为「来源 + 事实/推断性质」
+
+## 验证
+- 26 pass / 0 fail（S1 11 项 + S2 15 项）；typecheck 9 包 exit 0；biome 通过；docs:check 通过
+
+## 未接线
+- 提示词与账本之间还差 S4 的调用点，判断链路尚未进入扫描服务
+
+## 下一步
+- [ ] S3 确定性去重（URL 归一化查账本、关联指针）
+- [ ] S4 扫描链路改造（含 JSONL 轮转与 web-watch 文件删除清理）
+
+---
+
+# 外部变化观察 S3：确定性去重（2026-11-01 00:20 起）
+
+## 状态：已完成（未提交）
+
+- [x] 事实新增 `snippetDigest`（来源摘要指纹），去重不再依赖扫描流水窗口
+- [x] `snippetDigestOf` 单一实现；账本写入时自动计算
+- [x] `listPriorObservationsBySource`：重复判定记录不参与，避免指针链
+- [x] `applyDeterministicDedup`：同源同摘要 → duplicate；同源新内容 → 保留判定 + 关联；旧记录无指纹 → 保守重复
+- [x] 10 项单测（含 40 次扫描后仍命中最早来源的窗口外验证）
+
+## 验证
+- 36 pass / 0 fail（S1 11 + S2 15 + S3 10）；typecheck 9 包 exit 0；biome 通过；docs:check 通过
+
+## 边界
+- `same_event`（多 URL 同一事件）仍由模型判断，本层不做语义归并
+
+## 下一步
+- [ ] S4 扫描链路改造（提示词 + 解析 + 去重接入；JSONL 轮转；web-watch 文件删除清理）
+
+---
+
+# 外部变化观察 S4：扫描链路接入（2026-11-01 00:48 起）
+
+## 状态：已完成（预算结算除外，未提交）
+
+- [x] `project-web-watch-store.ts`：路径 + 删除清理（脱离项目服务，避免循环引用）
+- [x] `project-web-change-judgment.ts`：解析 → 去重 → 落账的编排，纯本地可测
+- [x] 扫描服务：删掉自由文本分析，改为「上下文装配 → 提示词 → 模型 → 判断落账」
+- [x] run 新增 `observationId` / `judgment` / `status: skipped` + `skipReason`
+- [x] 模型/解析失败记 `insufficient_evidence` 留证，不再把整轮扫描判为 failed
+- [x] 通知改为按 judgment（attention / decision_required）触发
+- [x] 流水保留 90 次并自动轮转
+- [x] 项目删除清理 web-watch 的 json/jsonl（S0 发现的泄漏）
+- [x] 项目页 `skipped` 不再显示为"失败"
+
+## 验证
+- 48 pass / 0 fail（S1 11 + S2 15 + S3 10 + S4 7 + 既有调度 5）
+- typecheck 9 包 exit 0；biome 6 文件通过；docs:check 通过
+
+## 未闭环（不得写成已完成）
+- [ ] 模型未复用 Owner 配置：仓库缺项目级 Owner 模型访问器，模型只存在于每次运行的 admission 绑定
+- [ ] 预算门禁是只读：扫描费用未写入 Owner 委托账本，只能拦"额度已满"，不能让扫描消耗被记账
+      → 需决定是否给扫描建认领与结算记录
+
+## 下一步
+- [ ] S5 投递到项目对话（shared kind + store 幂等 + conversation 四处 + 协议白名单 + UI 卡片）
+
+---
+
+# 外部变化观察 S5：投递到项目对话（2026-11-01 00:55 起）
+
+## 状态：已完成（未提交）
+
+- [x] shared：消息 kind `web_change_observation` + `webChangeObservationId`；规划上下文加 `webChangeObservation`；IPC 通道
+- [x] store：该 id 只允许出现在 assistant 的观察消息；幂等比对补字段
+- [x] conversation：账本复核、来源校验、触发白名单、目标变更提示、授权失效提示、就绪文案
+- [x] planning-protocol：字段白名单、子结构校验、throughMessageId 允许观察消息、专用提示词、只允许 conversation_reply
+- [x] 投递模块：只投 attention/decision_required；目标已变改写 attention 提示
+- [x] IPC 四段式：shared 通道 → 主进程 handler → preload → 渲染层卡片
+- [x] 观察卡片：事实+来源链接、推断单列、影响/建议/待决问题、未确认发布时间提示
+
+## 验证
+- 77 pass / 0 fail（6 个文件，含新增 4 项对话链路用例）
+- typecheck 9 包 exit 0；biome 12 文件通过
+
+## 未覆盖
+- [ ] 观察卡片的浏览器用例未补（需界面环境）；无数据时回退为对话摘要文本
+
+## 下一步
+- [ ] S6 用户反馈（表 + IPC + 卡片按钮 + 反馈进判断上下文）
+- [ ] S7 通知收敛与失败限流
+- [ ] 预算结算口径待决定（只读门禁 vs 建认领结算）
+
+---
+
+# 外部变化观察 S6 / S7 / S8（2026-11-01 00:22 起）
+
+## S6 用户反馈：已完成
+- [x] 新表 `project_web_observation_feedback` + 反馈模块（helpful / irrelevant / snooze）
+- [x] 静音策略：不相关长期、暂不关注 7 天（1–90 可调）到期失效；重复提交幂等
+- [x] 判断层：来源全静音时 attention / decision_required 降级 record_only 并写明原因
+- [x] 提示词接入最近 20 条反馈；IPC 四段式 + 卡片三个按钮
+- [x] 5 项单测
+
+## S7 通知收敛：已完成
+- [x] `shouldNotifySuccess` / `shouldNotifyFailure` 移入 policy 模块（纯函数）
+- [x] 成功提醒当天最多一条；失败 24 小时最多一条；连续 3 次失败后不弹系统通知
+- [x] 成功一轮重置 `consecutiveFailures`
+- [x] 7 项 policy 单测
+
+## S8 真实项目观察：未执行（需真实环境）
+- [x] `.context/plan/web-observation-s8-runbook.md`（前置条件、7 天步骤、记录表、结论模板、已知限制）
+- [x] `project-web-observation-metrics.ts` 质量汇总 + 4 项单测
+- [ ] 真实 7 次扫描与人工对照（需真实 Provider/搜索凭据/真实项目，且需你授权花费）
+
+## 验证
+- 64 pass / 0 fail（7 个测试文件）；typecheck 9 包 exit 0；biome 13 文件通过；docs:check 通过
+
+## 未闭环（跨切片）
+- [ ] 预算结算口径：扫描费用未写入 Owner 委托账本，只有只读门禁
+- [ ] 模型未复用 Owner 配置（缺项目级 Owner 模型访问器）
+- [ ] 观察卡片无浏览器用例
