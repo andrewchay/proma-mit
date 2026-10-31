@@ -25,6 +25,7 @@ import { SaveAsWorkflowButton } from './SaveAsWorkflowButton'
 import { extractToolResultText, parseTaskCreateResult, TASK_TOOL_NAMES } from './task-progress'
 import { extractCompactBoundaryInfo } from './compact-boundary-info'
 import { getBlockKey } from './tool-utils'
+import { getLiveTraceIndex } from './live-trace'
 import { DurationBadge, buildUsageTooltip, formatDuration } from './AgentMessages'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import {
@@ -667,6 +668,7 @@ export function AssistantTurnRenderer({ turn, sessionId, allMessages, historical
   const lastTraceIndex = topLevelBlocks.reduce((last, block, index) =>
     block.type === 'thinking' || (block.type === 'tool_use' && !TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name)) ? index : last, -1)
   const hasTrace = lastTraceIndex >= 0
+  const liveTraceIndex = getLiveTraceIndex(topLevelBlocks, turn.turnMessages, !!isStreaming)
 
   // 如果只有错误消息
   if (enrichedBlocks.length === 0 && hasError && errorContent) {
@@ -721,12 +723,17 @@ export function AssistantTurnRenderer({ turn, sessionId, allMessages, historical
               {traceExpanded && (
                 <div className="ml-1.5 space-y-2 border-l border-border/60 pl-4">
                   {topLevelBlocks.map((block, i) => {
-                    if (i > lastTraceIndex || (block.type === 'tool_use' && TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name))) return null
+                    if (i === liveTraceIndex || i > lastTraceIndex || (block.type === 'tool_use' && TASK_TOOL_NAMES.has((block as SDKToolUseBlock).name))) return null
                     const childBlocks = block.type === 'tool_use' ? childBlocksMap.get((block as SDKToolUseBlock).id) : undefined
                     return <ContentBlock key={getBlockKey(block, i)} block={block.type === 'text' && 'text' in block && typeof block.text === 'string' ? { ...block, text: hideStatusEmoji(block.text) } : block} allMessages={allMessages} basePath={basePath} animate={!!isStreaming} index={i} dimmed={hasTextContent && block.type !== 'text'} childBlocks={childBlocks} isStreaming={isStreaming} />
                   })}
                 </div>
               )}
+              {liveTraceIndex != null && (() => {
+                const block = topLevelBlocks[liveTraceIndex]!
+                const childBlocks = block.type === 'tool_use' ? childBlocksMap.get((block as SDKToolUseBlock).id) : undefined
+                return <div className="ml-1.5 border-l border-border/60 pl-4"><ContentBlock block={block} allMessages={allMessages} basePath={basePath} animate index={liveTraceIndex} childBlocks={childBlocks} isStreaming /></div>
+              })()}
             </div>
           )}
           {topLevelBlocks.map((block, i) => {
