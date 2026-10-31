@@ -41,6 +41,10 @@ Owner 可预览当前绑定的执行工作区及 OpenDesign 参考版本；用�
 
 在独立工作树以提交 `a35ce85b` 构建未签名 arm64 Owner 测试包；检查 app.asar 中的四个 OpenDesign 资源分片及包内 Apache-2.0 许可证均存在。直接启动测试包，进程存活 10 秒并创建独立的 `Gravitas Owner Test 0.13.406` 配置目录，然后结束本次测试进程。该检查未验证包内下载交互或真实 Provider。打包器提示缺少 node-pty 的 spawn-helper 源文件；启动成功不证明内置终端可用，需另行验证终端及正式签名分发。
 
+### Owner 安装资源路径补齐
+
+检查当前 Owner 安装服务后发现：参考分片虽进入 renderer 的 `app.asar`，但主进程安装服务从 Electron `process.resourcesPath` 读取资源，之前 electron-builder 只复制许可证，导致打包应用无法安装。0.13.515 将目录索引及四个参考 JSON 与许可证一并复制到 `Contents/Resources/opendesign/`，安装服务优先从该目录读取，并保留开发资源回退。定向测试覆盖打包资源目录的读取；未签名 macOS arm64 构建产物中已核实上述六个文件齐全。此证据不包含安装 UI 手动操作、真实 Provider 遵循、品牌授权审核或签名发布验收。
+
 ## 工艺参考缺项提示
 
 Skill 显式要求的 craft 章节若目录不存在、文件缺失、为空或无法读取，组合上下文会列出缺项并要求执行者说明，不声称遵循了缺失内容；可用章节仍正常注入。定向测试覆盖全部缺失、部分缺失、完整资料及 ReadSkill 接线；该提示不证明真实 Provider 会遵守，也不是独立品牌合规审核，其他 Runtime 和打包应用仍需各自验收。

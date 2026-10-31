@@ -87,6 +87,16 @@ extraResources:
   - from: resources/employee-role-templates-LICENSE.txt
     to: employee-role-templates/LICENSE.txt
   # OpenDesign 参考正文编入 renderer，许可证需随分发包保留。
+  - from: resources/opendesign-brand-catalog.json
+    to: opendesign/opendesign-brand-catalog.json
+  - from: resources/opendesign-references-0.json
+    to: opendesign/opendesign-references-0.json
+  - from: resources/opendesign-references-1.json
+    to: opendesign/opendesign-references-1.json
+  - from: resources/opendesign-references-2.json
+    to: opendesign/opendesign-references-2.json
+  - from: resources/opendesign-references-3.json
+    to: opendesign/opendesign-references-3.json
   - from: resources/opendesign-LICENSE.txt
     to: opendesign/LICENSE.txt
   - from: default-tools
