@@ -691,6 +691,7 @@ export class AISDKRuntimeCore {
         sessionId: state.sessionId,
         // 运行时时绑定的活动会话对象：门禁据此校验身份，调用方无法用 sessionId 冒充其他会话。
         boundSession: state.activeSession,
+        runtime: 'ai-sdk',
         abortSignal: state.signal,
         permissionMode: state.activeSession.permissionMode,
         planModeEntered: state.activeSession.planModeEntered,

@@ -59,6 +59,8 @@ export interface ToolContext {
   sessionId: string
   /** Runtime 绑定的活动会话对象；门禁据此校验会话身份，防止调用方替换 sessionId。 */
   boundSession?: object
+  /** 本工具上下文的 Runtime 种类；与绑定身份比对，防止跨 Runtime 冒用会话对象。 */
+  runtime?: 'ai-sdk' | 'pi' | 'proma'
   /** 中止信号 */
   abortSignal?: AbortSignal
   /** 当前权限模式（Plan 模式判断用） */

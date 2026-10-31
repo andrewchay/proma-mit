@@ -351,6 +351,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     bindRuntimeSessionIdentity(guardedToolContext, piSessionIdentity)
     // 自引用：工具入口从 ctx.boundSession 读回「运行时时绑定的那个会话对象」再校验身份。
     guardedToolContext.boundSession = guardedToolContext
+    guardedToolContext.runtime = 'pi'
     let customTools = createPiToolBridge({
       toolContext: guardedToolContext,
       allowSubAgent: !controlled,

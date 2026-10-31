@@ -80,6 +80,8 @@ interface ToolCallExecutionCtx {
   sessionOwner?: object
   /** 传给工具实现的同一个活动会话对象；工具入口门禁据此校验绑定身份。 */
   boundSession?: object
+  /** 本 Runtime 身份；与绑定对象比对，防止跨 Runtime 冒用。 */
+  runtime?: 'ai-sdk' | 'pi' | 'proma'
   abortSignal?: AbortSignal
   permissionMode?: PromaPermissionMode
   planModeEntered?: boolean
@@ -547,6 +549,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           sessionOwner: activeSession,
           // 传给工具的绑定对象：工具入口据此复核身份，不信任调用链上携带的 sessionId。
           boundSession: activeSession,
+          runtime: 'proma',
           abortSignal: controller.signal,
           permissionMode: activeSession.permissionMode,
           planModeEntered,

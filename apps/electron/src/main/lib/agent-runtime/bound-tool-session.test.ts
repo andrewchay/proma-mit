@@ -23,10 +23,14 @@ afterAll(() => {
 })
 
 /** 构造运行时时已绑定身份的会话对象，并按适配器的方式自引用写入 boundSession。 */
-function boundOwner(sessionId: string, cwd: string): { sessionId: string; cwd: string; boundSession?: object } {
+function boundOwner(
+  sessionId: string,
+  cwd: string,
+  runtime: 'ai-sdk' | 'pi' | 'proma' = 'ai-sdk',
+): { sessionId: string; cwd: string; boundSession?: object; runtime?: 'ai-sdk' | 'pi' | 'proma' } {
   const boundSession = { runtimeSession: sessionId }
-  bindRuntimeSessionIdentity(boundSession, { sessionId, cwd, runtime: 'ai-sdk' })
-  return { sessionId, cwd, boundSession }
+  bindRuntimeSessionIdentity(boundSession, { sessionId, cwd, runtime })
+  return { sessionId, cwd, boundSession, runtime }
 }
 
 describe('bound tool session gate', () => {
@@ -61,5 +65,17 @@ describe('bound tool session gate', () => {
     const ctx = { sessionId: randomUUID(), cwd: '/tmp/work', boundSession: {} }
     expect(resolveOwnerExecutionGateSession(ctx.sessionId).kind).toBe('unrestricted')
     expect(() => assertBoundToolSession(ctx)).toThrow('绑定已失效')
+  })
+
+  test('Given 绑定的是 Pi 会话 When 以 AI SDK 身份校验 Then 拒绝为 Runtime 不一致', () => {
+    const ctx = boundOwner('session-pi', '/tmp/work', 'pi')
+    expect(() => assertBoundToolSession({ ...ctx, runtime: 'ai-sdk' })).toThrow('Runtime 与会话绑定不一致')
+    expect(() => assertBoundToolSession({ ...ctx, runtime: 'pi' })).not.toThrow()
+  })
+
+  test('Given 未声明 Runtime When 校验绑定 Then 只比对 sessionId 与 cwd', () => {
+    const ctx = boundOwner('session-pi', '/tmp/work', 'pi')
+    const { runtime: _runtime, ...withoutRuntime } = ctx
+    expect(() => assertBoundToolSession(withoutRuntime)).not.toThrow()
   })
 })

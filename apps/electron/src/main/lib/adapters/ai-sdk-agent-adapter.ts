@@ -1,6 +1,6 @@
 import { bindAISDKSessionIdentity, revokeAISDKSessionIdentity } from '../agent-runtime/ai-sdk-session-identity'
 import { assertNoOwnerBusinessSession } from '../project-owner-task-evidence'
-import { assertToolAllowedForSessionPurpose, getOwnerExecutionToolNames, isOwnerWorkspaceFileActionCandidate } from '../project-owner-execution-gates'
+import { assertBoundToolSession, assertToolAllowedForSessionPurpose, getOwnerExecutionToolNames, isOwnerWorkspaceFileActionCandidate } from '../project-owner-execution-gates'
 import { OwnerPlanningRuntimeError } from '../agent-runtime/owner-planning-runtime-error'
 /**
  * Vercel AI SDK Agent Runtime 适配器。
@@ -179,6 +179,8 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       ownerPlanning: Boolean(owner),
     }
     bindAISDKSessionIdentity(activeSession.state, sessionId, cwd)
+    // 授权判定与工具执行包装都用它校验：调用方替换 sessionId / cwd 不能绕过 Owner 门禁。
+    const boundToolSession = { sessionId, cwd, boundSession: activeSession.state, runtime: 'ai-sdk' as const }
     this.activeSessions.set(sessionId, activeSession)
     let mcpRelease: (() => void) | undefined
     try {
@@ -247,6 +249,8 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
       for (const tool of tools) {
         const execute = tool.execute.bind(tool)
         tool.execute = async (...args) => {
+          // 先校验运行时时绑定的会话身份，再做用途判定。
+          assertBoundToolSession(boundToolSession)
           // purpose感知：无Owner证据=原行为；有证据时仅知识工具可经fence（休眠能力）。
           assertToolAllowedForSessionPurpose(sessionId, tool.name, args[0] as Record<string, unknown> | undefined)
           return execute(...args)
@@ -325,10 +329,15 @@ export class AISDKAgentAdapter implements AgentProviderAdapter {
             },
             onAgentEvent: input.onAgentEvent,
             canUseTool: input.canUseTool ? async (name, args, signal) => {
+              // 授权判定同样要求绑定身份：AI SDK 的权限回调是工具执行前的最后一道决定。
+              assertBoundToolSession(boundToolSession)
               const ownerApprovalCandidate = isOwnerWorkspaceFileActionCandidate(sessionId, name, args)
               if (!ownerApprovalCandidate) assertToolAllowedForSessionPurpose(sessionId, name, args)
               const result = await input.canUseTool!(name, args, signal)
-              if (result.allowed) assertToolAllowedForSessionPurpose(sessionId, name, args)
+              if (result.allowed) {
+                assertBoundToolSession(boundToolSession)
+                assertToolAllowedForSessionPurpose(sessionId, name, args)
+              }
               return result
             } : undefined,
             onPermissionModeChange: (mode) => assertControlledPermissionChange(sessionId, mode),
