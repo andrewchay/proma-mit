@@ -23,6 +23,14 @@ mock.module('./bash-termination.ts', () => ({
   describeBashTermination: () => undefined,
   runBashCommand: async () => { launches++; return { stdout: '', stderr: '', evidence: {} } },
 }))
+mock.module('../unknown-action-store', () => ({
+  // 本用例只验证「启动检查期间撤权」窗口，未知动作登记在 bash-unknown-gate.test.ts 单独覆盖。
+  buildActionKey: (tool: string, target: string) => `${tool}:${target}`,
+  hashDetail: () => 'hash',
+  blockIfUnknownAction: async () => undefined,
+  beginTrackedAction: async () => ({ id: 'tracked', sessionId: 's', actionKey: 'k', tool: 'Bash', detail: {}, reason: 'r', createdAt: '', status: 'pending' }),
+  finishTrackedAction: async () => undefined,
+}))
 mock.module('../../project-owner-execution-gates', () => ({
   // 本用例只验证「启动检查期间撤权」窗口，绑定校验在真实模块内由适配器保证，这里放行。
   assertBoundToolSession: () => undefined,
