@@ -92,6 +92,8 @@ describe('runBaseline', () => {
     expect(baseline.score).toBeGreaterThan(0)
     // scoreboard 有 baseline 记录（readScoreboard 由 scoreboard.ts 暴露，这里间接验证不抛错即可）
     expect(baseline.evaluationsBefore).toBeGreaterThanOrEqual(0)
+    const runs = readScoreboard(config.id).evaluations.at(-1)!.cases[0]!.runs
+    expect(runs[0]!.caseTextRubricSha256).toMatch(/^[a-f0-9]{64}$/)
   })
 })
 
@@ -109,10 +111,14 @@ describe('runImprove', () => {
     const record = readScoreboard(benchmark.id).evaluations[0]!
     expect(record.cases[0]!.score).toBe(20)
     expect(record.cases[0]!.runs.map(run => run.score)).toEqual([10, 30])
+    expect(record.cases[0]!.runs[0]!.caseTextRubricSha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(record.cases[0]!.runs[1]!.caseTextRubricSha256).toBe(record.cases[0]!.runs[0]!.caseTextRubricSha256)
     expect(record.heldOut!.cases[0]!.runs.map(run => run.score)).toEqual([50, 70])
     const candidate = readScoreboard(benchmark.id).evaluations[1]!
     expect(candidate.cases[0]!.runs.map(run => run.score)).toEqual([60, 80])
     expect(candidate.heldOut!.cases[0]!.runs.map(run => run.score)).toEqual([80, 90])
+    expect(candidate.heldOut!.cases[0]!.runs[0]!.caseTextRubricSha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(candidate.heldOut!.cases[0]!.runs[0]!.caseTextRubricSha256).not.toBe(record.cases[0]!.runs[0]!.caseTextRubricSha256)
     for (const item of [record.cases[0]!, record.heldOut!.cases[0]!, candidate.cases[0]!, candidate.heldOut!.cases[0]!]) {
       expect(item.runs.every(run => run.sessionId.length > 0)).toBe(true)
       expect(new Set(item.runs.map(run => run.sessionId)).size).toBe(2)
