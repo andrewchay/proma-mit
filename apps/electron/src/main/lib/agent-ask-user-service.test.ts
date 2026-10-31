@@ -9,6 +9,16 @@ test('通知前登记pending，同步答复不会丢失', async () => {
   expect(result.behavior).toBe('allow')
   expect(service.getPendingRequests()).toHaveLength(0)
 })
+test('未知动作核对保留专用交互类型供安全确认界面识别', async () => {
+  const service = new AgentAskUserService()
+  let kind: string | undefined
+  const pending = service.handleAskUserQuestion('session', {
+    ...input,
+    interactionType: 'unknown_action_resolution',
+  }, new AbortController().signal, request => { kind = request.kind; service.respondToAskUser(request.requestId, {}) })
+  expect((await pending).behavior).toBe('allow')
+  expect(kind).toBe('unknown_action_resolution')
+})
 test('Owner接管后不发布员工横幅，原响应入口可继续员工', async () => {
   let requestId = ''
   const service = new AgentAskUserService({ route: request => { requestId = request.requestId; return true }, cancel: () => {} })
