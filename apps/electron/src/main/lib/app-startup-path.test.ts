@@ -14,3 +14,14 @@ test('用户数据路径仅在 package smoke 或显式隔离目录下被临时�
   expect(source).toContain('} else if (APP_IS_DEV) {')
   expect(source).toContain("join(app.getPath('appData'), APP_DEV_USER_DATA_DIR_NAME)")
 })
+
+test('普通启动在注册 IPC 前对账遗留动作，显式多实例模式跳过主动对账', () => {
+  const source = readFileSync(join(import.meta.dir, '../index.ts'), 'utf8')
+  const bootstrap = source.slice(source.indexOf('async function bootstrap()'))
+  const smokeReturn = bootstrap.indexOf('return\n  }')
+  const reconcile = bootstrap.indexOf("await safeAwait('reconcileUnknownActionsAfterRestart'")
+  expect(smokeReturn).toBeGreaterThanOrEqual(0)
+  expect(reconcile).toBeGreaterThan(smokeReturn)
+  expect(bootstrap.slice(smokeReturn, reconcile)).toContain('if (!allowMultipleInstancesForTest)')
+  expect(reconcile).toBeLessThan(bootstrap.indexOf('await registerIpcHandlers()'))
+})

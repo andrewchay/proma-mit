@@ -479,6 +479,15 @@ async function bootstrap(): Promise<void> {
   const { initializeHarnessFlags } = await import('./lib/agent-runtime/harness-startup')
   const { getConfigDir } = await import('./lib/config-paths')
   await initializeHarnessFlags(getConfigDir)
+  // 普通单实例启动时尽早重建遗留动作；失败后工具门禁仍会重新读取并拒绝损坏账本。
+  // 显式多实例模式无法判断其他进程是否存活，不在启动时推断中断。
+  if (!allowMultipleInstancesForTest) {
+    await safeAwait('reconcileUnknownActionsAfterRestart', async () => {
+      const { reconcileUnknownActionsAfterRestart } = await import('./lib/agent-runtime/unknown-action-store')
+      const records = await reconcileUnknownActionsAfterRestart()
+      if (records.length) console.warn(`[未知动作] 启动时发现 ${records.length} 条中断记录，需在操作审计中核对`)
+    })
+  }
   // 注册自定义协议 proma-file:// 用于内联预览本地文件。
   // 协议只接受主进程签发的 opaque token，不解析 renderer 提供的绝对路径。
   protocol.handle('proma-file', handlePromaFileRequest)
