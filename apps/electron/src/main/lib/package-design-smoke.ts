@@ -17,7 +17,7 @@ async function waitRenderer(window: BrowserWindow, script: string, description: 
     } catch (error) { lastError = String(error) }
     await sleep(100)
   }
-  const body = await window.webContents.executeJavaScript('document.body.innerText.slice(0, 800)', true).catch(() => '')
+  const body = await window.webContents.executeJavaScript('document.body.innerText.slice(-1400)', true).catch(() => '')
   throw new Error(`打包渲染器验收超时：${description}${lastError ? `（${lastError}）` : ''}；当前界面：${JSON.stringify(body)}`)
 }
 
@@ -156,7 +156,10 @@ export async function runPackageDesignSmoke(root: string): Promise<Record<string
     await waitRenderer(window, `[...document.querySelectorAll('button')].some(item => item.textContent === '下载设计说明' && !item.disabled)`, '设计说明下载按钮')
 
     await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent === '安装到 Owner 工作区').click()`, true)
-    await waitRenderer(window, `document.querySelector('details[aria-label="确认 OpenDesign 安装"]')`, 'Owner 安装确认卡片')
+    await waitRenderer(window, `document.querySelector('details[aria-label="确认 OpenDesign 安装"]') || Boolean(document.querySelector('details[aria-label="设计任务草稿"] [role="status"]')?.textContent?.trim())`, 'Owner 安装预览结果')
+    const hasInstallPreview = await window.webContents.executeJavaScript(`document.querySelector('details[aria-label="确认 OpenDesign 安装"]') instanceof HTMLElement`, true)
+    const installPreviewStatus = await window.webContents.executeJavaScript(`document.querySelector('details[aria-label="设计任务草稿"] [role="status"]')?.textContent?.trim() ?? ''`, true)
+    assert(hasInstallPreview, `Owner 安装预览失败：${installPreviewStatus || '没有返回预览结果'}`)
     assert((await window.webContents.executeJavaScript(`document.querySelector('details[aria-label="确认 OpenDesign 安装"]').innerText`, true)).includes(smokeOwnerWorkspace.name), '确认卡片未显示实际绑定的 Owner 工作区')
     await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent === '确认安装').click()`, true)
     await waitRenderer(window, `document.querySelector('[role="status"]')?.textContent.includes('已安装到 Owner 工作区')`, 'Owner 安装成功状态')
