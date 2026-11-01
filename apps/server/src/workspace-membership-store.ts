@@ -18,6 +18,23 @@ export class PostgresWorkspaceMembershipStore {
     )`)
   }
 
+  /**
+   * 读取"当前用户作为成员"在某所有者工作区里的角色。
+   *
+   * 只按 (租户, 所有者, 工作区, 成员) 精确命中，不按同名 slug 推断其他所有者；
+   * 没有成员记录返回 undefined（调用方必须按非成员处理）。
+   */
+  async getMemberRole(scope: AgentRuntimeScope, ownerUserId: string, workspaceSlug: string, memberUserId: string): Promise<'editor' | 'viewer' | undefined> {
+    if (!ownerUserId.trim() || !workspaceSlug.trim() || !memberUserId.trim()) return undefined
+    const result = await this.client.query<{ role: string }>(
+      `SELECT role FROM proma_workspace_members
+       WHERE tenant_id=$1 AND owner_user_id=$2 AND workspace_slug=$3 AND member_user_id=$4`,
+      [scope.tenantId, ownerUserId, workspaceSlug, memberUserId],
+    )
+    const role = result.rows[0]?.role
+    return role === 'editor' || role === 'viewer' ? role : undefined
+  }
+
   /** 只为当前认证用户拥有的工作区设置成员；不根据同名 slug 推断其他所有者。 */
   async setMember(scope: AgentRuntimeScope, workspaceSlug: string, memberUserId: string, role: 'editor' | 'viewer', options?: { createOnly?: boolean }): Promise<boolean> {
     if (!workspaceSlug.trim() || !memberUserId.trim() || memberUserId === scope.userId || (role !== 'editor' && role !== 'viewer')) throw new Error('工作区成员或角色无效')

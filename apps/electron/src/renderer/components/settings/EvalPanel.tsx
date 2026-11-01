@@ -75,6 +75,21 @@ interface EvalDetail {
     statement: string | null
     rubric: { version: number; items: Array<{ name: string; points: number; check: string }> } | null
   }>
+  /** 样本来源审计（只读）；旧版本主进程可能不返回，按缺省处理。 */
+  audit?: {
+    summary: string
+    quality: {
+      evaluationCount: number
+      comparableReadyCount: number
+      legacyCount: number
+      comparablePairs: number
+      singleRunCases: number
+      runsMissingRubricDigest: number
+      judgeRecordedCount: number
+      runsPerCase: { min: number; median: number; max: number } | null
+      blockingReasons: Array<{ reason: string; count: number }>
+    }
+  }
 }
 
 interface BenchmarkTemplate {
@@ -448,6 +463,7 @@ export function EvalPanel(): React.ReactElement {
                   {selectedBench && detail && (
                     <div className="mt-3 border-t border-border/50 pt-2">
                       <ScoreTrend detail={detail} />
+                      <SampleAudit audit={detail.audit} />
                     </div>
                   )}
                 </button>
@@ -864,5 +880,38 @@ function CreateBenchmarkForm({ onCancelled, onCreated }: { onCancelled: () => vo
         </div>
       </SettingsCard>
     </SettingsSection>
+  )
+}
+
+/**
+ * 样本来源审计：告诉用户"这些分数能不能拿去比较"。
+ *
+ * 只展示审计结论与计数，不提供任何回填入口——历史缺口按事实保留。
+ */
+function SampleAudit({ audit }: { audit?: EvalDetail['audit'] }): React.ReactElement | null {
+  if (!audit) return null
+  const q = audit.quality
+  const pct = (value: number): string => `${value}`
+  return (
+    <div className="mt-2 rounded-md bg-muted/30 px-2 py-1.5 text-[11px]">
+      <p className="font-medium">样本来源审计</p>
+      <p className="mt-1 text-muted-foreground">{audit.summary}</p>
+      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-muted-foreground">
+        <span>记录 {pct(q.evaluationCount)}</span>
+        <span>来源齐备 {pct(q.comparableReadyCount)}</span>
+        <span>历史遗留 {pct(q.legacyCount)}</span>
+        <span>可对比对 {pct(q.comparablePairs)}</span>
+        <span>评判身份已记录 {pct(q.judgeRecordedCount)}</span>
+        {q.runsPerCase && <span>每 Case 运行 {q.runsPerCase.min}/{q.runsPerCase.median}/{q.runsPerCase.max}（min/中位/max）</span>}
+        {q.singleRunCases > 0 && <span className="text-amber-700 dark:text-amber-300">仅运行 1 次的 Case {pct(q.singleRunCases)}</span>}
+        {q.runsMissingRubricDigest > 0 && <span className="text-amber-700 dark:text-amber-300">缺少题目/规则摘要的 run {pct(q.runsMissingRubricDigest)}</span>}
+      </div>
+      {q.blockingReasons.length > 0 && (
+        <p className="mt-1 text-muted-foreground">
+          主要缺口：{q.blockingReasons.slice(0, 3).map((item) => `${item.reason}（${item.count} 条）`).join("；")}
+        </p>
+      )}
+      <p className="mt-1 text-muted-foreground/70">审计只读，历史缺口不回填；来源不足的记录一律判为不可比。</p>
+    </div>
   )
 }

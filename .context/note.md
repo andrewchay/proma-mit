@@ -1,5 +1,26 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-11-01 P2 收尾（RSI 审计入面板 / 文件对账账本 / 共享工作区只读）
+
+- **RSI · 样本审计接进界面**：`getBenchmarkDetail` 返回 `audit`（`auditScoreboard` 结果），EvalPanel 新增
+  「样本来源审计」块：结论句 + 记录数/来源齐备/历史遗留/可对比对/评判身份记录数/每 Case 运行分布；
+  单次运行与摘要缺失单独标黄，列出主要缺口。只读、不回填；旧主进程不返回 `audit` 时按缺省处理。
+- **Harness · 文件变更账本（跨文件操作可对账）**：新增 `file-mutation-journal`：Write/Edit 在真正截断前记
+  写入意图（路径、工具、会话、写入前 SHA-256），成功后记结算（写入后摘要），失败记原因。崩溃/强杀后
+  「有意图无结算」的变更进入 `listUnsettledFileMutations()`；`reconcileFileMutation()` 用当前磁盘内容给出
+  applied / not_applied / changed_by_others / missing 结论并落盘。范围明确：不做跨文件原子性、不自动回滚、
+  只记摘要不记内容；账本不可写时不阻断业务写入但打印警告（该次写入无法事后对账）。
+  测试：账本 10 例 + Write/Edit 接线 3 例。
+- **Enterprise · 共享工作区元数据只读**：集中授权第一个真实读路径。新增
+  `GET /agent/shared-workspaces/{ownerUserId}/{slug}`：先判存在性（404），再走
+  `decideWorkspaceAccess(read_workspace)`；开关默认关闭时成员得到 403 `shared_workspace_disabled`，
+  非成员 403 `not_a_member`；返回字段白名单只有 owner/slug/角色，SQL 层不选 cwd 与 mcpServers。
+  配套窄接口：成员存储 `getMemberRole`、工作区存储 `getOwnedWorkspaceMetadata`。测试 10 例。
+- 验证边界：`apps/electron`、`apps/server`、`@gravitas/shared` tsc 通过；agent-runtime 133 个测试文件
+  904 例通过（剩余 3 个失败文件为嵌套 seatbelt 不可用）；apps/server 52 个文件仅 `workspace-tools`
+  因 `/private/tmp` 不可写失败。未覆盖：完整工作区读写与 Runtime 判定（S3/S4）、跨文件原子性设计、
+  真实 IdP/生产存储/客户验收。
+
 ## 2026-11-01 第四轮推进（P2：RSI 样本审计 / Harness 工具入口身份门禁 / Enterprise 启动校验）
 
 - **RSI · 样本来源审计与质量报告**：新增 `eval/scoreboard-audit`（只读纯函数）。逐条审计基准定义

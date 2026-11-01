@@ -16,6 +16,7 @@ import { ServerMcpConnectionManager } from '@gravitas/shared/utils/node'
 import { readBoundedObjectBody } from './bounded-object-body.ts'
 import { csvValue } from './csv.ts'
 import { handleSharedFileList, matchSharedFileListRoute } from './workspace-shared-file-list.ts'
+import { handleSharedWorkspaceRead, matchSharedWorkspaceReadRoute } from './workspace-shared-read-api.ts'
 import type {
   AgentRuntimePostgresClient,
   AgentRuntimeRole,
@@ -524,6 +525,7 @@ export function createPromaWebServerApplication(
       const membershipRoute = matchWorkspaceMembershipRoute(request.method, url.pathname)
       const sharedFileRoute = matchSharedFileRoute(request.method, url.pathname)
       const sharedFileListRoute = matchSharedFileListRoute(request.method, url.pathname)
+      const sharedWorkspaceReadRoute = matchSharedWorkspaceReadRoute(request.method, url.pathname)
       let response: Response
       if (cookieOriginError) {
         response = cookieOriginError
@@ -531,6 +533,8 @@ export function createPromaWebServerApplication(
         response = actionAuthorizationError
       } else if (membershipRoute) {
         response = scope ? await handleWorkspaceMembershipRoute(request, scope, membershipRoute, store, workspaceMemberships) : Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
+      } else if (sharedWorkspaceReadRoute) {
+        response = scope ? await handleSharedWorkspaceRead(scope, sharedWorkspaceReadRoute, store, workspaceMemberships) : Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
       } else if (sharedFileListRoute) {
         response = scope ? await handleSharedFileList(request, scope, sharedFileListRoute, postgres) : Response.json({ error: '未认证或缺少租户上下文' }, { status: 401 })
       } else if (sharedFileRoute) {
