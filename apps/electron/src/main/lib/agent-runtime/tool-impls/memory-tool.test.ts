@@ -10,6 +10,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { MemorySearchResult } from '../../memos-client'
+import { bindTestToolContext } from '../../testing/bound-tool-context'
 
 let mockMemoryConfig: { apiKey?: string; userId?: string; baseUrl?: string } = {}
 let mockSearchCalls: string[] = []
@@ -54,7 +55,7 @@ afterAll(async () => {
 })
 
 describe('记忆工具（Agent Runtime）', () => {
-  const ctx = { cwd: '/tmp/workspace', sessionId: 'test-session' }
+  const ctx = bindTestToolContext({ cwd: '/tmp/workspace', sessionId: 'test-session' })
 
   beforeEach(() => {
     mockMemoryConfig = { apiKey: 'test-memory-key', userId: 'test-user' }

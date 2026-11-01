@@ -59,4 +59,59 @@ describe('Git 同命令执行边界', () => {
       expect(findGitCommandBoundaryViolation(command)).toContain('间接 Git 布局')
     }
   })
+
+  test('Given 受限制结构出现在引号、heredoc、注释或参数文本里 When 预检 Then 不误拒', () => {
+    const cases = [
+      'grep -rn "git init 必须单独执行" apps/electron/src/main',
+      'rg -n "GIT_DIR=|--git-dir|--config-env" apps/electron/src/main',
+      'git commit -qm "docs: 说明 git init 必须单独执行; 不要再组合命令"',
+      'git commit -qm "fix: 提交信息里可以出现 --git-dir 字样"',
+      'git log --grep="core.fsmonitor" --oneline',
+      'git log --grep="GIT_DIR" --all',
+      'echo \'bash -c "git init && touch /tmp/pwn" 只是文档字符串\'',
+      'git status --short # 注释里写 git init 也不该被拦',
+      'git init -q 2>&1',
+      'git -c user.name=agent commit -qm "git init 相关说明"',
+    ]
+    for (const command of cases) expect(findGitCommandBoundaryViolation(command)).toBeUndefined()
+  })
+
+  test('Given heredoc 正文含受限制结构 When 预检 Then 只按命令分析', () => {
+    const command = ['git commit -F - <<\'EOF\'', '说明：git init 必须单独执行', 'GIT_DIR=/tmp/x git status', 'EOF', 'git status'].join('\n')
+    expect(findGitCommandBoundaryViolation(command)).toBeUndefined()
+  })
+
+  test('Given 嵌套的 sh -c 脚本体 When 预检 Then 仍按命令分析', () => {
+    expect(findGitCommandBoundaryViolation('bash -c "git init -q && git config core.fsmonitor x"'))
+      .toContain('git init 必须单独执行')
+    expect(findGitCommandBoundaryViolation('sh -c "git --git-dir=/tmp/other status"'))
+      .toContain('间接 Git 布局')
+  })
+
+  test('Given 换行或前缀命令包裹 When 预检 Then 组合与覆盖仍被拒绝', () => {
+    expect(findGitCommandBoundaryViolation('git init -q\ngit status')).toContain('git init 必须单独执行')
+    expect(findGitCommandBoundaryViolation('env GIT_DIR=/tmp/other git status')).toContain('Git 环境覆盖')
+    expect(findGitCommandBoundaryViolation('sudo GIT_DIR=/tmp/other git status')).toContain('Git 环境覆盖')
+    expect(findGitCommandBoundaryViolation('git status && git -c core.fsmonitor=/tmp/pwn status')).toContain('命令执行型 Git config')
+  })
+
+  test('Given eval 或 find -exec 间接执行 When 预检 Then 仍按命令分析', () => {
+    expect(findGitCommandBoundaryViolation('eval "git init -q && git config core.fsmonitor x"')).toContain('git init 必须单独执行')
+    expect(findGitCommandBoundaryViolation('eval git --git-dir=/tmp/other status')).toContain('间接 Git 布局')
+    expect(findGitCommandBoundaryViolation('find . -maxdepth 1 -exec git init \\;')).toContain('git init 必须单独执行')
+    expect(findGitCommandBoundaryViolation('find . -execdir git -c core.fsmonitor=x status +')).toContain('命令执行型 Git config')
+    // eval 内只有一条命令时等价于直接执行，不按组合处理。
+    expect(findGitCommandBoundaryViolation('eval "git init -q"')).toBeUndefined()
+  })
+
+  test('Given eval 只做无害展开或 find 不派生子命令 When 预检 Then 不误拒', () => {
+    const cases = [
+      'eval "$(direnv hook zsh)"',
+      'eval echo hello',
+      'find . -name "*.ts" -maxdepth 2',
+      'find . -name "git init 说明.txt"',
+      'find . -exec grep -l pattern {} \\;',
+    ]
+    for (const command of cases) expect(findGitCommandBoundaryViolation(command)).toBeUndefined()
+  })
 })

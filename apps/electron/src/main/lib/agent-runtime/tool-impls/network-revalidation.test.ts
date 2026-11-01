@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, mock, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { bindTestToolContext } from '../../testing/bound-tool-context'
 
 const originalConfig = await import('../../chat-tool-config')
 mock.module('../../chat-tool-config', () => ({ ...originalConfig, getToolCredentials: () => ({ apiKey: 'fake' }) }))
@@ -19,7 +20,7 @@ test('Given 响应等待期间账本失效 When 网络工具完成 Then 不返�
     let started!: () => void
     const ready = new Promise<void>(resolve => { started = resolve })
     globalThis.fetch = (async () => { started(); return new Promise<Response>(resolve => { finish = resolve }) }) as unknown as typeof fetch
-    const ctx = { cwd: directory, sessionId: 'ordinary' }
+    const ctx = bindTestToolContext({ cwd: directory, sessionId: 'ordinary' })
     const pending = kind === 'fetch' ? executeWebFetchTool({ url: 'https://example.invalid' }, ctx) : executeWebSearchTool({ query: '测试' }, ctx)
     await ready
     store.closeProjectDb()

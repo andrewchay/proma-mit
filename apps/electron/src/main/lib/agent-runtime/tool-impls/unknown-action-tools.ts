@@ -157,7 +157,11 @@ async function executeResolveUnknownActionUnchecked(input: unknown, ctx: ToolCon
 }
 
 function describePending(record: UnknownActionRecord): string {
-  return `待处理：${record.tool}（${record.actionKey}），记录于 ${record.createdAt}。`
+  // 中断记录要单独说明来源：它不是本次会话的动作，而是上次运行派发后没结算的遗留。
+  const origin = record.interruptedAt
+    ? `应用在上次运行派发后中断（中断于 ${record.interruptedAt}），结果未知`
+    : '本会话登记，结果待核对'
+  return `待处理：${record.tool}（${record.actionKey}），记录于 ${record.createdAt}；${origin}。`
 }
 
 function error(content: string): ToolResult {

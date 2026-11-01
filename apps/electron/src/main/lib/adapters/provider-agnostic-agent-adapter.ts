@@ -37,7 +37,7 @@ import type {
   ThinkingBlock,
 } from '@gravitas/core'
 import { assertRuntimePolicy } from '../agent-runtime/harness-policy'
-import { assertRuntimeSessionIdentity, bindRuntimeSessionIdentity, revokeRuntimeSessionIdentity } from '../agent-runtime/runtime-session-identity'
+import { assertRuntimeSessionIdentity, bindRuntimeSessionIdentity, requireBoundSessionId, revokeRuntimeSessionIdentity } from '../agent-runtime/runtime-session-identity'
 import { getAdapter, streamSSE } from '@gravitas/core'
 import { getFetchFn } from '../proxy-fetch'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
@@ -773,12 +773,25 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
     input: Record<string, unknown>,
     ctx: {
       sessionId: string
+      cwd?: string
+      boundSession?: object
+      runtime?: 'ai-sdk' | 'pi' | 'proma'
       abortSignal?: AbortSignal
       permissionMode?: PromaPermissionMode
       planModeEntered?: boolean
       canUseTool?: CanUseToolCallback
     },
   ): Promise<ToolPermissionResult> {
+    // 授权依据只取运行时绑定：调用链携带的 sessionId 只参与比对，不能直接当身份用。
+    // 审批等待期间会话可能已被改写，因此在走 canUseTool（可能长时间阻塞）之前先比对一次。
+    let gateSessionId = ctx.sessionId
+    if (ctx.boundSession) {
+      try {
+        gateSessionId = requireBoundSessionId(ctx.boundSession, { sessionId: ctx.sessionId, cwd: ctx.cwd, runtime: ctx.runtime ?? 'proma' })
+      } catch (error) {
+        return { allowed: false, message: `工具执行失败: ${getErrorMessage(error)}` }
+      }
+    }
     if (ctx.permissionMode === 'bypassPermissions') {
       return { allowed: true }
     }
@@ -889,9 +902,9 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
     if (ctx.canUseTool) {
       const signal = ctx.abortSignal ?? new AbortController().signal
-      assertNoOwnerBusinessSession(ctx.sessionId)
+      assertNoOwnerBusinessSession(gateSessionId)
       const result = await ctx.canUseTool(toolName, input, signal)
-      assertNoOwnerBusinessSession(ctx.sessionId)
+      assertNoOwnerBusinessSession(gateSessionId)
       return result
     }
 
@@ -1065,9 +1078,11 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
 
     // 权限回调（可能等待用户审批）返回后、真正执行工具前复核会话身份：
     // 期间会话可能已结束或被改写，身份缺失/不匹配即拒绝（fail-closed）。
-    if (ctx.sessionOwner) {
+    // 绑定对象优先于 sessionOwner：前者只在绑定时写入，不会被调用链改写。
+    const identityOwner = ctx.boundSession ?? ctx.sessionOwner
+    if (identityOwner) {
       try {
-        assertRuntimeSessionIdentity(ctx.sessionOwner, { sessionId: ctx.sessionId, cwd: ctx.cwd, runtime: 'proma' })
+        assertRuntimeSessionIdentity(identityOwner, { sessionId: ctx.sessionId, cwd: ctx.cwd, runtime: 'proma' })
       } catch (error) {
         // 身份复核失败只拒绝本次工具调用，不改变既有权限语义。
         return { toolCallId: tc.id, content: `工具执行失败: ${getErrorMessage(error)}`, isError: true }

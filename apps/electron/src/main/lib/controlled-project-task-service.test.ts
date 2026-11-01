@@ -544,6 +544,10 @@ test('Given 受控Pi的真实工具桥且权限允许 When ExitPlan试图升级b
 			return 'never'
 		},
 	})
+	// 生产路径由 Pi 适配器绑定身份；测试夹具同样绑定，验证的才是权限升级守卫而不是身份门禁。
+	const { bindRuntimeSessionIdentity } = await import('./agent-runtime/runtime-session-identity')
+	bindRuntimeSessionIdentity(context as object, { sessionId: facts.sessionId, cwd: facts.cwd, runtime: 'pi' })
+	;(context as { boundSession?: object }).boundSession = context
 	const tools = createPiToolBridge({
 		toolContext: context,
 		allowSubAgent: false,

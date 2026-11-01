@@ -12,7 +12,7 @@ import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
 import { getMemoryConfig } from '../../memory-service'
 import { searchMemory, addMemory, formatSearchResult, type MemosCredentials } from '../../memos-client'
-import { assertOwnerToolPermission, formatToolError } from './tool-utils'
+import { assertOwnerToolGate, formatToolError } from './tool-utils'
 
 export const RECALL_MEMORY_TOOL_NAME = 'RecallMemory'
 export const ADD_MEMORY_TOOL_NAME = 'AddMemory'
@@ -78,7 +78,7 @@ function buildMemosCredentials(): MemosCredentials | null {
 }
 
 export async function executeRecallMemoryTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
-  try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, RECALL_MEMORY_TOOL_NAME, {}) }
+  try { assertOwnerToolGate(ctx, RECALL_MEMORY_TOOL_NAME, {}) }
   catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
   const credentials = buildMemosCredentials()
   if (!credentials) {
@@ -102,7 +102,7 @@ export async function executeRecallMemoryTool(input: unknown, ctx: ToolContext):
 }
 
 export async function executeAddMemoryTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
-  try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, ADD_MEMORY_TOOL_NAME, {}) }
+  try { assertOwnerToolGate(ctx, ADD_MEMORY_TOOL_NAME, {}) }
   catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
   const credentials = buildMemosCredentials()
   if (!credentials) {

@@ -15,7 +15,7 @@
 
 import { resolve } from 'node:path'
 
-export type AgentRuntimeKind = 'ai-sdk' | 'pi' | 'proma'
+export type AgentRuntimeKind = 'ai-sdk' | 'pi' | 'proma' | 'claude-sdk'
 
 export interface RuntimeSessionIdentity {
   sessionId: string
@@ -34,6 +34,7 @@ const RUNTIME_LABELS: Record<AgentRuntimeKind, string> = {
   'ai-sdk': 'AI SDK',
   pi: 'Pi',
   proma: 'Proma',
+  'claude-sdk': 'Claude SDK',
 }
 
 const identities = new WeakMap<object, StoredSessionIdentity>()
@@ -113,4 +114,23 @@ export function assertRuntimeSessionIdentity(owner: object, identity: RuntimeSes
   if (!matchesRuntimeSessionIdentity(owner, identity)) {
     throw new Error(`${runtimeLabel(identity.runtime)} 会话身份不匹配，拒绝执行工具`)
   }
+}
+
+/**
+ * 权限与门禁层用：从绑定对象取回授权依据的 sessionId，调用链携带的身份只参与比对。
+ *
+ * 与工具实现内的绑定校验分开，是为了让权限回调（可能长时间等待人工审批）在调用前
+ * 就把「会话身份被改写」挡掉，而不是等工具实现再拒绝。绑定对象缺失一律失败关闭。
+ */
+export function requireBoundSessionId(
+  owner: object | undefined,
+  identity: { sessionId: string; cwd?: string; runtime?: AgentRuntimeKind },
+): string {
+  const bound = owner ? getRuntimeSessionIdentity(owner) : undefined
+  if (!bound) throw new Error('工具执行缺少已绑定的会话身份，拒绝执行工具')
+  if (bound.revoked) throw new Error('会话身份绑定已失效，拒绝执行工具')
+  if (bound.sessionId !== identity.sessionId) throw new Error('工具执行会话身份与会话不一致，拒绝执行')
+  if (identity.cwd !== undefined && bound.cwd !== normalize(identity.cwd)) throw new Error('工具执行工作目录与会话身份不一致，拒绝执行')
+  if (identity.runtime !== undefined && bound.runtime !== identity.runtime) throw new Error('工具执行 Runtime 与会话绑定不一致，拒绝执行')
+  return bound.sessionId
 }

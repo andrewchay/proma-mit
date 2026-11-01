@@ -21,7 +21,7 @@ import { getWorkspaceSkillsDir, getDefaultSkillsDir } from './config-paths'
 import { executeSkillTool } from './agent-runtime/tool-impls/skill-tool'
 import { bindTestToolContext } from './testing/bound-tool-context'
 import { createHash } from 'node:crypto'
-import { installOpenDesignFiles } from './opendesign-install-store'
+import { installOpenDesignFiles, installOpenDesignIntoSessionDir } from './opendesign-install-store'
 
 // 测试经 getWorkspaceSkillsDir 闭包注入工作区 skills 目录（见 resolveDesignCraftDir 调用处）
 
@@ -209,6 +209,45 @@ describe('resolveActiveDesignSystem', () => {
     const ds = resolveActiveDesignSystem(cwd, WORKSPACE_SLUG)
     expect(ds?.title).toBe('User Design')
     expect(ds?.body).toContain('Keep this.')
+    expect(ds?.origin).toBeUndefined()
+  })
+
+  test('Given 会话目录安装了 OpenDesign 且另存为品牌前缀名 When 解析 Then 按 manifest 读回并标注来源', () => {
+    const cwd = join(tempHomeDir, 'ds-session-install')
+    mkdirSync(cwd, { recursive: true })
+    writeFileSync(join(cwd, 'DESIGN.md'), '# 用户自己的规范\n')
+    const design = '# Linear Design System\n\nUse Linear palette.\n'
+    const tokens = ':root { --brand: #5e6ad2; }\n'
+    const installed = installOpenDesignIntoSessionDir(cwd, {
+      schemaVersion: 1, source: 'OpenDesign', license: 'Apache-2.0', projectId: 'project-1', sessionId: 'session-1',
+      workspaceSlug: WORKSPACE_SLUG, brandId: 'linear', brandName: 'Linear', referenceRevision: 'catalog-r2',
+      installedAt: 456, actor: 'local-user',
+    }, design, tokens)
+    expect(installed.designFile).toBe('linear-design.md')
+    // 本地 DESIGN.md 仍然优先
+    expect(resolveActiveDesignSystem(cwd, WORKSPACE_SLUG)?.title).toBe('用户自己的规范')
+
+    // 去掉本地文件后，按会话 manifest 读另存名
+    rmSync(join(cwd, 'DESIGN.md'))
+    const ds = resolveActiveDesignSystem(cwd, WORKSPACE_SLUG)
+    expect(ds).toMatchObject({ title: 'Linear', body: design, tokensCss: tokens })
+    expect(ds?.origin).toContain('会话目录 linear-design.md')
+    const context = composeOdDesignContext({ requirements: { craftRequires: [], designSystemRequires: true }, cwd, workspaceSlug: WORKSPACE_SLUG })
+    expect(context).toContain('--brand: #5e6ad2')
+  })
+
+  test('Given 会话目录的安装文件被改写 When 解析 Then 按本地文件处理且不声称 OpenDesign 来源', () => {
+    const cwd = join(tempHomeDir, 'ds-session-tampered')
+    mkdirSync(cwd, { recursive: true })
+    const installed = installOpenDesignIntoSessionDir(cwd, {
+      schemaVersion: 1, source: 'OpenDesign', license: 'Apache-2.0', projectId: 'project-1', sessionId: 'session-2',
+      workspaceSlug: WORKSPACE_SLUG, brandId: 'stripe', brandName: 'Stripe', referenceRevision: 'catalog-r1',
+      installedAt: 789, actor: 'local-user',
+    }, '# Stripe\n', ':root { --s: 1; }\n')
+    writeFileSync(join(cwd, installed.designFile), '# 被改写的规范\n')
+    const ds = resolveActiveDesignSystem(cwd, WORKSPACE_SLUG)
+    // 安装记录失效后只能当作用户本地文件：内容照用，但不能挂 OpenDesign 来源与版本。
+    expect(ds?.body).toBe('# 被改写的规范')
     expect(ds?.origin).toBeUndefined()
   })
 })

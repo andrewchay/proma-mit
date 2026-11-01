@@ -78,6 +78,13 @@ export type PiCanUseToolCallback = (
 export interface CreatePiToolBridgeOptions {
   toolContext: ToolContext
   canUseTool?: PiCanUseToolCallback
+  /**
+   * 工具派发前的会话身份/撤权复核。
+   *
+   * 权限回调只决定"允不允许"，从回调返回到真正执行之间仍可能被撤权或改写会话身份；
+   * AskUserQuestion 与 GoalCheckpoint 又完全绕过权限回调。桥接层所有执行路径都必须先过这一关。
+   */
+  assertToolSession?: () => void
   /** 非代码准备任务不开放普通Agent旁路。 */
   allowSubAgent?: boolean
   coreTools?: RuntimeToolDefinition[]
@@ -118,8 +125,40 @@ function toolResult(
   }
 }
 
+/** 会话身份/撤权复核失败时的统一拒绝文案。 */
+export const SESSION_REJECTED_MESSAGE = '会话身份已失效或被撤销，拒绝执行工具'
+
 function errorResult(toolName: string, message: string): { content: Array<{ type: 'text'; text: string } | ImageContent>; details: PiToolDetails } {
   return toolResult(toolName, message, true)
+}
+
+function sessionRejectedResult(toolName: string): { content: Array<{ type: 'text'; text: string } | ImageContent>; details: PiToolDetails } {
+  return errorResult(toolName, SESSION_REJECTED_MESSAGE)
+}
+
+/**
+ * 统一撤权入口的校验函数。
+ *
+ * 适配器会传入带运行时身份比对的回调；未传入时退回工具入口的通用绑定校验，
+ * 保证"每次派发前必须复核身份"这条规则不依赖调用方是否记得接线。
+ */
+function resolveSessionAssert(options: CreatePiToolBridgeOptions): () => void {
+  if (options.assertToolSession) return options.assertToolSession
+  return () => {
+    const gates = require('../project-owner-execution-gates') as typeof import('../project-owner-execution-gates')
+    gates.assertBoundToolSession(options.toolContext)
+  }
+}
+
+/** 每次派发前调用；复核失败按失败关闭处理。 */
+function assertToolSessionAllowed(toolName: string, assert: () => void): boolean {
+  try {
+    assert()
+    return true
+  } catch (error) {
+    console.warn(`[Pi Tool Bridge] ${toolName} 会话复核失败:`, error instanceof Error ? error.message : error)
+    return false
+  }
 }
 
 interface PiBridgeToolConfig<TSchemaType extends TSchema> {
@@ -141,6 +180,9 @@ function createBridgeTool<TSchemaType extends TSchema>(
     promptSnippet: config.promptSnippet,
     parameters: config.parameters,
     async execute(_toolCallId, params, signal) {
+      // 统一撤权入口：任何工具执行前先复核运行时时绑定的会话身份（缺绑定/已撤销/被改写即拒绝）。
+      const sessionAssert = resolveSessionAssert(options)
+      if (!assertToolSessionAllowed(config.runtimeName, sessionAssert)) return sessionRejectedResult(config.runtimeName)
       const sessionSignal = options.toolContext.abortSignal
       const effectiveSignal = signal && sessionSignal && signal !== sessionSignal
         ? AbortSignal.any([signal, sessionSignal])
@@ -153,6 +195,7 @@ function createBridgeTool<TSchemaType extends TSchema>(
       // Proma / AI SDK runtime 都会在权限工具分支之前拦截它；Pi 也必须保持相同语义，
       // 否则 safe 模式会把一个已激活 Goal 的检查点错误拒绝，导致 Goal 无法进入下一状态。
       if (config.runtimeName === GOAL_CHECKPOINT_TOOL_NAME) {
+        if (!assertToolSessionAllowed(config.runtimeName, sessionAssert)) return sessionRejectedResult(config.runtimeName)
         if (!options.toolContext.onGoalCheckpoint) return errorResult(config.runtimeName, '当前会话没有激活的 Goal')
         await options.toolContext.onGoalCheckpoint(input as unknown as import('@gravitas/shared').AgentGoalCheckpoint)
         return toolResult(config.runtimeName, 'Goal 检查点已保存', false)
@@ -164,6 +207,8 @@ function createBridgeTool<TSchemaType extends TSchema>(
       // 导致用户被重复询问两遍（第一次提交被当作门禁响应，第二次带着空表单再次弹出）。
       // 这里与 ProviderAgnosticAgentAdapter / AI SDK runtime core 一致：直接执行工具（内部走 onAskUser）。
       if (config.runtimeName === ASK_USER_QUESTION_TOOL_NAME) {
+        // 交互工具等待用户期间也可能被撤权，执行前再复核一次。
+        if (!assertToolSessionAllowed(config.runtimeName, sessionAssert)) return sessionRejectedResult(config.runtimeName)
         const result = await runtimeTool.execute(input, Object.freeze({
           ...options.toolContext,
           abortSignal: effectiveSignal,
@@ -211,16 +256,25 @@ function createBridgeTool<TSchemaType extends TSchema>(
         abortSignal: effectiveSignal,
       })
       // E05：经共享调度器执行（锁域为本进程内经此调度的调用）。
-      const result = await runGuardedToolCall({
-        tool: runtimeTool,
-        args: input,
-        ctx: toolContext,
-        signal: effectiveSignal,
-        execute: () => {
-          if (effectiveSignal?.aborted) throw new Error('操作已中止')
-          return runtimeTool.execute(input, toolContext)
-        },
-      })
+      let result: Awaited<ReturnType<RuntimeToolDefinition['execute']>>
+      try {
+        result = await runGuardedToolCall({
+          tool: runtimeTool,
+          args: input,
+          ctx: toolContext,
+          signal: effectiveSignal,
+          execute: () => {
+            if (effectiveSignal?.aborted) throw new Error('操作已中止')
+            // 审批等待可能很久：拿到许可后、真正派发前再复核一次身份与撤权状态。
+            if (!assertToolSessionAllowed(config.runtimeName, sessionAssert)) throw new Error(SESSION_REJECTED_MESSAGE)
+            return runtimeTool.execute(input, toolContext)
+          },
+        })
+      } catch (error) {
+        // 撤权拒绝变成工具错误结果回给模型；其他异常保持原样抛出，不掩盖真实故障。
+        if (error instanceof Error && error.message === SESSION_REJECTED_MESSAGE) return sessionRejectedResult(config.runtimeName)
+        throw error
+      }
       // 截图必须随 tool result 进入 Pi 的下一轮上下文；只回传文字会让模型看不到页面本体。
       return toolResult(config.runtimeName, result.content, Boolean(result.isError), result.imageData)
     },

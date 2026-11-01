@@ -69,6 +69,59 @@ export async function runPackageDesignSmoke(root: string): Promise<Record<string
   assert.equal(installedReference.referenceRevision, bundledReference.revision)
   assert.equal(installer.preview(ownerBinding.projectId, 'stripe').canInstall, false, '重复安装预览必须报告冲突并避免覆盖')
 
+  // 包内链路验收：安装结果必须能被上下文组装器读出（不只是"安装目录里有文件"）。
+  const { composeOdDesignContext, resolveActiveDesignSystem } = await import('./design-context')
+  const { readInstalledOpenDesign } = await import('./opendesign-install-store')
+  const isolatedDeps = {
+    // 用真实 store 读取（含来源版本与摘要校验），只把目录换成隔离工作区。
+    readWorkspaceInstall: (slug: string) => slug === ownerWorkspace.slug ? readInstalledOpenDesign(ownerFiles, slug) : undefined,
+  }
+  const sessionDir = join(root, 'opendesign-session-context')
+  mkdirSync(sessionDir, { recursive: true })
+  const resolved = resolveActiveDesignSystem(sessionDir, ownerWorkspace.slug, isolatedDeps)
+  assert(resolved, '打包应用的上下文组装器读不到已安装的 OpenDesign 参考')
+  assert.equal(resolved.body, bundledReference.reference.design, '上下文中的设计说明与打包资源不一致')
+  assert.equal(resolved.tokensCss, bundledReference.reference.tokens, '上下文中的令牌与打包资源不一致')
+  assert.match(resolved.origin ?? '', /OpenDesign stripe/)
+
+  const designSystemContext = composeOdDesignContext({
+    requirements: { craftRequires: [], designSystemRequires: true },
+    cwd: sessionDir,
+    workspaceSlug: ownerWorkspace.slug,
+    designSystemDeps: isolatedDeps,
+  })
+  assert(designSystemContext.includes('<od_design_system'), '组装结果缺少设计系统块')
+  assert(designSystemContext.includes(bundledReference.reference.tokens), '组装结果缺少 tokens.css 契约')
+  assert(!designSystemContext.includes('od_missing_resource'), '安装完整时不应报告缺项')
+
+  // 边界 1：Skill 未声明设计系统需求时不得注入。
+  assert.equal(composeOdDesignContext({
+    requirements: { craftRequires: [], designSystemRequires: false },
+    cwd: sessionDir,
+    workspaceSlug: ownerWorkspace.slug,
+    designSystemDeps: isolatedDeps,
+  }), '', '未声明需求时不应注入设计系统')
+
+  // 边界 2：本地文件优先于已安装参考。
+  const localDir = join(root, 'opendesign-local-priority')
+  mkdirSync(localDir, { recursive: true })
+  writeFileSync(join(localDir, 'DESIGN.md'), '# Local Brand\n\nLOCAL_CANARY\n')
+  const localResolved = resolveActiveDesignSystem(localDir, ownerWorkspace.slug, isolatedDeps)
+  assert.equal(localResolved?.title, 'Local Brand', '本地 DESIGN.md 必须优先于已安装参考')
+  assert(localResolved?.body.includes('LOCAL_CANARY'))
+  assert.equal(localResolved?.origin, undefined, '本地文件不应带 OpenDesign 来源')
+
+  // 边界 3：安装内容损坏时必须报告缺项，而不是当作合规规范注入。
+  const brokenDeps = { readWorkspaceInstall: () => undefined }
+  const brokenContext = composeOdDesignContext({
+    requirements: { craftRequires: [], designSystemRequires: true },
+    cwd: join(root, 'opendesign-missing'),
+    workspaceSlug: ownerWorkspace.slug,
+    designSystemDeps: brokenDeps,
+  })
+  assert(brokenContext.includes('<od_missing_resource type="design_system">'), '缺少设计系统时必须提示缺项')
+  assert(!brokenContext.includes('<od_design_system'), '缺少设计系统时不得注入空规范')
+
   const { initProjectDb, closeProjectDb, createProject } = await import('./project-sqlite-store')
   const { saveProjectOwnerGoalDraft } = await import('./project-owner-goal-service')
   const { createAgentWorkspace } = await import('./agent-workspace-manager')

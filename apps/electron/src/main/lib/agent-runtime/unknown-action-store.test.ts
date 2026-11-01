@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -14,6 +14,7 @@ import {
   listPendingUnknownActions,
   listPendingUnknownActionsForReview,
   recordUnknownAction,
+  reconcileUnknownActionsAfterRestart,
   resolveUnknownAction,
 } from './unknown-action-store'
 
@@ -262,5 +263,94 @@ describe('动作指纹', () => {
 
   test('Given 工具与目标 When 组装指纹 Then 带工具前缀', () => {
     expect(buildActionKey('mcp:demo__tool', 'abc')).toBe('mcp:demo__tool:abc')
+  })
+})
+
+describe('崩溃恢复对账', () => {
+  const dispatched = { sessionId: 's1', tool: 'MCP 工具 demo__create_issue', actionKey: 'mcp:demo__create_issue:abc', reason: '动作已登记，结果待确认' }
+
+  test('Given 派发后进程异常退出 When 重启加载 Then 标记上次运行中断且继续拦截', async () => {
+    const record = await beginTrackedAction(dispatched)
+    expect(record?.phase).toBe('dispatched')
+    // 模拟崩溃：内存丢失、进程标识轮换，磁盘上没有结算事件
+    __resetUnknownActionCacheForTest()
+    const after = await findPendingUnknownAction(dispatched.sessionId, dispatched.actionKey)
+    expect(after?.phase).toBe('interrupted')
+    expect(after?.interruptedAt).toBeTruthy()
+    expect(after?.reason).toContain('应用在动作派发后中断')
+    expect(after?.reason).toContain(record!.createdAt)
+    const blocked = await blockIfUnknownAction({ ...dispatched, confirmHint: '请核对目标系统。' })
+    expect(blocked).toContain('结果未知')
+  })
+
+  test('Given 同一次运行仍在途 When 查询 Then 不误标为中断', async () => {
+    const record = await beginTrackedAction(dispatched)
+    const current = await findPendingUnknownAction(dispatched.sessionId, dispatched.actionKey)
+    expect(current?.phase).toBe('dispatched')
+    expect(current?.interruptedAt).toBeUndefined()
+    expect(current?.id).toBe(record?.id)
+  })
+
+  test('Given 中断标记已落盘 When 再次重启 Then 不重复追加事件', async () => {
+    await beginTrackedAction(dispatched)
+    __resetUnknownActionCacheForTest()
+    await findPendingUnknownAction(dispatched.sessionId, dispatched.actionKey)
+    const afterFirst = readFileSync(join(directory, 'unknown-actions.jsonl'), 'utf8').trim().split('\n').length
+    __resetUnknownActionCacheForTest()
+    const again = await findPendingUnknownAction(dispatched.sessionId, dispatched.actionKey)
+    expect(again?.phase).toBe('interrupted')
+    expect(readFileSync(join(directory, 'unknown-actions.jsonl'), 'utf8').trim().split('\n').length).toBe(afterFirst)
+  })
+
+  test('Given 派发后失败已写明原因 When 重启 Then 保留失败原因而不是改成中断', async () => {
+    const record = await beginTrackedAction(dispatched)
+    await finishTrackedAction(record!, false, 'Connection closed')
+    __resetUnknownActionCacheForTest()
+    const after = await findPendingUnknownAction(dispatched.sessionId, dispatched.actionKey)
+    expect(after?.phase).toBe('unknown')
+    expect(after?.reason).toBe('Connection closed')
+    expect(after?.interruptedAt).toBeUndefined()
+  })
+
+  test('Given 派发后正常结算 When 重启 Then 不残留记录', async () => {
+    const record = await beginTrackedAction(dispatched)
+    await finishTrackedAction(record!, true)
+    __resetUnknownActionCacheForTest()
+    expect(await findPendingUnknownAction(dispatched.sessionId, dispatched.actionKey)).toBeUndefined()
+  })
+
+  test('Given 已确认生效的中断记录 When 重启 Then 保留人工结论与中断来源', async () => {
+    await beginTrackedAction(dispatched)
+    __resetUnknownActionCacheForTest()
+    const interrupted = await findPendingUnknownAction(dispatched.sessionId, dispatched.actionKey)
+    await confirmUnknownActionApplied({ sessionId: dispatched.sessionId, id: interrupted!.id, resolution: '已核对目标系统，动作已生效' })
+    __resetUnknownActionCacheForTest()
+    const after = await findPendingUnknownAction(dispatched.sessionId, dispatched.actionKey)
+    expect(after?.acknowledgedAt).toBeTruthy()
+    expect(after?.interruptedAt).toBeTruthy()
+    expect(after?.resolution).toContain('已核对目标系统')
+  })
+
+  test('Given 重启后存在中断记录 When 显式对账 Then 返回遗留清单', async () => {
+    await beginTrackedAction(dispatched)
+    await beginTrackedAction({ sessionId: 's2', tool: 'WebBridgeClick', actionKey: 'web:click:9', reason: '动作已登记，结果待确认' })
+    __resetUnknownActionCacheForTest()
+    const leftover = await reconcileUnknownActionsAfterRestart()
+    expect(leftover).toHaveLength(2)
+    expect(leftover.map(item => item.sessionId).sort()).toEqual(['s1', 's2'])
+    expect(leftover.every(item => item.phase === 'interrupted')).toBe(true)
+    // 第二次调用不重复计入
+    expect(await reconcileUnknownActionsAfterRestart()).toHaveLength(2)
+    expect(await listPendingUnknownActionsForReview()).toHaveLength(2)
+  })
+
+  test('Given 已确认结果未知的历史记录 When 重启 Then 不当成崩溃遗留', async () => {
+    await recordUnknownAction({ sessionId: 's1', tool: 'ComputerUseClick', actionKey: 'cu:1', reason: 'timed out' })
+    __resetUnknownActionCacheForTest()
+    const after = await findPendingUnknownAction('s1', 'cu:1')
+    expect(after?.phase).toBe('unknown')
+    expect(after?.interruptedAt).toBeUndefined()
+    expect(await reconcileUnknownActionsAfterRestart()).toHaveLength(0)
+    expect(await listPendingUnknownActions('s1')).toHaveLength(1)
   })
 })

@@ -1,5 +1,104 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-11-01 第四轮推进（P2：RSI 样本审计 / Harness 工具入口身份门禁 / Enterprise 启动校验）
+
+- **RSI · 样本来源审计与质量报告**：新增 `eval/scoreboard-audit`（只读纯函数）。逐条审计基准定义
+  哈希、三类输入来源（素材/评判/运行配置）、内部自洽性（每个 case 有 run 且 run 带题目与评分规则
+  摘要），并给出可比前提；缺来源如实标注，明确"历史缺口不回填"。样本质量画像包含齐备记录数、
+  历史遗留数、可对比对数（要求定义哈希与 rubric 版本一致）、每 case run 数分布、只跑一次的 case 数、
+  摘要缺失 run 数、评判身份记录率与按频次排序的阻塞原因。12 例测试通过。
+- **Harness · 统一工具入口身份门禁**：盘点 `Read/Write/Edit/Bash` 之外的入口，发现 6 个只做用途门禁、
+  未校验绑定身份：Grep（文件入口）、Agent 委派、成员互调、RecallMemory/AddMemory、WebFetch、
+  WebSearch。新增 `assertOwnerToolGate`（先比对绑定身份、再判 Owner 用途）并替换这些工具的既有门禁点，
+  含 WebFetch/WebSearch 在网络请求前的二次复核。新增 `tool-entry-identity` 回归：未绑定一律拒绝、
+  已绑定不误拒；相关测试按生产语义绑定会话。26 个 tool-impls 测试文件全绿（除 2 个嵌套 seatbelt 用例）。
+- **Enterprise · 共享访问开关启动校验**：新增 `assertSharedWorkspaceAccessStartupPolicy`：开关打开但
+  判定未接进工作区读写与 Runtime 时拒绝启动（避免对外承诺未强制的权限），无鉴权模式下同样拒绝。
+  `index.ts` 启动序列接入，当前 enforcement 恒为 false，即开关无法被误开。14 例通过。
+- 验证边界：三处 tsc 与 biome 通过。仍未覆盖：真实 Provider、品牌授权、客户部署与人工验收。
+
+
+## 2026-11-01 第三轮推进（P1：崩溃对账 / 撤权入口 / 包内上下文链路）
+
+- **受控自主 · 崩溃恢复与未知状态对账**：派发前登记写入本进程 `bootId` 与 `phase=dispatched`；
+  加载时对账把「bootId 与当前进程不同且从未结算」的记录标为 `interrupted`，补一条可审计中断事件
+  （幂等，不重复追加），保留 pending 继续拦截重试；失败结算回落 `unknown`，已知未知记录不误判；
+  新增 `reconcileUnknownActionsAfterRestart()` 供启动流程取遗留清单。设置面板与 `ListUnknownActions`
+  显示「上次运行中断」与中断时间。测试 32 例（新增 8 例：崩溃、幂等、失败优先、历史记录不误判）。
+- **受控自主 · 统一撤权入口（Pi 桥接）**：新增 `assertToolSession` 回调，桥接层每次派发前复核运行时
+  绑定身份与撤权状态，未提供校验即失败关闭；覆盖三条派发点——普通工具（拿到许可后、真正执行前再
+  复核，堵住审批等待窗口）、`AskUserQuestion` 与 `GoalCheckpoint`（这两条绕过权限回调的早退路径）。
+  撤权拒绝转成工具错误结果回给模型，其他异常保持原样抛出。测试 15 例（新增 5 例）。
+  至此 Proma / AI SDK / Pi / Claude 四条路径的「审批前 + 派发前」复核齐全。
+- **OpenDesign · 包内上下文链路**：`resolveActiveDesignSystem` / `composeOdDesignContext` 增加只读依赖
+  注入（`readWorkspaceInstall` / `designSystemDeps`），默认行为不变；打包 smoke 在真实打包应用内追加
+  「安装 → 上下文组装」断言，并覆盖未声明需求不注入、本地文件优先、缺项报 `od_missing_resource`。
+  新增本机等价集成测试 5 例。包内 smoke 需在打包环境执行（本机沙箱不能跑 Electron）。
+- 验证边界：`apps/electron` tsc 通过；相关测试文件全绿。仍未覆盖：真实 Provider 遵循、品牌授权、
+  用户现场安装操作、客户环境部署。
+
+
+## 2026-11-01 第二轮推进（Claude 绑定 / 显著性 / Enterprise 接线）
+
+基线 `5e181e59`（含 #104）。本轮 3 个提交：`c2921cb1`、`e0bc5a84` + 文档。
+
+- **受控自主 · Claude 路径**：`RuntimeSessionIdentity` 增 `claude-sdk`；编排层 `sendMessage` 在
+  `this.adapter.query()` 前 `bindRuntimeSessionIdentity(sessionIdentityOwner, …)`，把
+  `resolveToolPermission` 包成 `canUseTool`：进入判定前与放行前各 `requireBoundSessionId` 一次，
+  失败直接 deny 且不进审批。至此四条路径（Proma / AI SDK / Pi / Claude）的权限判定都以绑定为授权依据。
+  注：Claude 路径的身份对象是每次运行新建、运行后不可达，因此不做撤销标记。
+- **RSI · 显著性**：`evaluateShadowSignificance` 双侧精确符号检验（二项系数精确计算），
+  `ShadowComparison.significance` 带 `pairs/pValue/alpha/significant/note`；配对数下限默认 5、
+  alpha 默认 0.05 可配；不可比时显式「未做显著性判断」。`verdict` 语义不变，
+  description 在「下了方向结论但未达显著」时提示不能排除噪声。新增 8 例。
+- **Enterprise**：成员接口改为先取工作区所有者再 `decideWorkspaceAccess(manage_members)`，非所有者
+  403 + 原因码、不写库；桩测试 5 例。S1（共享工作区读）仍是功能开发，未启动。
+
+环境限制复现（与本轮改动无关）：`apps/server/src/workspace-tools.test.ts` 在沙箱内
+`mkdir /private/tmp/...` EPERM；`agent-runtime` 的 seatbelt 用例同样受嵌套沙箱限制。
+
+下一步（仍在计划内）：RSI 真实评测验证三来源冻结；Harness 门禁语法补强；Enterprise S1 需先定
+共享读的字段口径；门禁改动需重建应用才对真实 Agent 生效。
+
+## 2026-11-01 五方向推进（本会话：门禁 / 绑定 / RSI / OpenDesign / Enterprise）
+
+基线与验证：`main` 08331f01（含 #79–#102）。本次改动全部是源码 + 测试，未提交 PR，未重建应用。
+
+- **Harness · Bash Git 门禁重写**（`agent-runtime/tool-impls/git-command-boundary.ts`）：
+  改前是整串正则（31 行），引号文本、here-doc 正文、提交信息、子命令参数都会被当成命令。
+  改后先做 shell 词法切分（引号/转义/here-doc/注释/重定向/命令替换），再只看命令位（跳过
+  `env`/`sudo`/`xargs` 前缀与 `VAR=值` 赋值）上的 Git；`-c`/`--config-env` 只在子命令之前当全局选项解析，
+  子命令之后同名参数按数据处理。测试 9 例（原 5 例保留 + 4 例新增误拒回归）。
+  **关键事实：当前会话的 Bash 工具跑的是改动前打好的 bundle**，实测仍按旧规则拒绝
+  `echo "…git init; …"`；源码修复要线上生效必须重新构建并重启应用。
+- **受控自主 · Proma 权限门禁接绑定身份**：`runtime-session-identity.ts` 新增
+  `requireBoundSessionId()`；`provider-agnostic-agent-adapter.ts` 的 `checkToolPermission` 在任何
+  模式分支之前先取绑定身份，后续 `assertNoOwnerBusinessSession` 用校验过的 sessionId；审批返回后
+  的身份复核改为 `ctx.boundSession ?? ctx.sessionOwner`。测试：13 例身份单测 + 24 例适配器集成。
+- **RSI · 三来源冻结**：`EvaluationDefinitionProvenance` 增 `caseMaterialHash`/`judgeHash`/
+  `runConfigHash`；`freezeEvaluationDefinition(benchmark, frozenAt, { judge, maxTurns })` 写入；
+  `compareRecordedEvaluations` 从「无条件不可比」改为按缺项/差异给出具体原因，齐备即正常比对。
+  历史记录不回填。测试：对比套件 40 例（含 3 例新增）。
+- **OpenDesign · 会话目录安装 + 同名另存**（核心层，未接 IPC/UI）：`opendesign-install-store.ts` 新增
+  `installOpenDesignIntoSessionDir` / `readInstalledOpenDesignFromSession`，另存名 `<brand>-design.md`、
+  `<brand>-tokens.css`、再冲突加序号；manifest 记实际文件名 + SHA-256；只写不改、失败回滚；读回校验
+  文件名安全、符号链接、大小、摘要。`resolveActiveDesignSystem` 优先级：本地文件 → 会话 manifest →
+  工作区共享安装；被改写的安装文件按本地文件处理、不挂 OpenDesign 来源。
+  测试：会话安装 8 例、设计上下文 27 例。
+- **Enterprise · 集中授权判定模型**：新增 `apps/server/src/workspace-access-policy.ts`
+  （`decideWorkspaceAccess` / `isSharedWorkspaceAccessEnabled`），成员接口的 `sharedAccessEnabled`
+  改为读该开关（默认关闭）。未接任何入口，线上行为不变。设计说明：
+  `docs/plans/2026-10-28-harness-autonomy-rsi-roadmap/enterprise-central-authorization.md`。测试 10 例。
+
+验证结果：`apps/electron` 与 `apps/server` 的 `tsc --noEmit` 均通过；`agent-runtime` 目录 128 个测试文件
+中 3 个失败，全部是嵌套 seatbelt 不可用（`sandbox_apply: Operation not permitted`）的沙箱用例，
+与本次改动无关。未跑完整全仓套件（先在后台跑满套件时被会话中止）。
+
+后续优先级（承接既有结论）：门禁改动需重建应用后才影响真实 Agent 使用；受控自主下一步把
+`assertBoundToolSession` 覆盖到 Pi/Claude SDK 两条链路的权限回调；RSI 需用真实评测跑一条带三来源的
+新记录确认可比性；OpenDesign 要把会话目录传给安装 IPC/UI；Enterprise 按设计文档 S1–S5 接入口。
+
+
 ## 2026-11-01 观察账本分支收尾与文档同步
 
 - 本分支（codex/p1-web-change-observation-ledger）S1–S7 已落地并推送，PR #94 OPEN。

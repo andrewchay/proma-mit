@@ -20,7 +20,7 @@ import type { ToolContext } from '../types.ts'
 import { getToolCredentials } from '../../chat-tool-config'
 import { getFetchFn } from '../../proxy-fetch'
 import { getEffectiveProxyUrl } from '../../proxy-settings-service'
-import { assertOwnerToolPermission, formatToolError } from './tool-utils.ts'
+import { assertOwnerToolGate, formatToolError } from './tool-utils.ts'
 import { readBoundedWebBody } from './bounded-web-body'
 
 export const WEB_SEARCH_TOOL_NAME = 'WebSearch'
@@ -252,7 +252,7 @@ export async function executeWebSearchTool(input: unknown, ctx: ToolContext): Pr
     return { toolCallId: '', content: '搜索参数缺失: query', isError: true }
   }
 
-  try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_SEARCH_TOOL_NAME, { query }) }
+  try { assertOwnerToolGate(ctx, WEB_SEARCH_TOOL_NAME, { query }) }
   catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
   const credentials = getToolCredentials('web-search') as WebSearchCredentials
   const provider = resolveWebSearchProvider(credentials)
@@ -261,7 +261,7 @@ export async function executeWebSearchTool(input: unknown, ctx: ToolContext): Pr
     // 网络请求统一跟随 Proma 代理设置
     const proxyUrl = await getEffectiveProxyUrl()
     const fetchFn = getFetchFn(proxyUrl)
-    assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_SEARCH_TOOL_NAME, { query })
+    assertOwnerToolGate(ctx, WEB_SEARCH_TOOL_NAME, { query })
 
     const controller = new AbortController()
     const abortFromCaller = () => controller.abort()
@@ -279,7 +279,7 @@ export async function executeWebSearchTool(input: unknown, ctx: ToolContext): Pr
           }
         }
         const result = await searchMetaso(query, credentials.metasoApiKey, fetchFn, controller.signal)
-        assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_SEARCH_TOOL_NAME, { query })
+        assertOwnerToolGate(ctx, WEB_SEARCH_TOOL_NAME, { query })
         return result
       }
 
@@ -291,7 +291,7 @@ export async function executeWebSearchTool(input: unknown, ctx: ToolContext): Pr
         }
       }
       const result = await searchTavily(query, credentials.apiKey, fetchFn, controller.signal)
-      assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_SEARCH_TOOL_NAME, { query })
+      assertOwnerToolGate(ctx, WEB_SEARCH_TOOL_NAME, { query })
       return result
     } finally {
       clearTimeout(timer)

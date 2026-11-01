@@ -72,6 +72,8 @@ export interface PendingUnknownActionSummary {
   tool: string
   createdAt: string
   acknowledgedAt?: string
+  /** 应用在派发后中断的时间；存在表示这条记录来自上一次运行，不是本次会话产生。 */
+  interruptedAt?: string
 }
 
 export interface AgentAuditQuery {

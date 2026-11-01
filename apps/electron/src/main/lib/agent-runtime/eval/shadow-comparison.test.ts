@@ -188,6 +188,83 @@ describe('compareScoreboardEvaluations（scoreboard 适配）', () => {
     cases: scores.map(([caseId, score]) => ({ caseId, score, runs: [] })),
   }) as unknown as import('./types').BenchmarkEvaluation
 
+  test('Given 两侧冻结了同一份素材、评判实现与运行配置 When 比较 Then 可给出差值结论', async () => {
+    const { compareRecordedEvaluations } = await import('./shadow-comparison')
+    const definition = {
+      version: 2,
+      rubricVersion: 3,
+      definitionHash: 'hash-same',
+      frozenAt: '2026-10-31T00:00:00Z',
+      caseMaterialHash: 'c'.repeat(64),
+      judgeHash: 'd'.repeat(64),
+      runConfigHash: 'e'.repeat(64),
+    }
+    const make = (score: number, caseText: string) => ({
+      ...evaluation(1, [['c1', score]]),
+      definition,
+      cases: [{ caseId: 'c1', score, costUsd: null, durationMs: null, runs: [{ score, sessionId: 's', caseTextRubricSha256: caseText }] }],
+    })
+    const result = compareRecordedEvaluations({
+      baseline: make(60, 'a'.repeat(64)),
+      candidate: make(80, 'a'.repeat(64)),
+      expectedCaseIds: ['c1'],
+    })
+    expect(result.reasons).toEqual([])
+    expect(result.comparable).toBe(true)
+    expect(result.meanDelta).toBeCloseTo(0.2, 5)
+    expect(result.verdict).toBe('candidate_better')
+  })
+
+  test('Given 两侧冻结来源不一致 When 比较 Then 逐项写明差异且不可比', async () => {
+    const { compareRecordedEvaluations } = await import('./shadow-comparison')
+    const base = {
+      version: 2,
+      rubricVersion: 3,
+      definitionHash: 'hash-same',
+      frozenAt: '2026-10-31T00:00:00Z',
+      caseMaterialHash: 'c'.repeat(64),
+      judgeHash: 'd'.repeat(64),
+      runConfigHash: 'e'.repeat(64),
+    }
+    const make = (definition: typeof base) => ({
+      ...evaluation(1, [['c1', 80]]),
+      definition,
+      cases: [{ caseId: 'c1', score: 80, runs: [{ score: 80, sessionId: 's', caseTextRubricSha256: 'a'.repeat(64) }] }],
+    })
+    const result = compareRecordedEvaluations({
+      baseline: make(base),
+      candidate: make({ ...base, caseMaterialHash: 'f'.repeat(64), judgeHash: 'g'.repeat(64), runConfigHash: 'h'.repeat(64) }),
+      expectedCaseIds: ['c1'],
+    })
+    expect(result.comparable).toBe(false)
+    expect(result.reasons.join()).toContain('两侧案例素材不同')
+    expect(result.reasons.join()).toContain('两侧评判实现不同')
+    expect(result.reasons.join()).toContain('两侧运行配置不同')
+  })
+
+  test('Given 仅一侧冻结了评判实现 When 比较 Then 只报该来源未冻结', async () => {
+    const { compareRecordedEvaluations } = await import('./shadow-comparison')
+    const full = {
+      version: 2,
+      rubricVersion: 3,
+      definitionHash: 'hash-same',
+      frozenAt: '2026-10-31T00:00:00Z',
+      caseMaterialHash: 'c'.repeat(64),
+      judgeHash: 'd'.repeat(64),
+      runConfigHash: 'e'.repeat(64),
+    }
+    const { judgeHash: _omitted, ...withoutJudge } = full
+    const make = (definition: typeof full | typeof withoutJudge) => ({
+      ...evaluation(1, [['c1', 80]]),
+      definition,
+      cases: [{ caseId: 'c1', score: 80, runs: [{ score: 80, sessionId: 's', caseTextRubricSha256: 'a'.repeat(64) }] }],
+    })
+    const result = compareRecordedEvaluations({ baseline: make(withoutJudge), candidate: make(full), expectedCaseIds: ['c1'] })
+    expect(result.comparable).toBe(false)
+    expect(result.reasons.join()).toContain('评判实现来源未冻结')
+    expect(result.reasons.join()).not.toContain('两侧评判实现不同')
+  })
+
   test('Given 历史评测未记录基准来源 When 当前定义匹配 Then 不推断可比', async () => {
     const { compareScoreboardEvaluations } = await import('./shadow-comparison')
     const result = compareScoreboardEvaluations({

@@ -198,6 +198,15 @@ export interface EvaluationDefinitionProvenance {
   definitionHash: string
   /** 冻结时刻（ISO 时间） */
   frozenAt: string
+  /**
+   * 案例素材（每个 case 的公开参考文件集合）内容摘要。
+   * 缺省=该记录未冻结素材来源（历史记录），不能据此认定两侧素材一致。
+   */
+  caseMaterialHash?: string
+  /** 评判实现身份摘要（kind/供应商/模型/渠道/独立性声明）；缺省=未记录评判者。 */
+  judgeHash?: string
+  /** 运行配置摘要（被测 runtime 与轮次上限）；缺省=未记录运行配置。 */
+  runConfigHash?: string
 }
 
 export interface BenchmarkEvaluation {

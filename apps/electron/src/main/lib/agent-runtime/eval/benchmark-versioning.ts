@@ -6,9 +6,9 @@
  */
 
 import { createHash } from 'node:crypto'
-import { existsSync } from 'node:fs'
+import { existsSync, lstatSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { getBenchmarksRootDir } from '../../config-paths'
+import { getBenchmarkCaseStatementAssetsDir, getBenchmarksRootDir } from '../../config-paths'
 import { readJsonFileSafe, writeJsonFileAtomic } from '../../safe-file'
 import type { BenchmarkConfig } from './types'
 
@@ -50,14 +50,19 @@ export function readBenchmarkVersion(benchmark: BenchmarkConfig): BenchmarkVersi
 /**
  * 冻结一条评测记录的基准来源。
  *
- * 只在写入评测时调用：版本、rubric 版本与定义哈希一起落盘，后续配置变化不回填历史，
- * 这样「这条评测当时用的是哪份基准」可被核对，影子对比才有可信输入。
+ * 只在写入评测时调用：版本、rubric 版本、定义哈希与三类输入来源一起落盘，
+ * 后续配置变化不回填历史，这样「这条评测当时用的是哪份基准、哪批素材、哪个评判者、
+ * 什么运行配置」可被核对，影子对比才有可信输入。
+ *
+ * `source` 缺失时对应哈希不写入（保留「来源未知」语义，而不是按空值当成一致）。
  */
 export function freezeEvaluationDefinition(
   benchmark: import('./types').BenchmarkConfig,
   frozenAt: string = new Date().toISOString(),
+  source?: { judge?: import('./types').JudgeIdentity | null; maxTurns?: number },
 ): import('./types').EvaluationDefinitionProvenance {
   const rubricVersion = benchmark.rubricVersion ?? 1
+  const judgeHash = hashJudgeIdentity(source?.judge)
   return {
     version: benchmark.version ?? 1,
     rubricVersion,
@@ -68,7 +73,64 @@ export function freezeEvaluationDefinition(
       ...(benchmark.targetScope === undefined ? {} : { targetScope: benchmark.targetScope }),
     }),
     frozenAt,
+    caseMaterialHash: hashBenchmarkCaseMaterial(benchmark.id, [...benchmark.cases, ...(benchmark.heldOutCases ?? [])]),
+    runConfigHash: hashEvalRunConfig(benchmark, source?.maxTurns),
+    ...(judgeHash === undefined ? {} : { judgeHash }),
   }
+}
+
+/**
+ * 案例素材摘要：按 case 目录下参考文件的相对名与内容计算，缺省目录计入 `absent`。
+ *
+ * 与 caseTextRubricSha256（题目正文+评分规则）互补：那个锁定「问什么、怎么判」，
+ * 这个锁定「给被测方看了哪些素材」。两者都一致才谈得上同一份评测输入。
+ */
+export function hashBenchmarkCaseMaterial(benchmarkId: string, caseIds: string[]): string {
+  const digest = createHash('sha256')
+  for (const caseId of normalize(caseIds)) {
+    const assetsDir = getBenchmarkCaseStatementAssetsDir(benchmarkId, caseId)
+    let entries: string[] = []
+    try {
+      entries = readdirSync(assetsDir).sort()
+    } catch {
+      digest.update(`${caseId}\u0000absent\u0000`)
+      continue
+    }
+    for (const entry of entries) {
+      const filePath = join(assetsDir, entry)
+      try {
+        const stat = lstatSync(filePath)
+        if (stat.isSymbolicLink()) { digest.update(`${caseId}\u0000${entry}\u0000symlink\u0000`); continue }
+        if (!stat.isFile()) { digest.update(`${caseId}\u0000${entry}\u0000non-file\u0000`); continue }
+        digest.update(`${caseId}\u0000${entry}\u0000${createHash('sha256').update(readFileSync(filePath)).digest('hex')}\u0000`)
+      } catch {
+        digest.update(`${caseId}\u0000${entry}\u0000unreadable\u0000`)
+      }
+    }
+  }
+  return digest.digest('hex')
+}
+
+/** 评判实现摘要：只认同一评判配置；未记录评判者时返回 undefined（不得按一致处理）。 */
+export function hashJudgeIdentity(judge: import('./types').JudgeIdentity | null | undefined): string | undefined {
+  if (!judge) return undefined
+  return createHash('sha256').update(JSON.stringify({
+    kind: judge.kind,
+    provider: judge.provider ?? null,
+    modelId: judge.modelId ?? null,
+    channelId: judge.channelId ?? null,
+    independent: judge.independent,
+  })).digest('hex')
+}
+
+/** 运行配置摘要：被测 runtime 与轮次上限；默认轮次与 evaluator 保持一致（12）。 */
+export function hashEvalRunConfig(benchmark: import('./types').BenchmarkConfig, maxTurns?: number): string {
+  return createHash('sha256').update(JSON.stringify({
+    provider: benchmark.runtime?.provider ?? null,
+    modelId: benchmark.runtime?.modelId ?? null,
+    channelId: benchmark.runtime?.channelId ?? null,
+    maxTurns: maxTurns ?? 12,
+  })).digest('hex')
 }
 
 /**
