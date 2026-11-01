@@ -136,12 +136,22 @@ function sessionRejectedResult(toolName: string): { content: Array<{ type: 'text
   return errorResult(toolName, SESSION_REJECTED_MESSAGE)
 }
 
-/** 统一撤权入口：桥接层每次派发前调用；未提供校验时按失败关闭处理。 */
-function assertToolSessionAllowed(toolName: string, assert?: () => void): boolean {
-  if (!assert) {
-    console.warn(`[Pi Tool Bridge] ${toolName} 缺少会话身份校验回调，拒绝执行`)
-    return false
+/**
+ * 统一撤权入口的校验函数。
+ *
+ * 适配器会传入带运行时身份比对的回调；未传入时退回工具入口的通用绑定校验，
+ * 保证"每次派发前必须复核身份"这条规则不依赖调用方是否记得接线。
+ */
+function resolveSessionAssert(options: CreatePiToolBridgeOptions): () => void {
+  if (options.assertToolSession) return options.assertToolSession
+  return () => {
+    const gates = require('../project-owner-execution-gates') as typeof import('../project-owner-execution-gates')
+    gates.assertBoundToolSession(options.toolContext)
   }
+}
+
+/** 每次派发前调用；复核失败按失败关闭处理。 */
+function assertToolSessionAllowed(toolName: string, assert: () => void): boolean {
   try {
     assert()
     return true
@@ -171,7 +181,8 @@ function createBridgeTool<TSchemaType extends TSchema>(
     parameters: config.parameters,
     async execute(_toolCallId, params, signal) {
       // 统一撤权入口：任何工具执行前先复核运行时时绑定的会话身份（缺绑定/已撤销/被改写即拒绝）。
-      if (!assertToolSessionAllowed(config.runtimeName, options.assertToolSession)) return sessionRejectedResult(config.runtimeName)
+      const sessionAssert = resolveSessionAssert(options)
+      if (!assertToolSessionAllowed(config.runtimeName, sessionAssert)) return sessionRejectedResult(config.runtimeName)
       const sessionSignal = options.toolContext.abortSignal
       const effectiveSignal = signal && sessionSignal && signal !== sessionSignal
         ? AbortSignal.any([signal, sessionSignal])
@@ -184,7 +195,7 @@ function createBridgeTool<TSchemaType extends TSchema>(
       // Proma / AI SDK runtime 都会在权限工具分支之前拦截它；Pi 也必须保持相同语义，
       // 否则 safe 模式会把一个已激活 Goal 的检查点错误拒绝，导致 Goal 无法进入下一状态。
       if (config.runtimeName === GOAL_CHECKPOINT_TOOL_NAME) {
-        if (!assertToolSessionAllowed(config.runtimeName, options.assertToolSession)) return sessionRejectedResult(config.runtimeName)
+        if (!assertToolSessionAllowed(config.runtimeName, sessionAssert)) return sessionRejectedResult(config.runtimeName)
         if (!options.toolContext.onGoalCheckpoint) return errorResult(config.runtimeName, '当前会话没有激活的 Goal')
         await options.toolContext.onGoalCheckpoint(input as unknown as import('@gravitas/shared').AgentGoalCheckpoint)
         return toolResult(config.runtimeName, 'Goal 检查点已保存', false)
@@ -197,7 +208,7 @@ function createBridgeTool<TSchemaType extends TSchema>(
       // 这里与 ProviderAgnosticAgentAdapter / AI SDK runtime core 一致：直接执行工具（内部走 onAskUser）。
       if (config.runtimeName === ASK_USER_QUESTION_TOOL_NAME) {
         // 交互工具等待用户期间也可能被撤权，执行前再复核一次。
-        if (!assertToolSessionAllowed(config.runtimeName, options.assertToolSession)) return sessionRejectedResult(config.runtimeName)
+        if (!assertToolSessionAllowed(config.runtimeName, sessionAssert)) return sessionRejectedResult(config.runtimeName)
         const result = await runtimeTool.execute(input, Object.freeze({
           ...options.toolContext,
           abortSignal: effectiveSignal,
@@ -255,7 +266,7 @@ function createBridgeTool<TSchemaType extends TSchema>(
           execute: () => {
             if (effectiveSignal?.aborted) throw new Error('操作已中止')
             // 审批等待可能很久：拿到许可后、真正派发前再复核一次身份与撤权状态。
-            if (!assertToolSessionAllowed(config.runtimeName, options.assertToolSession)) throw new Error(SESSION_REJECTED_MESSAGE)
+            if (!assertToolSessionAllowed(config.runtimeName, sessionAssert)) throw new Error(SESSION_REJECTED_MESSAGE)
             return runtimeTool.execute(input, toolContext)
           },
         })

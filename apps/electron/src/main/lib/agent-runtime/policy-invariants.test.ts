@@ -29,9 +29,10 @@ afterAll(async () => {
 const cwd = join(dir, 'work')
 
 const core = new AISDKRuntimeCore()
-const session = (permissionMode: import('./ai-sdk-runtime-core').AISDKRuntimeSessionState['permissionMode'], overrides: Partial<import('./ai-sdk-runtime-core').AISDKRuntimeSessionState> = {}): import('./ai-sdk-runtime-core').AISDKRuntimeSessionState => ({
+// 生产路径里活动会话一定先绑定身份；权限判定现在会比对绑定，测试夹具必须同样绑定。
+const session = (permissionMode: import('./ai-sdk-runtime-core').AISDKRuntimeSessionState['permissionMode'], overrides: Partial<import('./ai-sdk-runtime-core').AISDKRuntimeSessionState> = {}): import('./ai-sdk-runtime-core').AISDKRuntimeSessionState => bindTestToolContext({
   sessionId: 'inv', cwd, model: 'm', permissionMode, planModeEntered: false, ...overrides,
-} as import('./ai-sdk-runtime-core').AISDKRuntimeSessionState)
+} as unknown as { sessionId: string; cwd: string } & Record<string, unknown>) as unknown as import('./ai-sdk-runtime-core').AISDKRuntimeSessionState
 
 const writeTool = bindCoreToolEffects({ ...createWriteToolDefinition(), execute: executeWriteTool })
 const bashTool = bindCoreToolEffects({ ...createBashToolDefinition(), execute: executeBashTool })
