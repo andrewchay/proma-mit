@@ -1,7 +1,7 @@
 /**
  * OpenDesign 会话目录安装：写入会话目录、同名冲突另存、按 manifest 读回。
  *
- * 用户口径：设计说明与令牌写入当前会话目录；遇到同名文件另存，不覆盖工作区里的文件。
+ * 核心层实验功能，尚未接入用户安装入口。
  */
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
@@ -96,11 +96,22 @@ describe('会话目录安装', () => {
     expect(() => installOpenDesignIntoSessionDir(join(sessionDir, 'missing'), manifestBase, design, tokens)).toThrow('会话目录不可用')
   })
 
-  test('Given 两次安装不同品牌 When 读回 Then 以最后一次记录为准且旧文件保留', () => {
+  test('Given 已有安装记录 When 再次安装 Then 拒绝覆盖并回滚本次文件', () => {
     installOpenDesignIntoSessionDir(sessionDir, manifestBase, design, tokens)
-    const second = installOpenDesignIntoSessionDir(sessionDir, { ...manifestBase, brandId: 'linear', brandName: 'Linear' }, '# Linear\n', ':root { --l: 1; }\n')
-    expect(second.designFile).toBe('linear-design.md')
-    expect(readInstalledOpenDesignFromSession(sessionDir)?.brandId).toBe('linear')
-    expect(readdirSync(sessionDir).sort()).toEqual(['.opendesign', 'DESIGN.md', 'linear-design.md', 'linear-tokens.css', 'tokens.css'])
+    const original = readFileSync(join(sessionDir, '.opendesign', 'session-installation.json'), 'utf8')
+    expect(() => installOpenDesignIntoSessionDir(sessionDir, { ...manifestBase, brandId: 'linear', brandName: 'Linear' }, '# Linear\n', ':root { --l: 1; }\n')).toThrow()
+    expect(readFileSync(join(sessionDir, '.opendesign', 'session-installation.json'), 'utf8')).toBe(original)
+    expect(readInstalledOpenDesignFromSession(sessionDir)?.brandId).toBe('stripe')
+    expect(readdirSync(sessionDir).sort()).toEqual(['.opendesign', 'DESIGN.md', 'tokens.css'])
+  })
+
+  test('Given 安装记录是指向其他文件的符号链接 When 安装 Then 拒绝且不改写目标', () => {
+    const target = join(sessionDir, 'target.json')
+    writeFileSync(target, 'USER_CONTENT')
+    mkdirSync(join(sessionDir, '.opendesign'))
+    symlinkSync(target, join(sessionDir, '.opendesign', 'session-installation.json'))
+    expect(() => installOpenDesignIntoSessionDir(sessionDir, manifestBase, design, tokens)).toThrow()
+    expect(readFileSync(target, 'utf8')).toBe('USER_CONTENT')
+    expect(readdirSync(sessionDir).sort()).toEqual(['.opendesign', 'target.json'])
   })
 })

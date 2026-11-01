@@ -216,8 +216,8 @@ export function installOpenDesignIntoSessionDir(
     writeSessionFile(root, tokensFile, tokens)
     written.push(tokensFile)
     const payload: OpenDesignSessionInstallManifest = { ...manifest, files: { design: designFile, tokens: tokensFile, designSha256, tokensSha256 } }
-    // manifest 代表「本会话当前激活的安装」：后装覆盖记录，但旧文件保持不动。
-    writeFileSync(sessionManifestPath(root), `${JSON.stringify(payload, null, 2)}\n`, { mode: 0o600 })
+    // 独占创建也会拒绝符号链接，避免覆盖已有记录或链接指向的文件。
+    writeFileSync(sessionManifestPath(root), `${JSON.stringify(payload, null, 2)}\n`, { flag: 'wx', mode: 0o600 })
   } catch (error) {
     for (const name of written) rmSync(join(root, name), { force: true })
     throw error
