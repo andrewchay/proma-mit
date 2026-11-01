@@ -51,6 +51,10 @@ Owner 可预览当前绑定的执行工作区及 OpenDesign 参考版本；用�
 
 检查当前 Owner 安装服务后发现：参考分片虽进入 renderer 的 `app.asar`，但主进程安装服务从 Electron `process.resourcesPath` 读取资源，之前 electron-builder 只复制许可证，导致打包应用无法安装。0.13.515 将目录索引及四个参考 JSON 与许可证一并复制到 `Contents/Resources/opendesign/`，安装服务优先从该目录读取，并保留开发资源回退。定向测试覆盖打包资源目录的读取；未签名 macOS arm64 构建产物中已核实上述六个文件齐全。此证据不包含安装 UI 手动操作、真实 Provider 遵循、品牌授权审核或签名发布验收。
 
+### 打包 Owner 安装服务烟测（PR #104，2026-11-01）
+
+`package-design-smoke` 在实际打包应用启动后，以临时配置目录和临时 Owner 工作区运行安装服务；绑定和 Owner 身份使用烟测夹具，参考内容则由应用实际 `process.resourcesPath/opendesign` 资源读取。烟测执行预览、显式确认安装、读回 DESIGN.md/tokens.css 并逐字节内容比对、校验来源版本，再确认重复安装被报告为冲突。PR #104 的 macOS arm64、Windows x64、Linux x64 package smoke 与 quality/executor 共五项 CI 全部通过。该证据覆盖实际包资源读取和安装服务闭环，不覆盖 Owner 界面人工点击、生产 Owner 绑定、真实 Provider、品牌授权或客户验收。
+
 ## 工艺参考缺项提示
 
 Skill 显式要求的 craft 章节若目录不存在、文件缺失、为空或无法读取，组合上下文会列出缺项并要求执行者说明，不声称遵循了缺失内容；可用章节仍正常注入。定向测试覆盖全部缺失、部分缺失、完整资料及 ReadSkill 接线；该提示不证明真实 Provider 会遵守，也不是独立品牌合规审核，其他 Runtime 和打包应用仍需各自验收。
