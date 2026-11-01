@@ -1,5 +1,15 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-11-01 观察账本分支收尾与文档同步
+
+- 本分支（codex/p1-web-change-observation-ledger）S1–S7 已落地并推送，PR #94 OPEN。
+  `5c053165` 修复裁剪 O(n²) CI 超时（预检 COUNT/MIN，1844ms→421ms）。
+  新增两个 docs 提交（2261f206 主线 #95–#101 进展 + OpenDesign 后续；c6b4ab1d 分支进展）。
+- 路线图 delivery-progress.md 已更新：OpenDesign 行标记 #95/#101 落地、剩余改为
+  「会话目录安装与另存冲突策略」；新增 2026-11-01 两节（分支内进展 + 主线已合并切片）。
+- OpenDesign 剩余三个待决策仍悬置（另存文件发现方式 / 工作区共享安装去留 / 是否走审批），
+  AskUserQuestion 被中止，见 .context/opendesign-injection-next.md。
+
 ## 2026-11-01 主线更新与 OpenDesign 一期落地
 
 - 主线现为 fe0d0b9c（昨晚至今早合并 #95–#101）。OpenDesign #95 落地 Owner 工作区安装与受控注入，
