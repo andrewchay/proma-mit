@@ -53,7 +53,11 @@ Owner 可预览当前绑定的执行工作区及 OpenDesign 参考版本；用�
 
 ### 打包 Owner 安装服务烟测（PR #104，2026-11-01）
 
-`package-design-smoke` 在实际打包应用启动后，以临时配置目录和临时 Owner 工作区运行安装服务；绑定和 Owner 身份使用烟测夹具，参考内容则由应用实际 `process.resourcesPath/opendesign` 资源读取。烟测执行预览、显式确认安装、读回 DESIGN.md/tokens.css 并逐字节内容比对、校验来源版本，再确认重复安装被报告为冲突。PR #104 的 macOS arm64、Windows x64、Linux x64 package smoke 与 quality/executor 共五项 CI 全部通过。该证据覆盖实际包资源读取和安装服务闭环，不覆盖 Owner 界面人工点击、生产 Owner 绑定、真实 Provider、品牌授权或客户验收。
+`package-design-smoke` 在实际打包应用启动后，以临时配置目录和临时 Owner 工作区运行安装服务；绑定和 Owner 身份使用烟测夹具，参考内容则由应用实际 `process.resourcesPath/opendesign` 资源读取。烟测执行预览、显式确认安装、读回 DESIGN.md/tokens.css 并精确比对内容、校验来源版本，再确认重复安装被报告为冲突。PR #104 的 macOS arm64、Windows x64、Linux x64 package smoke 与 quality/executor 共五项 CI 全部通过。该证据覆盖实际包资源读取和安装服务闭环，不覆盖 Owner 界面人工点击、生产 Owner 绑定、真实 Provider、品牌授权或客户验收。
+
+### 打包 Owner 安装界面 smoke（PR #106）
+
+在 #104 服务烟测上增加独立 Owner 界面流程：隔离包配置下建立临时项目、工作区和绑定，打开 Owner 对话的设计任务卡，预览绑定工作区、点击二次确认并通过实际 IPC 安装；随后读回实际包内 Stripe 参考内容，并在第二次预览时核对冲突提示、确认按钮消失且原内容不变。员工渠道只作为绑定夹具，从不发起 Provider 请求。此 PR 的 package smoke CI 尚待验证；即使通过，也只代表打包自动化覆盖了 UI/IPC/服务链，不等同于人工操作验收或真实 Provider 品牌遵循。
 
 ## 工艺参考缺项提示
 

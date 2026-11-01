@@ -1,4 +1,4 @@
-/** 在真实打包渲染器中验收 OpenDesign 下载，不访问网络、不写入用户工作区。 */
+/** 在真实打包渲染器中验收 OpenDesign 下载和 Owner 安装，不访问网络或用户工作区。 */
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -32,7 +32,7 @@ async function clickProjectModule(window: BrowserWindow): Promise<void> {
 }
 
 export async function runPackageDesignSmoke(root: string): Promise<Record<string, unknown>> {
-  const { createOwnerDesignSystemInstaller, readBundledReference } = await import('./opendesign-install-service')
+  const { createOwnerDesignSystemInstaller, readBundledReference, readInstalledOwnerDesignSystem } = await import('./opendesign-install-service')
   const ownerWorkspace: AgentWorkspace = { id: 'package-opendesign-workspace', name: 'Package OpenDesign Smoke', slug: 'package-opendesign-smoke', createdAt: 1, updatedAt: 1 }
   const ownerBinding: OwnerRuntimeBinding = {
     schemaVersion: 1, projectId: 'package-opendesign-project', revision: 1,
@@ -71,9 +71,30 @@ export async function runPackageDesignSmoke(root: string): Promise<Record<string
 
   const { initProjectDb, closeProjectDb, createProject } = await import('./project-sqlite-store')
   const { saveProjectOwnerGoalDraft } = await import('./project-owner-goal-service')
+  const { createAgentWorkspace } = await import('./agent-workspace-manager')
+  const { bindWorkspaceToProject } = await import('./project-workspace-bindings')
+  const { createAgentEmployee } = await import('./agent-employee-service')
+  const { createChannel } = await import('./channel-manager')
+  const { saveOwnerRuntimeBinding } = await import('./project-owner-runtime-binding')
   const { registerIpcHandlers } = await import('../ipc')
   await initProjectDb()
   const project = createProject({ title: 'Package OpenDesign Smoke', description: '临时本地验收项目' })
+  const smokeOwnerWorkspace = createAgentWorkspace('Package OpenDesign Smoke Owner')
+  bindWorkspaceToProject(project.id, smokeOwnerWorkspace.id)
+  const smokeChannel = createChannel({
+    name: 'Package OpenDesign Smoke Channel', provider: 'openai', baseUrl: 'https://example.invalid',
+    apiKey: 'package-smoke-not-used', enabled: true,
+    models: [{ id: 'package-smoke-model', name: 'Package Smoke Model', enabled: true }],
+  })
+  const ownerCarrier = createAgentEmployee({
+    name: 'Package OpenDesign Smoke Carrier', role: '项目 Owner 验收载体', description: '不调用模型的打包界面验收夹具',
+    runtime: 'ai-sdk', channelId: smokeChannel.id, modelId: 'package-smoke-model',
+    workspaceIds: [smokeOwnerWorkspace.id], executionProfile: 'controlled', permissionMode: 'safe',
+  })
+  saveOwnerRuntimeBinding(project.id, 0, {
+    ownerName: 'Package Smoke Owner', carrierId: ownerCarrier.id,
+    workspaceId: smokeOwnerWorkspace.id, changeReason: '隔离打包界面验收',
+  })
   saveProjectOwnerGoalDraft(project.id, 0, {
     objective: '只验证本地设计参考下载，不调用模型', constraints: [], acceptanceCriteria: ['下载内容正确且原文件不变'],
   })
@@ -132,6 +153,21 @@ export async function runPackageDesignSmoke(root: string): Promise<Record<string
     })()`, true)
     await waitRenderer(window, `[...document.querySelectorAll('button')].some(item => item.textContent === '下载设计说明' && !item.disabled)`, '设计说明下载按钮')
 
+    await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent === '安装到 Owner 工作区').click()`, true)
+    await waitRenderer(window, `document.querySelector('details[aria-label="确认 OpenDesign 安装"]')`, 'Owner 安装确认卡片')
+    assert((await window.webContents.executeJavaScript(`document.querySelector('details[aria-label="确认 OpenDesign 安装"]').innerText`, true)).includes(smokeOwnerWorkspace.name), '确认卡片未显示实际绑定的 Owner 工作区')
+    await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent === '确认安装').click()`, true)
+    await waitRenderer(window, `document.querySelector('[role="status"]')?.textContent.includes('已安装到 Owner 工作区')`, 'Owner 安装成功状态')
+    const uiInstalledReference = readInstalledOwnerDesignSystem(smokeOwnerWorkspace.slug)
+    assert(uiInstalledReference, 'Owner 界面确认后未能读回已安装参考')
+    const uiBundledReference = readBundledReference('stripe', process.resourcesPath)
+    assert.equal(uiInstalledReference.design, uiBundledReference.reference.design, 'Owner 界面安装的设计说明与打包资源不一致')
+    assert.equal(uiInstalledReference.tokens, uiBundledReference.reference.tokens, 'Owner 界面安装的令牌与打包资源不一致')
+    await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent === '安装到 Owner 工作区').click()`, true)
+    await waitRenderer(window, `document.body.innerText.includes('目标存在冲突')`, '重复安装冲突提示')
+    assert.equal((await window.webContents.executeJavaScript(`document.querySelectorAll('button').length && [...document.querySelectorAll('button')].some(item => item.textContent === '确认安装')`, true)), false, '存在冲突时仍提供确认安装入口')
+    assert.equal(readInstalledOwnerDesignSystem(smokeOwnerWorkspace.slug)?.design, uiBundledReference.reference.design, '重复安装冲突改变了已安装内容')
+
     await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent === '下载设计说明').click()`, true)
     const deadline = Date.now() + 10_000
     while ((downloads[0]?.state === 'started' || downloads.length === 0) && Date.now() < deadline) await sleep(50)
@@ -152,7 +188,10 @@ export async function runPackageDesignSmoke(root: string): Promise<Record<string
     assert(existsSync(join(process.resourcesPath, 'opendesign', 'LICENSE.txt')), 'OpenDesign 许可证未随包分发')
     return {
       downloads: downloads.map(item => ({ name: item.path.split('/').pop(), state: item.state })),
-      ownerInstall: { brandName: installed.brandName, referenceRevision: installed.referenceRevision, verifiedPackagedReadback: true },
+      ownerInstall: {
+        brandName: installed.brandName, referenceRevision: installed.referenceRevision,
+        serviceReadbackVerified: true, ownerUiConfirmationVerified: true, duplicateInstallBlocked: true,
+      },
       userFilesUnchanged: true,
     }
   } finally {
