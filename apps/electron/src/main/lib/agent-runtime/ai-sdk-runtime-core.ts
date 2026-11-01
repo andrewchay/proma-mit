@@ -730,6 +730,11 @@ export class AISDKRuntimeCore {
     input: Record<string, unknown>,
     state: AISDKToolExecutionState,
   ): Promise<AISDKToolPermissionResult> {
+    // 授权判定前先核对运行时绑定：权限回调可能长时间等待用户审批，且回调内部的
+    // Owner/业务门禁按 sessionId 复核；先比对绑定，避免等待期间身份被改写后仍进入审批。
+    if (!isBoundSessionMarkerValid(state)) {
+      return { allowed: false, message: '受控会话身份标记已变化，拒绝执行工具' }
+    }
     if (state.activeSession.permissionMode === 'bypassPermissions' && !state.activeSession.ownerActionApproval) {
       return { allowed: true }
     }
