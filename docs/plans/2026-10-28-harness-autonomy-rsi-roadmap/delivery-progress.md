@@ -45,7 +45,7 @@
 - **Harness · 文件变更账本（跨文件操作可对账）**：新增 `file-mutation-journal`：Write/Edit 在真正截断前记
   写入意图（路径、工具、会话、写入前 SHA-256），成功后记结算（写入后摘要），失败记原因。崩溃/强杀后
   「有意图无结算」的变更进入 `listUnsettledFileMutations()`；`reconcileFileMutation()` 用当前磁盘内容给出
-  applied / not_applied / changed_by_others / missing 结论并落盘。范围明确：不做跨文件原子性、不自动回滚、
+  unchanged / changed_unknown / missing / unreadable 观察结果；缺少目标摘要时保留待核对记录，历史自动对账事件及写入失败记录也重新列出。摘要读取限制为 8 MiB 普通文件，拒绝符号链接及不支持安全打开的平台；父目录检查不提供 openat 级原子隔离。范围明确：不做跨文件原子性、不自动回滚、
   只记摘要不记内容；账本不可写时不阻断业务写入但打印警告（该次写入无法事后对账）。
   测试：账本 10 例 + Write/Edit 接线 3 例。
 - **Enterprise · 共享工作区元数据只读**：集中授权第一个真实读路径。新增

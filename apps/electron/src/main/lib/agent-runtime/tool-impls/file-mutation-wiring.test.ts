@@ -1,7 +1,7 @@
 /** Write / Edit 必须记账：成功结算、失败留原因、中断可对账。 */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { buildElectronMock } from '../../testing/electron-mock'
@@ -32,7 +32,7 @@ const journal = () => {
 
 describe('文件写入记账', () => {
   test('Given 写入成功 When 检查账本 Then 有意图与结算两条且状态 ok', async () => {
-    workDir = mkdtempSync(join(tmpdir(), 'w-'))
+    workDir = realpathSync(mkdtempSync(join(tmpdir(), 'w-')))
     const result = await executeWriteTool({ file_path: 'a.txt', content: 'v1' }, ctx())
     expect(result.isError).toBeFalsy()
     const events = journal().filter(event => event.path.endsWith('a.txt'))
@@ -41,7 +41,7 @@ describe('文件写入记账', () => {
   })
 
   test('Given 写入被拒绝 When 检查账本 Then 保留失败原因', async () => {
-    workDir = mkdtempSync(join(tmpdir(), 'w-'))
+    workDir = realpathSync(mkdtempSync(join(tmpdir(), 'w-')))
     mkdirSync(join(workDir, 'dir'), { recursive: true })
     const result = await executeWriteTool({ file_path: 'dir', content: 'x' }, ctx())
     expect(result.isError).toBe(true)
@@ -50,7 +50,7 @@ describe('文件写入记账', () => {
   })
 
   test('Given 编辑成功 When 检查账本 Then 记录 Edit 与写入前摘要', async () => {
-    workDir = mkdtempSync(join(tmpdir(), 'w-'))
+    workDir = realpathSync(mkdtempSync(join(tmpdir(), 'w-')))
     writeFileSync(join(workDir, 'b.txt'), 'old value')
     const result = await executeEditTool({ file_path: 'b.txt', old_string: 'old', new_string: 'new' }, ctx())
     expect(result.isError).toBeFalsy()
