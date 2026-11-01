@@ -91,10 +91,11 @@ export function OperationAuditSettings(): React.ReactElement {
             <div className="flex flex-wrap items-center gap-2">
               <AlertTriangle className="size-4 text-amber-600" />
               <span className="font-medium">{item.tool || '未知工具'}</span>
-              <span className="text-amber-700 dark:text-amber-300">{item.acknowledgedAt ? '已确认动作生效，仍拦截重试' : '结果待核对，仍拦截重试'}</span>
+              <span className="text-amber-700 dark:text-amber-300">{item.acknowledgedAt ? '已确认动作生效，仍拦截重试' : item.interruptedAt ? '上次运行中断，结果待核对，仍拦截重试' : '结果待核对，仍拦截重试'}</span>
               <span className="ml-auto text-muted-foreground">{formatTimestamp(item.createdAt)}</span>
             </div>
             <p className="mt-2 break-all text-muted-foreground">会话：<span className="font-mono text-foreground/80">{item.sessionId}</span></p>
+            {item.interruptedAt && <p className="mt-1 text-muted-foreground">中断于 {formatTimestamp(item.interruptedAt)}：应用在动作派发后退出，无法确认是否生效。</p>}
             <p className="mt-1 text-muted-foreground">请在对应 Agent 会话中调用 ListUnknownActions 查看核对依据，再通过 ResolveUnknownAction 明确处理；确认已生效或暂不处理仍会保持拦截。</p>
           </div>)}
         </SettingsCard>

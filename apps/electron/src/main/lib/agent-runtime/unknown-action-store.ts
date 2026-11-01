@@ -12,11 +12,19 @@
  *
  * 未知状态本身是事实，不会因为"下一个动作成功了"自动消失——成功的动作可能是
  * 另一次点击，不构成对上一次的核验。
+ *
+ * 崩溃恢复：派发前登记会写入本进程的 boot 标识（phase=dispatched）。应用在派发后异常
+ * 退出时不会有人写结算事件，重启加载时这些记录会被识别为"上次运行中断"（phase=interrupted），
+ * 保留 pending 继续拦截重试，并补一条可审计的中断事件说明为什么结果未知。
  */
 
+import { randomUUID } from 'node:crypto'
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { getConfigDir } from '../config-paths'
+
+/** 一次「登记之后发生了什么」。dispatched 表示已派发待结算，interrupted 表示上次运行中断。 */
+export type UnknownActionPhase = 'unknown' | 'dispatched' | 'interrupted'
 
 export interface UnknownActionRecord {
   id: string
@@ -29,6 +37,11 @@ export interface UnknownActionRecord {
   reason: string
   createdAt: string
   status: 'pending' | 'resolved'
+  phase: UnknownActionPhase
+  /** 派发前登记时所在的进程实例；用来判断该动作是否由"上一次运行"遗留。 */
+  bootId?: string
+  /** 应用在派发后中断的时间；存在即表示这条记录不是本次运行产生。 */
+  interruptedAt?: string
   resolvedAt?: string
   resolution?: string
   /** 用户已确认动作生效的时间；确认后仍保留 pending，持续阻止同一动作重试。 */
@@ -36,7 +49,7 @@ export interface UnknownActionRecord {
 }
 
 interface StoredEvent {
-  type: 'unknown' | 'unknown_failed' | 'confirmed_applied' | 'resolved'
+  type: 'unknown' | 'dispatched' | 'unknown_failed' | 'interrupted' | 'confirmed_applied' | 'resolved'
   id: string
   sessionId: string
   actionKey: string
@@ -44,18 +57,23 @@ interface StoredEvent {
   detail?: Record<string, unknown>
   reason?: string
   createdAt: string
+  bootId?: string
   resolution?: string
 }
 
 const FILE_NAME = 'unknown-actions.jsonl'
+/** 本进程实例标识。每次进程启动不同；测试用 __resetUnknownActionCacheForTest 模拟重启。 */
+let bootId = randomUUID()
 let pending = new Map<string, UnknownActionRecord>()
 let loadPromise: Promise<void> | undefined
 const inFlight = new Set<string>()
 
 const cacheKey = (sessionId: string, actionKey: string): string => `${sessionId}\u0000${actionKey}`
 const filePath = (): string => join(getConfigDir(), FILE_NAME)
+const INTERRUPTED_REASON = '应用在动作派发后中断，结果未知：请先核对目标系统，再决定是否需要处理'
 
 function toRecord(event: StoredEvent): UnknownActionRecord {
+  const phase: UnknownActionPhase = event.type === 'dispatched' ? 'dispatched' : 'unknown'
   return {
     id: event.id,
     sessionId: event.sessionId,
@@ -65,6 +83,8 @@ function toRecord(event: StoredEvent): UnknownActionRecord {
     reason: event.reason ?? '',
     createdAt: event.createdAt,
     status: 'pending',
+    phase,
+    ...(event.type === 'dispatched' && event.bootId ? { bootId: event.bootId } : {}),
   }
 }
 
@@ -78,8 +98,8 @@ async function readEvents(): Promise<StoredEvent[]> {
   }
   return text.split('\n').filter((line) => line.trim()).map((line) => {
     const event = JSON.parse(line) as StoredEvent
-    const knownType = event?.type === 'unknown' || event?.type === 'unknown_failed' ||
-      event?.type === 'confirmed_applied' || event?.type === 'resolved'
+    const knownType = event?.type === 'unknown' || event?.type === 'dispatched' || event?.type === 'unknown_failed' ||
+      event?.type === 'interrupted' || event?.type === 'confirmed_applied' || event?.type === 'resolved'
     if (!event || !knownType ||
       typeof event.id !== 'string' || typeof event.sessionId !== 'string' ||
       typeof event.actionKey !== 'string' || typeof event.createdAt !== 'string') {
@@ -96,31 +116,85 @@ async function ensureLoaded(): Promise<void> {
       const records = new Map<string, UnknownActionRecord>()
       for (const event of await readEvents()) {
         const key = cacheKey(event.sessionId, event.actionKey)
-        if (event.type === 'unknown') {
+        if (event.type === 'unknown' || event.type === 'dispatched') {
           records.set(key, toRecord(event))
           continue
         }
         const current = records.get(key)
         // 同一指纹可能已有新记录，旧动作的后续事件不能改写或解除新记录。
         if (current?.id !== event.id) continue
-        if (event.type === 'resolved') records.delete(key)
-        else if (event.type === 'unknown_failed') {
-          records.set(key, { ...current, reason: event.reason ?? current.reason })
-        } else {
-          records.set(key, {
-            ...current,
-            resolution: event.resolution,
-            acknowledgedAt: event.createdAt,
-          })
+        if (event.type === 'resolved') {
+          records.delete(key)
+          continue
         }
+        if (event.type === 'interrupted') {
+          // 中断标记一旦写明就保留：它解释的是"为什么这条结果未知"。
+          records.set(key, { ...current, phase: 'interrupted', interruptedAt: event.createdAt, reason: event.reason ?? INTERRUPTED_REASON })
+          continue
+        }
+        if (event.type === 'unknown_failed') {
+          records.set(key, { ...current, phase: 'unknown', reason: event.reason ?? current.reason })
+          continue
+        }
+        records.set(key, {
+          ...current,
+          resolution: event.resolution,
+          acknowledgedAt: event.createdAt,
+        })
       }
       pending = records
+      await reconcileInterruptedActions()
     })().catch((error: unknown) => {
       loadPromise = undefined
       throw error
     })
   }
   await loadPromise
+}
+
+/**
+ * 把「上次运行派发后未结算」的记录标记为中断。
+ *
+ * 只认 bootId 与当前进程不同的 dispatched 记录：本次运行仍在途的动作不会被误标。
+ * 标记必须先落内存（拦截重试立刻生效），落盘失败只损失一条审计事件，不阻断门禁。
+ */
+async function reconcileInterruptedActions(): Promise<UnknownActionRecord[]> {
+  const interrupted: UnknownActionRecord[] = []
+  for (const [key, record] of pending) {
+    if (record.phase !== 'dispatched' || !record.bootId || record.bootId === bootId) continue
+    const interruptedAt = new Date().toISOString()
+    const next: UnknownActionRecord = {
+      ...record,
+      phase: 'interrupted',
+      interruptedAt,
+      reason: `${INTERRUPTED_REASON}（派发于 ${record.createdAt}，原登记：${record.reason}）`,
+    }
+    pending.set(key, next)
+    interrupted.push(next)
+    try {
+      await append({
+        type: 'interrupted',
+        id: record.id,
+        sessionId: record.sessionId,
+        actionKey: record.actionKey,
+        reason: next.reason,
+        createdAt: interruptedAt,
+      })
+    } catch (error) {
+      console.warn('[未知动作] 中断标记落盘失败，内存门禁仍生效:', error)
+    }
+  }
+  return interrupted
+}
+
+/**
+ * 显式触发一次崩溃对账并返回本次发现的遗留记录。
+ *
+ * 加载时已自动执行一次；启动流程可再调用以拿到数量，用于提示"上次运行有 N 条动作未结算"。
+ */
+export async function reconcileUnknownActionsAfterRestart(): Promise<UnknownActionRecord[]> {
+  await ensureLoaded()
+  return [...pending.values()].filter((record) => record.phase === 'interrupted')
 }
 
 async function append(event: StoredEvent): Promise<void> {
@@ -160,8 +234,11 @@ export async function recordUnknownAction(input: {
   actionKey: string
   detail?: Record<string, unknown>
   reason: string
+  /** dispatched=已派发待结算（崩溃对账依据）；unknown=已经确认结果未知（默认）。 */
+  phase?: 'unknown' | 'dispatched'
 }): Promise<UnknownActionRecord> {
   await ensureLoaded()
+  const phase: UnknownActionPhase = input.phase ?? 'unknown'
   const record: UnknownActionRecord = {
     id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
     sessionId: input.sessionId,
@@ -171,10 +248,12 @@ export async function recordUnknownAction(input: {
     reason: input.reason,
     createdAt: new Date().toISOString(),
     status: 'pending',
+    phase,
+    ...(phase === 'dispatched' ? { bootId } : {}),
   }
   pending.set(cacheKey(record.sessionId, record.actionKey), record)
   await append({
-    type: 'unknown',
+    type: phase === 'dispatched' ? 'dispatched' : 'unknown',
     id: record.id,
     sessionId: record.sessionId,
     actionKey: record.actionKey,
@@ -182,6 +261,7 @@ export async function recordUnknownAction(input: {
     detail: record.detail,
     reason: record.reason,
     createdAt: record.createdAt,
+    ...(phase === 'dispatched' ? { bootId } : {}),
   })
   return record
 }
@@ -199,7 +279,7 @@ export async function beginTrackedAction(input: {
   if (pending.has(key) || inFlight.has(key)) return undefined
   inFlight.add(key)
   try {
-    return await recordUnknownAction(input)
+    return await recordUnknownAction({ ...input, phase: 'dispatched' })
   } catch (error) {
     inFlight.delete(key)
     throw error
@@ -226,7 +306,8 @@ export async function finishTrackedAction(record: UnknownActionRecord, completed
     createdAt: failedAt,
   })
   if (pending.get(key)?.id === record.id) {
-    pending.set(key, { ...record, reason: failureReason })
+    // 失败原因已明确：phase 回到 unknown，重启时不再被当成本次引入的新崩溃。
+    pending.set(key, { ...record, phase: 'unknown', reason: failureReason })
   }
 }
 
@@ -337,9 +418,10 @@ export async function blockIfUnknownAction(input: {
   )
 }
 
-/** 仅供测试：清空内存状态，强制下次从磁盘重读。 */
+/** 仅供测试：清空内存状态并轮换 bootId，等价于"进程重启后重新读盘"。 */
 export function __resetUnknownActionCacheForTest(): void {
   pending = new Map()
   inFlight.clear()
   loadPromise = undefined
+  bootId = randomUUID()
 }

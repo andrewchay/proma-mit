@@ -12,6 +12,7 @@ test('Given 未知动作含敏感参数 When 生成设置页摘要 Then 只返�
     reason: 'error includes private endpoint',
     createdAt: '2026-10-31T00:00:00.000Z',
     status: 'pending',
+    phase: 'unknown',
     acknowledgedAt: '2026-10-31T00:01:00.000Z',
     resolution: 'private user evidence',
   }
