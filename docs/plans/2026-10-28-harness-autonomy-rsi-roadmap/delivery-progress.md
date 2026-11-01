@@ -35,6 +35,12 @@
 
 - P0 验证基线：`d48e8fc6` 的全仓隔离测试 784 个文件、5524 pass、47 skip、0 fail；同一提交的 quality、executor 和三平台打包 smoke CI 通过。后续 P1 提交需各自验证，真实第三方 MCP 和业务验收仍未完成。
 
+## 2026-11-01 分支内进展（codex/p1-web-change-observation-ledger，未合并）
+
+- Owner 外网扫描一期 S1–S7 已在本分支落地（`089f2ec1`→`5c053165`）：结构化观察账本（幂等身份 + 内容哈希复核 + 500 条/90 天保留）、可信/不可信分区判断提示词与两级字段白名单解析、snippetDigest 账本内去重、扫描服务接入（失败降级 insufficient_evidence、流水 90 次轮转、额度已满跳过）、web_change_observation 对话投递（仅 attention/decision_required）、三态用户反馈与通知收敛、面板观察质量汇总（近 7 天五态分布/重复率/证据不足率）。
+- `5c053165` 修复观察账本裁剪 O(n²) 导致的 CI 超时：预检 COUNT/MIN 后才执行 DELETE，本地 1844ms→421ms。
+- 未闭环：扫描费用未入 Owner 委托账本；判断模型取第一个启用渠道（缺项目级访问器）；观察卡片无浏览器用例；same_event 仍由模型判断；S8 真实 7 次观察需真实 Provider 与费用授权，执行手册在 `.context/plan/web-observation-s8-runbook.md`。
+
 ## 2026-11-01 已合并的切片（主线 fe0d0b9c）
 
 - OpenDesign：PR #95 落地 Owner 工作区安装与受控注入——预览绑定工作区与参考版本，用户二次确认后仅在共享目录安装 DESIGN.md 与 tokens.css；冲突（同名文件/安装目录/符号链接）拒绝覆盖；安装记录保存 OpenDesign 版本、项目/工作区绑定、确认身份与文件 SHA-256，读取时重新校验，损坏不注入；确认同时绑定 Owner 工作区修订、工作区 ID 与参考版本，任一变化要求重新预览。仅声明 od.design_system.requires 的 Skill 获取共享安装上下文，本地已有设计文件时保留本地优先级。PR #101 补齐打包资源路径：目录索引与四个参考 JSON 随包复制到 Contents/Resources/opendesign/，安装服务优先读取该目录并保留开发回退；未签名 arm64 产物已核实六个文件齐全。未验证：打包应用内安装 UI 手动操作、真实 Provider 遵循、品牌授权审核、签名发布验收。
