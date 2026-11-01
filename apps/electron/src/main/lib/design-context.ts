@@ -213,7 +213,19 @@ export interface ActiveDesignSystem {
  * （可能是另存名，按 manifest 读取）→ Owner 工作区共享安装。都不存在时返回
  * undefined（调用方不注入，保持零开销）。
  */
-export function resolveActiveDesignSystem(cwd: string | undefined, workspaceSlug?: string): ActiveDesignSystem | undefined {
+export interface DesignSystemResolutionDeps {
+  /**
+   * 读取工作区共享安装。默认读全局配置目录下的 workspace-files；
+   * 隔离环境（打包 smoke、临时目录验收）可注入只读解析器，避免读到真实用户工作区。
+   */
+  readWorkspaceInstall?: (workspaceSlug: string) => { brandId: string; brandName: string; design: string; tokens: string; referenceRevision: string } | undefined
+}
+
+export function resolveActiveDesignSystem(
+  cwd: string | undefined,
+  workspaceSlug?: string,
+  deps: DesignSystemResolutionDeps = {},
+): ActiveDesignSystem | undefined {
   const designMdPath = cwd ? join(cwd, 'DESIGN.md') : ''
   const tokensPath = cwd ? join(cwd, 'tokens.css') : ''
   // 会话目录安装：文件名可能是另存名，只能按 manifest 读，不能靠固定文件名探测。
@@ -234,7 +246,9 @@ export function resolveActiveDesignSystem(cwd: string | undefined, workspaceSlug
   }
   if (!hasLocalDesign && workspaceSlug) {
     try {
-      const installed = readInstalledOpenDesign(join(getAgentWorkspacePath(workspaceSlug), 'workspace-files'), workspaceSlug)
+      const readInstall = deps.readWorkspaceInstall
+        ?? ((slug: string) => readInstalledOpenDesign(join(getAgentWorkspacePath(slug), 'workspace-files'), slug))
+      const installed = readInstall(workspaceSlug)
       if (installed) return {
         title: installed.brandName,
         body: installed.design,
@@ -270,6 +284,8 @@ export function resolveActiveDesignSystem(cwd: string | undefined, workspaceSlug
 
 /** 组合参数 */
 export interface ComposeOdDesignContextInput {
+  /** 透传给 resolveActiveDesignSystem 的隔离依赖；默认读真实配置目录。 */
+  designSystemDeps?: DesignSystemResolutionDeps
   /** Skill 的 od: 需求（调用方先经 parseOdRequirements 得到） */
   requirements: OdSkillRequirements
   /** craft 参考目录（resolveDesignCraftDir 的结果；undefined 时报告所需资料缺失） */
@@ -292,7 +308,7 @@ export function composeOdDesignContext(input: ComposeOdDesignContextInput): stri
   const parts: string[] = []
 
   if (requirements.designSystemRequires && !skipDesignSystem) {
-    const ds = resolveActiveDesignSystem(cwd, input.workspaceSlug)
+    const ds = resolveActiveDesignSystem(cwd, input.workspaceSlug, input.designSystemDeps)
     if (ds) {
       parts.push(
         [
