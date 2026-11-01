@@ -4,6 +4,7 @@
 
 import { describe, expect, test } from 'bun:test'
 import {
+  assertSharedWorkspaceAccessStartupPolicy,
   decideWorkspaceAccess,
   isSharedWorkspaceAccessEnabled,
   type WorkspaceAccessRequest,
@@ -118,5 +119,25 @@ describe('工作区集中授权', () => {
     expect(isSharedWorkspaceAccessEnabled({})).toBe(false)
     expect(isSharedWorkspaceAccessEnabled({ GRAVITAS_SHARED_WORKSPACE_ACCESS: 'true' })).toBe(false)
     expect(isSharedWorkspaceAccessEnabled({ GRAVITAS_SHARED_WORKSPACE_ACCESS: '1' })).toBe(true)
+  })
+})
+
+describe('共享工作区访问启动校验', () => {
+  test('Given 开关关闭 When 校验 Then 放行（不引入额外启动门槛）', () => {
+    expect(() => assertSharedWorkspaceAccessStartupPolicy({ sharedAccessEnabled: false, authMode: 'none', workspaceReadEnforcementWired: false })).not.toThrow()
+  })
+
+  test('Given 开关打开但判定未接入口 When 校验 Then 拒绝启动并说明原因', () => {
+    expect(() => assertSharedWorkspaceAccessStartupPolicy({ sharedAccessEnabled: true, authMode: 'oidc', workspaceReadEnforcementWired: false }))
+      .toThrow('尚未接入工作区读写与 Runtime 判定')
+  })
+
+  test('Given 开关打开且判定已接入 When 无鉴权模式 Then 拒绝启动', () => {
+    expect(() => assertSharedWorkspaceAccessStartupPolicy({ sharedAccessEnabled: true, authMode: 'none', workspaceReadEnforcementWired: true }))
+      .toThrow('要求已配置身份认证')
+  })
+
+  test('Given 开关打开、判定已接入且有认证 When 校验 Then 放行', () => {
+    expect(() => assertSharedWorkspaceAccessStartupPolicy({ sharedAccessEnabled: true, authMode: 'oidc', workspaceReadEnforcementWired: true })).not.toThrow()
   })
 })

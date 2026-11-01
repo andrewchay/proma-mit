@@ -1,5 +1,6 @@
 import { createPromaWebServerApplication } from './app.ts'
 import { assertTrustedHeaderAuthStartupPolicy, assertAuthModeStartupPolicy, assertNoneAuthStartupPolicy, resolveDefaultAuthMode, resolveSecureSessionCookie } from './auth-startup-policy.ts'
+import { assertSharedWorkspaceAccessStartupPolicy, isSharedWorkspaceAccessEnabled } from './workspace-access-policy.ts'
 import { createOidcJwtAuth } from './jwt-auth.ts'
 import { parseAdminAccount } from './local-admin-auth.ts'
 import type { AgentRuntimeWebAuthResolver } from '@gravitas/shared/utils'
@@ -62,6 +63,13 @@ assertAuthModeStartupPolicy({
   authMode,
   hasLocalAdmin: Boolean(localAdmin),
   hasOidcClient: Boolean(oidcClientBase && oidcClientBase.clientId),
+})
+
+// 共享工作区访问开关：打开前必须确认判定已接进工作区读写与 Runtime（当前尚未接入，故恒为 false）。
+assertSharedWorkspaceAccessStartupPolicy({
+  sharedAccessEnabled: isSharedWorkspaceAccessEnabled(),
+  authMode,
+  workspaceReadEnforcementWired: false,
 })
 
 // 现有 Bearer-JWT 链路（仍用 createOidcJwtAuth），作为 cookie 会话之外的 API 认证回退

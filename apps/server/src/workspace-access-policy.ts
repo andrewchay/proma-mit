@@ -104,6 +104,34 @@ function isKnownAction(action: string): action is WorkspaceAccessAction {
   return KNOWN_ACTIONS.has(action)
 }
 
+export interface SharedWorkspaceAccessStartupInput {
+  sharedAccessEnabled: boolean
+  authMode: string
+  /**
+   * 判定是否已接进工作区读写与 Runtime 启动。
+   *
+   * 当前没有入口调用判定函数，因此部署时必须是 false；等到 S1/S3/S4 落地后由调用方传入真实状态。
+   */
+  workspaceReadEnforcementWired: boolean
+}
+
+/**
+ * 共享工作区访问的启动校验。
+ *
+ * 开关一旦打开，成员接口与界面就会对外声明"共享工作区可用"。如果判定还没有接进
+ * 工作区读写与 Runtime，这条承诺是空的，甚至比关闭更危险（用户以为权限已生效）。
+ * 因此这里失败关闭：没接强制点就不允许打开开关。
+ */
+export function assertSharedWorkspaceAccessStartupPolicy(input: SharedWorkspaceAccessStartupInput): void {
+  if (!input.sharedAccessEnabled) return
+  if (!input.workspaceReadEnforcementWired) {
+    throw new Error('共享工作区访问尚未接入工作区读写与 Runtime 判定，打开 GRAVITAS_SHARED_WORKSPACE_ACCESS 会对外承诺未强制的权限；请保持关闭')
+  }
+  if (input.authMode === 'none') {
+    throw new Error('共享工作区访问要求已配置身份认证；无鉴权模式只允许本机开发')
+  }
+}
+
 /**
  * 共享工作区访问开关。
  *
