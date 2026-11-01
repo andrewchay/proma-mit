@@ -1,5 +1,23 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-11-01 第四轮推进（P2：RSI 样本审计 / Harness 工具入口身份门禁 / Enterprise 启动校验）
+
+- **RSI · 样本来源审计与质量报告**：新增 `eval/scoreboard-audit`（只读纯函数）。逐条审计基准定义
+  哈希、三类输入来源（素材/评判/运行配置）、内部自洽性（每个 case 有 run 且 run 带题目与评分规则
+  摘要），并给出可比前提；缺来源如实标注，明确"历史缺口不回填"。样本质量画像包含齐备记录数、
+  历史遗留数、可对比对数（要求定义哈希与 rubric 版本一致）、每 case run 数分布、只跑一次的 case 数、
+  摘要缺失 run 数、评判身份记录率与按频次排序的阻塞原因。12 例测试通过。
+- **Harness · 统一工具入口身份门禁**：盘点 `Read/Write/Edit/Bash` 之外的入口，发现 6 个只做用途门禁、
+  未校验绑定身份：Grep（文件入口）、Agent 委派、成员互调、RecallMemory/AddMemory、WebFetch、
+  WebSearch。新增 `assertOwnerToolGate`（先比对绑定身份、再判 Owner 用途）并替换这些工具的既有门禁点，
+  含 WebFetch/WebSearch 在网络请求前的二次复核。新增 `tool-entry-identity` 回归：未绑定一律拒绝、
+  已绑定不误拒；相关测试按生产语义绑定会话。26 个 tool-impls 测试文件全绿（除 2 个嵌套 seatbelt 用例）。
+- **Enterprise · 共享访问开关启动校验**：新增 `assertSharedWorkspaceAccessStartupPolicy`：开关打开但
+  判定未接进工作区读写与 Runtime 时拒绝启动（避免对外承诺未强制的权限），无鉴权模式下同样拒绝。
+  `index.ts` 启动序列接入，当前 enforcement 恒为 false，即开关无法被误开。14 例通过。
+- 验证边界：三处 tsc 与 biome 通过。仍未覆盖：真实 Provider、品牌授权、客户部署与人工验收。
+
+
 ## 2026-11-01 第三轮推进（P1：崩溃对账 / 撤权入口 / 包内上下文链路）
 
 - **受控自主 · 崩溃恢复与未知状态对账**：派发前登记写入本进程 `bootId` 与 `phase=dispatched`；
