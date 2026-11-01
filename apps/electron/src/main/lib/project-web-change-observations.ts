@@ -271,10 +271,19 @@ export function listProjectWebChangeObservations(projectId: string, limit = 20):
   })
 }
 
-/** 按保留策略裁剪：先按时间窗，再按条数。返回删除条数。 */
+/**
+ * 按保留策略裁剪：先按时间窗，再按条数。返回删除条数。
+ *
+ * 每次写入都会调用，因此先用一次带索引的预检判断是否真的超限；
+ * 没超限直接返回，避免每次写入都跑带子查询的整表 DELETE。
+ */
 export function pruneProjectWebChangeObservations(projectId: string, now = Date.now()): number {
   const database = getProjectDb()
-  const expired = database.prepare('DELETE FROM project_web_change_observations WHERE project_id = ? AND created_at < ?').run(projectId, now - RETENTION_WINDOW_MS).changes
+  const cutoff = now - RETENTION_WINDOW_MS
+  const summary = database.prepare('SELECT COUNT(*) AS total, MIN(created_at) AS oldest FROM project_web_change_observations WHERE project_id = ?')
+    .get(projectId) as { total: number; oldest: number | null } | undefined
+  if (!summary || (summary.total <= RETENTION_COUNT && (summary.oldest === null || summary.oldest >= cutoff))) return 0
+  const expired = database.prepare('DELETE FROM project_web_change_observations WHERE project_id = ? AND created_at < ?').run(projectId, cutoff).changes
   const overflow = database.prepare('DELETE FROM project_web_change_observations WHERE project_id = ? AND id NOT IN (SELECT id FROM project_web_change_observations WHERE project_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ?)')
     .run(projectId, projectId, RETENTION_COUNT).changes
   return expired + overflow

@@ -109,9 +109,12 @@ test('Given 观察关联旧记录 When 记录 Then 只存指针且不覆盖旧�
 test('Given 超过保留条数或早于保留窗口 When 裁剪 Then 只保留最近 500 条与 90 天内记录', () => {
   const project = createProject({ title: '保留策略项目', description: '' })
   const now = 1_800_000_000_000
-  for (let index = 0; index < 502; index += 1) {
-    recordProjectWebChangeObservation(input(project.id, { runId: `run-${index}`, createdAt: now + index }))
-  }
+  // 502 次写入放进一个事务：验证裁剪逻辑本身，不把逐次落盘的 I/O 也算进用时。
+  getProjectDb().transaction(() => {
+    for (let index = 0; index < 502; index += 1) {
+      recordProjectWebChangeObservation(input(project.id, { runId: `run-${index}`, createdAt: now + index }))
+    }
+  })()
   pruneProjectWebChangeObservations(project.id, now + 1000)
   const rows = getProjectDb().prepare('SELECT created_at FROM project_web_change_observations WHERE project_id = ? ORDER BY created_at').all(project.id) as Array<{ created_at: number }>
   expect(rows.length).toBe(500)
