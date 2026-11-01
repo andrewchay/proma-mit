@@ -1,5 +1,25 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-11-01 第三轮推进（P1：崩溃对账 / 撤权入口 / 包内上下文链路）
+
+- **受控自主 · 崩溃恢复与未知状态对账**：派发前登记写入本进程 `bootId` 与 `phase=dispatched`；
+  加载时对账把「bootId 与当前进程不同且从未结算」的记录标为 `interrupted`，补一条可审计中断事件
+  （幂等，不重复追加），保留 pending 继续拦截重试；失败结算回落 `unknown`，已知未知记录不误判；
+  新增 `reconcileUnknownActionsAfterRestart()` 供启动流程取遗留清单。设置面板与 `ListUnknownActions`
+  显示「上次运行中断」与中断时间。测试 32 例（新增 8 例：崩溃、幂等、失败优先、历史记录不误判）。
+- **受控自主 · 统一撤权入口（Pi 桥接）**：新增 `assertToolSession` 回调，桥接层每次派发前复核运行时
+  绑定身份与撤权状态，未提供校验即失败关闭；覆盖三条派发点——普通工具（拿到许可后、真正执行前再
+  复核，堵住审批等待窗口）、`AskUserQuestion` 与 `GoalCheckpoint`（这两条绕过权限回调的早退路径）。
+  撤权拒绝转成工具错误结果回给模型，其他异常保持原样抛出。测试 15 例（新增 5 例）。
+  至此 Proma / AI SDK / Pi / Claude 四条路径的「审批前 + 派发前」复核齐全。
+- **OpenDesign · 包内上下文链路**：`resolveActiveDesignSystem` / `composeOdDesignContext` 增加只读依赖
+  注入（`readWorkspaceInstall` / `designSystemDeps`），默认行为不变；打包 smoke 在真实打包应用内追加
+  「安装 → 上下文组装」断言，并覆盖未声明需求不注入、本地文件优先、缺项报 `od_missing_resource`。
+  新增本机等价集成测试 5 例。包内 smoke 需在打包环境执行（本机沙箱不能跑 Electron）。
+- 验证边界：`apps/electron` tsc 通过；相关测试文件全绿。仍未覆盖：真实 Provider 遵循、品牌授权、
+  用户现场安装操作、客户环境部署。
+
+
 ## 2026-11-01 第二轮推进（Claude 绑定 / 显著性 / Enterprise 接线）
 
 基线 `5e181e59`（含 #104）。本轮 3 个提交：`c2921cb1`、`e0bc5a84` + 文档。
