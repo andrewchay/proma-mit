@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { BrowserWindow } from 'electron'
+import type { AgentWorkspace, OwnerRuntimeBinding } from '@gravitas/shared'
 import { setMainWindow } from '../main-window'
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms))
@@ -31,6 +32,43 @@ async function clickProjectModule(window: BrowserWindow): Promise<void> {
 }
 
 export async function runPackageDesignSmoke(root: string): Promise<Record<string, unknown>> {
+  const { createOwnerDesignSystemInstaller, readBundledReference } = await import('./opendesign-install-service')
+  const ownerWorkspace: AgentWorkspace = { id: 'package-opendesign-workspace', name: 'Package OpenDesign Smoke', slug: 'package-opendesign-smoke', createdAt: 1, updatedAt: 1 }
+  const ownerBinding: OwnerRuntimeBinding = {
+    schemaVersion: 1, projectId: 'package-opendesign-project', revision: 1,
+    ownerRole: 'project_owner', ownerName: 'Package Smoke Owner', carrierId: 'package-smoke-owner',
+    workspaceId: ownerWorkspace.id, channelId: 'package-smoke-channel', modelId: 'package-smoke-model',
+    runtime: 'ai-sdk', carrierFingerprint: 'a'.repeat(64), actor: 'local-user', savedAt: 1, changeReason: 'test',
+  }
+  const ownerRoot = join(root, ownerWorkspace.slug)
+  const ownerFiles = join(ownerRoot, 'workspace-files')
+  mkdirSync(ownerFiles, { recursive: true })
+  const installer = createOwnerDesignSystemInstaller({
+    getBinding: projectId => projectId === ownerBinding.projectId ? ownerBinding : null,
+    getWorkspace: workspaceId => workspaceId === ownerWorkspace.id ? ownerWorkspace : undefined,
+    getWorkspacePath: () => ownerRoot,
+    getWorkspaceFilesDir: () => ownerFiles,
+    loadReference: brandId => readBundledReference(brandId, process.resourcesPath),
+    now: () => 1,
+  })
+  const installPreview = installer.preview(ownerBinding.projectId, 'stripe')
+  assert(installPreview.canInstall, '隔离 Owner 工作区应可安装随包的 OpenDesign 参考')
+  const installed = installer.install({
+    projectId: ownerBinding.projectId,
+    brandId: 'stripe',
+    expectedOwnerBindingRevision: installPreview.ownerBindingRevision,
+    expectedWorkspaceId: installPreview.workspaceId,
+    expectedReferenceRevision: installPreview.referenceRevision,
+    confirmed: true,
+  })
+  const installedReference = installer.readInstalled(ownerWorkspace.slug)
+  const bundledReference = readBundledReference('stripe', process.resourcesPath)
+  assert(installedReference, '打包 OpenDesign 参考未能从隔离工作区完整读回')
+  assert.equal(installedReference.design, bundledReference.reference.design, '安装后的设计说明与实际打包资源不一致')
+  assert.equal(installedReference.tokens, bundledReference.reference.tokens, '安装后的令牌与实际打包资源不一致')
+  assert.equal(installedReference.referenceRevision, bundledReference.revision)
+  assert.equal(installer.preview(ownerBinding.projectId, 'stripe').canInstall, false, '重复安装预览必须报告冲突并避免覆盖')
+
   const { initProjectDb, closeProjectDb, createProject } = await import('./project-sqlite-store')
   const { saveProjectOwnerGoalDraft } = await import('./project-owner-goal-service')
   const { registerIpcHandlers } = await import('../ipc')
@@ -112,7 +150,11 @@ export async function runPackageDesignSmoke(root: string): Promise<Record<string
     assert.equal(readFileSync(join(userWorkspace, 'tokens.css'), 'utf8'), 'USER_TOKENS_CANARY')
     assert.deepEqual(readdirSync(userWorkspace).sort(), ['DESIGN.md', 'tokens.css'])
     assert(existsSync(join(process.resourcesPath, 'opendesign', 'LICENSE.txt')), 'OpenDesign 许可证未随包分发')
-    return { downloads: downloads.map(item => ({ name: item.path.split('/').pop(), state: item.state })), userFilesUnchanged: true }
+    return {
+      downloads: downloads.map(item => ({ name: item.path.split('/').pop(), state: item.state })),
+      ownerInstall: { brandName: installed.brandName, referenceRevision: installed.referenceRevision, verifiedPackagedReadback: true },
+      userFilesUnchanged: true,
+    }
   } finally {
     if (!window.isDestroyed()) window.destroy()
     setMainWindow(null)
