@@ -10,6 +10,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { WebSearchCredentials } from './web-search-tool'
+import { bindTestToolContext } from '../../testing/bound-tool-context'
 
 let mockCredentials: WebSearchCredentials = {}
 const originalChatConfig = await import('../../chat-tool-config')
@@ -40,7 +41,7 @@ afterAll(async () => {
 })
 
 describe('WebSearch 工具', () => {
-  const ctx = { cwd: '/tmp/workspace', sessionId: 'test-session' }
+  const ctx = bindTestToolContext({ cwd: '/tmp/workspace', sessionId: 'test-session' })
   let originalFetch: typeof globalThis.fetch
 
   beforeEach(() => {

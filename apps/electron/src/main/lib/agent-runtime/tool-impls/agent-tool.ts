@@ -8,7 +8,7 @@
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types'
 import { enforceHandoffBudget } from '../../handoff-budget'
-import { assertOwnerToolPermission } from './tool-utils'
+import { assertOwnerToolGate } from './tool-utils'
 
 export const AGENT_TOOL_NAME = 'Agent'
 
@@ -69,7 +69,7 @@ export async function executeAgentTool(input: unknown, ctx: ToolContext): Promis
   }
 
   try {
-    assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, AGENT_TOOL_NAME, args)
+    assertOwnerToolGate(ctx, AGENT_TOOL_NAME, args)
     const result = await ctx.runSubAgent({
       agentName,
       task,

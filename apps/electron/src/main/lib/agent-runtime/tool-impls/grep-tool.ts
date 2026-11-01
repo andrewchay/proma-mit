@@ -8,7 +8,7 @@
 import { spawn } from 'node:child_process'
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
-import { resolveToolPath, formatToolError, truncateOutput, assertOwnerToolPermission } from './tool-utils.ts'
+import { resolveToolPath, formatToolError, truncateOutput, assertOwnerToolGate } from './tool-utils.ts'
 
 export interface GrepToolInput {
   path?: string
@@ -40,7 +40,7 @@ export function createGrepToolDefinition() {
 
 export async function executeGrepTool(input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const params = input as GrepToolInput
-  const assertOwnerGate = (): void => assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, GREP_TOOL_NAME, { path: params.path, regex: params.regex })
+  const assertOwnerGate = (): void => assertOwnerToolGate(ctx, GREP_TOOL_NAME, { path: params.path, regex: params.regex })
   try { assertOwnerGate() } catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
   const targetPath = params.path ?? '.'
   const { path, error: pathError } = resolveToolPath(targetPath, ctx.cwd)

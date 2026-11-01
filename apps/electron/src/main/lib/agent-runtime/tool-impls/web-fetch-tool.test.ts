@@ -8,6 +8,7 @@ import { describe, expect, mock, test, beforeAll, afterAll, beforeEach, afterEac
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { bindTestToolContext } from '../../testing/bound-tool-context'
 
 const { executeWebFetchTool, createWebFetchToolDefinition, WEB_FETCH_TOOL_NAME } = await import('./web-fetch-tool')
 
@@ -26,7 +27,7 @@ afterAll(async () => {
 })
 
 describe('WebFetch 工具', () => {
-  const ctx = { cwd: '/tmp/workspace', sessionId: 'test-session' }
+  const ctx = bindTestToolContext({ cwd: '/tmp/workspace', sessionId: 'test-session' })
   let originalFetch: typeof globalThis.fetch
 
   beforeEach(() => {

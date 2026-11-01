@@ -10,7 +10,7 @@
 
 import type { ToolResult } from '@gravitas/core'
 import type { ToolContext } from '../types.ts'
-import { assertOwnerToolPermission, formatToolError, truncateOutput } from './tool-utils.ts'
+import { assertOwnerToolGate, formatToolError, truncateOutput } from './tool-utils.ts'
 import { getFetchFn } from '../../proxy-fetch'
 import { getEffectiveProxyUrl } from '../../proxy-settings-service'
 import { readBoundedWebBody } from './bounded-web-body'
@@ -66,14 +66,14 @@ export async function executeWebFetchTool(input: unknown, ctx: ToolContext): Pro
     return { toolCallId: '', content: `不支持的协议: ${parsed.protocol}（仅允许 http/https）`, isError: true }
   }
 
-  try { assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_FETCH_TOOL_NAME, { url }) }
+  try { assertOwnerToolGate(ctx, WEB_FETCH_TOOL_NAME, { url }) }
   catch (error) { return { toolCallId: '', content: formatToolError(error), isError: true } }
 
   try {
     // 网络请求统一跟随 Proma 代理设置
     const proxyUrl = await getEffectiveProxyUrl()
     const fetchFn = getFetchFn(proxyUrl)
-    assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_FETCH_TOOL_NAME, { url })
+    assertOwnerToolGate(ctx, WEB_FETCH_TOOL_NAME, { url })
 
     const controller = new AbortController()
     const abortFromCaller = () => controller.abort()
@@ -103,7 +103,7 @@ export async function executeWebFetchTool(input: unknown, ctx: ToolContext): Pro
       ctx.abortSignal?.removeEventListener('abort', abortFromCaller)
     }
 
-    assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, WEB_FETCH_TOOL_NAME, { url })
+    assertOwnerToolGate(ctx, WEB_FETCH_TOOL_NAME, { url })
     const raw = new TextDecoder('utf-8').decode(buffer)
 
     // 非 HTML 内容（JSON、纯文本等）直接截断返回

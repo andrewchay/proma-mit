@@ -2,6 +2,7 @@ import { afterAll, beforeAll, expect, mock, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { bindTestToolContext } from '../../testing/bound-tool-context'
 
 const directory = mkdtempSync(join(tmpdir(), 'invoke-tool-test-'))
 const previous = process.env.PROMA_TEST_CONFIG_DIR
@@ -22,7 +23,7 @@ afterAll(() => {
 })
 
 test('Given 普通会话 When 成员互调 Then 模拟服务接收请求', async () => {
-  const result = await executeInvokeAgentTool({ toMemberId: 'agent-example', task: ' 检查 ' }, { cwd: directory, sessionId: 'ordinary-session' })
+  const result = await executeInvokeAgentTool({ toMemberId: 'agent-example', task: ' 检查 ' }, bindTestToolContext({ cwd: directory, sessionId: 'ordinary-session' }))
   expect(result.isError).toBeFalsy()
   expect(sent).toEqual(['agent-example:检查'])
 })

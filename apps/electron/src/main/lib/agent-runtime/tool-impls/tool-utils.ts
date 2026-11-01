@@ -123,6 +123,18 @@ export function assertOwnerToolPermission(sessionId: string, ownerMarker: boolea
   gates.assertToolAllowedForSessionPurpose(sessionId, toolName, args, options)
 }
 
+/**
+ * 用途 + 身份一起校验：先比对运行时时绑定的会话身份，再判 Owner 用途。
+ *
+ * 供未走 guardOwnerTool 包装的工具（Grep、Agent 委派、记忆、联网读取）在自己的每个
+ * 门禁点复用，保证"每次真正派发前都复核身份"的规则只有一处实现。
+ */
+export function assertOwnerToolGate(ctx: ToolContext, toolName: string, args: Record<string, unknown>, options?: { recordKnowledgeRead?: boolean }): void {
+  const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+  gates.assertBoundToolSession(ctx)
+  assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, toolName, args, options)
+}
+
 /** 为工具入口提供统一的受控会话检查。 */
 export function guardOwnerTool(toolName: string, execute: (input: unknown, ctx: ToolContext) => Promise<ToolResult>): (input: unknown, ctx: ToolContext) => Promise<ToolResult> {
   return async (input, ctx) => {

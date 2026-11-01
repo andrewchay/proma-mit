@@ -9,7 +9,7 @@
 import type { ToolResult } from '@gravitas/core'
 import type { RuntimeToolDefinition, ToolContext } from '../types.ts'
 import { resolveMemberForSession } from '../../app-event-bus'
-import { assertOwnerToolPermission } from './tool-utils'
+import { assertOwnerToolGate } from './tool-utils'
 
 export const INVOKE_AGENT_TOOL_NAME = 'InvokeAgent'
 
@@ -38,9 +38,9 @@ export async function executeInvokeAgentTool(input: unknown, ctx: ToolContext): 
   }
   try {
     const args = { toMemberId: params.toMemberId, task: params.task }
-    assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, INVOKE_AGENT_TOOL_NAME, args)
+    assertOwnerToolGate(ctx, INVOKE_AGENT_TOOL_NAME, args)
     const { sendAgentInvoke, invokeToText } = await import('../../agent-invoke-service')
-    assertOwnerToolPermission(ctx.sessionId, ctx.ownerWorkspaceWrite, INVOKE_AGENT_TOOL_NAME, args)
+    assertOwnerToolGate(ctx, INVOKE_AGENT_TOOL_NAME, args)
     const fromMember = resolveMemberForSession(ctx.sessionId) ?? 'unknown'
     const req = sendAgentInvoke(fromMember, params.toMemberId, params.task.trim())
     return { toolCallId: '', content: `已发送互调请求给 ${params.toMemberId}（等待对方处理）。\n${invokeToText(req)}` }
