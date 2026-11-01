@@ -119,4 +119,12 @@ describe('runtime session identity', () => {
     revokeRuntimeSessionIdentity(owner)
     expect(() => requireBoundSessionId(owner, { sessionId: 'session-1', runtime: 'pi' })).toThrow('绑定已失效')
   })
+
+  test('Given Claude SDK 路径绑定身份 When 与其他 Runtime 混用 Then 不互相放行', () => {
+    const owner = {}
+    bindRuntimeSessionIdentity(owner, { sessionId: 'session-1', cwd: '/tmp/work', runtime: 'claude-sdk' })
+    expect(requireBoundSessionId(owner, { sessionId: 'session-1', cwd: '/tmp/work', runtime: 'claude-sdk' })).toBe('session-1')
+    expect(() => requireBoundSessionId(owner, { sessionId: 'session-1', runtime: 'ai-sdk' })).toThrow('Runtime 与会话绑定不一致')
+    expect(() => assertRuntimeSessionIdentity(owner, { sessionId: 'session-1', cwd: '/tmp/work', runtime: 'ai-sdk' })).toThrow('AI SDK 会话身份不匹配')
+  })
 })

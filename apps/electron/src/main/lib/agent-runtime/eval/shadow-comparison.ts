@@ -67,6 +67,32 @@ export interface ShadowComparison {
   verdict: 'candidate_better' | 'candidate_worse' | 'no_difference' | 'inconclusive'
   /** 成本与延迟的变化及门禁结果；分数不可比时不评估，记为 unverified。 */
   resources: ShadowResourceComparison
+  /**
+   * 方向一致性的显著性检验。不改写 verdict，只回答「这个差值是否可能来自噪声」，
+   * 由调用方/界面决定是否据此收敛结论。
+   */
+  significance: ShadowSignificance
+}
+
+/**
+ * 配对符号检验的结果。
+ *
+ * 用非参数方法而不是 t 检验：case 分数是 0..1 的有界离散量、样本量通常很小，
+ * 正态假设不成立。只统计超过阈值的配对方向，能回答「改善/退步方向是否一边倒」。
+ */
+export interface ShadowSignificance {
+  method: 'sign_test'
+  /** 参与检验的配对数：|delta| 超过阈值的两侧共有 case 数。 */
+  pairs: number
+  improvedPairs: number
+  regressedPairs: number
+  /** 双侧精确 p 值；pairs=0 时为 null。 */
+  pValue: number | null
+  alpha: number
+  /** p<=alpha 且配对数达到下限时为 true；样本不足一律 false。 */
+  significant: boolean
+  /** 不足以判断时说明原因，避免把 null 当"无差异"。 */
+  note?: string
 }
 
 export interface ShadowComparisonOptions {
@@ -78,6 +104,10 @@ export interface ShadowComparisonOptions {
   maxCostIncreaseRatio?: number
   /** 允许的最大耗时增幅；不设置则不做延迟门禁。 */
   maxLatencyIncreaseRatio?: number
+  /** 符号检验的显著性水平；默认 0.05。 */
+  significanceAlpha?: number
+  /** 配对数下限：少于该值即使 p 很小也不算显著，默认 5。 */
+  minSignificancePairs?: number
 }
 
 const isValidScore = (value: unknown): value is number =>
@@ -90,6 +120,55 @@ const finiteNonNegative = (value: unknown): number | null =>
 /** 相对增幅；基线为 0 或缺失时无法给出比例（不写成 Infinity 或 100%）。 */
 const increaseRatio = (base: number | null, candidate: number | null): number | null =>
   base === null || candidate === null || base <= 0 ? null : (candidate - base) / base
+
+/** 组合数；n 很小（case 数），用整数精确计算避免浮点误差。 */
+function binomialCoefficient(n: number, k: number): number {
+  if (k < 0 || k > n) return 0
+  let result = 1
+  for (let index = 1; index <= k; index++) result = (result * (n - k + index)) / index
+  return result
+}
+
+/**
+ * 双侧精确符号检验：只问「改善与退步的方向是否一边倒」。
+ *
+ * p = min(1, 2 * Σ_{i=0}^{k} C(n,i) / 2^n)，k = 较少一侧的配对数。样本不足时不给显著结论。
+ */
+export function evaluateShadowSignificance(
+  cases: readonly ShadowCaseComparison[],
+  options: { deltaThreshold?: number; alpha?: number; minPairs?: number } = {},
+): ShadowSignificance {
+  const threshold = options.deltaThreshold ?? 0.02
+  const alpha = options.alpha ?? 0.05
+  const minPairs = options.minPairs ?? 5
+  const improvedPairs = cases.filter((item) => item.delta > threshold).length
+  const regressedPairs = cases.filter((item) => item.delta < -threshold).length
+  const pairs = improvedPairs + regressedPairs
+  const base: Omit<ShadowSignificance, 'pValue' | 'significant' | 'note'> & { pValue: number | null } = {
+    method: 'sign_test',
+    pairs,
+    improvedPairs,
+    regressedPairs,
+    pValue: null,
+    alpha,
+  }
+  if (pairs === 0) {
+    return { ...base, significant: false, note: `没有超过阈值 ${threshold} 的配对，无法判断方向` }
+  }
+  const tail = Math.min(improvedPairs, regressedPairs)
+  let cumulative = 0
+  for (let index = 0; index <= tail; index++) cumulative += binomialCoefficient(pairs, index)
+  const pValue = Math.min(1, (2 * cumulative) / 2 ** pairs)
+  if (pairs < minPairs) {
+    return { ...base, pValue, significant: false, note: `配对 ${pairs} 例少于下限 ${minPairs} 例，p=${pValue.toFixed(3)} 仅供参考` }
+  }
+  return { ...base, pValue, significant: pValue <= alpha }
+}
+
+/** 不可比时也给出显式的"未做检验"，避免把缺字段当成已通过。 */
+function skippedSignificance(alpha: number, note: string): ShadowSignificance {
+  return { method: 'sign_test', pairs: 0, improvedPairs: 0, regressedPairs: 0, pValue: null, alpha, significant: false, note }
+}
 
 /** 计算成本与延迟变化并按需判定门禁；分数不可比时不做资源评估。 */
 function evaluateResources(
@@ -238,6 +317,7 @@ function compareShadowRunsWithReasons(
       unchanged: 0,
       verdict: 'inconclusive',
       resources: evaluateResources(baseline, candidate, options, false),
+      significance: skippedSignificance(options.significanceAlpha ?? 0.05, '分数不可比，未做显著性判断'),
     }
   }
 
@@ -267,6 +347,11 @@ function compareShadowRunsWithReasons(
     unchanged,
     verdict,
     resources: evaluateResources(baseline, candidate, options, true),
+    significance: evaluateShadowSignificance(cases, {
+      deltaThreshold: threshold,
+      ...(options.significanceAlpha === undefined ? {} : { alpha: options.significanceAlpha }),
+      ...(options.minSignificancePairs === undefined ? {} : { minPairs: options.minSignificancePairs }),
+    }),
   }
 }
 
@@ -286,8 +371,22 @@ export function describeShadowComparison(comparison: ShadowComparison): string {
       ? '候选更差'
       : '无显著差异'
   const base = `影子对比：${trend}（均值 ${meanBaseline.toFixed(3)} → ${meanCandidate.toFixed(3)}，差值 ${sign}${delta.toFixed(3)}；改善 ${comparison.improved}、退步 ${comparison.regressed}、持平 ${comparison.unchanged}）`
+  const significanceNote = describeShadowSignificance(comparison.significance, comparison.verdict)
   const resourceNote = describeShadowResources(comparison.resources)
-  return resourceNote ? `${base}；${resourceNote}` : base
+  return [base, significanceNote, resourceNote].filter(Boolean).join('；')
+}
+
+/** 显著性表述：只在"下了方向结论但没有统计支持"时提醒，避免把噪声当成提升。 */
+export function describeShadowSignificance(
+  significance: ShadowSignificance,
+  verdict: ShadowComparison['verdict'],
+): string | undefined {
+  if (verdict === 'no_difference' || verdict === 'inconclusive') return undefined
+  if (significance.significant) {
+    return `配对 ${significance.pairs} 例，p=${significance.pValue?.toFixed(3) ?? '-'}，方向一致`
+  }
+  const pText = significance.pValue === null ? '无法计算' : `p=${significance.pValue.toFixed(3)}`
+  return `⚠️ 未达统计显著（配对 ${significance.pairs} 例，${pText}${significance.note ? `；${significance.note}` : ''}），不能排除噪声`
 }
 
 /** 成本与延迟的表述：超限、未核验与"未记录"三种情况分别说清。 */

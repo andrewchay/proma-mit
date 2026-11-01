@@ -1,5 +1,6 @@
 import { assertNoOwnerBusinessSession } from './project-owner-task-evidence'
 import { assertToolAllowedForSessionPurpose, isOwnerWorkspaceFileActionCandidate } from './project-owner-execution-gates'
+import { bindRuntimeSessionIdentity, requireBoundSessionId } from './agent-runtime/runtime-session-identity'
 import { assertControlledPermissionChange, isControlledProviderSession } from './controlled-provider-boundary'
 import * as projectStore from './project-sqlite-store'
 import { assertOwnerCommandRuntimeContext } from './project-owner-execution-start'
@@ -2863,8 +2864,16 @@ export class AgentOrchestrator {
       /** Plan 模式是否已被 Agent 进入（初始 plan 模式时天然为 true，其他模式需 EnterPlanMode 触发） */
       let planModeEntered = initialPermissionMode === 'plan'
 
+      /**
+       * Claude 路径的会话身份所有者：本对象只用于承载绑定，不参与业务逻辑。
+       * 每次运行新建，运行结束后不再可达，因此不需要撤销标记。
+       */
+      const sessionIdentityOwner: object = {}
+      const sessionIdentity = { sessionId, cwd: agentCwd, runtime: 'claude-sdk' as const }
+      const describeIdentityFailure = (error: unknown): string => (error instanceof Error ? error.message : String(error))
+
       // 动态 canUseTool：每次调用读取当前权限模式，支持运行中切换
-      const canUseTool = async (toolName: string, input: Record<string, unknown>, options: CanUseToolOptions): Promise<PermissionResult> => {
+      const resolveToolPermission = async (toolName: string, input: Record<string, unknown>, options: CanUseToolOptions): Promise<PermissionResult> => {
         // purpose感知：无Owner证据=原行为；有证据时仅知识工具可经fence，先于Plan模式分派防旁路。
         const ownerApprovalCandidate = isOwnerWorkspaceFileActionCandidate(sessionId, toolName, input)
         if (!ownerApprovalCandidate) assertToolAllowedForSessionPurpose(sessionId, toolName, input)
@@ -2990,6 +2999,28 @@ export class AgentOrchestrator {
           default:
             return { behavior: 'allow' as const, updatedInput: input }
         }
+      }
+
+      /**
+       * 权限判定只认运行时绑定：调用链携带的 sessionId 只参与比对。
+       *
+       * 审批可能长时间等待用户，期间会话可能已结束或被改写；因此进入判定前与放行前各比对一次，
+       * 不一致即拒绝，与 AI SDK / Proma 适配器的绑定校验保持一致。
+       */
+      const canUseTool = async (toolName: string, input: Record<string, unknown>, options: CanUseToolOptions): Promise<PermissionResult> => {
+        try {
+          requireBoundSessionId(sessionIdentityOwner, sessionIdentity)
+        } catch (error) {
+          return { behavior: 'deny' as const, message: `工具执行失败: ${describeIdentityFailure(error)}` }
+        }
+        const result = await resolveToolPermission(toolName, input, options)
+        if (result.behavior !== 'allow') return result
+        try {
+          requireBoundSessionId(sessionIdentityOwner, sessionIdentity)
+        } catch (error) {
+          return { behavior: 'deny' as const, message: `工具执行失败: ${describeIdentityFailure(error)}` }
+        }
+        return result
       }
 
       // 13. 构建 Adapter 查询选项
@@ -3194,6 +3225,8 @@ export class AgentOrchestrator {
         try {
           // 获取异步迭代器（手动 .next() 以支持 Promise.race 中断）
           assertNoOwnerBusinessSession(sessionId)
+          // 授权依据在这里写入绑定；canUseTool 只做比对，不信任调用链携带的身份。
+          bindRuntimeSessionIdentity(sessionIdentityOwner, sessionIdentity)
           const queryIterable = this.adapter.query(queryOptions)
           const queryIterator = queryIterable[Symbol.asyncIterator]()
 

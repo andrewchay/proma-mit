@@ -15,7 +15,7 @@
 
 import { resolve } from 'node:path'
 
-export type AgentRuntimeKind = 'ai-sdk' | 'pi' | 'proma'
+export type AgentRuntimeKind = 'ai-sdk' | 'pi' | 'proma' | 'claude-sdk'
 
 export interface RuntimeSessionIdentity {
   sessionId: string
@@ -34,6 +34,7 @@ const RUNTIME_LABELS: Record<AgentRuntimeKind, string> = {
   'ai-sdk': 'AI SDK',
   pi: 'Pi',
   proma: 'Proma',
+  'claude-sdk': 'Claude SDK',
 }
 
 const identities = new WeakMap<object, StoredSessionIdentity>()
