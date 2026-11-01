@@ -94,4 +94,24 @@ describe('Git 同命令执行边界', () => {
     expect(findGitCommandBoundaryViolation('sudo GIT_DIR=/tmp/other git status')).toContain('Git 环境覆盖')
     expect(findGitCommandBoundaryViolation('git status && git -c core.fsmonitor=/tmp/pwn status')).toContain('命令执行型 Git config')
   })
+
+  test('Given eval 或 find -exec 间接执行 When 预检 Then 仍按命令分析', () => {
+    expect(findGitCommandBoundaryViolation('eval "git init -q && git config core.fsmonitor x"')).toContain('git init 必须单独执行')
+    expect(findGitCommandBoundaryViolation('eval git --git-dir=/tmp/other status')).toContain('间接 Git 布局')
+    expect(findGitCommandBoundaryViolation('find . -maxdepth 1 -exec git init \\;')).toContain('git init 必须单独执行')
+    expect(findGitCommandBoundaryViolation('find . -execdir git -c core.fsmonitor=x status +')).toContain('命令执行型 Git config')
+    // eval 内只有一条命令时等价于直接执行，不按组合处理。
+    expect(findGitCommandBoundaryViolation('eval "git init -q"')).toBeUndefined()
+  })
+
+  test('Given eval 只做无害展开或 find 不派生子命令 When 预检 Then 不误拒', () => {
+    const cases = [
+      'eval "$(direnv hook zsh)"',
+      'eval echo hello',
+      'find . -name "*.ts" -maxdepth 2',
+      'find . -name "git init 说明.txt"',
+      'find . -exec grep -l pattern {} \\;',
+    ]
+    for (const command of cases) expect(findGitCommandBoundaryViolation(command)).toBeUndefined()
+  })
 })

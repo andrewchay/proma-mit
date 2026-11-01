@@ -417,6 +417,31 @@ function analyzeShell(source: string, composed: boolean, depth: number): string 
         if (nestedViolation) return nestedViolation
       }
     }
+    // `eval "git …"`：参数字面值会被重新当成命令执行。
+    if (basename === 'eval') {
+      const script = args.map(word => word.value).join(' ').trim()
+      if (script) {
+        const nestedViolation = analyzeShell(script, hasComposition || args.length > 1, depth + 1)
+        if (nestedViolation) return nestedViolation
+      }
+    }
+    // `find … -exec git …`：find 会反复派生命令，git 不可能"单独执行"。
+    if (basename === 'find') {
+      const execIndex = args.findIndex(word => word.value === '-exec' || word.value === '-execdir')
+      if (execIndex !== -1) {
+        const spawned = args.slice(execIndex + 1)
+        const terminator = spawned.findIndex(word => word.value === ';' || word.value === '+')
+        const commandWords = terminator === -1 ? spawned : spawned.slice(0, terminator)
+        const spawnedCommand = commandWords[0]
+        if (spawnedCommand && (spawnedCommand.value.split('/').pop()?.toLowerCase() ?? '') === 'git') {
+          const inspected = inspectGitArguments(commandWords, 0)
+          if (inspected.violation) return inspected.violation
+          if (inspected.subcommand === 'init') {
+            return 'Bash Git 门禁：git init 必须单独执行，完成 hooks/config 收口后再运行后续命令'
+          }
+        }
+      }
+    }
   }
   if (depth < MAX_NESTING) {
     for (const body of scan.nested) {
