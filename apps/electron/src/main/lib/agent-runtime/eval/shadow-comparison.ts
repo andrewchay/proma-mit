@@ -354,8 +354,26 @@ export function compareRecordedEvaluations(input: RecordedEvaluationComparisonIn
   const baselineDefinition = input.baseline.definition
   const candidateDefinition = input.candidate.definition
   const reasons: string[] = []
-  // 现有来源仅覆盖题目与评分规则，不覆盖案例素材及实际评判实现，不能据此认定完整输入一致。
-  reasons.push('案例素材与评判实现的完整来源尚未冻结，不能确认评测可比')
+  // 三类输入来源必须两侧都有冻结值才能谈可比：缺一侧就按不可比处理，不按空值当一致。
+  const missingSources: string[] = []
+  if (!baselineDefinition?.caseMaterialHash || !candidateDefinition?.caseMaterialHash) missingSources.push('案例素材')
+  if (!baselineDefinition?.judgeHash || !candidateDefinition?.judgeHash) missingSources.push('评判实现')
+  if (!baselineDefinition?.runConfigHash || !candidateDefinition?.runConfigHash) missingSources.push('运行配置')
+  if (missingSources.length === 3) {
+    reasons.push('案例素材与评判实现的完整来源尚未冻结，不能确认评测可比')
+  } else if (missingSources.length > 0) {
+    reasons.push(`${missingSources.join('、')}来源未冻结，不能确认评测可比`)
+  } else if (baselineDefinition && candidateDefinition) {
+    if (baselineDefinition.caseMaterialHash !== candidateDefinition.caseMaterialHash) {
+      reasons.push(`两侧案例素材不同：${baselineDefinition.caseMaterialHash} vs ${candidateDefinition.caseMaterialHash}`)
+    }
+    if (baselineDefinition.judgeHash !== candidateDefinition.judgeHash) {
+      reasons.push(`两侧评判实现不同：${baselineDefinition.judgeHash} vs ${candidateDefinition.judgeHash}`)
+    }
+    if (baselineDefinition.runConfigHash !== candidateDefinition.runConfigHash) {
+      reasons.push(`两侧运行配置不同：${baselineDefinition.runConfigHash} vs ${candidateDefinition.runConfigHash}`)
+    }
+  }
   if (!baselineDefinition || !candidateDefinition) {
     reasons.push('评测记录未冻结基准来源，不能作为对比证据')
   } else {

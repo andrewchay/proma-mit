@@ -53,6 +53,8 @@ export interface EvolveInput {
   state: StateGuard
   /** 本次评判者身份（评估器独立性审计），写入每条 evaluation */
   judge?: JudgeIdentity | null
+  /** 被测方轮次上限；缺省与 evaluator 一致（12），参与运行配置来源冻结。 */
+  maxTurns?: number
   /**
    * 可选：held-out 迁移评测（综述 §8.1.1）。对不参与优化的 held-out Case 集评测，
    * 在 baseline 与每个被接受候选上各跑一次并落盘——训练分涨而 held-out 不涨即为过拟合信号。
@@ -119,13 +121,15 @@ function buildEvaluation(
   time: string,
   judge?: JudgeIdentity | null,
   heldOutByCase?: CaseEval[] | null,
+  maxTurns?: number,
 ): BenchmarkEvaluation {
   const total = averageCaseScore(byCase) ?? 0
   return {
     time,
     agentVersion,
     // 写入时冻结基准来源：后续配置变化不回填，影子对比据此判断两侧是否同一份基准。
-    definition: freezeEvaluationDefinition(benchmark, time),
+    // 同时冻结案例素材、评判实现与运行配置，否则新记录也只能判为不可比。
+    definition: freezeEvaluationDefinition(benchmark, time, { judge: judge ?? null, maxTurns }),
     score: Math.round(total * 100) / 100,
     costUsd: byCase.some((c) => c.costUsd != null) ? byCase.filter((c) => c.costUsd != null).reduce((s, c) => s + (c.costUsd as number), 0) : null,
     durationMs: byCase.some((c) => c.durationMs != null) ? byCase.filter((c) => c.durationMs != null).reduce((s, c) => s + (c.durationMs as number), 0) : null,
@@ -159,7 +163,7 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
   // held-out baseline 同时用于记录与候选门禁，避免同一轮重复消耗评测预算。
   const heldOutBaseline = input.evaluateHeldOut ? await input.evaluateHeldOut(undefined, input.benchmark) : null
   // 每次实际完成的基线都是独立观测，即使被测版本相同也保留。
-  const baselineEvaluation = buildEvaluation(input.benchmark, baselineVersion, baselineByCase, new Date().toISOString(), input.judge, heldOutBaseline)
+  const baselineEvaluation = buildEvaluation(input.benchmark, baselineVersion, baselineByCase, new Date().toISOString(), input.judge, heldOutBaseline, input.maxTurns)
   appendEvaluation(input.benchmark.id, baselineEvaluation)
 
   // 2) 迭代候选
@@ -190,7 +194,7 @@ export async function selfEvolve(input: EvolveInput): Promise<EvolveOutput> {
       candidateScore = candidateTotal ?? 0
       if (candidateTotal !== null) {
         // 与 Reference 同一份冻结基准：这是影子对比唯一来源可信的场景，因此在这里落地报告。
-        candidateEvaluation = buildEvaluation(input.benchmark, candidateVersion, candidateByCase, new Date().toISOString(), input.judge, null)
+        candidateEvaluation = buildEvaluation(input.benchmark, candidateVersion, candidateByCase, new Date().toISOString(), input.judge, null, input.maxTurns)
       }
       if (candidateTotal === null) {
         reason = '候选评测无效（无有效分数）'

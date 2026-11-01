@@ -4,6 +4,7 @@ import {
   assertRuntimeSessionIdentity,
   bindRuntimeSessionIdentity,
   matchesRuntimeSessionIdentity,
+  requireBoundSessionId,
   revokeRuntimeSessionIdentity,
 } from './runtime-session-identity'
 
@@ -98,5 +99,24 @@ describe('runtime session identity', () => {
     expect(matchesRuntimeSessionIdentity(promaOwner, piIdentity({ runtime: 'proma' }))).toBe(true)
     revokeRuntimeSessionIdentity(promaOwner)
     expect(matchesRuntimeSessionIdentity(piOwner, piIdentity())).toBe(true)
+  })
+
+  test('Given 权限层取授权会话 When 绑定一致 Then 返回绑定的 sessionId', () => {
+    const owner = {}
+    bindRuntimeSessionIdentity(owner, piIdentity())
+    expect(requireBoundSessionId(owner, { sessionId: 'session-1', cwd: '/tmp/work', runtime: 'pi' })).toBe('session-1')
+    // cwd 归一后仍视为同一身份
+    expect(requireBoundSessionId(owner, { sessionId: 'session-1', cwd: '/tmp/work/', runtime: 'pi' })).toBe('session-1')
+  })
+
+  test('Given 权限层取授权会话 When 调用链改写身份 Then 失败关闭', () => {
+    const owner = {}
+    bindRuntimeSessionIdentity(owner, piIdentity())
+    expect(() => requireBoundSessionId(undefined, { sessionId: 'session-1', runtime: 'pi' })).toThrow('缺少已绑定的会话身份')
+    expect(() => requireBoundSessionId(owner, { sessionId: 'session-2', runtime: 'pi' })).toThrow('身份与会话不一致')
+    expect(() => requireBoundSessionId(owner, { sessionId: 'session-1', cwd: '/tmp/other', runtime: 'pi' })).toThrow('工作目录与会话身份不一致')
+    expect(() => requireBoundSessionId(owner, { sessionId: 'session-1', runtime: 'proma' })).toThrow('Runtime 与会话绑定不一致')
+    revokeRuntimeSessionIdentity(owner)
+    expect(() => requireBoundSessionId(owner, { sessionId: 'session-1', runtime: 'pi' })).toThrow('绑定已失效')
   })
 })

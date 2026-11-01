@@ -1,5 +1,44 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-11-01 五方向推进（本会话：门禁 / 绑定 / RSI / OpenDesign / Enterprise）
+
+基线与验证：`main` 08331f01（含 #79–#102）。本次改动全部是源码 + 测试，未提交 PR，未重建应用。
+
+- **Harness · Bash Git 门禁重写**（`agent-runtime/tool-impls/git-command-boundary.ts`）：
+  改前是整串正则（31 行），引号文本、here-doc 正文、提交信息、子命令参数都会被当成命令。
+  改后先做 shell 词法切分（引号/转义/here-doc/注释/重定向/命令替换），再只看命令位（跳过
+  `env`/`sudo`/`xargs` 前缀与 `VAR=值` 赋值）上的 Git；`-c`/`--config-env` 只在子命令之前当全局选项解析，
+  子命令之后同名参数按数据处理。测试 9 例（原 5 例保留 + 4 例新增误拒回归）。
+  **关键事实：当前会话的 Bash 工具跑的是改动前打好的 bundle**，实测仍按旧规则拒绝
+  `echo "…git init; …"`；源码修复要线上生效必须重新构建并重启应用。
+- **受控自主 · Proma 权限门禁接绑定身份**：`runtime-session-identity.ts` 新增
+  `requireBoundSessionId()`；`provider-agnostic-agent-adapter.ts` 的 `checkToolPermission` 在任何
+  模式分支之前先取绑定身份，后续 `assertNoOwnerBusinessSession` 用校验过的 sessionId；审批返回后
+  的身份复核改为 `ctx.boundSession ?? ctx.sessionOwner`。测试：13 例身份单测 + 24 例适配器集成。
+- **RSI · 三来源冻结**：`EvaluationDefinitionProvenance` 增 `caseMaterialHash`/`judgeHash`/
+  `runConfigHash`；`freezeEvaluationDefinition(benchmark, frozenAt, { judge, maxTurns })` 写入；
+  `compareRecordedEvaluations` 从「无条件不可比」改为按缺项/差异给出具体原因，齐备即正常比对。
+  历史记录不回填。测试：对比套件 40 例（含 3 例新增）。
+- **OpenDesign · 会话目录安装 + 同名另存**（核心层，未接 IPC/UI）：`opendesign-install-store.ts` 新增
+  `installOpenDesignIntoSessionDir` / `readInstalledOpenDesignFromSession`，另存名 `<brand>-design.md`、
+  `<brand>-tokens.css`、再冲突加序号；manifest 记实际文件名 + SHA-256；只写不改、失败回滚；读回校验
+  文件名安全、符号链接、大小、摘要。`resolveActiveDesignSystem` 优先级：本地文件 → 会话 manifest →
+  工作区共享安装；被改写的安装文件按本地文件处理、不挂 OpenDesign 来源。
+  测试：会话安装 8 例、设计上下文 27 例。
+- **Enterprise · 集中授权判定模型**：新增 `apps/server/src/workspace-access-policy.ts`
+  （`decideWorkspaceAccess` / `isSharedWorkspaceAccessEnabled`），成员接口的 `sharedAccessEnabled`
+  改为读该开关（默认关闭）。未接任何入口，线上行为不变。设计说明：
+  `docs/plans/2026-10-28-harness-autonomy-rsi-roadmap/enterprise-central-authorization.md`。测试 10 例。
+
+验证结果：`apps/electron` 与 `apps/server` 的 `tsc --noEmit` 均通过；`agent-runtime` 目录 128 个测试文件
+中 3 个失败，全部是嵌套 seatbelt 不可用（`sandbox_apply: Operation not permitted`）的沙箱用例，
+与本次改动无关。未跑完整全仓套件（先在后台跑满套件时被会话中止）。
+
+后续优先级（承接既有结论）：门禁改动需重建应用后才影响真实 Agent 使用；受控自主下一步把
+`assertBoundToolSession` 覆盖到 Pi/Claude SDK 两条链路的权限回调；RSI 需用真实评测跑一条带三来源的
+新记录确认可比性；OpenDesign 要把会话目录传给安装 IPC/UI；Enterprise 按设计文档 S1–S5 接入口。
+
+
 ## 2026-11-01 观察账本分支收尾与文档同步
 
 - 本分支（codex/p1-web-change-observation-ledger）S1–S7 已落地并推送，PR #94 OPEN。
