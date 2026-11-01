@@ -154,6 +154,7 @@ export function formatSkillForPrompt(skill: Skill, opts?: { workspaceSlug?: stri
           ? resolveDesignCraftDir({ workspaceSlug: opts.workspaceSlug, getWorkspaceSkillsDir, getDefaultSkillsDir })
           : resolveDesignCraftDir({ getDefaultSkillsDir }),
         cwd: opts?.cwd,
+        workspaceSlug: opts?.workspaceSlug,
       })
     } catch { /* 忽略 */ }
 

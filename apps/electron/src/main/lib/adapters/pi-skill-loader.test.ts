@@ -1,8 +1,11 @@
 import { describe, expect, test, afterAll } from 'bun:test'
+import { createHash } from 'node:crypto'
 import { mkdirSync, writeFileSync, mkdtempSync, rmSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import type { ResourceLoader, Skill } from '@earendil-works/pi-coding-agent'
+import { getAgentWorkspacePath } from '../config-paths'
+import { installOpenDesignFiles } from '../opendesign-install-store'
 import {
   buildAllowedSkillRoots,
   buildSkillLookup,
@@ -156,6 +159,55 @@ describe('formatSkillForPrompt', () => {
   test('given missing file then returns undefined', () => {
     const skill = makeSkill({ filePath: '/nonexistent/SKILL.md', baseDir: '/nonexistent' })
     expect(formatSkillForPrompt(skill)).toBeUndefined()
+  })
+
+  test('given Owner 工作区已安装 OpenDesign When Pi 展开设计 Skill Then 注入安装正文和令牌', async () => {
+    const previousConfigDir = process.env.PROMA_TEST_CONFIG_DIR
+    const configDir = join(projectDir, 'pi-installed-config')
+    process.env.PROMA_TEST_CONFIG_DIR = configDir
+    try {
+      const workspaceSlug = 'pi-design-owner'
+      const workspaceRoot = getAgentWorkspacePath(workspaceSlug)
+      const filesDir = join(workspaceRoot, 'workspace-files')
+      const design = '# Stripe Design System\n\nOwner-approved Pi reference.\n'
+      const tokens = ':root { --brand: #635bff; }\n'
+      const digest = (value: string) => createHash('sha256').update(value).digest('hex')
+      mkdirSync(filesDir, { recursive: true })
+      installOpenDesignFiles(filesDir, {
+        schemaVersion: 1,
+        source: 'OpenDesign',
+        license: 'Apache-2.0',
+        projectId: 'pi-project',
+        workspaceId: 'pi-workspace',
+        workspaceSlug,
+        brandId: 'stripe',
+        brandName: 'Stripe',
+        referenceRevision: 'pi-r1',
+        installedAt: 1,
+        actor: 'local-user',
+        files: { 'DESIGN.md': digest(design), 'tokens.css': digest(tokens) },
+      }, design, tokens)
+
+      const cwd = join(projectDir, 'pi-owner-session')
+      const skillDir = join(projectDir, 'pi-design-skill')
+      mkdirSync(cwd, { recursive: true })
+      mkdirSync(skillDir, { recursive: true })
+      const skillPath = join(skillDir, 'SKILL.md')
+      writeFileSync(skillPath, '---\nname: installed-design\nod:\n  design_system:\n    requires: true\n---\n\n# Design task\n')
+      const skill = makeSkill({ name: 'installed-design', filePath: skillPath, baseDir: skillDir })
+      const loader = {
+        getSkills: () => ({ skills: [skill], diagnostics: [] }),
+        reload: async () => {},
+      } as unknown as ResourceLoader
+      const prompt = await preparePromptWithPromaSkills(loader, '设计一个页面', ['installed-design'], { workspaceSlug, cwd })
+      expect(prompt).toContain('origin="OpenDesign stripe pi-r1"')
+      expect(prompt).toContain('Owner-approved Pi reference.')
+      expect(prompt).toContain('--brand: #635bff')
+      expect(prompt).toContain('设计一个页面')
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+      else process.env.PROMA_TEST_CONFIG_DIR = previousConfigDir
+    }
   })
 })
 

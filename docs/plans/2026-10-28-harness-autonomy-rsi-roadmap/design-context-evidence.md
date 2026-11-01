@@ -31,6 +31,10 @@ Owner 交付卡可在成果正文选择最多 300 字，或在隔离的 HTML 静
 
 用户可分别下载所选品牌的完整设计说明和 CSS 令牌原文，保存文件名带品牌前缀，避免与现有文件混淆；如需激活，需由用户自行审阅并决定是否以 `DESIGN.md` / `tokens.css` 放入工作区根目录。浏览器测试核对下载文件名与内容；尚未验证打包 Electron 的下载交互、品牌授权或真实 Provider 对完整规范的遵循。
 
+### Pi Runtime 安装规范注入
+
+补充跨 Runtime 回归时发现，Pi 的 Skill 展开器虽接收 Owner `workspaceSlug`，却没有把它传给已安装设计系统解析器；Owner 会话 cwd 无本地 `DESIGN.md` 时，Pi 误报资源缺失。现在将工作区身份传入共享解析器，隔离测试经 Pi 的 `preparePromptWithPromaSkills` 验证已安装正文、来源版本和 tokens.css 注入。该测试验证本地 prompt 组装，不代表真实 Pi Provider 遵循或用户交付验收。
+
 ### Owner 工作区安装与受控注入
 
 Owner 可预览当前绑定的执行工作区及 OpenDesign 参考版本；用户二次确认后，仅在该工作区共享目录安装 `DESIGN.md` 与 `tokens.css`。若目标、项目根目录存在同名文件、安装目录或符号链接冲突，安装拒绝覆盖。安装记录作为独立元数据保存 OpenDesign 版本、来源、项目/工作区绑定、用户确认身份与两份文件的 SHA-256；上下文读取时重新校验摘要，损坏或不完整时不注入。安装确认同时绑定预览时的 Owner 工作区修订、工作区 ID 和 OpenDesign 版本，期间任一变化都要求重新预览。
