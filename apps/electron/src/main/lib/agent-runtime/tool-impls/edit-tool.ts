@@ -50,6 +50,8 @@ export async function executeEditTool(input: unknown, ctx: ToolContext): Promise
     return { toolCallId: '', content: pathError, isError: true }
   }
 
+  let mutation: import('../file-mutation-journal').FileMutationHandle | undefined
+  let settle: typeof import('../file-mutation-journal').settleFileMutation | undefined
   try {
     const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
     gates.assertBoundToolSession(ctx)
@@ -91,6 +93,10 @@ export async function executeEditTool(input: unknown, ctx: ToolContext): Promise
 
       const newContent = content.replace(params.old_string, params.new_string)
       const bytes = Buffer.from(newContent, 'utf-8')
+      // 先记写入意图：截断发生在下一行，崩溃点就在这之后。
+      const journal = require('../file-mutation-journal') as typeof import('../file-mutation-journal')
+      settle = journal.settleFileMutation
+      mutation = await journal.beginFileMutation({ sessionId: ctx.sessionId, tool: 'Edit', path })
       ftruncateSync(descriptor, 0)
       for (let offset = 0; offset < bytes.length;) {
         const written = writeSync(descriptor, bytes, offset, bytes.length - offset, offset)
@@ -98,6 +104,7 @@ export async function executeEditTool(input: unknown, ctx: ToolContext): Promise
         offset += written
       }
     } finally { closeSync(descriptor) }
+    await settle?.(mutation, 'ok')
     // PH2-A：文件共享事件流
     try {
       const { recordFileEvent } = await import('../../workspace-file-event-service')
@@ -111,6 +118,7 @@ export async function executeEditTool(input: unknown, ctx: ToolContext): Promise
       content: `文件已编辑：${params.file_path}`,
     }
   } catch (error) {
+    await settle?.(mutation, 'error', error instanceof Error ? error.message : String(error))
     return {
       toolCallId: '',
       content: formatToolError(error),

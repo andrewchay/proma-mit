@@ -268,6 +268,23 @@ export class PostgresTenantRuntimeStore implements TenantRuntimeStore {
     return row ? workspaceFromRow(row) : undefined
   }
 
+  /**
+   * 只读「别人的工作区」的存在性与所有者，用于共享工作区元数据读取。
+   *
+   * 刻意不返回 cwd 与 mcpServers：共享成员没有理由知道路径和服务器配置，
+   * 字段白名单写在 SQL 里，避免调用方顺手把整行带出去。
+   */
+  async getOwnedWorkspaceMetadata(scope: AgentRuntimeScope, ownerUserId: string, workspaceSlug: string): Promise<{ tenantId: string; ownerUserId: string; workspaceSlug: string } | undefined> {
+    if (!ownerUserId.trim() || !workspaceSlug.trim()) return undefined
+    const result = await this.client.query<{ tenant_id: string; user_id: string; workspace_slug: string }>(
+      `SELECT tenant_id, user_id, workspace_slug FROM proma_runtime_workspaces
+       WHERE tenant_id = $1 AND user_id = $2 AND workspace_slug = $3`,
+      [scope.tenantId, ownerUserId, workspaceSlug],
+    )
+    const row = result.rows[0]
+    return row ? { tenantId: row.tenant_id, ownerUserId: row.user_id, workspaceSlug: row.workspace_slug } : undefined
+  }
+
   async createSession(session: TenantRuntimeSession): Promise<TenantRuntimeSession> {
     await this.client.query(
       `INSERT INTO proma_runtime_sessions (

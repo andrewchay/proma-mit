@@ -40,10 +40,10 @@
 
 ## 迁移顺序（后续切片）
 
-1. **读路径接线（行为不变）**：工作区读取入口改为调用判定函数，开关保持关闭；验收标准是现有
-   所有者用例全部照旧、成员用例仍被拒且原因码可审计。**未开始**：服务端工作区读取目前按
-   `(tenant_id, user_id, workspace_slug)` 收敛，放开共享读等于新增功能，需先定 editor/viewer
-   能读到哪些字段。
+1. **读路径接线（行为不变）**：**已落地元数据子集**——`GET /agent/shared-workspaces/{owner}/{slug}`
+   先判存在性再走 `decideWorkspaceAccess(read_workspace)`，返回字段白名单只有 owner/slug/角色
+   （SQL 层不选 cwd 与 mcpServers）；开关关闭时成员得到 403 `shared_workspace_disabled`。
+   **未开始**：工作区内容（文件、会话、Runtime 能力）的共享读仍需先定 editor/viewer 的读范围。
 2. **成员接口自检**：成员登记/撤销在写入前用判定函数复核 `manage_members`。**已落地**：
    `handleWorkspaceMembershipRoute` 先取工作区所有者身份再判定，非所有者 403 并带原因码、
    不写库；桩测试 5 例覆盖所有者放行、他人工作区 403、缺失工作区 404 与路径匹配。

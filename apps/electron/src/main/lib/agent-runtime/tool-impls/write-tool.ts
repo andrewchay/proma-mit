@@ -45,6 +45,8 @@ export async function executeWriteTool(input: unknown, ctx: ToolContext): Promis
     return { toolCallId: '', content: pathError, isError: true }
   }
 
+  let mutation: import('../file-mutation-journal').FileMutationHandle | undefined
+  let settle: typeof import('../file-mutation-journal').settleFileMutation | undefined
   try {
     let exclusiveCreate = false
     const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
@@ -63,6 +65,10 @@ export async function executeWriteTool(input: unknown, ctx: ToolContext): Promis
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true })
     }
+    // 先记写入意图：崩溃后能定位"哪个文件可能半写"，而不是靠猜。
+    const journal = require('../file-mutation-journal') as typeof import('../file-mutation-journal')
+    settle = journal.settleFileMutation
+    mutation = await journal.beginFileMutation({ sessionId: ctx.sessionId, tool: 'Write', path })
     // 新建必须独占；已存在文件先打开再核验，不能在核验前截断链接目标。
     let descriptor: number
     try {
@@ -84,6 +90,7 @@ export async function executeWriteTool(input: unknown, ctx: ToolContext): Promis
       ftruncateSync(descriptor, 0)
       writeFileSync(descriptor, params.content, 'utf-8')
     } finally { closeSync(descriptor) }
+    await settle?.(mutation, 'ok')
     // PH2-A：文件共享事件流（谁改了什么，团队成员可见）
     try {
       const { recordFileEvent } = await import('../../workspace-file-event-service')
@@ -96,6 +103,8 @@ export async function executeWriteTool(input: unknown, ctx: ToolContext): Promis
       content: `文件已写入：${params.file_path}`,
     }
   } catch (error) {
+    // 失败也要结算：留下"尝试过但没写成"的痕迹，避免它被当成崩溃遗留反复对账。
+    await settle?.(mutation, 'error', error instanceof Error ? error.message : String(error))
     return {
       toolCallId: '',
       content: formatToolError(error),

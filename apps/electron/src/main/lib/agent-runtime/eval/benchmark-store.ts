@@ -163,7 +163,13 @@ export function listBenchmarks(): Array<BenchmarkConfig & { latestScore: number 
 
 /** 读取某个 Benchmark 的配置 + scoreboard（供面板展示）。不存在返回 null。 */
 export function getBenchmarkDetail(benchmarkId: string):
-  | { config: BenchmarkConfig; scoreboard: Scoreboard; cases: Array<{ caseId: string; statement: string | null; rubric: Rubric | null }> }
+  | {
+    config: BenchmarkConfig
+    scoreboard: Scoreboard
+    cases: Array<{ caseId: string; statement: string | null; rubric: Rubric | null }>
+    /** 样本来源审计：面板据此说明"为什么大多不可比"，历史缺口不回填。 */
+    audit: import('./scoreboard-audit').ScoreboardAudit
+  }
   | null {
   const config = readBenchmark(benchmarkId)
   if (!config) return null
@@ -173,7 +179,8 @@ export function getBenchmarkDetail(benchmarkId: string):
     statement: readCaseStatement(benchmarkId, caseId),
     rubric: readCaseRubric(benchmarkId, caseId),
   }))
-  return { config, scoreboard, cases }
+  const { auditScoreboard } = require('./scoreboard-audit') as typeof import('./scoreboard-audit')
+  return { config, scoreboard, cases, audit: auditScoreboard(benchmarkId, scoreboard) }
 }
 
 /** UI 创建 Benchmark 的请求结构。 */
