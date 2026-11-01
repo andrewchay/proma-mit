@@ -35,6 +35,8 @@ Owner 交付卡可在成果正文选择最多 300 字，或在隔离的 HTML 静
 
 补充跨 Runtime 回归时发现，Pi 的 Skill 展开器虽接收 Owner `workspaceSlug`，却没有把它传给已安装设计系统解析器；Owner 会话 cwd 无本地 `DESIGN.md` 时，Pi 误报资源缺失。现在将工作区身份传入共享解析器，隔离测试经 Pi 的 `preparePromptWithPromaSkills` 验证已安装正文、来源版本和 tokens.css 注入。该测试验证本地 prompt 组装，不代表真实 Pi Provider 遵循或用户交付验收。
 
+Claude SDK 的系统提示词构建也新增了隔离回归：在 Owner 工作区安装固定版本规范并启用声明 `od.design_system.requires` 的 Skill 后，完整 system prompt 包含安装正文、来源版本及 tokens.css。此项只验证本地 prompt 组装，不代表 Claude Provider 遵循或业务验收；三条 Runtime 的实际 Provider 表现仍需分别验证。
+
 ### Owner 工作区安装与受控注入
 
 Owner 可预览当前绑定的执行工作区及 OpenDesign 参考版本；用户二次确认后，仅在该工作区共享目录安装 `DESIGN.md` 与 `tokens.css`。若目标、项目根目录存在同名文件、安装目录或符号链接冲突，安装拒绝覆盖。安装记录作为独立元数据保存 OpenDesign 版本、来源、项目/工作区绑定、用户确认身份与两份文件的 SHA-256；上下文读取时重新校验摘要，损坏或不完整时不注入。安装确认同时绑定预览时的 Owner 工作区修订、工作区 ID 和 OpenDesign 版本，期间任一变化都要求重新预览。
