@@ -1,5 +1,27 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-11-01 第二轮推进（Claude 绑定 / 显著性 / Enterprise 接线）
+
+基线 `5e181e59`（含 #104）。本轮 3 个提交：`c2921cb1`、`e0bc5a84` + 文档。
+
+- **受控自主 · Claude 路径**：`RuntimeSessionIdentity` 增 `claude-sdk`；编排层 `sendMessage` 在
+  `this.adapter.query()` 前 `bindRuntimeSessionIdentity(sessionIdentityOwner, …)`，把
+  `resolveToolPermission` 包成 `canUseTool`：进入判定前与放行前各 `requireBoundSessionId` 一次，
+  失败直接 deny 且不进审批。至此四条路径（Proma / AI SDK / Pi / Claude）的权限判定都以绑定为授权依据。
+  注：Claude 路径的身份对象是每次运行新建、运行后不可达，因此不做撤销标记。
+- **RSI · 显著性**：`evaluateShadowSignificance` 双侧精确符号检验（二项系数精确计算），
+  `ShadowComparison.significance` 带 `pairs/pValue/alpha/significant/note`；配对数下限默认 5、
+  alpha 默认 0.05 可配；不可比时显式「未做显著性判断」。`verdict` 语义不变，
+  description 在「下了方向结论但未达显著」时提示不能排除噪声。新增 8 例。
+- **Enterprise**：成员接口改为先取工作区所有者再 `decideWorkspaceAccess(manage_members)`，非所有者
+  403 + 原因码、不写库；桩测试 5 例。S1（共享工作区读）仍是功能开发，未启动。
+
+环境限制复现（与本轮改动无关）：`apps/server/src/workspace-tools.test.ts` 在沙箱内
+`mkdir /private/tmp/...` EPERM；`agent-runtime` 的 seatbelt 用例同样受嵌套沙箱限制。
+
+下一步（仍在计划内）：RSI 真实评测验证三来源冻结；Harness 门禁语法补强；Enterprise S1 需先定
+共享读的字段口径；门禁改动需重建应用才对真实 Agent 生效。
+
 ## 2026-11-01 五方向推进（本会话：门禁 / 绑定 / RSI / OpenDesign / Enterprise）
 
 基线与验证：`main` 08331f01（含 #79–#102）。本次改动全部是源码 + 测试，未提交 PR，未重建应用。
