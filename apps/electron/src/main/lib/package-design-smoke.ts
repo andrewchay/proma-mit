@@ -162,7 +162,7 @@ export async function runPackageDesignSmoke(root: string): Promise<Record<string
     assert(hasInstallPreview, `Owner 安装预览失败：${installPreviewStatus || '没有返回预览结果'}`)
     assert((await window.webContents.executeJavaScript(`document.querySelector('[aria-label="确认 OpenDesign 安装"]').innerText`, true)).includes(smokeOwnerWorkspace.name), '确认卡片未显示实际绑定的 Owner 工作区')
     await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent === '确认安装').click()`, true)
-    await waitRenderer(window, `document.querySelector('[role="status"]')?.textContent.includes('已安装到 Owner 工作区')`, 'Owner 安装成功状态')
+    await waitRenderer(window, `document.querySelector('details[aria-label="设计任务草稿"] [role="status"]')?.textContent.includes('已安装到 Owner 工作区')`, 'Owner 安装成功状态')
     const uiInstalledReference = readInstalledOwnerDesignSystem(smokeOwnerWorkspace.slug)
     assert(uiInstalledReference, 'Owner 界面确认后未能读回已安装参考')
     const uiBundledReference = readBundledReference('stripe', process.resourcesPath)
