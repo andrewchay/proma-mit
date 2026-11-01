@@ -1597,12 +1597,26 @@ interface ProjectWebWatchConfigView {
   lastSuccessAt?: number
 }
 
+interface WebObservationQualityView {
+  observations: number
+  byJudgment: Record<string, number>
+  duplicateRate: number | null
+  insufficientRate: number | null
+  factsTotal: number
+  factsWithoutPublishedAt: number
+  inferencesTotal: number
+  truncatedObservations: number
+  feedback: { helpful: number; irrelevant: number; snooze: number }
+}
+
 interface ProjectWebWatchRunView {
   id: string
   startedAt: number
   coverageFrom: number
   coverageTo: number
-  status: 'success' | 'failed'
+  status: 'success' | 'failed' | 'skipped'
+  skipReason?: 'budget_exhausted'
+  judgment?: string
   sources: Array<{ title: string; url: string; snippet: string; publishedAt?: string }>
   newSources: Array<{ title: string; url: string; snippet: string; publishedAt?: string }>
   analysis?: string
@@ -1613,16 +1627,19 @@ function ProjectWebWatchPanel({ projectId, projectTitle, projectDescription }: {
   const [config, setConfig] = useState<ProjectWebWatchConfigView>({ projectId, enabled: false, topics: [], localTime: '09:00' })
   const [topicsText, setTopicsText] = useState('')
   const [runs, setRuns] = useState<ProjectWebWatchRunView[]>([])
+  const [quality, setQuality] = useState<WebObservationQualityView | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   const load = useCallback(async () => {
-    const [saved, history] = await Promise.all([
+    const [saved, history, summary] = await Promise.all([
       callProjectAPI<ProjectWebWatchConfigView>('getWebWatch', projectId),
       callProjectAPI<ProjectWebWatchRunView[]>('listWebWatchRuns', projectId),
+      callProjectAPI<WebObservationQualityView>('getWebObservationQuality', projectId, Date.now() - 7 * 24 * 60 * 60 * 1000),
     ])
     setConfig(saved)
     setTopicsText(saved.topics.join('\n'))
     setRuns(history)
+    setQuality(summary)
   }, [projectId])
   useEffect(() => { void load().catch((error) => setMessage(error instanceof Error ? error.message : String(error))) }, [load])
 
@@ -1667,11 +1684,25 @@ function ProjectWebWatchPanel({ projectId, projectTitle, projectDescription }: {
       <p className="mt-3 text-xs text-muted-foreground">需要先配置 WebSearch（Tavily 或秘塔）和一个已启用的 AI 渠道。应用离线错过计划后，启动时补扫一次，覆盖上次成功扫描至今。</p>
       {config.lastSuccessAt && <p className="mt-2 text-xs text-muted-foreground">上次成功：{new Date(config.lastSuccessAt).toLocaleString()}</p>}
     </div>
+    <div className="rounded-xl bg-card p-5 shadow-sm">
+      <h3 className="font-medium">观察质量（近 7 天）</h3>
+      <p className="mt-1 text-xs text-muted-foreground">用于观察期评估：判断分布、重复率、证据不足率与发布时间可靠性。比率为空表示还没有观察记录。</p>
+      {quality && quality.observations > 0 ? <div className="mt-3 grid gap-2 text-sm sm:grid-cols-2">
+        <p>观察条数：{quality.observations}</p>
+        <p>值得了解：{quality.byJudgment.attention ?? 0} 次 · 需要决定：{quality.byJudgment.decision_required ?? 0} 次</p>
+        <p>重复率：{quality.duplicateRate === null ? '无数据' : `${Math.round(quality.duplicateRate * 100)}%`}</p>
+        <p>证据不足率：{quality.insufficientRate === null ? '无数据' : `${Math.round(quality.insufficientRate * 100)}%`}</p>
+        <p>事实 {quality.factsTotal} 条，其中发布时间未确认 {quality.factsWithoutPublishedAt} 条</p>
+        <p>推断 {quality.inferencesTotal} 条 · 上下文被截断 {quality.truncatedObservations} 次</p>
+        <p className="sm:col-span-2">你的反馈：有帮助 {quality.feedback.helpful} · 不相关 {quality.feedback.irrelevant} · 暂不关注 {quality.feedback.snooze}</p>
+        <p className="sm:col-span-2 text-xs text-muted-foreground">这些是本地账本的统计，不含遗漏评估与准确性判断；后者需要你对照实际关心的变化来看。</p>
+      </div> : <p className="mt-3 text-sm text-muted-foreground">近 7 天还没有观察记录。开启每日扫描或点“立即扫描”后，这里会出现统计。</p>}
+    </div>
     <div className="space-y-3">
       <h3 className="font-medium">扫描历史</h3>
       {runs.length === 0 && <p className="text-sm text-muted-foreground">还没有扫描记录。</p>}
       {runs.map((run) => <article key={run.id} className="rounded-xl bg-card p-4 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-2 text-sm"><strong>{new Date(run.startedAt).toLocaleString()}</strong><span className={run.status === 'success' ? 'text-emerald-600' : 'text-red-600'}>{run.status === 'success' ? `成功 · ${run.newSources.length} 条新来源` : '失败'}</span></div>
+        <div className="flex flex-wrap items-center justify-between gap-2 text-sm"><strong>{new Date(run.startedAt).toLocaleString()}</strong><span className={run.status === 'success' ? 'text-emerald-600' : run.status === 'skipped' ? 'text-muted-foreground' : 'text-red-600'}>{run.status === 'success' ? `成功 · ${run.newSources.length} 条新来源${run.judgment ? ` · ${run.judgment}` : ''}` : run.status === 'skipped' ? '已跳过：Owner 模型额度不足，未做任何外部请求' : '失败'}</span></div>
         <p className="mt-1 text-xs text-muted-foreground">覆盖：{new Date(run.coverageFrom).toLocaleString()} 至 {new Date(run.coverageTo).toLocaleString()}</p>
         {run.error && <p className="mt-3 text-sm text-red-600">{run.error}</p>}
         {run.analysis && <pre className="mt-3 whitespace-pre-wrap text-sm leading-6">{run.analysis}</pre>}

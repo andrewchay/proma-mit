@@ -1,5 +1,59 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-11-01 观察账本分支收尾与文档同步
+
+- 本分支（codex/p1-web-change-observation-ledger）S1–S7 已落地并推送，PR #94 OPEN。
+  `5c053165` 修复裁剪 O(n²) CI 超时（预检 COUNT/MIN，1844ms→421ms）。
+  新增两个 docs 提交（2261f206 主线 #95–#101 进展 + OpenDesign 后续；c6b4ab1d 分支进展）。
+- 路线图 delivery-progress.md 已更新：OpenDesign 行标记 #95/#101 落地、剩余改为
+  「会话目录安装与另存冲突策略」；新增 2026-11-01 两节（分支内进展 + 主线已合并切片）。
+- OpenDesign 剩余三个待决策仍悬置（另存文件发现方式 / 工作区共享安装去留 / 是否走审批），
+  AskUserQuestion 被中止，见 .context/opendesign-injection-next.md。
+
+## 2026-11-01 主线更新与 OpenDesign 一期落地
+
+- 主线现为 fe0d0b9c（昨晚至今早合并 #95–#101）。OpenDesign #95 落地 Owner 工作区安装与受控注入，
+  #101 补齐打包资源路径；受控自主 #99/#100 收紧未知动作确认并展示 pending；RSI #96/#97/#98
+  区分 Owner 判断与执行信号、批准需可审计理由、历史信号噪声下限。
+- OpenDesign 一期（工作区共享安装）已由其他会话完成并合并。用户口径改为：写入会话目录、
+  同名文件另存。剩余工作写入 .context/opendesign-injection-next.md。
+- 三个待决策（AskUserQuestion 被中止）：另存文件如何被 Skill 发现（manifest 提示/DESIGN.md
+  软链/Skill 读 manifest）；是否保留工作区共享安装为第二模式；是否走 ownerActionApproval。
+
+## 2026-10-31 五路线剩余工作量评估（基线 main 85a321c6，含 #79–#93）
+
+- 用户表格以 #78 为基线，已过期：#79/80/81/84 三 Runtime 身份绑定且缺绑定一律拒绝；#83 Bash 纳入未知门禁；
+  #87 未知动作确认展示标识/时间/重试后果；#85/#91 题目+规则摘要、定义哈希、逐轮对比报告进 EvalPanel；
+  #86 令牌缺项提示；#92 asar 硬链接扫描；#93 沙箱保留 Git 身份。
+- Git 词法门禁误拒已实测复现：grep 搜索门禁报错原文即被拒（GIT_INIT + SHELL_COMPOSITION 对整串正则匹配，
+  不区分引号/heredoc/参数文本）。git-command-boundary.ts 仅 31 行。
+- 编排层 canUseTool（agent-orchestrator.ts:798）仍只按 sessionId 复核，无绑定对象。
+- RSI：对比报告已接通，但 compareRecordedEvaluations 因素材/评判者/运行配置未冻结而保守全部不可比。
+- OpenDesign：现有设计明确「不安装、不覆盖工作区文件」，用户需手动下载放入根目录；design-context 已能读取并刷新。
+- Enterprise：成员登记不授予工作区/Runtime 权限（sharedAccessEnabled:false），集中授权是最大块。
+- 评估结论：OpenDesign M｜受控自主 L（含固定构建真实验收则 XL）｜RSI 可比性 M、影子流量等 L 且依赖费用授权｜
+  Harness L（另拆 Git 门禁误拒 S–M 优先）｜Enterprise 代码 L + 客户验收外部依赖。
+
+## 2026-10-31 外网扫描与 Owner 的实际耦合度（评审核查结论）
+
+方案文档《Project Owner 外部变化观察与建议》评审时的核查结论，证据在
+`.context/plan/project-owner-external-watch-p1.md`。
+
+- **外网扫描与 Project Owner 零耦合**：`project-web-watch-service.ts` 只写
+  `projects/web-watch/{id}.json`/`.jsonl`，并在 `ProjectView.tsx` 的「外网扫描」面板展示；
+  `main/lib` 下没有任何 owner 模块引用它。扫描结果进不了 Owner 对话，也不看 goal/plan/授权。
+- **判断是自由文本**：`ProjectWebWatchRun.analysis` 由一次性 LLM 调用产出，无结构化状态；
+  是否通知取决于 `analysis.includes('本次未发现足够相关的新信息')` 的字面匹配（:148）。
+- **去重窗口只有 30 次运行**：`listProjectWebWatchRuns` 按 startedAt 排序截断 30 条（:89），
+  增量判定依赖这份截断后的 `knownVersions`（:138）。
+- **JSONL 只追加不轮转**，读取时截断；磁盘无上界。
+- **同族样板是 `file_change_observation`**：SQLite 表 + hash 身份 + 使用前授权复核 +
+  `recordOwnerConversationMessage` + 协议字段白名单 + 只允许 `conversation_reply`。
+  新增系统来源观察应复制这条链路（六处改动点：shared kind 联合、store 幂等比对、
+  conversation `:125` 触发白名单、planning-protocol 四处、renderer 卡片）。
+- **没有用户反馈机制**：全仓无「有帮助/不相关/暂不关注」实现；`project-owner-delivery-feedback.ts`
+  是把交付意见写进 Goal 草稿约束，不是观察相关性反馈。
+
 ## 2026-10-30 macOS 打包缺 node-pty spawn-helper（PR #73）
 
 ### 现象

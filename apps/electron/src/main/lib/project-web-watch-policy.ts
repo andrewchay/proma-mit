@@ -11,3 +11,20 @@ export function isProjectWebWatchDue(config: Pick<ProjectWebWatchConfig, 'enable
   const lastAttempt = config.lastAttemptAt ? new Date(config.lastAttemptAt) : undefined
   return !lastAttempt || lastAttempt.toDateString() !== now.toDateString()
 }
+
+const DAY_MS = 24 * 60 * 60 * 1000
+const MAX_CONSECUTIVE_FAILURE_NOTICES = 3
+
+/** 一天最多一条成功提醒：同一天已提醒过就不再打扰。 */
+export function shouldNotifySuccess(config: Pick<ProjectWebWatchConfig, 'lastNotifiedAt'>, now: number): boolean {
+  if (!config.lastNotifiedAt) return true
+  return new Date(config.lastNotifiedAt).toDateString() !== new Date(now).toDateString()
+}
+
+/** 失败 24 小时最多一条；连续失败达到 3 次后只在项目页显示，不再弹系统通知。 */
+export function shouldNotifyFailure(config: Pick<ProjectWebWatchConfig, 'lastFailureNotifiedAt'>, failures: number, now: number): boolean {
+  if (!Number.isSafeInteger(failures) || failures < 1) return false
+  if (failures >= MAX_CONSECUTIVE_FAILURE_NOTICES) return false
+  if (!config.lastFailureNotifiedAt) return true
+  return now - config.lastFailureNotifiedAt >= DAY_MS
+}
