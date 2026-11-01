@@ -131,8 +131,10 @@ export async function runPackageDesignSmoke(root: string): Promise<Record<string
     await waitRenderer(window, `[...document.querySelectorAll('button')].some(item => item.textContent?.trim() === '项目管理')`, '应用导航加载')
     await clickProjectModule(window)
     await waitRenderer(window, `document.body.innerText.includes(${JSON.stringify(project.title)})`, '验收项目出现')
+    const ownerConversationSelector = `[aria-label=${JSON.stringify(`与 ${project.title} 的 Owner 对话`)}]`
+    await waitRenderer(window, `document.querySelector(${JSON.stringify(ownerConversationSelector)}) instanceof HTMLElement`, 'Owner 对话入口出现')
     const opened = await window.webContents.executeJavaScript(`(() => {
-      const button = document.querySelector(${JSON.stringify(`[aria-label="与 ${project.title} 的 Owner 对话"]`)})
+      const button = document.querySelector(${JSON.stringify(ownerConversationSelector)})
       if (!(button instanceof HTMLElement)) return false
       button.click()
       return true
