@@ -1,5 +1,15 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-11-01 主线更新与 OpenDesign 一期落地
+
+- 主线现为 fe0d0b9c（昨晚至今早合并 #95–#101）。OpenDesign #95 落地 Owner 工作区安装与受控注入，
+  #101 补齐打包资源路径；受控自主 #99/#100 收紧未知动作确认并展示 pending；RSI #96/#97/#98
+  区分 Owner 判断与执行信号、批准需可审计理由、历史信号噪声下限。
+- OpenDesign 一期（工作区共享安装）已由其他会话完成并合并。用户口径改为：写入会话目录、
+  同名文件另存。剩余工作写入 .context/opendesign-injection-next.md。
+- 三个待决策（AskUserQuestion 被中止）：另存文件如何被 Skill 发现（manifest 提示/DESIGN.md
+  软链/Skill 读 manifest）；是否保留工作区共享安装为第二模式；是否走 ownerActionApproval。
+
 ## 2026-10-31 五路线剩余工作量评估（基线 main 85a321c6，含 #79–#93）
 
 - 用户表格以 #78 为基线，已过期：#79/80/81/84 三 Runtime 身份绑定且缺绑定一律拒绝；#83 Bash 纳入未知门禁；
