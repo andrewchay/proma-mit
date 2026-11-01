@@ -355,6 +355,8 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     let customTools = createPiToolBridge({
       toolContext: guardedToolContext,
       allowSubAgent: !controlled,
+      // 统一撤权入口：包含绕过权限回调的 AskUserQuestion / GoalCheckpoint 在内的所有派发点。
+      assertToolSession: () => assertRuntimeSessionIdentity(guardedToolContext, piSessionIdentity),
       canUseTool: controlled || canUseTool ? async (name, args, signal) => {
         // 每次异步等待前后都复核身份：等待期间会话可能已被撤销或改写。
         assertRuntimeSessionIdentity(guardedToolContext, piSessionIdentity)

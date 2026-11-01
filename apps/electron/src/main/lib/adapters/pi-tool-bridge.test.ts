@@ -70,6 +70,7 @@ describe('Pi Tool Bridge', () => {
   test('given P0 bridge when tools are registered then only Proma read is exposed', () => {
     const tools = createPiToolBridge({
       toolContext: { cwd: '/workspace', sessionId: 'pi-p0' },
+      assertToolSession: () => {},
       canUseTool: async () => ({ allowed: true }),
       coreTools: createCoreTools(async () => ({ toolCallId: '', content: 'ok', isError: false })),
     })
@@ -101,6 +102,7 @@ describe('Pi Tool Bridge', () => {
     let seen: { cwd: string; sessionId: string; frozen: boolean } | undefined
     const tools = createPiToolBridge({
       toolContext: context,
+      assertToolSession: () => {},
       canUseTool: async () => ({ allowed: true }),
       coreTools: createCoreTools(async (_input, ctx) => {
         seen = { cwd: ctx.cwd, sessionId: ctx.sessionId, frozen: Object.isFrozen(ctx) }
@@ -120,6 +122,7 @@ describe('Pi Tool Bridge', () => {
     let calls = 0
     const tools = createPiToolBridge({
       toolContext: { cwd: '/workspace', sessionId: 'pi-abort', abortSignal: controller.signal },
+      assertToolSession: () => {},
       canUseTool: async () => ({ allowed: true }),
       coreTools: createCoreTools(async () => { calls += 1; return { toolCallId: '', content: 'ok', isError: false } }),
     })
@@ -136,6 +139,7 @@ describe('Pi Tool Bridge', () => {
     let calls = 0
     const tools = createPiToolBridge({
       toolContext: { cwd: '/workspace', sessionId: 'pi-abort-approval', abortSignal: controller.signal },
+      assertToolSession: () => {},
       canUseTool: async () => { controller.abort(); return { allowed: true } },
       coreTools: createCoreTools(async () => { calls += 1; return { toolCallId: '', content: 'ok', isError: false } }),
     })
@@ -150,6 +154,7 @@ describe('Pi Tool Bridge', () => {
     const calls: string[] = []
     const tools = createPiToolBridge({
       toolContext: { cwd: '/workspace', sessionId: 'pi-p0' },
+      assertToolSession: () => {},
       canUseTool: async (toolName, input) => {
         calls.push(`${toolName}:${String(input.file_path)}`)
         return { allowed: true }
@@ -174,6 +179,7 @@ describe('Pi Tool Bridge', () => {
     let executed = false
     const tools = createPiToolBridge({
       toolContext: { cwd: '/workspace', sessionId: 'pi-p0' },
+      assertToolSession: () => {},
       canUseTool: async () => ({ allowed: false, message: '权限拒绝' }),
       coreTools: createCoreTools(async () => {
         executed = true
@@ -194,6 +200,7 @@ describe('Pi Tool Bridge', () => {
     let writeExecuted = false
     const tools = createPiToolBridge({
       toolContext: { cwd: '/workspace', sessionId: 'pi-p1', permissionMode: 'safe' },
+      assertToolSession: () => {},
       canUseTool: async (toolName) => ({
         allowed: toolName === 'Read' || toolName === 'Grep',
         message: '安全模式下不允许执行写操作',
@@ -224,6 +231,7 @@ describe('Pi Tool Bridge', () => {
         onExitPlanMode: async () => ({ behavior: 'allow', targetMode: 'auto' }),
         setPermissionMode: (mode) => { selectedMode = mode },
       },
+      assertToolSession: () => {},
       canUseTool: async () => ({ allowed: true }),
       coreTools: createCoreTools(async () => ({ toolCallId: '', content: 'ok', isError: false })),
     })
@@ -247,6 +255,7 @@ describe('Pi Tool Bridge', () => {
         sessionId: 'pi-goal',
         onGoalCheckpoint: async (checkpoint) => { checkpoints.push(checkpoint) },
       },
+      assertToolSession: () => {},
       canUseTool: async () => {
         permissionChecks += 1
         return { allowed: false, message: 'Goal 控制面不应请求权限' }
@@ -268,6 +277,7 @@ describe('Pi Tool Bridge', () => {
   test('given a screenshot result when Pi invokes the bridge then the next Pi turn receives the image body', async () => {
     const tools = createPiToolBridge({
       toolContext: { cwd: '/workspace', sessionId: 'pi-screenshot' },
+      assertToolSession: () => {},
       canUseTool: async () => ({ allowed: true }),
       coreTools: [
         ...createCoreTools(async () => ({ toolCallId: '', content: 'ok', isError: false })),
@@ -288,5 +298,85 @@ describe('Pi Tool Bridge', () => {
       { type: 'text', text: '截图已附加' },
       { type: 'image', mimeType: 'image/png', data: 'AQID' },
     ])
+  })
+})
+
+describe('统一撤权入口', () => {
+  const coreTools = () => createCoreTools(async () => ({ toolCallId: '', content: 'ok', isError: false }))
+
+  test('Given 未提供会话校验 Within 桥接层 When 任何工具执行 Then 失败关闭', async () => {
+    const tools = createPiToolBridge({
+      toolContext: { cwd: '/workspace', sessionId: 'pi-nobind' },
+      canUseTool: async () => ({ allowed: true }),
+      coreTools: coreTools(),
+    })
+    const read = tools.find((tool) => tool.name === PI_PROMA_READ_TOOL_NAME)
+    if (!read) throw new Error('缺少 Read 工具')
+    const result = await read.execute('call-1', { file_path: 'notes.txt' }, undefined, undefined, {} as never)
+    expect(JSON.stringify(result.content)).toContain('会话身份已失效或被撤销')
+  })
+
+  test('Given 会话在校验时被判定撤销 When 执行工具 Then 拒绝且不调用权限回调', async () => {
+    let permissionCalls = 0
+    const tools = createPiToolBridge({
+      toolContext: { cwd: '/workspace', sessionId: 'pi-revoked' },
+      assertToolSession: () => { throw new Error('会话身份不匹配，拒绝执行工具') },
+      canUseTool: async () => { permissionCalls += 1; return { allowed: true } },
+      coreTools: coreTools(),
+    })
+    const read = tools.find((tool) => tool.name === PI_PROMA_READ_TOOL_NAME)
+    if (!read) throw new Error('缺少 Read 工具')
+    const result = await read.execute('call-1', { file_path: 'notes.txt' }, undefined, undefined, {} as never)
+    expect(JSON.stringify(result.content)).toContain('会话身份已失效或被撤销')
+    expect(permissionCalls).toBe(0)
+  })
+
+  test('Given 审批通过但等待期间被撤权 When 真正派发 Then 拒绝执行', async () => {
+    let checks = 0
+    let executed = 0
+    const tools = createPiToolBridge({
+      toolContext: { cwd: '/workspace', sessionId: 'pi-window' },
+      // 第一次通过（判定前），第二次失败（派发前），模拟审批期间的撤权
+      assertToolSession: () => { checks += 1; if (checks >= 2) throw new Error('会话已撤销') },
+      canUseTool: async () => ({ allowed: true }),
+      coreTools: createCoreTools(async () => {
+        executed += 1
+        return { toolCallId: '', content: 'ok', isError: false }
+      }),
+    })
+    const read = tools.find((tool) => tool.name === PI_PROMA_READ_TOOL_NAME)
+    if (!read) throw new Error('缺少 Read 工具')
+    const result = await read.execute('call-1', { file_path: 'notes.txt' }, undefined, undefined, {} as never)
+    expect(executed).toBe(0)
+    expect(checks).toBeGreaterThanOrEqual(2)
+    expect(JSON.stringify(result.content) + JSON.stringify(result.details)).toContain('会话')
+  })
+
+  test('Given GoalCheckpoint 绕过权限回调 When 会话已撤销 Then 不写入检查点', async () => {
+    let checkpoints = 0
+    const tools = createPiToolBridge({
+      toolContext: { cwd: '/workspace', sessionId: 'pi-goal-revoked', onGoalCheckpoint: async () => { checkpoints += 1 } },
+      assertToolSession: () => { throw new Error('会话已撤销') },
+      canUseTool: async () => ({ allowed: true }),
+      coreTools: coreTools(),
+    })
+    const tool = tools.find((item) => item.name === PI_PROMA_GOAL_CHECKPOINT_TOOL_NAME)
+    if (!tool) throw new Error('缺少 GoalCheckpoint 工具')
+    await tool.execute('goal-1', { outcome: 'continue', summary: '继续' }, undefined, undefined, {} as never)
+    expect(checkpoints).toBe(0)
+  })
+
+  test('Given AskUserQuestion 绕过权限回调 When 会话已撤销 Then 不执行交互工具', async () => {
+    let asked = 0
+    const tools = createPiToolBridge({
+      toolContext: { cwd: '/workspace', sessionId: 'pi-ask-revoked', onAskUser: async () => { asked += 1; return { behavior: 'allow', answers: {} } } },
+      assertToolSession: () => { throw new Error('会话已撤销') },
+      canUseTool: async () => ({ allowed: true }),
+      coreTools: coreTools(),
+    })
+    const tool = tools.find((item) => item.name === PI_PROMA_ASK_USER_TOOL_NAME)
+    if (!tool) throw new Error('缺少 AskUser 工具')
+    await tool.execute('ask-1', { questions: [{ question: '继续吗', header: '确认', options: [{ label: '是' }] }] }, undefined, undefined, {} as never)
+    expect(asked).toBe(0)
   })
 })
