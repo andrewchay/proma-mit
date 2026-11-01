@@ -13,8 +13,8 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import { appendFile, mkdir, readFile } from 'node:fs/promises'
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { closeSync, constants, fstatSync, lstatSync, openSync, readSync } from 'node:fs'
+import { dirname, join, parse, resolve } from 'node:path'
 import { getConfigDir } from '../config-paths'
 
 export type FileMutationStatus = 'ok' | 'error'
@@ -38,7 +38,7 @@ interface FileMutationEvent {
   verdict?: FileMutationVerdict
 }
 
-export type FileMutationVerdict = 'applied' | 'not_applied' | 'partially_written' | 'changed_by_others' | 'missing'
+export type FileMutationVerdict = 'unchanged' | 'changed_unknown' | 'missing' | 'unreadable'
 
 export interface FileMutationHandle {
   id: string
@@ -63,16 +63,49 @@ export interface UnsettledFileMutation {
 const FILE_NAME = 'file-mutations.jsonl'
 const ABSENT = 'absent'
 const bootId = randomUUID()
-const digest = (content: string | Buffer): string => createHash('sha256').update(content).digest('hex')
+const MAX_HASH_BYTES = 8 * 1024 * 1024
 const filePath = (): string => join(getConfigDir(), FILE_NAME)
 
-function hashFile(path: string): string {
-  try {
-    return digest(readFileSync(path))
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return ABSENT
-    return 'unreadable'
+/** 普通路径校验；不能替代 openat 级的目录原子隔离。 */
+function hasSafeParents(path: string): boolean {
+  let current = dirname(resolve(path))
+  const root = parse(current).root
+  while (current !== root) {
+    const stat = lstatSync(current)
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return false
+    current = dirname(current)
   }
+  return true
+}
+
+function hashFile(path: string): string {
+  let fd: number | undefined
+  let before: ReturnType<typeof lstatSync>
+  try {
+    if (!hasSafeParents(path)) return 'unreadable'
+    before = lstatSync(path)
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? ABSENT : 'unreadable'
+  }
+  try {
+    if (!before.isFile() || before.isSymbolicLink() || before.size > MAX_HASH_BYTES) return 'unreadable'
+    if (typeof constants.O_NOFOLLOW !== 'number' || typeof constants.O_NONBLOCK !== 'number') return 'unreadable'
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    const opened = fstatSync(fd)
+    if (!opened.isFile() || opened.dev !== before.dev || opened.ino !== before.ino || opened.size > MAX_HASH_BYTES) return 'unreadable'
+    const hash = createHash('sha256'), buffer = Buffer.alloc(64 * 1024)
+    let total = 0
+    for (;;) {
+      const bytes = readSync(fd, buffer, 0, Math.min(buffer.length, MAX_HASH_BYTES + 1 - total), null)
+      if (!bytes) break
+      total += bytes
+      if (total > MAX_HASH_BYTES) return 'unreadable'
+      hash.update(buffer.subarray(0, bytes))
+    }
+    const after = fstatSync(fd)
+    if (after.size !== opened.size || after.mtimeMs !== opened.mtimeMs || after.ctimeMs !== opened.ctimeMs || !hasSafeParents(path)) return 'unreadable'
+    return hash.digest('hex')
+  } catch { return 'unreadable' } finally { if (fd !== undefined) closeSync(fd) }
 }
 
 async function append(event: FileMutationEvent): Promise<void> {
@@ -140,9 +173,9 @@ export async function settleFileMutation(handle: FileMutationHandle | undefined,
 }
 
 /**
- * 列出「有意图但没有结算」的变更。
+ * 列出尚无成功结算的变更，失败和历史自动对账均保留待核对。
  *
- * 这些就是崩溃或强杀时可能半写的文件；sameBoot=false 表示来自上一次运行。
+ * 包括崩溃、强杀或写入失败时可能部分写入的文件；sameBoot=false 表示来自上一次运行。
  */
 export async function listUnsettledFileMutations(): Promise<UnsettledFileMutation[]> {
   const unsettled = new Map<string, UnsettledFileMutation>()
@@ -160,13 +193,14 @@ export async function listUnsettledFileMutations(): Promise<UnsettledFileMutatio
       })
       continue
     }
-    if (event.type === 'settled' || event.type === 'reconciled') unsettled.delete(event.id)
+    // 历史 reconciled 结论没有目标摘要或人工证据，重新列出以供核对。
+    if (event.type === 'settled' && event.status === 'ok') unsettled.delete(event.id)
   }
   return [...unsettled.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt))
 }
 
 /**
- * 用当前磁盘内容核对一条未结算变更，并写入核对结论。
+ * 观察一条未结算变更的当前磁盘状态；保留记录供进一步核对。
  *
  * 结论只描述"现在看到什么"，不替用户决定要不要恢复。
  */
@@ -174,31 +208,10 @@ export async function reconcileFileMutation(input: { id: string; note?: string }
   const unsettled = (await listUnsettledFileMutations()).find(item => item.id === input.id)
   if (!unsettled) return undefined
   const observedHash = hashFile(unsettled.path)
-  const exists = existsSync(unsettled.path)
-  const verdict: FileMutationVerdict = !exists
-    ? 'missing'
-    : observedHash === unsettled.preHash
-      ? 'not_applied'
-      : unsettled.preHash === ABSENT
-        ? 'applied'
-        : 'changed_by_others'
-  try {
-    await append({
-      type: 'reconciled',
-      id: unsettled.id,
-      sessionId: unsettled.sessionId,
-      tool: unsettled.tool,
-      path: unsettled.path,
-      createdAt: new Date().toISOString(),
-      bootId,
-      preHash: unsettled.preHash,
-      observedHash,
-      verdict,
-      ...(input.note ? { message: input.note } : {}),
-    })
-  } catch (error) {
-    console.warn('[文件账本] 对账结论写入失败，记录仍在待对账列表:', error)
-    return undefined
-  }
+  const verdict: FileMutationVerdict = observedHash === 'unreadable' || unsettled.preHash === 'unreadable'
+    ? 'unreadable'
+    : observedHash === unsettled.preHash ? 'unchanged'
+      : observedHash === ABSENT ? 'missing' : 'changed_unknown'
+  // 观察无法证明写入是否完成，也无法证明谁改了文件；保留未结算记录。
   return { verdict, observedHash }
 }

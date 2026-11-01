@@ -6,7 +6,8 @@
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -34,7 +35,7 @@ afterAll(() => {
 })
 beforeEach(() => {
   rmSync(journalPath, { force: true })
-  workDir = mkdtempSync(join(tmpdir(), 'file-journal-work-'))
+  workDir = realpathSync(mkdtempSync(join(tmpdir(), 'file-journal-work-')))
 })
 afterEach(() => {
   rmSync(workDir, { recursive: true, force: true })
@@ -60,29 +61,64 @@ describe('文件变更账本', () => {
     expect(unsettled[0]).toMatchObject({ id: handle!.id, sessionId: 's1', tool: 'Edit', preHash: sha('before') })
   })
 
-  test('Given 新建文件的写入中断 When 对账 Then 判为已生效（原文件不存在且现在有内容）', async () => {
+  test('Given 新建文件的写入中断 When 对账 Then 只报告变化并保留待核对', async () => {
     const handle = await beginFileMutation({ sessionId: 's1', tool: 'Write', path: target() })
     expect(handle?.preHash).toBe('absent')
     writeFileSync(target(), 'created')
     const result = await reconcileFileMutation({ id: handle!.id, note: '用户核对' })
-    expect(result?.verdict).toBe('applied')
-    expect(await listUnsettledFileMutations()).toEqual([])
+    expect(result?.verdict).toBe('changed_unknown')
+    expect(await listUnsettledFileMutations()).toHaveLength(1)
   })
 
-  test('Given 覆盖写入中断但内容未变 When 对账 Then 判为未生效', async () => {
+  test('Given 当前内容与写前一致 When 观察 Then 只报告未变化', async () => {
     writeFileSync(target(), 'same')
     const handle = await beginFileMutation({ sessionId: 's1', tool: 'Write', path: target() })
     const result = await reconcileFileMutation({ id: handle!.id })
-    expect(result?.verdict).toBe('not_applied')
+    expect(result?.verdict).toBe('unchanged')
   })
 
-  test('Given 覆盖写入后他人又改过 When 对账 Then 判为被他人改动而不是已生效', async () => {
+  test('Given 当前内容与写前不同 When 观察 Then 不推断写入者或完成状态', async () => {
     writeFileSync(target(), 'before')
     const handle = await beginFileMutation({ sessionId: 's1', tool: 'Edit', path: target() })
     writeFileSync(target(), 'edited-by-us')
     writeFileSync(target(), 'edited-by-someone-else')
     const result = await reconcileFileMutation({ id: handle!.id })
-    expect(result?.verdict).toBe('changed_by_others')
+    expect(result?.verdict).toBe('changed_unknown')
+  })
+
+  test('Given 目标是符号链接 When 记录意图 Then 不读取链接目标', async () => {
+    const outside = join(workDir, 'outside.txt')
+    writeFileSync(outside, 'secret')
+    symlinkSync(outside, target())
+    const handle = await beginFileMutation({ sessionId: 's1', tool: 'Write', path: target() })
+    expect(handle?.preHash).toBe('unreadable')
+    expect((await reconcileFileMutation({ id: handle!.id }))?.verdict).toBe('unreadable')
+    expect(await listUnsettledFileMutations()).toHaveLength(1)
+  })
+
+  test('Given 父目录是符号链接 When 记录意图 Then 不读取链接目录里的文件', async () => {
+    writeFileSync(target(), 'secret')
+    const alias = join(workDir, 'alias')
+    symlinkSync(workDir, alias, 'dir')
+    expect((await beginFileMutation({ sessionId: 's1', tool: 'Write', path: join(alias, 'notes.txt') }))?.preHash).toBe('unreadable')
+  })
+
+  test('Given 文件超过摘要上限 When 记录意图 Then 不读取完整文件', async () => {
+    writeFileSync(target(), Buffer.alloc(8 * 1024 * 1024 + 1))
+    expect((await beginFileMutation({ sessionId: 's1', tool: 'Write', path: target() }))?.preHash).toBe('unreadable')
+  })
+
+  test.skipIf(process.platform === 'win32')('Given FIFO When 记录意图 Then 不打开阻塞管道', async () => {
+    expect(spawnSync('mkfifo', [target()]).status).toBe(0)
+    expect((await beginFileMutation({ sessionId: 's1', tool: 'Write', path: target() }))?.preHash).toBe('unreadable')
+  })
+
+  test('Given 历史自动对账事件 When 查询 Then 保留该意图供人工核对', async () => {
+    const handle = await beginFileMutation({ sessionId: 's1', tool: 'Write', path: target() })
+    const legacy = { type: 'reconciled', id: handle!.id, sessionId: 's1', path: target(), createdAt: new Date().toISOString(), bootId: 'old', verdict: 'applied' }
+    const existing = readFileSync(journalPath, 'utf8')
+    writeFileSync(journalPath, `${existing}${JSON.stringify(legacy)}\n`)
+    expect((await listUnsettledFileMutations()).map(item => item.id)).toEqual([handle!.id])
   })
 
   test('Given 文件在中断后被删除 When 对账 Then 判为缺失', async () => {
@@ -93,11 +129,11 @@ describe('文件变更账本', () => {
     expect(result?.verdict).toBe('missing')
   })
 
-  test('Given 写入失败 When 结算失败原因 Then 保留原因且不再待对账', async () => {
+  test('Given 写入失败 When 结算失败原因 Then 保留原因和待对账记录', async () => {
     writeFileSync(target(), 'before')
     const handle = await beginFileMutation({ sessionId: 's1', tool: 'Write', path: target() })
     await settleFileMutation(handle, 'error', 'Write拒绝符号链接、硬链接和非普通文件')
-    expect(await listUnsettledFileMutations()).toEqual([])
+    expect(await listUnsettledFileMutations()).toHaveLength(1)
     const events = readFileSync(journalPath, 'utf8').trim().split('\n').map(line => JSON.parse(line))
     expect(events.at(-1)).toMatchObject({ type: 'settled', status: 'error', message: 'Write拒绝符号链接、硬链接和非普通文件' })
   })
