@@ -62,6 +62,18 @@ export function getChannelsPath(): string {
 }
 
 /**
+ * 获取事件路由规则文件路径
+ *
+ * 事件路由器（event-router-service）的声明式规则：
+ * 所有触发源（IM 消息 / 内部事件 / webhook）统一归一为事件后按此文件路由。
+ *
+ * @returns ~/.proma/event-rules.json
+ */
+export function getEventRulesPath(): string {
+  return join(getConfigDir(), 'event-rules.json')
+}
+
+/**
  * 获取对话索引文件路径
  *
  * @returns ~/.proma/conversations.json

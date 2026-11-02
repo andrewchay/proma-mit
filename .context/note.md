@@ -1,5 +1,31 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-11-02 实施：卡兹克体系三差异落地（事件路由 / 审批外推 / 交付核实）
+
+分支 codex/p1-five-direction-slice，10+ 提交（至 8a412e14）。验证：apps/electron tsc 通过；新增 3 测试文件 26 例 +
+回归 7 文件 62 例全绿；biome 12 文件零告警。
+
+- **A 事件路由规则层**：新增 `event-router-service.ts`（AgentAutomationEvent 统一 schema：source/type/target/summary/backlink/dedupeKey；
+  event-rules.json 声明式规则 when(source/types)→to(workflow-event|log)+group+parallel+tell）。中台三件套：dedupeKey 指纹去重
+  （10min 窗、跨规则共享）、同 group 串行+parallel 上限、tell 通知策略（needed 默认仅失败打扰）。接入 bridge-command-handler
+  非命令 IM 文本（旁路 dispatch 不拦截原流程，无规则零开销）；通知经 BridgePlatformAdapter.sendText 广播绑定聊天。
+  规则文件路径 `getEventRulesPath()`（~/.gravitas/event-rules.json）。
+- **B 审批外推飞书卡片（票拟+批红）**：`agent-permission-service` 增 setExternalNotifier（sendToRenderer 后触发，失败不影响审批）；
+  新增 `feishu-approval-cards.ts` 纯函数（票拟卡按 DangerLevel 配色红/橙/绿、按钮 value 带 `__gravitas_approval` 载荷、
+  批红结果卡、失效卡）；`feishu-bridge` 注册 LarkChannel cardAction（WS 卡片帧，推翻旧"需 HTTP 回调"注释）、openId 白名单
+  （默认空=全部拒绝）、respondToPermission 后同步 permission_resolved 到 BrowserWindow+agentEventBus（桌面队列消空）、
+  卡片经 im.message.update 原位回写结论（失败降级文本）。
+- **C 交付核实（第五步）**：新增 `delivery-verification.ts`（verifyDelivery：summary_present≥10 字 + artifact_paths_exist
+  摘要路径正则提取上限 8、pathExists 注入）；`pilot_delivery_verification_receipts` 不可变回执表（immutable trigger，
+  仅 pilotCommandId 非空执行写，INSERT OR IGNORE 幂等）；writebackExecutionResult completed 分支接线（workflow/审批后/headless
+  三路径全覆盖），completionNotes 前缀【交付核实 N/M 通过】/【核实未通过】，失败追加 verification_failed 活动流事件。
+- **环境坑（重要）**：① 子代理委派再次"操作已中止"，主上下文直接探索更可靠；② Edit/Write 工具多次静默丢失，
+  实为同 worktree 并行会话切换分支所致（feat/pi-1.4.0-trial ↔ codex 分支互切+PR #109 merge），对策=每步立即 git commit
+  + reflog 找回 cherry-pick；③ 沙箱 EPERM：/tmp 固定路径 mkdir 被禁（既有用例失败），bun -e 里 mkdir /tmp 同禁，
+  临时目录用仓库内路径或 mkdtemp；④ bun test 相对路径 filter 需 `./` 前缀。
+- 遗留：审批白名单接设置面板/成员映射；event-rules UI；webhook 入站（companion-server）；to.kind=session 直启预留；
+  改动需重建应用生效。
+
 ## 2026-11-01 P2 收尾（RSI 审计入面板 / 文件对账账本 / 共享工作区只读）
 
 - **RSI · 样本审计接进界面**：`getBenchmarkDetail` 返回 `audit`（`auditScoreboard` 结果），EvalPanel 新增

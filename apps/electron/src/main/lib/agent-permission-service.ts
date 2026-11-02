@@ -193,6 +193,9 @@ export class AgentPermissionService {
   /** 待处理的权限请求 Map（requestId → PendingPermission） */
   private pendingPermissions = new Map<string, PendingPermission>()
 
+  /** 外推通知器（如飞书审批卡片）；sendToRenderer 后触发，失败不影响原审批流程 */
+  private externalNotifier?: (request: PermissionRequest) => void
+
   /** 持久化 Allowlist 存储（跨会话白名单）。未注入时默认内存态。 */
   private readonly persistentStore: PersistentAllowlistStore
 
@@ -323,6 +326,7 @@ export class AgentPermissionService {
         }
         try {
           sendToRenderer(request)
+          this.notifyExternal(request)
         } catch (error) {
           pendingCancel(this.pendingPermissions.get(request.requestId))
           this.pendingPermissions.delete(request.requestId)
@@ -337,6 +341,20 @@ export class AgentPermissionService {
    *
    * @returns 对应的 sessionId，用于向渲染进程发送 resolved 事件；未找到请求时返回 null
    */
+  /** 注册权限请求外推回调（IM 审批卡片等）；传 undefined 取消 */
+  setExternalNotifier(notifier: ((request: PermissionRequest) => void) | undefined): void {
+    this.externalNotifier = notifier
+  }
+
+  private notifyExternal(request: PermissionRequest): void {
+    if (!this.externalNotifier) return
+    try {
+      this.externalNotifier(request)
+    } catch (error) {
+      console.warn('[Permission] 外推通知失败（不影响审批流程）:', error)
+    }
+  }
+
   respondToPermission(requestId: string, behavior: 'allow' | 'deny', alwaysAllow: boolean): string | null {
     const pending = this.pendingPermissions.get(requestId)
     if (!pending) return null

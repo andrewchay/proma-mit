@@ -13,6 +13,7 @@ import { BrowserWindow } from 'electron'
 import { randomUUID } from 'node:crypto'
 import type {
   AgentStreamPayload,
+  PermissionRequest,
   AgentSendInput,
   FeishuBridgeState,
   FeishuChatBinding,
@@ -31,6 +32,13 @@ import type {
 } from '@gravitas/shared'
 import { FEISHU_IPC_CHANNELS, AGENT_IPC_CHANNELS } from '@gravitas/shared'
 import { getDecryptedBotAppSecret } from './feishu-config'
+import { permissionService } from './agent-permission-service'
+import {
+  buildApprovalResultCard,
+  buildApprovalStaleCard,
+  buildPermissionApprovalCard,
+  parseApprovalCardAction,
+} from './feishu-approval-cards'
 import { agentEventBus, runAgentHeadless, stopAgent, isAgentSessionActive } from './agent-service'
 import { createAgentSession, listAgentSessions, getAgentSessionMeta } from './agent-session-manager'
 import {
@@ -124,6 +132,10 @@ class FeishuBridge {
   private chatBindings = new Map<string, FeishuChatBinding>()
   /** sessionId → chatId（反向索引） */
   private sessionToChat = new Map<string, string>()
+  /** 允许点击审批卡片的飞书 openId 白名单（空 = 审批外推点击全部拒绝） */
+  private approvalAllowedOpenIds = new Set<string>()
+  /** 已外推的审批卡片：requestId → 发送位置（用于批红后原位更新） */
+  private approvalCardMessages = new Map<string, { chatId: string; messageId: string }>()
   /** sessionId → 文本累积缓冲（桌面通知场景仍依赖） */
   private sessionBuffers = new Map<string, SessionBuffer>()
   /** sessionId → 流式卡片状态（飞书发起的会话才有） */
@@ -231,6 +243,8 @@ class FeishuBridge {
       // 注册消息接收（cardAction 暂时不接：飞书 cardAction 不通过长连接推送，
       // 需要单独配置 HTTP 回调 URL；本期保留 LarkChannel 抽象但卡片改用文本
       // 命令 /stop 终止，未来 Phase 3 权限审批做差异化时再评估）
+      // 注册消息接收与卡片按钮回调（LarkChannel 经 WebSocket 长连接接收 card 帧，
+      // 老组合 WSClient.handleEventData 会丢掉 MessageType.card 帧）
       this.channel.on({
         message: (msg) => {
           // 把 NormalizedMessage 反构成旧 handleFeishuMessage 期望的 raw 形态，
@@ -238,6 +252,11 @@ class FeishuBridge {
           const raw = (msg as { raw?: Record<string, unknown> }).raw ?? {}
           this.handleFeishuMessage(raw).catch((error) => {
             console.error('[飞书 Bridge] 处理消息异常:', error)
+          })
+        },
+        cardAction: (evt) => {
+          void this.handleApprovalCardAction(evt).catch((error) => {
+            console.error('[飞书 Bridge] 处理卡片回调异常:', error)
           })
         },
       })
@@ -254,6 +273,13 @@ class FeishuBridge {
 
       this.updateStatus({ status: 'connected', connectedAt: Date.now() })
       console.log('[飞书 Bridge] 已连接')
+
+      // 审批外推（票拟）：权限请求同步推送为会话绑定聊天的飞书卡片
+      permissionService.setExternalNotifier((request) => {
+        void this.sendPermissionCardExternal(request).catch((error) => {
+          console.warn('[飞书 Bridge] 审批卡片外推失败:', error)
+        })
+      })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       this.updateStatus({ status: 'error', errorMessage: message })
@@ -288,6 +314,8 @@ class FeishuBridge {
     this.streamingCardsUsedSessions.clear()
     this.sessionNotifyModes.clear()
     this.recentMessageIds.clear()
+    permissionService.setExternalNotifier(undefined)
+    this.approvalCardMessages.clear()
     this.recentEventIds.clear()
     this.processingChats.clear()
     this.lastUserMessageId.clear()
@@ -2001,6 +2029,105 @@ class FeishuBridge {
     }
   }
 
+  // ===== 审批外推（票拟 + 批红）=====
+
+  /** 设置允许点击审批卡片的飞书 openId 白名单；空集合 = 点击全部拒绝（默认） */
+  setApprovalAllowedOpenIds(openIds: string[]): void {
+    this.approvalAllowedOpenIds = new Set(openIds)
+  }
+
+  /** 权限请求外推入口（permissionService.notifier 调用）：仅对已绑定聊天的会话外推 */
+  private async sendPermissionCardExternal(request: PermissionRequest): Promise<void> {
+    const chatId = this.sessionToChat.get(request.sessionId)
+    if (!chatId) return
+    const messageId = await this.sendCardGetId(chatId, buildPermissionApprovalCard(request))
+    if (messageId) this.approvalCardMessages.set(request.requestId, { chatId, messageId })
+  }
+
+  /** 发送卡片并返回 message_id（供批红后原位更新） */
+  private async sendCardGetId(chatId: string, card: Record<string, unknown>): Promise<string | null> {
+    if (!this.client) return null
+    try {
+      const resp = await this.client.im.message.create({
+        params: { receive_id_type: 'chat_id' },
+        data: {
+          receive_id: chatId,
+          msg_type: 'interactive',
+          content: JSON.stringify(card),
+        },
+      })
+      const sentId = (resp?.data as Record<string, unknown>)?.message_id as string | undefined
+      if (sentId) this.addToDedup(this.recentMessageIds, sentId)
+      return sentId ?? null
+    } catch (error) {
+      console.error('[飞书 Bridge] 发送审批卡片失败:', error)
+      return null
+    }
+  }
+
+  /** 原位更新卡片内容；失败降级为发送文本 */
+  private async updateCardMessage(chatId: string, messageId: string, card: Record<string, unknown>): Promise<void> {
+    if (!this.client) return
+    try {
+      await this.client.im.message.update({
+        path: { message_id: messageId },
+        data: { msg_type: 'interactive', content: JSON.stringify(card) },
+      })
+    } catch (error) {
+      console.warn('[飞书 Bridge] 卡片原位更新失败，降级为文本:', error)
+      const summary = extractCardHeaderText(card)
+      await this.sendTextMessage(chatId, summary)
+    }
+  }
+
+  /** 卡片按钮回调（批红）：解析 → 授权校验 → resolve 请求 → resolved 事件 → 卡片回写 */
+  private async handleApprovalCardAction(evt: {
+    messageId: string
+    chatId: string
+    operator: { openId: string; name?: string }
+    action: { value: unknown }
+  }): Promise<void> {
+    const action = parseApprovalCardAction(evt.action?.value)
+    if (!action) return
+
+    // 授权校验：点击者必须在白名单（默认空集合 = 全部拒绝，功能显式开启才生效）
+    if (!this.approvalAllowedOpenIds.has(evt.operator?.openId ?? '')) {
+      console.warn(`[飞书 Bridge] 审批卡片点击被拒绝（openId 不在白名单）: ${evt.operator?.openId ?? '(空)'}`)
+      return
+    }
+
+    // 先取请求（respond 之后 pending 中已删除，结果卡需要原始信息）
+    const request = permissionService.getPendingRequests().find((r: PermissionRequest) => r.requestId === action.requestId)
+    const sessionId = permissionService.respondToPermission(action.requestId, action.decision, false)
+
+    const recorded = this.approvalCardMessages.get(action.requestId)
+    if (!sessionId) {
+      // 请求已被桌面端处理或超时：原位替换为失效卡
+      if (recorded) await this.updateCardMessage(recorded.chatId, recorded.messageId, buildApprovalStaleCard(action.decision))
+      return
+    }
+
+    // 渲染端队列消空 + 会话总线 resolved（与 IPC PERMISSION_RESPOND 同语义）
+    const payload: AgentStreamPayload = {
+      kind: 'proma_event',
+      event: { type: 'permission_resolved', requestId: action.requestId, behavior: action.decision },
+    }
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) win.webContents.send(AGENT_IPC_CHANNELS.STREAM_EVENT, { sessionId, payload })
+    }
+    agentEventBus.emit(sessionId, payload)
+
+    // 批红回写：卡片原位更新为结论
+    if (recorded && request) {
+      const resultCard = buildApprovalResultCard(request, action.decision, evt.operator?.name)
+      await this.updateCardMessage(recorded.chatId, recorded.messageId, resultCard)
+    } else if (request) {
+      const text = action.decision === 'allow' ? '✅ 已允许' : '❌ 已拒绝'
+      await this.sendTextMessage(evt.chatId, `${text}｜${request.sdkDisplayName ?? request.toolName}（${evt.operator?.name ?? '授权用户'}）`)
+    }
+    this.approvalCardMessages.delete(action.requestId)
+  }
+
   private async sendCard(chatId: string, card: Record<string, unknown>): Promise<void> {
     if (!this.client) return
 
@@ -2121,3 +2248,14 @@ class FeishuBridge {
 // ===== 导出类（由 FeishuBridgeManager 创建实例） =====
 
 export { FeishuBridge }
+
+
+/** 从卡片 JSON 提取头部标题作为降级文本 */
+function extractCardHeaderText(card: Record<string, unknown>): string {
+  try {
+    const header = card.header as { title?: { content?: string } } | undefined
+    return header?.title?.content ?? '审批结果已更新'
+  } catch {
+    return '审批结果已更新'
+  }
+}

@@ -17,6 +17,7 @@ import {
   getWorkspaceCapabilities,
 } from './agent-workspace-manager'
 import { runAgentHeadless, agentEventBus, stopAgent, isAgentSessionActive } from './agent-service'
+import { eventRouter } from './event-router-service'
 import { getSettings } from './settings-service'
 import { getAgentWorkspacePath } from './config-paths'
 import { buildAttachedFilesBlock } from './bridge-attachment-utils'
@@ -123,6 +124,17 @@ export class BridgeCommandHandler {
       // 命令消息不携带附件（附件由 Bridge 缓冲，等普通消息触发）
       await this.handleCommand(chatId, text, contextData)
     } else {
+      // 事件路由：非命令文本先归一为自动化事件（event-rules.json 未命中时零开销返回）。
+      // 不拦截原流程：IM 消息照旧进入绑定会话，规则命中的自动化是旁路。
+      void eventRouter
+        .dispatch({
+          source: this.config.platformName,
+          type: 'im.message',
+          target: chatId,
+          summary: text.slice(0, 120),
+          payload: { text, chatId, senderId },
+        })
+        .catch((error) => this.log(`事件路由失败: ${error instanceof Error ? error.message : String(error)}`))
       await this.handleUserMessage(chatId, text, contextData, attachments, senderId)
     }
   }
@@ -176,13 +188,30 @@ export class BridgeCommandHandler {
     this.eventBusUnsubscribe = agentEventBus.on((sessionId, payload) => {
       this.handleAgentPayload(sessionId, payload)
     })
+    // 事件路由器的 tell 通知：广播到本 Bridge 的所有已绑定聊天。
+    // 多 Bridge 并存时后订阅者覆盖（v1 接受；通知目标是唯一的主人聊天）。
+    eventRouter.setNotifyHandler((message) => {
+      void this.broadcastText(`⚙️ 自动化通知｜${message.ruleName}\n${message.text}`).catch(() => {})
+    })
   }
 
   /** 取消订阅（Bridge 断开时调用） */
   unsubscribe(): void {
     this.eventBusUnsubscribe?.()
     this.eventBusUnsubscribe = null
+    eventRouter.clearNotifyHandler()
     this.sessionBuffers.clear()
+  }
+
+  /** 事件路由通知广播：发到所有已绑定的聊天 */
+  private async broadcastText(text: string): Promise<void> {
+    for (const chatId of this.chatBindings.keys()) {
+      try {
+        await this.config.adapter.sendText(chatId, text)
+      } catch (error) {
+        this.log(`通知广播失败 (${chatId.slice(0, 8)}...): ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
   }
 
   /** 获取聊天绑定 */
