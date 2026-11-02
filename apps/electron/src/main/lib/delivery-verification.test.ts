@@ -46,28 +46,39 @@ describe('交付核实探针', () => {
     expect(report.checks.find((c) => c.id === 'summary_present')!.passed).toBe(false)
   })
 
-  test('摘要无路径声明 → 产物检查跳过并通过', () => {
+  test('摘要无可识别路径 → 产物未检查，不声称通过', () => {
     const report = verifyDelivery({
       executionId: 'exec-4',
       summary: '已完成全部配置修改并通过类型检查，等待人工验收。',
       pathExists: () => false,
     })
-    expect(report.passed).toBe(true)
-    expect(report.checks.find((c) => c.id === 'artifact_paths_exist')!.detail).toContain('跳过')
+    expect(report.passed).toBe(false)
+    expect(report.outcome).toBe('incomplete')
+    expect(report.checks.find((c) => c.id === 'artifact_paths_exist')!.status).toBe('not_checked')
+    expect(formatVerificationPrefix(report)).toContain('不完整')
   })
 
   test('路径数量截断到上限', () => {
     const many = Array.from({ length: 30 }, (_, i) => `/tmp/p-${i}`).join(' ')
     let checked = 0
-    verifyDelivery({ executionId: 'exec-5', summary: `完成 ${many}`, pathExists: () => { checked++; return true } })
+    const report = verifyDelivery({ executionId: 'exec-5', summary: `完成 ${many}`, pathExists: () => { checked++; return true } })
     expect(checked).toBeLessThanOrEqual(8)
+    expect(report.outcome).toBe('incomplete')
+    expect(report.checks[1]?.detail).toContain('至少还有一个路径未检查')
+  })
+
+  test('识别部分绝对路径时明确其余格式未覆盖，不能称为交付验收', () => {
+    const report = verifyDelivery({ executionId: 'exec-partial', summary: '产物在 /tmp/a.txt 和相对路径 dist/result.txt 中', pathExists: () => true })
+    expect(report.checks[1]?.detail).toContain('其他格式的路径未覆盖')
+    expect(formatVerificationPrefix(report)).toContain('已识别路径存在性')
+    expect(formatVerificationPrefix(report)).toContain('待验收')
   })
 
   test('formatVerificationPrefix 两种结论', () => {
     const passed = verifyDelivery({ executionId: 'e1', summary: '全部完成，详见 /tmp/a.txt', pathExists: () => true })
-    expect(formatVerificationPrefix(passed)).toBe('【交付核实 2/2 通过】')
+    expect(formatVerificationPrefix(passed)).toBe('【摘要与已识别路径存在性检查通过，待验收】')
     const failed = verifyDelivery({ executionId: 'e2', summary: 'ok', pathExists: () => false })
-    expect(formatVerificationPrefix(failed)).toBe('【核实未通过 1/2 项】')
+    expect(formatVerificationPrefix(failed)).toBe('【摘要或路径检查未通过】')
   })
 })
 
@@ -122,7 +133,20 @@ describe('交付核实回执（不可变表）', () => {
       violated = true
     }
     expect(violated).toBe(true)
-    expect(readDeliveryVerificationReceipt('exec-immutable')?.passed).toBe(true)
+    expect(readDeliveryVerificationReceipt('exec-immutable')?.outcome).toBe('incomplete')
+  })
+
+  test('旧回执缺少覆盖状态 → 读取时标记待核对且保留原始账本', () => {
+    const legacy = { executionId: 'exec-legacy', checkedAt: 123, passed: true, passedCount: 2, totalCount: 2, checks: [] }
+    getProjectDb().prepare('INSERT INTO pilot_delivery_verification_receipts (id, execution_id, project_id, session_id, passed, passed_count, total_count, report, payload_hash, checked_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+      .run('legacy-receipt', 'exec-legacy', 'proj-1', null, 1, 2, 2, JSON.stringify(legacy), 'legacy-hash', 123)
+    const result = readDeliveryVerificationReceipt('exec-legacy')
+    expect(result?.outcome).toBe('legacy_unverified')
+    expect(result?.passed).toBe(false)
+    expect(formatVerificationPrefix(result!)).toContain('待核对')
+    const row = getProjectDb().prepare('SELECT passed, report FROM pilot_delivery_verification_receipts WHERE execution_id = ?').get('exec-legacy') as { passed: number; report: string }
+    expect(row.passed).toBe(1)
+    expect(JSON.parse(row.report)).toEqual(legacy)
   })
 
   test('重复结算幂等：INSERT OR IGNORE 不抛错不重复', () => {
