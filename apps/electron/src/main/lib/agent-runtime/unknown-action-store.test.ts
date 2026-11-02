@@ -269,6 +269,27 @@ describe('动作指纹', () => {
 describe('崩溃恢复对账', () => {
   const dispatched = { sessionId: 's1', tool: 'MCP 工具 demo__create_issue', actionKey: 'mcp:demo__create_issue:abc', reason: '动作已登记，结果待确认' }
 
+  test('Given 多实例模式加载其他进程的在途动作 When 查询或确认 Then 不推断中断且保持拦截', async () => {
+    const previousMulti = process.env.PROMA_ALLOW_MULTI_INSTANCE
+    try {
+      await beginTrackedAction(dispatched)
+      process.env.PROMA_ALLOW_MULTI_INSTANCE = '1'
+      __resetUnknownActionCacheForTest()
+      const record = await findPendingUnknownAction(dispatched.sessionId, dispatched.actionKey)
+      expect(record?.phase).toBe('dispatched')
+      expect(await resolveUnknownAction({ sessionId: dispatched.sessionId, id: record!.id, resolution: '检查' })).toBeUndefined()
+      expect(await confirmUnknownActionApplied({ sessionId: dispatched.sessionId, id: record!.id, resolution: '检查' })).toBeUndefined()
+      expect(await beginTrackedAction(dispatched)).toBeUndefined()
+      expect(readFileSync(join(directory, 'unknown-actions.jsonl'), 'utf8')).not.toContain('"type":"interrupted"')
+      process.env.PROMA_ALLOW_MULTI_INSTANCE = '0'
+      __resetUnknownActionCacheForTest()
+      expect((await findPendingUnknownAction(dispatched.sessionId, dispatched.actionKey))?.phase).toBe('interrupted')
+    } finally {
+      if (previousMulti === undefined) delete process.env.PROMA_ALLOW_MULTI_INSTANCE
+      else process.env.PROMA_ALLOW_MULTI_INSTANCE = previousMulti
+    }
+  })
+
   test('Given 派发后进程异常退出 When 重启加载 Then 标记上次运行中断且继续拦截', async () => {
     const record = await beginTrackedAction(dispatched)
     expect(record?.phase).toBe('dispatched')

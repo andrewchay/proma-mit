@@ -143,7 +143,8 @@ async function ensureLoaded(): Promise<void> {
         })
       }
       pending = records
-      await reconcileInterruptedActions()
+      // 多实例模式无法根据 bootId 判断另一进程是否已退出；保留待核对状态。
+      if (process.env.PROMA_ALLOW_MULTI_INSTANCE !== '1') await reconcileInterruptedActions()
     })().catch((error: unknown) => {
       loadPromise = undefined
       throw error
@@ -343,7 +344,7 @@ export async function confirmUnknownActionApplied(input: {
   await ensureLoaded()
   const key = [...pending.entries()].find(([, item]) => item.id === input.id && item.sessionId === input.sessionId)?.[0]
   const record = key ? pending.get(key) : undefined
-  if (!key || !record || inFlight.has(key)) return undefined
+  if (!key || !record || inFlight.has(key) || (record.phase === 'dispatched' && record.bootId !== bootId)) return undefined
 
   const acknowledgedAt = new Date().toISOString()
   await append({
@@ -378,7 +379,7 @@ export async function resolveUnknownAction(input: {
     : input.actionKey
       ? pending.get(cacheKey(input.sessionId, input.actionKey))
       : undefined
-  if (!record || inFlight.has(cacheKey(record.sessionId, record.actionKey))) return undefined
+  if (!record || inFlight.has(cacheKey(record.sessionId, record.actionKey)) || (record.phase === 'dispatched' && record.bootId !== bootId)) return undefined
 
   const resolvedAt = new Date().toISOString()
   await append({
