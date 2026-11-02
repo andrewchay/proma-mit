@@ -1329,7 +1329,8 @@ function writebackExecutionResult(
     if (!report.passed) {
       try {
         const failedChecks = report.checks.filter((c) => !c.passed).map((c) => c.detail).join('；')
-        recordActivity(execution, 'verification_failed', `交付核实未通过：${failedChecks}`)
+        const incomplete = report.outcome === 'incomplete'
+        recordActivity(execution, incomplete ? 'verification_incomplete' : 'verification_failed', `${incomplete ? '摘要与路径检查不完整' : '摘要或路径检查未通过'}：${failedChecks}`)
       } catch { /* 活动流失败不影响结算 */ }
     }
   }
