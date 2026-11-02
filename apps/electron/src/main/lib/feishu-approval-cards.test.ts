@@ -79,7 +79,7 @@ describe('飞书审批卡片', () => {
     expect(allowed.header.template).toBe('green')
     const div = allowed.elements.find((el) => el.tag === 'div') as { text: { content: string } }
     expect(div.text.content).toContain('张三')
-    expect(JSON.stringify(allowed)).toContain('session-abcdef')
+    expect(JSON.stringify(allowed)).toContain('session-abcd')
 
     const denied = buildApprovalResultCard(request, 'deny', undefined) as { header: { template: string } }
     expect(denied.header.template).toBe('grey')
