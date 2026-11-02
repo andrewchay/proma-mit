@@ -845,6 +845,24 @@ function migrate(database: SqliteCompat): void {
       BEFORE UPDATE ON pilot_runtime_start_receipts
       BEGIN SELECT RAISE(ABORT, 'Pilot Runtime start receipt is immutable'); END;
 
+    CREATE TABLE IF NOT EXISTS pilot_delivery_verification_receipts (
+      id TEXT PRIMARY KEY,
+      execution_id TEXT NOT NULL UNIQUE,
+      project_id TEXT NOT NULL,
+      session_id TEXT,
+      passed INTEGER NOT NULL CHECK (passed IN (0, 1)),
+      passed_count INTEGER NOT NULL CHECK (passed_count >= 0),
+      total_count INTEGER NOT NULL CHECK (total_count >= 0),
+      report TEXT NOT NULL,
+      payload_hash TEXT NOT NULL,
+      checked_at INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_pilot_delivery_verification_payload
+      ON pilot_delivery_verification_receipts(payload_hash, execution_id);
+    CREATE TRIGGER IF NOT EXISTS pilot_delivery_verification_receipts_immutable
+      BEFORE UPDATE ON pilot_delivery_verification_receipts
+      BEGIN SELECT RAISE(ABORT, 'Pilot delivery verification receipt is immutable'); END;
+
     CREATE TABLE IF NOT EXISTS pilot_stop_escalations (
       escalation_id TEXT PRIMARY KEY,
       execution_id TEXT NOT NULL UNIQUE,
