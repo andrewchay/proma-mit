@@ -26,6 +26,12 @@
 - [x] D. 验证：apps/electron tsc 通过；7 个测试文件 62 例 0 fail；biome 12 文件零告警
   - 已知无关失败：workflow-event-service.test.ts 固定 /tmp 路径 EPERM（沙箱限制，同 note.md 既有记录）
 
+## PR 状态（2026-11-02 18:25）
+
+- PR #117：5/5 检查全绿（quality / macOS / Windows / Linux package smoke / executor），mergeStateStatus=CLEAN，可合并
+- 修复记录：首轮 quality 失败 = docs:check（repository-facts.md 过期，新增 6 文件致统计变化）→ docs:generate 重新生成提交（bbee8e87）
+- 插曲：首次 push 静默失败（并行会话干扰），重试成功；一次只读 gh 查询超时被平台标记未知动作（无副作用）
+
 ## 未做（需用户或环境）
 
 - 审批外推的 openId 白名单默认为空（功能显式开启才生效），需要接设置面板/成员映射
