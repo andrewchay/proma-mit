@@ -187,9 +187,16 @@ export class EventRouter {
   private notifyHandler?: (message: EventNotifyMessage) => void
   /** workflow-event 执行器（缺省懒加载 workflow-event-service，避免测试期连带重依赖） */
   private workflowExecutor?: WorkflowEventExecutor
+  /** 规则文件路径覆盖（测试注入临时路径；缺省读全局 event-rules.json） */
+  private rulesPathOverride?: string
 
   constructor(workflowExecutor?: WorkflowEventExecutor) {
     this.workflowExecutor = workflowExecutor
+  }
+
+  /** 测试辅助：覆盖规则文件路径 */
+  setRulesPath(path: string): void {
+    this.rulesPathOverride = path
   }
 
   private async executeWorkflowEvent(eventName: string, payload: Record<string, unknown>): Promise<WorkflowRun[]> {
@@ -242,7 +249,7 @@ export class EventRouter {
       if (now - ts > this.dedupeWindowMs) this.recentDispatch.delete(key)
     }
 
-    const rules = readEventRules()
+    const rules = this.rulesPathOverride ? readEventRules(this.rulesPathOverride) : readEventRules()
     const matched = rules.filter((rule) => ruleMatches(rule, event))
     if (matched.length === 0) return [{ ruleName: '', status: 'no_rule' }]
 

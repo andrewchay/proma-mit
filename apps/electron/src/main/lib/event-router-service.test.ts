@@ -41,7 +41,9 @@ describe('事件路由器', () => {
   })
 
   function makeRouter(executor?: WorkflowEventExecutor): EventRouter {
-    return new EventRouter(executor)
+    const router = new EventRouter(executor)
+    router.setRulesPath(rulesPath)
+    return router
   }
 
   test('无规则文件时 dispatch 返回 no_rule 且零副作用', async () => {
@@ -77,14 +79,16 @@ describe('事件路由器', () => {
     })
     writeEventRules(
       [
-        { name: '规则A', when: { types: ['im.message'] }, to: { kind: 'log' } },
-        { name: '规则B', when: { types: ['im.message'] }, to: { kind: 'log' } },
+        { name: '规则A', when: { types: ['im.message'] }, to: { kind: 'workflow-event', eventName: 'e' } },
+        { name: '规则B', when: { types: ['im.message'] }, to: { kind: 'workflow-event', eventName: 'e' } },
       ],
       rulesPath,
     )
     await router.dispatch(makeEvent())
+    // 单次 dispatch 命中两条规则各执行一次；去重挡的是下一次 dispatch
+    expect(calls).toBe(2)
     const second = await router.dispatch(makeEvent({ occurredAt: Date.now() + 1 }))
-    expect(calls).toBe(1)
+    expect(calls).toBe(2)
     expect(second).toHaveLength(2)
     expect(second.every((o) => o.status === 'duplicate')).toBe(true)
   })
@@ -96,7 +100,7 @@ describe('事件路由器', () => {
       return []
     })
     router.setDedupeWindowMs(50)
-    writeEventRules([{ name: 'R', when: { types: ['im.message'] }, to: { kind: 'log' } }], rulesPath)
+    writeEventRules([{ name: 'R', when: { types: ['im.message'] }, to: { kind: 'workflow-event', eventName: 'e' } }], rulesPath)
     await router.dispatch(makeEvent(), 1_000)
     await router.dispatch(makeEvent(), 1_020)
     await router.dispatch(makeEvent(), 1_100)
@@ -109,7 +113,7 @@ describe('事件路由器', () => {
       calls++
       return []
     })
-    writeEventRules([{ name: 'R', when: { types: ['im.message'] }, to: { kind: 'log' } }], rulesPath)
+    writeEventRules([{ name: 'R', when: { types: ['im.message'] }, to: { kind: 'workflow-event', eventName: 'e' } }], rulesPath)
     await router.dispatch(makeEvent({ target: 'chat-1' }))
     await router.dispatch(makeEvent({ target: 'chat-2' }))
     expect(calls).toBe(2)
@@ -140,7 +144,7 @@ describe('事件路由器', () => {
 
   test('tell=needed：成功不打扰、失败必通知；always 总是通知', async () => {
     const notified: Array<{ ruleName: string; ok: boolean }> = []
-    const failing = new EventRouter(async () => {
+    const failing = makeRouter(async () => {
       throw new Error('boom')
     })
     failing.setNotifyHandler((m) => notified.push({ ruleName: m.ruleName, ok: m.ok }))
@@ -149,14 +153,14 @@ describe('事件路由器', () => {
     expect(outcomes[0]!.status).toBe('failed')
     expect(notified).toEqual([{ ruleName: '会炸', ok: false }])
 
-    const succeeding = new EventRouter(async () => [])
+    const succeeding = makeRouter(async () => [])
     const silentNotified: unknown[] = []
     succeeding.setNotifyHandler((m) => silentNotified.push(m))
     writeEventRules([{ name: '顺利', when: { types: ['x'] }, to: { kind: 'log' }, tell: 'needed' }], rulesPath)
     await succeeding.dispatch(makeEvent({ type: 'x' }))
     expect(silentNotified).toEqual([])
 
-    const chatty = new EventRouter(async () => [])
+    const chatty = makeRouter(async () => [])
     const alwaysNotified: unknown[] = []
     chatty.setNotifyHandler((m) => alwaysNotified.push(m))
     writeEventRules([{ name: '话痨', when: { types: ['x'] }, to: { kind: 'log' }, tell: 'always' }], rulesPath)
@@ -166,11 +170,11 @@ describe('事件路由器', () => {
 
   test('tell=silent：失败也不通知', async () => {
     const notified: unknown[] = []
-    const router = new EventRouter(async () => {
+    const router = makeRouter(async () => {
       throw new Error('boom')
     })
     router.setNotifyHandler((m) => notified.push(m))
-    writeEventRules([{ name: '静默', when: { types: ['x'] }, to: { kind: 'log' }, tell: 'silent' }], rulesPath)
+    writeEventRules([{ name: '静默', when: { types: ['x'] }, to: { kind: 'workflow-event', eventName: 'e' }, tell: 'silent' }], rulesPath)
     const outcomes = await router.dispatch(makeEvent({ type: 'x' }))
     expect(outcomes[0]!.status).toBe('failed')
     expect(notified).toEqual([])
