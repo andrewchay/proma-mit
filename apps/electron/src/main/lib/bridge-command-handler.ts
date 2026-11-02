@@ -207,7 +207,7 @@ export class BridgeCommandHandler {
   private async broadcastText(text: string): Promise<void> {
     for (const chatId of this.chatBindings.keys()) {
       try {
-        await this.sendMessage(chatId, text)
+        await this.config.adapter.sendText(chatId, text)
       } catch (error) {
         this.log(`通知广播失败 (${chatId.slice(0, 8)}...): ${error instanceof Error ? error.message : String(error)}`)
       }
