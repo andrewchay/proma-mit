@@ -8,6 +8,8 @@ Owner 共享安装的 `installation.json`、`DESIGN.md` 和 `tokens.css` 同处�
 
 源码检查显示 Claude SDK 的附加目录包含 `workspace-files`；是否可写仍受具体权限模式、SDK 和宿主限制，不能仅凭附加目录断言写入成功。Proma 受控 Bash 的 seatbelt 写根为当前 `cwd` 和 scratch，配置目录默认禁止写入，仅对配置目录内的当前会话工作目录开放例外。Pi、Claude SDK、非 Bash 文件工具与其他平台需要各自验证；用户或同一系统账户的其他程序仍可能修改文件。
 
+在 macOS 宿主使用临时配置目录和绑定测试会话，实际通过 Proma Bash 工具及 seatbelt 执行写入：会话目录可写，兄弟 `workspace-files/.opendesign/installation.json` 和配置目录内候选确认登记文件均拒绝写入且内容未变。这验证该会话目录布局下的 Bash 工具路径；它不是完整 Owner 授权流程、其他 Runtime、所有工作目录布局或真实 Provider 的验收。若当前 `cwd` 本身覆盖配置目录或其他进程可写登记，不能沿用此结论。
+
 ## 候选：把确认依据移出工作区
 
 1. 应用主进程维护独立于工作区文件的本地确认登记。每条记录绑定项目、Owner 绑定修订、工作区 ID/slug、品牌、随包参考版本、两份文件摘要和用户确认时间；不得从现有 workspace manifest 自动推导确认。
