@@ -212,10 +212,11 @@ describe('resolveActiveDesignSystem', () => {
     expect(ds?.origin).toBeUndefined()
   })
 
-  test('Given 会话目录安装了 OpenDesign 且另存为品牌前缀名 When 解析 Then 按 manifest 读回并标注来源', () => {
+  test('Given 会话目录存在另存 manifest When 解析 Then 不自动注入或声称来源', () => {
     const cwd = join(tempHomeDir, 'ds-session-install')
     mkdirSync(cwd, { recursive: true })
     writeFileSync(join(cwd, 'DESIGN.md'), '# 用户自己的规范\n')
+    writeFileSync(join(cwd, 'tokens.css'), ':root { --user: 1; }\n')
     const design = '# Linear Design System\n\nUse Linear palette.\n'
     const tokens = ':root { --brand: #5e6ad2; }\n'
     const installed = installOpenDesignIntoSessionDir(cwd, {
@@ -227,13 +228,12 @@ describe('resolveActiveDesignSystem', () => {
     // 本地 DESIGN.md 仍然优先
     expect(resolveActiveDesignSystem(cwd, WORKSPACE_SLUG)?.title).toBe('用户自己的规范')
 
-    // 去掉本地文件后，按会话 manifest 读另存名
+    // 去掉本地文件后，会话 manifest 不能冒充已确认的共享安装。
     rmSync(join(cwd, 'DESIGN.md'))
-    const ds = resolveActiveDesignSystem(cwd, WORKSPACE_SLUG)
-    expect(ds).toMatchObject({ title: 'Linear', body: design, tokensCss: tokens })
-    expect(ds?.origin).toContain('会话目录 linear-design.md')
-    const context = composeOdDesignContext({ requirements: { craftRequires: [], designSystemRequires: true }, cwd, workspaceSlug: WORKSPACE_SLUG })
-    expect(context).toContain('--brand: #5e6ad2')
+    rmSync(join(cwd, 'tokens.css'))
+    expect(resolveActiveDesignSystem(cwd)).toBeUndefined()
+    const context = composeOdDesignContext({ requirements: { craftRequires: [], designSystemRequires: true }, cwd })
+    expect(context).not.toContain('--brand: #5e6ad2')
   })
 
   test('Given 会话目录的安装文件被改写 When 解析 Then 按本地文件处理且不声称 OpenDesign 来源', () => {

@@ -27,7 +27,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { getAgentWorkspacePath } from './config-paths'
-import { readInstalledOpenDesign, readInstalledOpenDesignFromSession } from './opendesign-install-store'
+import { readInstalledOpenDesign } from './opendesign-install-store'
 
 /** 单个 Skill 的 od: 需求声明 */
 export interface OdSkillRequirements {
@@ -207,10 +207,9 @@ export interface ActiveDesignSystem {
 }
 
 /**
- * 解析 cwd 本地设计系统、会话目录安装或用户确认的 Owner 工作区安装。
+ * 解析 cwd 本地设计系统或用户确认的 Owner 工作区安装。
  *
- * 优先级：cwd 下用户自己的 DESIGN.md/tokens.css → 本会话目录的 OpenDesign 安装
- * （可能是另存名，按 manifest 读取）→ Owner 工作区共享安装。都不存在时返回
+ * 优先级：cwd 下用户自己的 DESIGN.md/tokens.css → Owner 工作区共享安装。都不存在时返回
  * undefined（调用方不注入，保持零开销）。
  */
 export interface DesignSystemResolutionDeps {
@@ -228,22 +227,8 @@ export function resolveActiveDesignSystem(
 ): ActiveDesignSystem | undefined {
   const designMdPath = cwd ? join(cwd, 'DESIGN.md') : ''
   const tokensPath = cwd ? join(cwd, 'tokens.css') : ''
-  // 会话目录安装：文件名可能是另存名，只能按 manifest 读，不能靠固定文件名探测。
-  const sessionInstall = cwd ? readInstalledOpenDesignFromSession(cwd) : undefined
-  const installedNames = new Set(sessionInstall ? [sessionInstall.designFile, sessionInstall.tokensFile] : [])
-  // 本地文件指「不是本会话安装记录里的那些文件」：否则安装写入的 tokens.css 会把自己挡掉。
-  const hasLocalDesign = Boolean(cwd && (
-    (existsSync(designMdPath) && !installedNames.has('DESIGN.md'))
-    || (existsSync(tokensPath) && !installedNames.has('tokens.css'))
-  ))
-  if (sessionInstall && !hasLocalDesign) {
-    return {
-      title: sessionInstall.brandName,
-      body: sessionInstall.design,
-      tokensCss: sessionInstall.tokens,
-      origin: `OpenDesign ${sessionInstall.brandId} ${sessionInstall.referenceRevision}（会话目录 ${sessionInstall.designFile}）`,
-    }
-  }
+  // 会话目录 manifest 由工作区内容控制，不能作为用户确认安装的凭证。
+  const hasLocalDesign = Boolean(cwd && (existsSync(designMdPath) || existsSync(tokensPath)))
   if (!hasLocalDesign && workspaceSlug) {
     try {
       const readInstall = deps.readWorkspaceInstall
