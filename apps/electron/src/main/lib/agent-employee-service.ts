@@ -42,6 +42,7 @@ import { getActivePilotGrant } from './project-pilot-grant-issue'
 import { assertPilotExecutionLinked } from './project-pilot-command-links'
 import { assertPilotCommandStartRecord, cancelQueuedPilotCommand, claimPilotCommandStart, recordPilotRunnerHandoffIntent } from './project-pilot-budget-ledger'
 import { recordPilotRuntimeStarted } from './project-pilot-start-receipt'
+import { formatVerificationPrefix, recordDeliveryVerificationReceipt, verifyDelivery } from './delivery-verification'
 import { requestPilotStopWithIntent } from './project-pilot-stop-escalation'
 import { resolvePilotRuntimeBudgetLimitUsd } from './project-pilot-runtime-budget'
 import { inspectPilotReadiness } from './project-pilot-readiness'
@@ -1314,10 +1315,29 @@ function writebackExecutionResult(
     })
     return
   }
+  // 交付核实（第五步·核实）：结算前独立验证摘要声明；结论并入验收备注，失败升级活动流告警。
+  // 只核实与升级信息，不做自动回滚；任务仍落 paused 待人工确认，核实结果帮助人优先处理可疑交付。
+  let verificationPrefix = ''
+  if (status === 'completed') {
+    const report = verifyDelivery({ executionId: execution.id, summary })
+    verificationPrefix = formatVerificationPrefix(report)
+    try {
+      recordDeliveryVerificationReceipt(execution, report)
+    } catch (error) {
+      console.warn(`[AgentEmployee] 交付核实回执写入失败（不阻断结算）: ${execution.id}`, error)
+    }
+    if (!report.passed) {
+      try {
+        const failedChecks = report.checks.filter((c) => !c.passed).map((c) => c.detail).join('；')
+        recordActivity(execution, 'verification_failed', `交付核实未通过：${failedChecks}`)
+      } catch { /* 活动流失败不影响结算 */ }
+    }
+  }
+
   // 任务 draft 是需求确认态，不是交付物草稿；暂停待验收，沿用现有完成/DoD 闸门。
   void updateTask(execution.entityId, {
     status: 'paused',
-    completionNotes: status === 'completed' ? `【AI 交付待确认】${summary}` : summary,
+    completionNotes: status === 'completed' ? `${verificationPrefix}【AI 交付待确认】${summary}` : summary,
   }, { source: 'system' }).catch((error: unknown) => {
     store.updateAgentExecution(execution.id, { error: `任务回写失败：${error instanceof Error ? error.message : String(error)}` })
   })

@@ -94,6 +94,9 @@ describe('交付核实回执（不可变表）', () => {
       agentId: 'agent-1',
       status: 'completed',
       createdAt: Date.now(),
+      sessionId: 'session-test',
+      prompt: '测试任务',
+      startedAt: Date.now() - 1_000,
       ...(pilotCommandId ? { pilotCommandId } : {}),
     } as AgentExecution
   }
