@@ -3,6 +3,7 @@ import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { confirmOwnerTeamWorkspaceAccessAtom, editOwnerMessageAtom, getOwnerManagementEditor, getOwnerMessageComposer, loadOwnerManagementAtom, ownerManagementEditorsAtom, ownerMessageComposersAtom, ownerTeamWorkspaceApprovalStatesAtom, sendOwnerMessageAtom } from '../../atoms/project-owner-management-atoms'
 import { getOwnerDelegationEditor, ownerDelegationEditorsAtom } from '../../atoms/owner-management-delegation-atoms'
 import { getOwnerPlanEditor, loadOwnerPlanAtom, ownerPlanEditorsAtom } from '../../atoms/project-owner-plan-atoms'
+import { getOwnerExecutionAssignmentEditor, ownerExecutionAssignmentEditorsAtom } from '../../atoms/project-owner-execution-assignment-atoms'
 import { allPendingPermissionRequestsAtom } from '../../atoms/agent-atoms'
 import { retakeOwnerAssignmentAtom } from '../../atoms/project-owner-management-atoms'
 import { PermissionBanner } from '../agent/PermissionBanner'
@@ -66,6 +67,12 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const approveWorkspace = useSetAtom(confirmOwnerTeamWorkspaceAccessAtom)
   const retakeAssignment = useSetAtom(retakeOwnerAssignmentAtom)
   const [retakeStatus, setRetakeStatus] = useState('')
+  const [retakeRequested, setRetakeRequested] = useState(false)
+  const assignmentEditors = useAtomValue(ownerExecutionAssignmentEditorsAtom)
+  const assignmentRuns = getOwnerExecutionAssignmentEditor(assignmentEditors, subject).runs
+  const staleAssignment = assignmentRuns[0]?.sourceStatus === 'stale'
+    && !assignmentRuns.some(run => run.executions.some(execution => execution.status === 'queued' || execution.status === 'running'))
+  useEffect(() => { if (subject.projectId) { setRetakeStatus(''); setRetakeRequested(false) } }, [subject])
   const load = useSetAtom(loadOwnerManagementAtom), loadPlan = useSetAtom(loadOwnerPlanAtom), edit = useSetAtom(editOwnerMessageAtom), send = useSetAtom(sendOwnerMessageAtom)
   const loadedMessage = useRef('')
   const [clock, setClock] = useState(Date.now())
@@ -155,6 +162,11 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
         <p>Owner 建议将“{latestWorkspaceProposal.teamWorkspaceProposal?.workspaceName}”纳入项目资料范围。</p>
         <button type="button" className="mt-2 text-primary underline underline-offset-4" onClick={() => document.getElementById(`owner-workspace-proposal-${latestWorkspaceProposal.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>查看范围与确认选项</button>
       </div>}
+      {staleAssignment && <section className="space-y-2 rounded-xl bg-amber-500/10 p-3 text-sm" aria-label="团队安排需要重新核对">
+        <p>项目资料或团队范围已经变化，旧安排不能继续使用。可以让 Owner 按当前已确认方案重新安排；旧记录会保留。</p>
+        <button type="button" className="rounded-lg bg-primary px-3 py-2 text-primary-foreground disabled:opacity-50" disabled={retakeStatus === 'sending' || retakeRequested} onClick={() => { setRetakeStatus('sending'); void retakeAssignment(subject).then(result => { setRetakeStatus(result.message); setRetakeRequested(result.ok) }) }}>{retakeStatus === 'sending' ? '正在重新安排…' : '按当前方案重新安排'}</button>
+        {retakeStatus && retakeStatus !== 'sending' && <p role="status">{retakeStatus}</p>}
+      </section>}
       <OwnerConversationChanges projectId={projectId} taskId={taskId} />
       {children}
       <OwnerManagementQuestions projectId={projectId} taskId={taskId} embedded />
@@ -223,7 +235,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
         <p className="whitespace-pre-wrap break-words text-sm leading-6">{ownerFacingMessage(latestAttention.content)}</p>
         <div className="flex flex-wrap items-center gap-3">
           <button type="button" className="text-xs text-primary underline underline-offset-4" onClick={focusLatestRecord}>查看 Owner 历史记录</button>
-          {latestAttention.content.includes('人员安排') && <button type="button" className="rounded-lg bg-primary px-3 py-2 text-xs text-primary-foreground disabled:opacity-50" disabled={retakeStatus === 'sending'} onClick={() => { setRetakeStatus('sending'); void retakeAssignment(subject).then(result => setRetakeStatus(result.message)) }}>{retakeStatus === 'sending' ? '正在重新安排…' : '按当前已确认方案重新安排'}</button>}
+          {!staleAssignment && latestAttention.content.includes('人员安排') && <button type="button" className="rounded-lg bg-primary px-3 py-2 text-xs text-primary-foreground disabled:opacity-50" disabled={retakeStatus === 'sending' || retakeRequested} onClick={() => { setRetakeStatus('sending'); void retakeAssignment(subject).then(result => { setRetakeStatus(result.message); setRetakeRequested(result.ok) }) }}>{retakeStatus === 'sending' ? '正在重新安排…' : '按当前已确认方案重新安排'}</button>}
         </div>
         {retakeStatus && retakeStatus !== 'sending' && <p role="status" className="text-xs text-muted-foreground">{retakeStatus}</p>}
       </section>}
