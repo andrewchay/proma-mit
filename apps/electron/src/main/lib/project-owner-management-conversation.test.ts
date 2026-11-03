@@ -126,6 +126,8 @@ test('Given旧版遗留同源对话Link且没有执行记录 When Owner后台恢
     reconcileOwnerManagement(f.project.id)
     expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(1)
     expect(getOwnerManagementConversation(f.project.id).messages.filter(item => item.kind === 'reply')).toHaveLength(1)
+    const completed = getOwnerManagementConversation(f.project.id).trace?.filter(item => item.phase === 'owner_response' && item.state === 'completed' && item.detailCode === 'result_ready')
+    expect(completed).toHaveLength(1)
   } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
 })
 

@@ -97,7 +97,11 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     const phaseIndex = phases.indexOf(phase)
     const supersededByLaterPhase = [...latestTraceByPhase.entries()].some(([laterPhase, laterEntry]) => phases.indexOf(laterPhase) > phaseIndex && laterEntry.createdAt >= entry.createdAt)
     const supersededByDelivery = deliveryTimes.some(createdAt => createdAt >= entry.createdAt)
-    return !supersededByLaterPhase && !supersededByDelivery
+    // 旧版本可能漏写回复完成的 trace；后续真实回复可阻止旧 started 一直显示为进行中。
+    const supersededByReply = phase === 'owner_response' && messages.some(message => message.role === 'assistant'
+      && ['reply', 'conversation', 'clarification', 'answer', 'plan_proposal', 'change_proposal', 'change_decision', 'delivery'].includes(message.kind)
+      && message.createdAt >= entry.createdAt)
+    return !supersededByLaterPhase && !supersededByDelivery && !supersededByReply
   })
   useEffect(() => {
     if (!assignmentActive) return
@@ -165,7 +169,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     }} />}
     <OwnerDesignHistory messages={messages} />
     {messages.length > 0 && <div className="space-y-3 border-t border-border/60 pt-4" role="log" aria-label="Owner历史对话" aria-live="polite" aria-relevant="additions">
-      {messages.map(message => <article key={message.id} className={`max-w-3xl rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm ${message.role === 'user' ? 'ml-6 rounded-tr-sm bg-primary/10' : 'mr-6 rounded-tl-sm bg-muted/60'}`}>
+      {[...messages].reverse().map(message => <article key={message.id} className={`max-w-3xl rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm ${message.role === 'user' ? 'ml-6 rounded-tr-sm bg-primary/10' : 'mr-6 rounded-tl-sm bg-muted/60'}`}>
         <p className="mb-1 text-xs font-medium text-muted-foreground">{message.role === 'user' ? '你' : '项目 Owner'}</p>
         {message.kind === 'employee_interaction' && message.employeeInteraction && <section className="mb-3 rounded-xl bg-amber-500/10 p-3" aria-label="员工待决事项">
           <div className="flex items-center justify-between gap-3"><p className="font-medium">员工需要 Owner 判断</p><span className="rounded-full bg-background/70 px-2 py-1 text-xs">{({ pending_owner: '等待 Owner', discussing_user: '讨论中', decided: '已决定', delivering: '回传中', resolved: '已回传', cancelled: '已取消', stale: '已失联', delivery_failed: '回传失败' } as Record<string, string>)[(editor.view?.employeeInteractions?.find(item => item.id === message.employeeInteraction?.id) ?? message.employeeInteraction).state] ?? '状态待核对'}</span></div>

@@ -449,7 +449,7 @@ window.fixture={deliver:async()=>{await call('testDeliver');const result=await c
 store.sub(ownerMessageComposersAtom,()=>{const composer=getOwnerMessageComposer(store.get(ownerMessageComposersAtom),subject);document.body.dataset.ownerComposer=composer.text;document.body.dataset.ownerDeliveryReference=JSON.stringify(composer.deliveryReference||null)});
 createRoot(document.getElementById('root')).render(<Provider store={store}><ProjectOwnerDeliveryConversation projectId={subject.projectId} managed={${managed}} singleConfirmation={${managed}} ownerConversation={true}/></Provider>);
 `)
-  await build({ entryPoints: [entry], outfile: join(directory, 'browser.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
+  await build({ entryPoints: [entry], outfile: join(directory, 'browser.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.png': 'dataurl' }, absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
   const browser = await chromium.launch({ headless: true }), page = await browser.newPage({ viewport: { width: 390, height: 800 } })
   page.setDefaultTimeout(5000)
   const errors: string[] = []

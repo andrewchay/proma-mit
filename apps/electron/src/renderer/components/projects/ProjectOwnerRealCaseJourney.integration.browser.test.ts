@@ -447,7 +447,7 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
     const value = await handler(undefined, body.payload)
     return Response.json(value)
   }, routes: { '/entry.js': () => new Response(Bun.file(join(directory, `entry-${project.id}.js`))) } })
-  const bundle = await build({ entryPoints: [entry], outfile: join(directory, `entry-${project.id}.js`), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
+  const bundle = await build({ entryPoints: [entry], outfile: join(directory, `entry-${project.id}.js`), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.png': 'dataurl' }, absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
   void bundle
   // 两个案例共用浏览器进程，各自新建Context隔离页面状态；避免在同一Bun用例内反复关闭/启动进程。
   journeyBrowser ??= await chromium.launch({ headless: true })
