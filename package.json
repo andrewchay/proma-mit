@@ -40,9 +40,9 @@
   },
   "dependencies": {
     "@aws-sdk/client-kms": "^3.1101.0",
-    "@earendil-works/pi-agent-core": "1.4.0",
-    "@earendil-works/pi-ai": "1.4.0",
-    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-agent-core": "1.5.0",
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
     "jotai": "^2.20.2"
   },
   "overrides": {

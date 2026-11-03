@@ -28,7 +28,10 @@
 
 ## PR 状态（2026-11-02 18:25）
 
-- PR #117：docs 修复提交后 4/5 通过，quality（全量测试）运行中，用户自行在 PR 页面确认最终结果
+- PR #117：MERGED（2026-11-02 19:33），remote main = e0fec6df
+- 本地 main 引用已同步 = e0fec6df（用 git update-ref 绕过 worktree 占用保护）
+- 副作用：opendesign-closure worktree（.codex/worktrees/）工作树文件仍是旧 main，该目录对本会话 EPERM 无法代同步；补救 = 在该 worktree 内执行 git reset --hard HEAD（其改动已提交、状态干净，reset 安全）
+- 事故记录：曾误在当前分支执行 git pull origin main（merge 进 codex），已 git reset --hard bf950c4e 撤销，codex 分支无损
 - 修复记录：首轮 quality 失败 = docs:check（repository-facts.md 过期，新增 6 文件致统计变化）→ docs:generate 重新生成提交（bbee8e87）
 - 插曲：首次 push 静默失败（并行会话干扰），重试成功；一次只读 gh 查询超时被平台标记未知动作（无副作用）
 
