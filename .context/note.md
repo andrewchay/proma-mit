@@ -1,5 +1,33 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-11-03 修复：Owner 默认建队被外部工作区建议压制（测试项目"没有可派工员工实例"根因）
+
+分支 feat/pi-1.5.0-upgrade，未提交、未重建应用。用户测试项目 6336c41d（"测试项目"）出现：已确认方案无法派工，
+Owner 回复"项目获准工作区里没有可承担执行工作的员工实例"，并建议把 OptiMed 工作区纳入项目资料范围。
+
+- **数据诊断（只读查询 ~/.gravitas/projects/paa.db）**：项目唯一绑定工作区 a723defa 里只有 Owner 载体
+  e7487e45，无任何业务员工；OptiMed = b1838f15（未绑定任何项目），内有 2 名 pi/development 员工
+  （Gravitas 研发/测试工程师，智谱 glm-5.3-flash）。`project_owner_management_messages` 中的 attention
+  原文确认走了 no-executable-employee blocked 分支 + teamWorkspaceProposal 建议。
+- **根因（行为优先级 bug）**：`prepareOwnerManagementAssignment` 原逻辑
+  `if (!getOwnerTeamWorkspaceProposal(...)) ensureOwnerDefaultTeam(...)`——只要系统里存在任何一个
+  "未占用 + ≥2 名合格员工"的工作区（如 OptiMed），就跳过默认建队，转为阻塞等待用户确认扩大资料范围。
+  与产品预期（项目授权工作区内自动补齐方案岗位团队）相反。`recoverMissingOwnerDefaultTeams` 同样被
+  proposal 条件压制。附带的 genericNextStep 文案"扩大项目资料范围也不能解决"与 proposal 建议自相矛盾
+  （前一轮已修）。
+- **修复**：① assignment.ts 改为无条件先 `ensureOwnerDefaultTeam`（幂等守卫：多绑定工作区/方案模板缺失/
+  工作区已有业务员工时返回 false，再回退 proposal 路径）；② management-loop.ts 去掉恢复补队的
+  proposal 前置条件并删除 unused import；③ pi/development 员工资格不变（freezeOwnerEmployeeRuntime
+  仅放行 ai-sdk openai-chat 协议与智谱 GLM-5.3-Flash + 已审核价格证据）。
+- **测试**：project-owner-management-assignment.test.ts 改写 3 个 teamWorkspaceProposal 场景为
+  "默认建队优先"语义，新增"项目工作区已有业务员工但缺独立评审时仍建议纳入"用例保留 proposal 覆盖。
+  38/38 通过；tsc 通过；biome 3 文件零告警。**教训：文件内测试共享同一临时 DB，新增"未占用+2 员工"
+  工作区用例必须在 finally 清理员工，否则污染后续所有 proposal 相关断言（本轮 5 个假失败均源于此）。**
+- **边界**：`project-owner-management-execution.test.ts` / `project-pilot-g1-fixture.test.ts` 单跑失败
+  （electron mock 'shell' 导出缺失），git stash 基线复现一致，与本次改动无关。改动需重建应用才对
+  运行中的 Gravitas 生效；生产测试项目无需改数据——重建后 Owner 会在 a723defa 自动补齐
+  需求分析师 + 交付核验员并继续安排。
+
 ## 2026-11-02 实施：卡兹克体系三差异落地（事件路由 / 审批外推 / 交付核实）
 
 分支 codex/p1-five-direction-slice，10+ 提交（至 8a412e14）。验证：apps/electron tsc 通过；新增 3 测试文件 26 例 +
