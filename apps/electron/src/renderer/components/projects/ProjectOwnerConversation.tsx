@@ -100,10 +100,10 @@ export function ProjectOwnerConversation({ projectId, taskId }: { projectId: str
           {plan.snapshot && <details className="rounded-xl bg-card p-3 shadow-sm sm:col-span-2"><summary className="cursor-pointer text-sm font-medium">方案记录 · {plan.snapshot.state === 'confirmed' ? '已确认' : plan.snapshot.state === 'stale' ? '需更新' : '待审阅'}</summary><div className="mt-2 space-y-2 text-xs leading-5 text-muted-foreground"><p>{plan.snapshot.proposal.summary}</p><p><span className="font-medium text-foreground">交付步骤：</span>{plan.snapshot.proposal.steps.map(step => step.title).join('、')}</p></div></details>}
           <div className="rounded-xl bg-card p-3 text-xs leading-5 text-muted-foreground shadow-sm sm:col-span-2">每轮交付、验收意见和后续修改记录会按时间保留在下方对话历史中。</div>
         </div>}>
-        {facts?.binding && <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-muted/40 px-4 py-3 text-xs">
+        {facts?.binding && <details className="rounded-xl bg-muted/40 px-4 py-3 text-xs"><summary className="cursor-pointer font-medium">Owner 模型设置</summary><div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <p>当前 Owner 模型：{facts.binding.modelId}</p>
           <button type="button" className="text-primary underline underline-offset-4" disabled={busy} onClick={() => change({ editingConfiguration: true })}>更换 Owner 模型</button>
-        </div>}
+        </div></details>}
         {showSetupSummary && <div className="space-y-3 rounded-2xl rounded-tl-sm bg-muted/60 p-4">
           {setup.error && <p role="alert" className="text-sm text-destructive">{setup.error}</p>}
           {setup.loading && <p role="status" className="text-sm text-muted-foreground">Owner正在检查项目资料与可用能力。</p>}

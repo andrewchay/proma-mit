@@ -102,7 +102,7 @@ export function ProjectOwnerConversationProgress({ subject }: { subject: Project
     if (text.length > 4000) return 'too_long'
     editMessage({ subject, text, deliveryReference })
     requestAnimationFrame(() => {
-      const composer = document.querySelector<HTMLTextAreaElement>('form[aria-label="向Owner发送消息"] textarea')
+      const composer = document.querySelector<HTMLElement>('form[aria-label="向Owner发送消息"] [contenteditable="true"][aria-label="给项目 Owner 的消息"]')
       composer?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       composer?.focus()
     })
@@ -124,7 +124,7 @@ export function ProjectOwnerConversationProgress({ subject }: { subject: Project
   }
   const focusReplyComposer = (): void => {
     requestAnimationFrame(() => {
-      const composer = document.querySelector<HTMLTextAreaElement>('form[aria-label="向Owner发送消息"] textarea')
+      const composer = document.querySelector<HTMLElement>('form[aria-label="向Owner发送消息"] [contenteditable="true"][aria-label="给项目 Owner 的消息"]')
       composer?.scrollIntoView({ behavior: 'smooth', block: 'center' })
       composer?.focus()
     })

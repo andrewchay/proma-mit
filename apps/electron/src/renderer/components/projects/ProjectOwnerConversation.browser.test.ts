@@ -65,8 +65,9 @@ const rootNode=createRoot(document.getElementById('root'));rootNode.render(<Prov
     await page.getByRole('button', { name: '提交目标', exact: true }).click()
     await page.getByRole('button', { name: '调整目标' }).waitFor()
     expect(await page.getByLabel('Owner管理委托').count()).toBe(1)
-    // 已绑定配置不能隐藏更换入口；添加渠道不等于切换Owner。
+    // 模型设置可展开更换；添加渠道不等于切换 Owner。
     expect(await page.getByLabel('Owner规划模型').count()).toBe(0)
+    await page.getByText('Owner 模型设置', { exact: true }).click()
     await page.getByRole('button', { name: '更换 Owner 模型', exact: true }).click()
     await page.getByLabel('Owner规划模型').selectOption(JSON.stringify(['channel-a', 'deepseek-flash']))
     expect(await page.getByLabel('Owner管理委托').count()).toBe(0)
