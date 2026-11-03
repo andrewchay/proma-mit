@@ -94,6 +94,7 @@ export function projectOwnerManagementRunResult(projectId: string, executionId: 
       appendOwnerManagementTrace({ eventId: `${eventId}:claim-trace`, projectId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), phase: 'owner_response', state: 'completed', createdAt: Date.now(), detailCode: 'claim_without_fact' })
     }
     appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: outcome.changeProposal ? 'change_proposal' : 'reply', ...(outcome.changeProposal ? { changeId: receipt.id } : {}), planningTaskId: receipt.planningTaskId, content: claims.content })
+    appendOwnerManagementTrace({ eventId: `${eventId}:reply-completed`, projectId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), phase: 'owner_response', state: 'completed', createdAt: Date.now(), detailCode: 'result_ready' })
     return
   }
   if (outcome.state === 'needs_clarification' && outcome.clarification) {
