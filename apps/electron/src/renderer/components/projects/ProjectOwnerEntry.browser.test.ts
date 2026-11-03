@@ -20,7 +20,7 @@ import {ProjectView} from ${JSON.stringify(join(renderer, 'components/projects/P
 window.electronAPI={paa:{project:{listProjects:async()=>[{id:'p',title:'产品定位',description:'形成建议',status:'planning',createdAt:1,updatedAt:1}],getOwnerGoalDraft:async()=>({ok:true,value:null}),getOwnerManagement:async()=>({ok:true,value:{messages:[]}}),getOwnerManagementDelegation:async()=>({ok:true,value:null})}},getSettings:async()=>({})};
 createRoot(document.getElementById('root')).render(<Provider store={createStore()}><ProjectView/></Provider>);
 `)
-  await build({ entryPoints: [entry], outfile: join(directory, 'entry.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.mp3': 'dataurl' }, absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
+  await build({ entryPoints: [entry], outfile: join(directory, 'entry.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.mp3': 'dataurl', '.png': 'dataurl' }, absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('<div id="root"></div><script src="/entry.js"></script>', { headers: { 'Content-Type': 'text/html' } }), routes: { '/entry.js': () => new Response(Bun.file(join(directory, 'entry.js'))) } })
   const browser = await chromium.launch({ headless: true })
   try {
