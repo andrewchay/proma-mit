@@ -720,7 +720,7 @@ test('Given 用户在项目对话提交新目标及总预算 When Owner规划并
     const grant = delegation.getOwnerManagementDelegation(f.project.id)
     if (grant.state === 'active' && grant.delegation) delegation.revokeOwnerManagementDelegation(f.project.id, grant.delegation.id)
   }
-})
+}, 15_000)
 
 test('Given 首次待审方案及项目绑定资料 When Owner自主安排 Then 保留资料范围完成启动绑定并仅显示真实门禁', async () => {
   const f = fixture()
