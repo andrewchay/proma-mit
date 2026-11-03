@@ -501,6 +501,7 @@ test('Given 项目总预算 When 计算Owner模型占比上限 Then按20%向下�
 })
 
 test('Given Owner模型已占额 When 达到20% Then明确拒绝并要求增量授权', () => {
+  expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 3_000_000, ownerModelMicros: 929_493, nextReservedMicros: 309_831 })).toThrow('至少 $6.20')
   expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: 399_999, nextReservedMicros: 2 })).toThrow('20%上限')
   expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: 399_999, nextReservedMicros: 1 })).not.toThrow()
   expect(() => service.assertOwnerModelBudgetAvailable({ projectBudgetMicros: 2_000_000, ownerModelMicros: 0, nextReservedMicros: 400_001 })).toThrow('20%上限')

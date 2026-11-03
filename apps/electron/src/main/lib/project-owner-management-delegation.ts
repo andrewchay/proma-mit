@@ -150,7 +150,13 @@ export function assertOwnerModelBudgetAvailable(input: { projectBudgetMicros: nu
   const next = input.nextReservedMicros
   if (!Number.isSafeInteger(next) || next < 0) throw new Error('Owner下一请求预留无效')
   const limit = ownerModelBudgetLimit(input.projectBudgetMicros)
-  if (input.ownerModelMicros >= limit || next > limit - input.ownerModelMicros) throw new Error(`Owner模型额度已用尽，或下一请求预留将超过项目预算的${OWNER_MODEL_BUDGET_RATIO * 100}%上限，须先确认增量授权或缩小请求包络`)
+  if (input.ownerModelMicros >= limit || next > limit - input.ownerModelMicros) {
+    const requiredOwnerMicros = BigInt(input.ownerModelMicros) + BigInt(Math.max(next, 1))
+    const minimumCents = (requiredOwnerMicros * 5n + 9999n) / 10000n
+    const minimumBudget = `$${minimumCents / 100n}.${String(minimumCents % 100n).padStart(2, '0')}`
+    const amount = (micros: number): string => `$${(micros / 1_000_000).toFixed(6)}`
+    throw new Error(`Owner模型占额 ${amount(input.ownerModelMicros)}，下一请求最多预留 ${amount(next)}，超过当前项目预算的${OWNER_MODEL_BUDGET_RATIO * 100}%上限 ${amount(limit)}。按当前占额和请求上界，累计项目预算至少 ${minimumBudget}；请调整预算并重新核对授权，或缩小请求包络。历史未知费用按预留计入，并非实际账单。`)
+  }
 }
 
 /**

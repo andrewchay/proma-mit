@@ -7,7 +7,7 @@ import { atom, useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { getOwnerPlanEditor, ownerPlanEditorsAtom } from '../../atoms/project-owner-plan-atoms'
 import { getOwnerGrantEditor, loadOwnerGrantAtom, ownerGrantEditorsAtom } from '../../atoms/project-owner-execution-grant-atoms'
 import { getOwnerCommandProgress, loadOwnerCommandProgressAtom, ownerCommandProgressAtom } from '../../atoms/owner-command-progress-atoms'
-import { canPreviewOwnerExecution, canSaveOwnerExecution, compareOwnerExecutionAtom, editOwnerExecutionAtom, getOwnerExecutionEditor, loadOwnerExecutionAtom, ownerExecutionEditorsAtom, ownerExecutionInput, ownerExecutionPlanReady, previewOwnerExecutionAtom, saveOwnerExecutionAtom, type OwnerExecutionEdit } from '../../atoms/project-owner-execution-atoms'
+import { canPreviewOwnerExecution, canSaveOwnerExecution, compareOwnerExecutionAtom, editOwnerExecutionAtom, getOwnerExecutionEditor, loadOwnerExecutionAtom, ownerExecutionEditorsAtom, ownerExecutionInput, ownerExecutionPlanReady, parseOwnerExecutionInteger, previewOwnerExecutionAtom, saveOwnerExecutionAtom, type OwnerExecutionEdit } from '../../atoms/project-owner-execution-atoms'
 import { ownerDollarsToMicros, ownerExecutionAssignmentEdit, ownerExecutionArrangementMatches, ownerExecutionPeopleBlockers, ownerExecutionPeopleReady, ownerExecutionSetupSuggestion, ownerExecutionSuggestedLimits, ownerMicrosToDollars } from '../../atoms/owner-execution-setup'
 import { getOwnerExecutionAssignmentEditor, loadOwnerExecutionAssignmentRunsAtom, ownerExecutionAssignmentEditorsAtom, prepareOwnerExecutionAssignmentAtom } from '../../atoms/project-owner-execution-assignment-atoms'
 import { getOwnerDelegationEditor, ownerDelegationEditorsAtom } from '../../atoms/owner-management-delegation-atoms'
@@ -140,6 +140,19 @@ export function ProjectOwnerExecutionConversation({ projectId, taskId, ownerConv
   const editing = local.editing && !(savedCurrent && saved?.input.requestId === e.requestId && !local.started)
   const approvalInputReady = Boolean(singleConfirmation && projectBudgetReady && ownerExecutionInput(store.get, subject, true))
   const canApproveAndStart = approvalInputReady
+  const runs = parseOwnerExecutionInteger(e.maxRunsText)
+  const rework = parseOwnerExecutionInteger(e.maxReworkText)
+  const cost = parseOwnerExecutionInteger(e.maxCostMicrosText)
+  const executionExpiry = new Date(e.expiresAtText).getTime()
+  const approvalBlocker = !reviewReady ? '当前目标或方案来源尚未核对完成，员工尚未启动。请重新读取项目执行配置。'
+    : e.requiresReview ? '项目执行配置的来源发生变化，员工尚未启动。请在下方核对当前来源后继续。'
+    : cost === null || cost <= 0 ? '可用于执行的项目预算尚未准备好，员工尚未启动。请先核对上方管理授权与预算。'
+    : runs === null || runs <= 0 ? 'Owner 的执行安排缺少有效的运行次数，员工尚未启动。请让 Owner 重新整理执行安排。'
+    : rework === null ? 'Owner 的执行安排缺少有效的返工次数，员工尚未启动。请让 Owner 重新整理执行安排。'
+    : !Number.isFinite(executionExpiry) || executionExpiry <= Date.now() ? '本次执行有效期未准备好或已过期，员工尚未启动。请核对上方管理授权期限。'
+    : !e.changeReason.trim() ? 'Owner 的执行安排缺少准备说明，员工尚未启动。请让 Owner 重新整理执行安排。'
+    : e.executionKind === 'development' && (!e.targetPathsText.trim() || !e.allowedPathsText.trim()) ? 'Owner 尚未准备完整的代码修改范围，员工尚未启动。请让 Owner 补充目标路径与允许修改的范围。'
+    : '当前执行安排尚未通过完整校验，员工尚未启动。请重新读取配置；如果仍无法继续，请让 Owner 重新整理安排。'
   useEffect(() => {
     if (!singleConfirmation || !projectBudgetReady || !projectBudget) return
     // Owner人员安排尚未合并前，预算回填不能伪装成用户修改并触发额外确认。
@@ -285,7 +298,7 @@ export function ProjectOwnerExecutionConversation({ projectId, taskId, ownerConv
           {!singleConfirmation && e.roleBudgetCapsEnabled && <p className="text-sm">已有岗位单独上限，将一并保留；请在高级设置中调整，并核对下方完整预览。</p>}
           <p className="text-xs text-muted-foreground">{singleConfirmation ? '确认后 Owner 会按此结果与边界开始执行；只有需要扩大范围或作业务判断时才会再与你商量。' : '这里登记预算方案，不预留额度。执行准备保存后仍需在 Owner 对话中明确确认授权与启动；费用未知时会占用预留额度。运行次数包含执行及评审请求。'}</p>
           <button type="submit" className={button} disabled={busy || (singleConfirmation ? !canApproveAndStart || !ownerApprovalScopeReady : !canPreview)}>{busy ? singleConfirmation ? '正在确认方案并启动…' : '正在整理执行范围…' : singleConfirmation ? '确认方案并开始执行' : '生成执行准备摘要'}</button>
-          {singleConfirmation && !busy && !approvalInputReady && ownerApprovalScopeReady && projectBudgetReady && peopleReady && <p role="status" className="text-sm text-amber-800">启动按钮暂不可用：方案来源或执行准备字段尚未通过校验。请核对方案状态、预算金额、运行次数、有效期和变更说明；研发执行还需填写目标路径及允许修改路径。若仍不可用，请重新读取项目执行配置。</p>}
+          {singleConfirmation && !busy && !approvalInputReady && ownerApprovalScopeReady && projectBudgetReady && peopleReady && <div role="status" className="space-y-2 rounded-lg bg-amber-500/10 p-3 text-sm"><p>{approvalBlocker}</p><button type="button" className="text-primary underline underline-offset-4" onClick={() => void load(subject)}>重新读取项目执行配置</button></div>}
           {singleConfirmation && busy && <p role="status" className="text-sm text-muted-foreground">启动按钮暂不可用：正在{delivery.loading || e.loading ? '读取项目执行配置' : delivery.saving || e.saving ? '保存或确认范围' : assignments.loading || assignments.preparing ? '核对团队安排' : '处理当前项目操作'}。</p>}
         </fieldset>
         {singleConfirmation && !peopleReady && <button type="button" className="mt-2 text-sm underline underline-offset-4" disabled={busy} onClick={() => void load(subject)}>重新读取项目执行配置</button>}
