@@ -16,7 +16,6 @@ import { onOwnerAutonomousScheduleWake } from './project-owner-autonomous-schedu
 import { listOwnerExecutionAssignmentRuns } from './project-owner-execution-assignment-service'
 import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt, recoverLegacyOwnerConversationReply, recoverLegacyOwnerAssignmentProposal } from './project-owner-planning-run-service'
 import { ensureOwnerDefaultTeam } from './project-owner-default-team'
-import { getOwnerTeamWorkspaceProposal } from './project-owner-team-workspace-access'
 
 let requestActiveOwnerManagementRescan: (() => void) | null = null
 
@@ -218,7 +217,7 @@ function recoverMissingOwnerDefaultTeams(projectId: string): void {
     if (taskId === null) continue
     const plan = getProjectOwnerPlanDraft(projectId, taskId), view = getOwnerManagementDelegation(projectId, taskId)
     if (plan?.state !== 'confirmed' || view.state !== 'active' || !view.delegation
-      || hasActiveOwnerManagementRequest(view.delegation.id) || getOwnerTeamWorkspaceProposal(projectId, taskId)) continue
+      || hasActiveOwnerManagementRequest(view.delegation.id)) continue
     const binding = getOwnerRuntimeBinding(projectId)
     if (!binding) continue
     store.getProjectDb().transaction(() => {

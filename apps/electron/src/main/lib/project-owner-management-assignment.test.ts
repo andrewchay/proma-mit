@@ -345,53 +345,39 @@ test('Given 授权前已有待审方案和完整团队 When 首次确认管理�
   } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
 })
 
-test('Given 员工位于未授权的共享工作区 When 团队不足 Then Owner建议最小工作区且只在用户确认后恢复安排', async () => {
+test('Given 员工位于未授权的共享工作区 When 团队不足 Then Owner在项目工作区自动补齐默认团队并完成安排', async () => {
   const f = fixture('complete', false, true, true, true)
   const grant = authorize(f)
   expect(teamAccess.getOwnerTeamWorkspaceProposal(f.project.id)).toMatchObject({ workspaceId: f.teamWorkspace.id, eligibleEmployeeCount: 2 })
   const stop = startOwnerManagementLoop()
   try {
-    await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.teamWorkspaceProposal), () => ({
+    await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'execution_arranged'), () => ({
       pending: listPendingOwnerManagementEvents(f.project.id).map(event => event.kind),
       messages: getOwnerManagementConversation(f.project.id).messages.slice(-5).map(message => ({ kind: message.kind, eventId: message.eventId, hasProposal: Boolean(message.teamWorkspaceProposal), content: message.content.slice(0, 120) })),
       assignments: listOwnerExecutionAssignmentRuns(f.subject).map(run => ({ status: run.sourceStatus, purpose: run.link.purpose })),
     }))
-    const suggestion = getOwnerManagementConversation(f.project.id).messages.find(item => item.teamWorkspaceProposal)!
-    expect(suggestion).toMatchObject({ kind: 'attention', teamWorkspaceProposal: { workspaceId: f.teamWorkspace.id, workspaceName: f.teamWorkspace.name, eligibleEmployeeCount: 2 } })
-    expect(suggestion.content).toContain(f.teamWorkspace.name)
-    expect(suggestion.content).not.toContain('名当前可用员工')
-    expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(0)
-    expect(calls.filter(item => item.projectId === f.project.id)).toHaveLength(0)
-    expect(teamAccess.getOwnerTeamWorkspaceProposal(f.project.id)).toEqual(suggestion.teamWorkspaceProposal!)
+    // 默认建队优先：项目已授权工作区按方案自动补齐岗位团队，不要求扩大项目资料范围。
+    const defaults = employees.listAgentEmployees().filter(item => item.workspaceIds?.includes(f.workspace.id) && item.id !== f.owner.id)
+    expect(defaults.map(item => item.roleTemplateId).sort()).toEqual(['delivery-verifier', 'requirements-analyst'])
+    expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.teamWorkspaceProposal)).toBe(false)
     expect(store.getProjectDb().prepare('SELECT COUNT(*) AS n FROM project_workspace_bindings WHERE project_id=? AND workspace_id=?').get(f.project.id, f.teamWorkspace.id)).toEqual({ n: 0 })
-    const approval = { projectId: f.project.id, messageId: suggestion.id, workspaceId: f.teamWorkspace.id, scopeFingerprint: suggestion.teamWorkspaceProposal!.scopeFingerprint }
-    teamAccess.confirmOwnerTeamWorkspaceAccess(approval)
-    teamAccess.confirmOwnerTeamWorkspaceAccess(approval)
-    await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'execution_arranged'))
-    expect(store.getProjectDb().prepare('SELECT COUNT(*) AS n FROM project_workspace_bindings WHERE project_id=? AND workspace_id=?').get(f.project.id, f.teamWorkspace.id)).toEqual({ n: 1 })
-    expect(getOwnerManagementConversation(f.project.id).messages.filter(item => item.eventId === `team-workspace-approved:${suggestion.id}`)).toHaveLength(1)
-    expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.content.includes('这条消息保存后，项目目标已更新'))).toBe(false)
-    expect(calls.filter(item => item.projectId === f.project.id).map(item => item.purpose)).toEqual(['owner_execution_assignment'])
-    expect(calls.find(item => item.projectId === f.project.id)?.candidates.sort()).toEqual([f.executor.id, f.reviewer!.id].sort())
+    const callsForProject = calls.filter(item => item.projectId === f.project.id)
+    expect(callsForProject.map(item => item.purpose)).toEqual(['owner_execution_assignment'])
+    expect(callsForProject[0]!.candidates.sort()).toEqual(defaults.map(item => item.id).sort())
     expect(store.listAgentExecutionsByProject(f.project.id).every(item => item.agentId === f.owner.id)).toBe(true)
     expect(delegation.getOwnerManagementDelegation(f.project.id)).toMatchObject({ state: 'active', usedRequests: 1 })
+  } finally {
+    stop()
     delegation.revokeOwnerManagementDelegation(f.project.id, grant.id)
-  } finally { stop() }
+    // 清理未占用工作区里的员工，避免污染后续测试的最小资料范围扫描。
+    employees.deleteAgentEmployee(f.executor.id)
+    if (f.reviewer) employees.deleteAgentEmployee(f.reviewer.id)
+  }
 })
 
-test('Given 可计费Pi团队位于未授权工作区 When Owner检查执行能力 Then 提议最小资料范围并在确认后自动安排', async () => {
+test('Given 可计费Pi团队位于未授权工作区 When Owner检查执行能力 Then 在项目工作区自动补齐默认团队并完成安排', async () => {
   const f = fixture('pi-team', false, true, true, true), grant = authorize(f), before = calls.length, stop = startOwnerManagementLoop()
   try {
-    await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.teamWorkspaceProposal))
-    const suggestion = getOwnerManagementConversation(f.project.id).messages.find(item => item.teamWorkspaceProposal)!
-    expect(suggestion.teamWorkspaceProposal).toMatchObject({ workspaceId: f.teamWorkspace.id, eligibleEmployeeCount: 2 })
-    expect(suggestion.content).not.toContain('名当前可用员工')
-    expect(teamAccess.getOwnerTeamWorkspaceProposal(f.project.id)).toEqual(suggestion.teamWorkspaceProposal!)
-    expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(0)
-    expect(calls.filter(item => item.projectId === f.project.id)).toHaveLength(0)
-
-    const approval = { projectId: f.project.id, messageId: suggestion.id, workspaceId: f.teamWorkspace.id, scopeFingerprint: suggestion.teamWorkspaceProposal!.scopeFingerprint }
-    teamAccess.confirmOwnerTeamWorkspaceAccess(approval)
     await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'execution_arranged'), () => ({
       messages: getOwnerManagementConversation(f.project.id).messages.slice(-8).map(message => ({ kind: message.kind, content: message.content.slice(0, 100) })),
       events: listPendingOwnerManagementEvents(f.project.id).map(event => event.kind),
@@ -399,34 +385,77 @@ test('Given 可计费Pi团队位于未授权工作区 When Owner检查执行能�
       executions: store.listAgentExecutionsByProject(f.project.id).map(execution => ({ status: execution.status, error: execution.error, agentId: execution.agentId, entityId: execution.entityId })),
       links: store.getProjectDb().prepare('SELECT planning_task_id, payload FROM project_owner_planning_links WHERE project_id=?').all(f.project.id),
     }))
-
-    expect(store.getProjectDb().prepare('SELECT COUNT(*) AS n FROM project_workspace_bindings WHERE project_id=? AND workspace_id=?').get(f.project.id, f.teamWorkspace.id)).toEqual({ n: 1 })
-    expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.content.includes('这条消息保存后，项目目标已更新'))).toBe(false)
+    // 默认建队优先：不在项目授权工作区里的 Pi 团队不会被自动挪用，改为在项目工作区补齐默认团队。
+    const defaults = employees.listAgentEmployees().filter(item => item.workspaceIds?.includes(f.workspace.id) && item.id !== f.owner.id)
+    expect(defaults.map(item => item.roleTemplateId).sort()).toEqual(['delivery-verifier', 'requirements-analyst'])
+    expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.teamWorkspaceProposal)).toBe(false)
     expect(calls.slice(before).filter(item => item.projectId === f.project.id).map(item => item.purpose)).toEqual(['owner_execution_assignment'])
-    expect(calls.find(item => item.projectId === f.project.id && item.purpose === 'owner_execution_assignment')?.candidates.sort()).toEqual([f.executor.id, f.reviewer!.id].sort())
     expect(listOwnerExecutionAssignmentRuns(f.subject)).toHaveLength(1)
     expect(store.getProjectDb().prepare('SELECT COUNT(*) AS n FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id)).toEqual({ n: 0 })
     expect(delegation.getOwnerManagementDelegation(f.project.id)).toMatchObject({ state: 'active', usedRequests: 1 })
-  } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+  } finally {
+    stop()
+    delegation.revokeOwnerManagementDelegation(f.project.id, grant.id)
+    // 清理未占用共享工作区里的员工，避免污染后续测试的资料范围扫描。
+    employees.deleteAgentEmployee(f.executor.id)
+    if (f.reviewer) employees.deleteAgentEmployee(f.reviewer.id)
+  }
 })
 
-test('Given可安全降级的Pi研发员工位于未授权Git工作区 When用户只确认资料范围 ThenOwner自动将其安排为受控非代码团队', async () => {
+test('Given可降级的Pi研发员工位于未授权Git工作区 When默认建队可行 Then优先在项目工作区补齐受控默认团队且不改已有员工', async () => {
   const f = fixture('pi-development-team', false, true, true, true), grant = authorize(f), before = calls.length, stop = startOwnerManagementLoop()
   try {
+    // 纯函数行为保留：默认建队守卫之外，仍能对未占用工作区提出最小资料范围建议。
     const proposal = teamAccess.getOwnerTeamWorkspaceProposal(f.project.id)
     if (!proposal) throw new Error('预期存在 Pi 团队工作区提议')
     expect(proposal).toMatchObject({ workspaceId: f.teamWorkspace.id, eligibleEmployeeCount: 2 })
-    const suggestion = getOwnerManagementConversation(f.project.id).messages.find(item => item.teamWorkspaceProposal)!
-    expect(suggestion.teamWorkspaceProposal).toEqual(proposal)
-    expect(calls.filter(item => item.projectId === f.project.id)).toHaveLength(0)
-    teamAccess.confirmOwnerTeamWorkspaceAccess({ projectId: f.project.id, messageId: suggestion.id, workspaceId: proposal!.workspaceId, scopeFingerprint: proposal!.scopeFingerprint })
     await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'execution_arranged'), () => ({ messages: getOwnerManagementConversation(f.project.id).messages.slice(-6).map(item => ({ kind: item.kind, content: item.content.slice(0, 120) })), assignments: listOwnerExecutionAssignmentRuns(f.subject).map(run => run.outcomes.map(outcome => ({ state: outcome.state, detail: outcome.detail }))), calls: calls.filter(item => item.projectId === f.project.id) }))
-    const run = listOwnerExecutionAssignmentRuns(f.subject)[0]!
-    expect(run.outcomes).toEqual(expect.arrayContaining([expect.objectContaining({ state: 'proposed' })]))
-    expect(calls.slice(before).filter(item => item.projectId === f.project.id).map(item => item.purpose)).toEqual(['owner_execution_assignment'])
+    const defaults = employees.listAgentEmployees().filter(item => item.workspaceIds?.includes(f.workspace.id) && item.id !== f.owner.id)
+    expect(defaults.map(item => item.roleTemplateId).sort()).toEqual(['delivery-verifier', 'requirements-analyst'])
+    // 自动补队不改动既有员工档案。
     expect(employees.getAgentEmployee(f.executor.id)).toMatchObject({ executionProfile: 'development', permissionMode: 'safe' })
     expect(employees.getAgentEmployee(f.reviewer!.id)).toMatchObject({ executionProfile: 'development', permissionMode: 'safe' })
-  } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+    expect(calls.slice(before).filter(item => item.projectId === f.project.id).map(item => item.purpose)).toEqual(['owner_execution_assignment'])
+  } finally {
+    stop()
+    delegation.revokeOwnerManagementDelegation(f.project.id, grant.id)
+    employees.deleteAgentEmployee(f.executor.id)
+    if (f.reviewer) employees.deleteAgentEmployee(f.reviewer.id)
+  }
+}, 15_000)
+
+test('Given 项目工作区已有业务员工但缺独立评审 When 存在含合格员工的未占用工作区 Then 建议纳入资料范围且不另建默认团队', async () => {
+  const f = fixture('missing-reviewer')
+  const shared = createAgentWorkspace(`共享团队-${randomUUID()}`)
+  const sharedChannel = createChannel({ name: 'fake shared', provider: 'zhipu', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', apiKey: 'fake', enabled: true, models: [{ id: 'glm-5.3-flash', name: 'glm', enabled: true }] })
+  employees.createAgentEmployee({ name: '共享执行', role: '共享执行', roleTemplateId: 'requirements-analyst', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: sharedChannel.id, modelId: 'glm-5.3-flash', workspaceIds: [shared.id] })
+  employees.createAgentEmployee({ name: '共享评审', role: '共享评审', roleTemplateId: 'delivery-verifier', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: sharedChannel.id, modelId: 'glm-5.3-flash', workspaceIds: [shared.id] })
+  const grant = authorize(f)
+  expect(teamAccess.getOwnerTeamWorkspaceProposal(f.project.id)).toMatchObject({ workspaceId: shared.id, eligibleEmployeeCount: 2 })
+  const stop = startOwnerManagementLoop()
+  try {
+    await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.teamWorkspaceProposal), () => ({
+      pending: listPendingOwnerManagementEvents(f.project.id).map(event => event.kind),
+      messages: getOwnerManagementConversation(f.project.id).messages.slice(-5).map(message => ({ kind: message.kind, hasProposal: Boolean(message.teamWorkspaceProposal), content: message.content.slice(0, 120) })),
+    }))
+    const suggestion = getOwnerManagementConversation(f.project.id).messages.find(item => item.teamWorkspaceProposal)!
+    expect(suggestion.teamWorkspaceProposal).toMatchObject({ workspaceId: shared.id })
+    // 项目工作区已有业务员工，默认建队守卫生效：不另建团队，等待用户决定资料范围。
+    expect(employees.listAgentEmployees().filter(item => item.workspaceIds?.includes(f.workspace.id) && item.id !== f.owner.id)).toHaveLength(1)
+    expect(listOwnerExecutionAssignmentRuns(f.subject)).toHaveLength(0)
+    const approval = { projectId: f.project.id, messageId: suggestion.id, workspaceId: shared.id, scopeFingerprint: suggestion.teamWorkspaceProposal!.scopeFingerprint }
+    teamAccess.confirmOwnerTeamWorkspaceAccess(approval)
+    teamAccess.confirmOwnerTeamWorkspaceAccess(approval)
+    expect(store.getProjectDb().prepare('SELECT COUNT(*) AS n FROM project_workspace_bindings WHERE project_id=? AND workspace_id=?').get(f.project.id, shared.id)).toEqual({ n: 1 })
+    expect(getOwnerManagementConversation(f.project.id).messages.filter(item => item.eventId === `team-workspace-approved:${suggestion.id}`)).toHaveLength(1)
+  } finally {
+    stop()
+    delegation.revokeOwnerManagementDelegation(f.project.id, grant.id)
+    // 清理共享工作区员工，避免未占用工作区污染后续测试的资料范围扫描。
+    for (const employee of employees.listAgentEmployees()) {
+      if (employee.workspaceIds?.includes(shared.id)) employees.deleteAgentEmployee(employee.id)
+    }
+  }
 }, 15_000)
 
 test('Given 待审方案的授权事件已消费但没有安排记录 When Owner循环恢复项目 Then 只重新检查一次并把缺少团队的原因带回对话', () => {
@@ -838,7 +867,7 @@ test('Given 现有团队缺独立评审 When 确认方案 Then 说明阻塞和�
   }
 })
 
-test('Given 获准工作区没有可执行员工 When 确认方案 Then 明确说明未派工并询问是否调整授权范围', () => {
+test('Given 项目范围内员工均不具备可用配置 When 确认方案 Then 说明团队配置阻塞且不建议扩大项目资料范围', () => {
   const f = fixture(), grant = authorize(f)
   try {
     employees.updateAgentEmployee(f.executor.id, { enabled: false })
@@ -848,7 +877,8 @@ test('Given 获准工作区没有可执行员工 When 确认方案 Then 明确�
     const attention = getOwnerManagementConversation(f.project.id).messages.find(item => item.kind === 'attention')
     expect(attention?.content).toContain('还没有派工')
     expect(attention?.content).toContain('工作尚未开始')
-    expect(attention?.content).toContain('扩大项目资料范围也不能解决当前团队配置问题')
+    expect(attention?.content).toContain('我暂时找不到可承担这项工作的合格团队')
+    expect(attention?.content).not.toContain('扩大项目资料范围也不能解决当前团队配置问题')
     expect(listOwnerExecutionAssignmentRuns(f.subject)).toHaveLength(0)
   } finally { delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
 }, 15_000)

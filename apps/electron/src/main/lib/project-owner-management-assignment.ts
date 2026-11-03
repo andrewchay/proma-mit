@@ -75,7 +75,8 @@ export function prepareOwnerManagementAssignment(event: OwnerManagementEvent): v
   if (hasCompleteOwnerManagementDelivery(event.projectId, event.taskId, plan)) return
   const binding = getOwnerRuntimeBinding(event.projectId)
   if (!binding) throw new Error('Owner安排缺少有效模型绑定')
-  if (!getOwnerTeamWorkspaceProposal(event.projectId, event.taskId)) ensureOwnerDefaultTeam(event.projectId, binding, plan.proposal.steps.map(step => step.roleKey))
+  // 默认建队优先于外部工作区建议：项目已授权工作区内能按方案自动补齐团队时，不要求扩大项目资料范围。
+  ensureOwnerDefaultTeam(event.projectId, binding, plan.proposal.steps.map(step => step.roleKey))
   const context = getProjectOwnerPlanningContext(event.projectId, event.taskId)
   const requestKey = createHash('sha256').update(event.id).digest('hex').slice(0, 32)
   const input = { requestId: `management-assignment:${requestKey}`, expectedBindingRevision: binding.revision, expectedGoalRevision: context.goal.revision, expectedPlanRevision: plan.revision, expectedPlanFingerprint: plan.planFingerprint, expectedContextFingerprint: context.fingerprint }
@@ -90,7 +91,7 @@ export function prepareOwnerManagementAssignment(event: OwnerManagementEvent): v
   catch (cause) {
     const reason = cause instanceof Error ? cause.message : ''
     const prefix = plan.state === 'proposed' ? '目标和方案已保留，方案仍待你确认；' : '目标和已确认方案已保留；'
-    const genericNextStep = '我暂时找不到可承担这项工作的合格团队，所以工作尚未开始；扩大项目资料范围也不能解决当前团队配置问题。目标和方案已保留。我会在团队配置发生变化时自动重新核对；如需调整交付目标或验收标准，会先回来和你商量。'
+    const genericNextStep = '我暂时找不到可承担这项工作的合格团队，所以工作尚未开始。目标和方案已保留。我会在团队配置发生变化时自动重新核对；如需调整交付目标或验收标准，会先回来和你商量。'
     const message = cause instanceof OwnerExecutionAssignmentCapabilityError
       ? cause.reason === 'no-executable-employee'
         ? `当前获准用于本项目的工作区里没有能承担这项工作的员工，因此这部分工作还没有派工。${prefix}${genericNextStep}`
