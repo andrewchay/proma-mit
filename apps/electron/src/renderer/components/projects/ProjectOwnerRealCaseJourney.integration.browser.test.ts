@@ -382,6 +382,8 @@ async function runRealCaseJourney(options: JourneyOptions): Promise<void> {
   bindWorkspaceToProject(project.id, workspace.id)
   const channel = createChannel({ name: 'Owner real case fake', provider: 'openai', baseUrl: 'https://example.invalid/v1', apiKey: 'fake-only', enabled: true, models: [{ id: 'deepseek-flash', name: '隔离模型', enabled: true }] })
   const owner = employees.createAgentEmployee({ name: 'Owner', role: '项目管理者', description: '真实案例旅程Owner载体', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId: 'deepseek-flash', workspaceIds: [workspace.id] })
+  // 载体工作区预置一名不参与方案岗位的助理：默认建队守卫生效，Owner走"建议纳入团队工作区→用户确认"路径。
+  employees.createAgentEmployee({ name: '项目助理', role: '项目助理', description: '载体工作区常驻助理，不承担本次方案岗位', executionProfile: 'general', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId: 'deepseek-flash', workspaceIds: [workspace.id] })
   for (const [name, roleTemplateId] of [['需求分析师', 'requirements-analyst'], ['独立检查', 'delivery-verifier']] as const) {
     employees.createAgentEmployee({ name, role: name, roleTemplateId, description: '真实案例隔离员工', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId: 'deepseek-flash', workspaceIds: [teamWorkspace.id] })
   }
