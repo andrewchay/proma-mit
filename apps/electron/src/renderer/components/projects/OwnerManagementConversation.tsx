@@ -164,7 +164,8 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
       </div>}
       {staleAssignment && <section className="space-y-2 rounded-xl bg-amber-500/10 p-3 text-sm" aria-label="团队安排需要重新核对">
         <p>项目资料或团队范围已经变化，旧安排不能继续使用。可以让 Owner 按当前已确认方案重新安排；旧记录会保留。</p>
-        <button type="button" className="rounded-lg bg-primary px-3 py-2 text-primary-foreground disabled:opacity-50" disabled={retakeStatus === 'sending' || retakeRequested} onClick={() => { setRetakeStatus('sending'); void retakeAssignment(subject).then(result => { setRetakeStatus(result.message); setRetakeRequested(result.ok) }) }}>{retakeStatus === 'sending' ? '正在重新安排…' : '按当前方案重新安排'}</button>
+        {delegation.view?.state !== 'active' && <p>请先重新核对项目管理授权，再重新安排。</p>}
+        <button type="button" className="rounded-lg bg-primary px-3 py-2 text-primary-foreground disabled:opacity-50" disabled={delegation.view?.state !== 'active' || retakeStatus === 'sending' || retakeRequested} onClick={() => { setRetakeStatus('sending'); void retakeAssignment(subject).then(result => { setRetakeStatus(result.message); setRetakeRequested(result.ok) }) }}>{retakeStatus === 'sending' ? '正在重新安排…' : '按当前方案重新安排'}</button>
         {retakeStatus && retakeStatus !== 'sending' && <p role="status">{retakeStatus}</p>}
       </section>}
       <OwnerConversationChanges projectId={projectId} taskId={taskId} />
