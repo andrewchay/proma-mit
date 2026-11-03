@@ -54,7 +54,7 @@ describe('pi-model-registry', () => {
     expect(inferPiContextWindow('deepseek-v4-flash')).toBe(256_000)
     expect(inferPiContextWindow('glm-4.5')).toBe(256_000)
     expect(inferPiContextWindow('claude-haiku-4-5')).toBe(200_000)
-    expect(inferPiContextWindow('claude-sonnet-4-5')).toBe(1_000_000)
+    expect(inferPiContextWindow('claude-sonnet-4-5')).toBe(200_000)
     expect(inferPiContextWindow('gpt-4o')).toBe(128_000)
     expect(inferPiContextWindow(undefined)).toBe(256_000)
   })
