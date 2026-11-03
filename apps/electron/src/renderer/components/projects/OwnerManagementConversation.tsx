@@ -154,6 +154,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     {!editor.view?.manager && delegation.view?.state === 'none' && !plan.snapshot && <p role="status" className="rounded-xl bg-primary/5 px-4 py-3 text-sm leading-6">Owner尚未开始规划：当前没有已确认的项目总模型费用额度。请在下方确认预算与有效期；确认后，Owner会在额度内自动整理方案并回到这里回应。</p>}
     <aside className="min-w-0 space-y-3 rounded-2xl bg-card p-4 shadow-sm sm:p-5" aria-label="需要你决定">
       <h3 className="text-base font-semibold">需要你决定</h3>
+      <p className="text-xs leading-5 text-muted-foreground">需要你选择、输入或确认的事项在这里；项目授权设置也可在此查看。</p>
       {pendingAction && <section aria-label="员工动作需要你逐次审批" className="space-y-3 rounded-xl bg-amber-500/10 p-3">
         <p className="text-sm leading-6">员工执行已暂停，等待你核对下面的准确操作。Owner不能代签；在对话中讨论不等于批准。一次确认仅适用于本次参数，不扩大预算或范围。</p>
         <PermissionBanner key={pendingAction.requestId} sessionId={pendingAction.sessionId} keyboardShortcuts={false} />
@@ -223,6 +224,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     </section>
     <section className="min-w-0 rounded-2xl bg-card p-4 shadow-sm sm:p-5" aria-label="现阶段最需要关注">
       <h3 className="text-base font-semibold">现在最需要关注</h3>
+      <p className="mt-1 text-xs leading-5 text-muted-foreground">这里汇总项目进度、阻塞和成果；需要选择或确认时请查看上方。</p>
       {(assignmentTrace || ownerProcessing) && <div className="mt-3 rounded-xl bg-primary/5 px-4 py-3 text-sm" role="status" aria-label="Owner组织进度">
       <div className="flex items-center gap-2">
         {ownerProcessing && <span className="sidebar-breathe-dot sidebar-breathe-running size-2 flex-shrink-0 bg-current text-blue-500" aria-label="Owner正在处理" />}
