@@ -17,6 +17,7 @@ export interface DeliveryVerificationCheck {
   id: string
   kind: 'summary' | 'artifacts'
   passed: boolean
+  status: 'passed' | 'failed' | 'not_checked'
   detail: string
 }
 
@@ -24,6 +25,7 @@ export interface DeliveryVerificationReport {
   executionId: string
   checkedAt: number
   passed: boolean
+  outcome: 'checked' | 'failed' | 'incomplete' | 'legacy_unverified'
   passedCount: number
   totalCount: number
   checks: DeliveryVerificationCheck[]
@@ -56,36 +58,47 @@ export function verifyDelivery(input: VerifyDeliveryInput): DeliveryVerification
     id: 'summary_present',
     kind: 'summary',
     passed: summaryOk,
+    status: summaryOk ? 'passed' : 'failed',
     detail: summaryOk ? `摘要 ${trimmed.length} 字` : '摘要缺失或过短（不足 10 字），无法核实交付内容',
   })
 
   // 2. 产物路径存在性：摘要声明的路径必须真实存在
-  const declared = [...new Set([...trimmed.matchAll(PATH_PATTERN)].map((m) => m[1]!))].slice(0, MAX_PATH_CHECKS)
+  const found = new Set<string>()
+  for (const match of trimmed.matchAll(PATH_PATTERN)) {
+    found.add(match[1]!)
+    if (found.size > MAX_PATH_CHECKS) break
+  }
+  const truncated = found.size > MAX_PATH_CHECKS
+  const declared = [...found].slice(0, MAX_PATH_CHECKS)
   if (declared.length === 0) {
     checks.push({
       id: 'artifact_paths_exist',
       kind: 'artifacts',
-      passed: true,
-      detail: '摘要未声明文件路径，跳过产物存在性检查',
+      passed: false,
+      status: 'not_checked',
+      detail: '未识别可检查的绝对路径，产物存在性未检查；相对路径及其他格式未覆盖',
     })
   } else {
     const missing = declared.filter((path) => !pathExists(path))
     checks.push({
       id: 'artifact_paths_exist',
       kind: 'artifacts',
-      passed: missing.length === 0,
+      passed: missing.length === 0 && !truncated,
+      status: missing.length ? 'failed' : truncated ? 'not_checked' : 'passed',
       detail:
         missing.length === 0
-          ? `声明的 ${declared.length} 个路径均存在`
-          : `声明 ${declared.length} 个路径中 ${missing.length} 个不存在：${missing.join('、')}`,
+          ? `已识别的前 ${declared.length} 个绝对路径均存在${truncated ? '；至少还有一个路径未检查' : '；其他格式的路径未覆盖'}`
+          : `已检查 ${declared.length} 个绝对路径中 ${missing.length} 个不存在：${missing.join('、')}${truncated ? '；至少还有一个路径未检查' : '；其他格式的路径未覆盖'}`,
     })
   }
 
   const passedCount = checks.filter((c) => c.passed).length
+  const outcome = checks.some(c => c.status === 'failed') ? 'failed' : checks.some(c => c.status === 'not_checked') ? 'incomplete' : 'checked'
   return {
     executionId: input.executionId,
     checkedAt: Date.now(),
     passed: passedCount === checks.length,
+    outcome,
     passedCount,
     totalCount: checks.length,
     checks,
@@ -94,9 +107,10 @@ export function verifyDelivery(input: VerifyDeliveryInput): DeliveryVerification
 
 /** 核实结论 → completionNotes 前缀 */
 export function formatVerificationPrefix(report: DeliveryVerificationReport): string {
-  return report.passed
-    ? `【交付核实 ${report.passedCount}/${report.totalCount} 通过】`
-    : `【核实未通过 ${report.totalCount - report.passedCount}/${report.totalCount} 项】`
+  if (report.outcome === 'legacy_unverified') return '【历史检查结果待核对】'
+  if (report.outcome === 'incomplete') return '【摘要与路径检查不完整，待核对】'
+  if (report.outcome === 'failed') return '【摘要或路径检查未通过】'
+  return '【摘要与已识别路径存在性检查通过，待验收】'
 }
 
 /**
@@ -133,7 +147,10 @@ export function readDeliveryVerificationReceipt(executionId: string): DeliveryVe
     | undefined
   if (!row) return null
   try {
-    return JSON.parse(row.report) as DeliveryVerificationReport
+    const report = JSON.parse(row.report) as DeliveryVerificationReport
+    // 旧回执曾把跳过的检查算作通过；保留原始记录，但不能继续视为验证通过。
+    if (!report.outcome) return { ...report, passed: false, outcome: 'legacy_unverified' }
+    return report
   } catch {
     return null
   }
