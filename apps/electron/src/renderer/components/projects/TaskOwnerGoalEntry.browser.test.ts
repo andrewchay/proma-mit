@@ -58,7 +58,7 @@ function App() {
 createRoot(document.getElementById('root')).render(<App />);
 `)
   await build({ entryPoints: [entry], outfile: join(directory, 'entry.js'), bundle: true,
-    platform: 'browser', format: 'iife', jsx: 'automatic', absWorkingDir: root,
+    platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.png': 'dataurl' }, absWorkingDir: root,
     nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')],
     alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
   writeFileSync(join(directory, 'input.css'), '@tailwind base; @tailwind components; @tailwind utilities;')
