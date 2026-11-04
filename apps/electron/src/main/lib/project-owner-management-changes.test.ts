@@ -186,19 +186,23 @@ test('Given意图协议 When不完整答案、伪造问题/权限、无变化目
   for (const change of [{ ...revised(), goal: { ...revised().goal, codeSourceAccess: 'workspace' } }, { ...revised(), grant: true }, { kind: 'clarification_answers', questionId: 'a'.repeat(64), answers: {} }, { kind: 'goal_revision', goal: { objective: context.goal.goal.objective, constraints: context.goal.goal.constraints, acceptanceCriteria: context.goal.goal.acceptanceCriteria } }]) expect(() => parseProjectOwnerPlanningResponse({ ...response, change }, current)).toThrow()
 })
 
-test('Given目标已含相同答复 WhenOwner再提问且用户同框确认 Then不造新目标版本但答复后仍自动续做', async () => {
+test('Given目标已含相同答复 When暂停后台后确认并重启 Then不造新目标版本且只自动续做一次', async () => {
   const f = fixture()
   goals.saveProjectOwnerGoalDraft(f.project.id, 1, { objective: '形成产品定位建议', constraints: ['Owner澄清答复（主要服务谁？）：现有用户'] })
-  const grant = f.issue(), stop = startOwnerManagementLoop()
+  const grant = f.issue()
+  let stop = startOwnerManagementLoop()
   try {
     await until(() => Boolean(active(f))); finish(f, 'clarify')
     await until(() => getOwnerManagementConversation(f.project.id).questions.some(item => item.state === 'open'))
     const question = getOwnerManagementConversation(f.project.id).questions[0]!
     sendOwnerManagementMessage({ ...f.message('仍是现有用户，请继续'), expectedGoalRevision: 2 })
     const view = await changed(f, () => ({ kind: 'clarification_answers', questionId: question.id, answers: { audience: '现有用户' } }))
+    await stop()
     const input = decision(view), saved = changes.decideOwnerConversationChange(input)
     expect(saved.goal?.revision).toBe(2)
     expect(changes.decideOwnerConversationChange(input)).toEqual(saved)
+    expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(2)
+    stop = startOwnerManagementLoop()
     await until(() => Boolean(active(f)))
     expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(3)
     await new Promise(resolve => setTimeout(resolve, 30))
@@ -207,7 +211,7 @@ test('Given目标已含相同答复 WhenOwner再提问且用户同框确认 Then
     await until(() => plans.getProjectOwnerPlanDraft(f.project.id)?.state === 'proposed')
     expect(goals.listProjectOwnerGoalHistory(f.project.id)).toHaveLength(2)
     expect(changes.getOwnerConversationChange(f.project.id, view.id).state).toBe('applied')
-  } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+  } finally { await stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
 })
 
 

@@ -4,7 +4,7 @@ import { readOwnerClaimFacts, stripUnsupportedClaims } from './project-owner-cla
 import { createHash } from 'node:crypto'
 import { applyOwnerClarificationAnswers, type AnswerOwnerManagementQuestionRequest, type OwnerManagementQuestion, type ProjectOwnerGoalDraft, type OwnerManagementView } from '@gravitas/shared'
 import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt } from './project-owner-planning-run-service'
-import { readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
+import { OwnerPlanningSourceChangedError, readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
 import { appendOwnerManagementMessage, appendOwnerManagementTrace, recordOwnerManagementAnswer, getOwnerManager, getOwnerManagementView } from './project-owner-management-store'
 import { getProjectOwnerGoalDraft, saveProjectOwnerGoalDraft } from './project-owner-goal-service'
 import { assertLocalActorEnabled, getProjectOwnerPlanDraft } from './project-owner-plan-service'
@@ -44,7 +44,7 @@ function existingAnswer(question: OwnerManagementQuestion): AnswerReceipt | null
 function assertQuestionCurrent(question: OwnerManagementQuestion): void {
   resolveOwnerPlanningTask(question.planningTaskId, true)
   const latest = store.getProjectDb().prepare("SELECT l.planning_task_id FROM project_owner_planning_links l WHERE l.project_id = ? AND json_extract(l.payload, '$.purpose') = 'owner_planning' AND json_extract(l.payload, '$.targetTaskId') IS ? AND (json_extract(l.payload, '$.conversationMessageId') IS NULL OR l.planning_task_id = ? OR EXISTS (SELECT 1 FROM project_owner_management_questions q WHERE q.project_id = l.project_id AND json_extract(q.payload, '$.planningTaskId') = l.planning_task_id)) ORDER BY l.rowid DESC LIMIT 1").get(question.projectId, question.taskId ?? null, question.planningTaskId) as { planning_task_id: string } | undefined
-  if (latest?.planning_task_id !== question.planningTaskId) throw new Error('Owner已有更新的问题或规划请求，不能套用旧答复')
+  if (latest?.planning_task_id !== question.planningTaskId) throw new OwnerPlanningSourceChangedError('Owner已有更新的问题或规划请求，不能套用旧答复')
 }
 export function listOwnerManagementQuestions(projectId: string): OwnerManagementQuestion[] {
   const rows = store.getProjectDb().prepare('SELECT id FROM project_owner_management_questions WHERE project_id = ? ORDER BY rowid DESC LIMIT 50').all(projectId) as { id: string }[]
@@ -67,8 +67,11 @@ export function projectOwnerManagementRunResult(projectId: string, executionId: 
   const receipt = outcome ? getOwnerPlanningRunReceipt(outcome.receiptId) : null
   const manager = getOwnerManager(projectId)
   if (!outcome || !receipt || !manager || receipt.projectId !== projectId || receipt.executionId !== executionId || receipt.purpose !== 'owner_planning') throw new Error('Owner管理运行结论身份不一致')
-  const snapshot = readOwnerPlanningSnapshot(receipt.planningTaskId)
-  if (!snapshot) throw new Error('Owner问题缺少冻结来源')
+  // 旧提示版本仅用于展示失败回执；成功决定和新请求仍需通过严格来源检查。
+  const snapshot = outcome.state === 'failed' && !outcome.employeeDecision && !outcome.qualityDecision
+    ? readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true })
+    : readOwnerPlanningSnapshot(receipt.planningTaskId)
+  if (!snapshot || snapshot.link.projectId !== projectId) throw new Error('Owner问题缺少冻结来源')
   if (outcome.employeeDecision) {
     if (!snapshot.link.conversationMessageId || getProjectOwnerGoalDraft(projectId, snapshot.link.targetTaskId)?.revision !== snapshot.link.goalRevision) return
     const interactions = require('./project-owner-employee-interactions') as typeof import('./project-owner-employee-interactions')
@@ -100,10 +103,14 @@ export function projectOwnerManagementRunResult(projectId: string, executionId: 
     return
   }
   if (outcome.state === 'needs_clarification' && outcome.clarification) {
-    resolveOwnerPlanningTask(receipt.planningTaskId, true)
     const id = digest({ projectId, executionId, receiptId: receipt.id })
     const question: OwnerManagementQuestion = { id, projectId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), conversationId: manager.conversationId, executionId, receiptId: receipt.id, planningTaskId: receipt.planningTaskId, goalRevision: snapshot.link.goalRevision, contextFingerprint: snapshot.link.contextFingerprint, reason: outcome.clarification.reason, questions: outcome.clarification.questions, state: 'open' }
-    assertQuestionCurrent(question)
+    try { assertQuestionCurrent(question) }
+    catch (cause) {
+      if (!(cause instanceof OwnerPlanningSourceChangedError)) throw cause
+      appendOwnerManagementTrace({ projectId, eventId: `${eventId}:stale-question`, ...(question.taskId ? { taskId: question.taskId } : {}), phase: 'owner_response', state: 'blocked', createdAt: Date.now(), detailCode: 'no_update' })
+      return
+    }
     const existing = store.getProjectDb().prepare('SELECT payload, integrity_hash FROM project_owner_management_questions WHERE id = ?').get(id) as PayloadRow | undefined
     if (existing) {
       if (JSON.stringify(parse<OwnerManagementQuestion>(existing)) !== JSON.stringify(question)) throw new Error('Owner问题已有不同记录')
@@ -219,7 +226,12 @@ export function prepareOwnerUnchangedAnswer(event: import('@gravitas/shared').Ow
   const current = getProjectOwnerGoalDraft(event.projectId, event.taskId)
   if (!answer || question.taskId !== event.taskId || answer.goal.revision !== event.sourceRevision) throw new Error('Owner答复事件与回执不一致')
   if (!current || digest(current) !== digest(answer.goal)) return
-  assertQuestionCurrent(question)
+  try { assertQuestionCurrent(question) }
+  catch (cause) {
+    if (!(cause instanceof OwnerPlanningSourceChangedError)) throw cause
+    appendOwnerManagementTrace({ projectId: event.projectId, eventId: `${event.id}:stale-answer`, ...(event.taskId ? { taskId: event.taskId } : {}), phase: 'owner_response', state: 'blocked', createdAt: Date.now(), detailCode: 'no_update' })
+    return
+  }
   const binding = require('./project-owner-runtime-binding') as typeof import('./project-owner-runtime-binding')
   const owner = binding.getOwnerRuntimeBinding(event.projectId)!, plan = getProjectOwnerPlanDraft(event.projectId, event.taskId)
   const link = binding.prepareOwnerPlanning(event.projectId, { requestId: `management:${event.id}`, ...(event.taskId ? { taskId: event.taskId } : {}), expectedBindingRevision: owner.revision, expectedGoalRevision: current.revision, expectedPlanRevision: plan?.revision ?? 0, expectedContextFingerprint: question.contextFingerprint })

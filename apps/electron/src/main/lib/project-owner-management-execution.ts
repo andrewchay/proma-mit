@@ -39,6 +39,24 @@ export function readOwnerExecutionObservation(projectId: string, executionId: st
     ...(review ? { review: { verdict: review.verdict, summary: review.summary.slice(0, 2000), findings: review.findings.slice(0, 8).map(item => `${item.severity}: ${item.description} → ${item.requestedChange}`.slice(0, 1000)) } } : {}),
   } }
 }
+/** 只计算未来的边界，已观察过的运行不会让定时器空转。 */
+export function nextOwnerExecutionObservationDeadline(projectId: string, after: number): number {
+  const row = store.getProjectDb().prepare(`SELECT MIN(deadline) AS deadline FROM (
+    SELECT g.expires_at AS deadline
+    FROM project_owner_execution_commands c
+    JOIN project_owner_execution_grants g ON g.id=c.grant_id AND g.project_id=c.project_id
+    JOIN agent_executions e ON e.id=c.execution_id AND e.owner_command_id=c.id AND e.project_id=c.project_id
+    WHERE c.project_id=? AND g.dispatch_mode='autonomous' AND e.status IN ('queued','running')
+    UNION ALL
+    SELECT COALESCE(e.last_heartbeat_at, e.started_at) + ? AS deadline
+    FROM project_owner_execution_commands c
+    JOIN project_owner_execution_grants g ON g.id=c.grant_id AND g.project_id=c.project_id
+    JOIN agent_executions e ON e.id=c.execution_id AND e.owner_command_id=c.id AND e.project_id=c.project_id
+    WHERE c.project_id=? AND g.dispatch_mode='autonomous' AND e.status='running'
+  ) WHERE deadline>?`).get(projectId, OWNER_EXECUTION_STALL_MS, projectId, after) as { deadline: number | null }
+  return row.deadline ?? Infinity
+}
+
 /** 启动补偿与定时检查复用同一事实身份；无变化不会增加事件或模型请求。 */
 export function scanOwnerExecutionObservations(projectId: string, now = Date.now()): void {
   if (getOwnerManager(projectId)?.status !== 'active' || store.getProjectDb().isTransactionActive()) return

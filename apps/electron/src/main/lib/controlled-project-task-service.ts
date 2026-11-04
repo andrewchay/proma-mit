@@ -460,9 +460,12 @@ export async function startControlledTask(
 export async function startDelegatedOwnerPlanningTask(taskId: string): Promise<ControlledTaskStartResult> {
   const delegation = await import('./project-owner-management-delegation')
   const employeeService = await import('./agent-employee-service')
+  const { findOwnerFollowupFuse } = await import('./project-owner-management-conversation')
   const executionId = transactionResult(() => {
     const previous = delegation.getOwnerManagementClaim(taskId)
     if (previous) return previous.executionId
+    const link = readOwnerPlanningSnapshot(taskId)?.link
+    if (link?.conversationMessageId && findOwnerFollowupFuse(link.projectId, link.conversationMessageId)) throw new Error('同一任务的自动跟进已达到上限，请在项目对话中确认下一步')
     getControlledTaskStartPreview(taskId)
     store.updateTask(taskId, { status: 'pending' })
     const id = employeeService.enqueueControlledPreparedTask(taskId)
