@@ -44,6 +44,8 @@ window.dialogueFixture={render,approvals:()=>approvals,setActionRequests:async()
   try {
     await page.goto(`http://127.0.0.1:${server.port}`)
     await page.getByText('上次讨论保留一页建议。', { exact: true }).waitFor()
+    await page.getByLabel('需要你决定').getByText('需要你选择、输入或确认的事项在这里；项目授权设置也可在此查看。').waitFor()
+    await page.getByLabel('现阶段最需要关注').getByText('这里汇总项目进度、阻塞和成果；需要选择或确认时请查看上方。').waitFor()
     await page.evaluate('window.dialogueFixture.setStaleGrant()')
     await page.evaluate('window.testStaleAssignment()')
     const staleAction = page.getByLabel('团队安排需要重新核对')

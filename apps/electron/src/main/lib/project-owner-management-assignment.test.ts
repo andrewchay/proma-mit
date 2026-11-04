@@ -30,6 +30,7 @@ const ipcHandlers = new Map<string, (event: unknown, request: unknown) => unknow
 const { setHeadlessAgentRunner } = await import('./agent-headless-runner-registry')
 const { listOwnerExecutionAssignmentRuns } = await import('./project-owner-execution-assignment-service')
 const teamAccess = await import('./project-owner-team-workspace-access')
+const { retakeOwnerManagementAssignment } = await import('./project-owner-manual-retake')
 const calls: Array<{ projectId: string; purpose: string; candidates: string[]; executionKinds?: string[]; employeeModes?: Array<{ id: string; executionProfile: string; ownerControlledCompatible?: boolean }> }> = []
 let rejectNextAssignmentProjectId: string | null = null
 let legacyNullScopeProjectId: string | null = null
@@ -473,6 +474,30 @@ test('Given 待审方案的授权事件已消费但没有安排记录 When Owner
     expect(listOwnerExecutionAssignmentRuns(f.subject)).toHaveLength(0)
     expect(calls.filter(item => item.projectId === f.project.id)).toHaveLength(before)
   } finally { delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+})
+
+test('Given 已确认方案和有效管理授权 When 用户手动重新安排 Then 后台消费请求并准备一次新安排', () => {
+  const f = fixture(), grant = authorize(f)
+  try {
+    confirm(f)
+    for (const event of listPendingOwnerManagementEvents(f.project.id)) consumeOwnerManagementEvent(event)
+    expect(retakeOwnerManagementAssignment({ ...f.subject, requestId: randomUUID() })).toEqual({ enqueued: true })
+    reconcileOwnerManagement(f.project.id)
+    const runs = listOwnerExecutionAssignmentRuns(f.subject)
+    expect(runs).toHaveLength(1)
+    expect(runs[0]?.link.requestId).toStartWith('management-assignment:')
+    expect(getOwnerManagementConversation(f.project.id).messages.filter(item => item.kind === 'attention').map(item => item.content)).not.toContain('当前方案或持续管理授权已变化，我已停止使用旧安排条件；请在项目对话中核对最新方案与管理范围。')
+  } finally { delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+})
+
+test('Given 手动重排已排队 When 管理授权在消费前被撤销 Then 不准备新安排', () => {
+  const f = fixture(), grant = authorize(f)
+  confirm(f)
+  for (const event of listPendingOwnerManagementEvents(f.project.id)) consumeOwnerManagementEvent(event)
+  expect(retakeOwnerManagementAssignment({ ...f.subject, requestId: randomUUID() })).toEqual({ enqueued: true })
+  delegation.revokeOwnerManagementDelegation(f.project.id, grant.id)
+  reconcileOwnerManagement(f.project.id)
+  expect(listOwnerExecutionAssignmentRuns(f.subject)).toHaveLength(0)
 })
 
 test('Given 已保存目标与已授权的项目费用边界 When 后台开始管理 Then Owner自动规划并安排团队，等待用户确认执行', async () => {

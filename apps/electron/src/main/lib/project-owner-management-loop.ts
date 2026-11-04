@@ -90,8 +90,9 @@ function handle(event: OwnerManagementEvent): void {
     const plan = getProjectOwnerPlanDraft(event.projectId, event.taskId)
     const delegation = getOwnerManagementDelegation(event.projectId, event.taskId)
     const protocolRetry = event.sourceId?.startsWith('protocol-retry:') === true
-    if (!plan || (protocolRetry ? plan.state !== 'confirmed' : plan.state !== 'proposed') || plan.revision !== event.sourceRevision
-      || delegation.state !== 'active' || (protocolRetry ? !delegation.delegation?.autonomousExecution : delegation.delegation?.id !== event.sourceId)) {
+    const manualRetry = event.sourceId?.startsWith('manual-retry:') === true
+    if (!plan || (protocolRetry || manualRetry ? plan.state !== 'confirmed' : plan.state !== 'proposed') || plan.revision !== event.sourceRevision
+      || delegation.state !== 'active' || (protocolRetry ? !delegation.delegation?.autonomousExecution : !manualRetry && delegation.delegation?.id !== event.sourceId)) {
       appendOwnerManagementMessage({ projectId: event.projectId, eventId: event.id, ...(event.taskId ? { taskId: event.taskId } : {}), role: 'assistant', kind: 'attention', content: '当前方案或持续管理授权已变化，我已停止使用旧安排条件；请在项目对话中核对最新方案与管理范围。' })
       return
     }
