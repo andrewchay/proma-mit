@@ -13,20 +13,24 @@ const directory = mkdtempSync(join(tmpdir(), 'owner-employee-session-'))
 afterAll(() => rmSync(directory, { recursive: true, force: true }))
 const browserTest = existsSync(chromium.executablePath()) ? test : test.skip
 
-browserTest('Given 员工已在项目工作区执行 When 查看只读监控并反馈 Then 不进入员工聊天且问题仅进入Owner草稿', async () => {
+browserTest('Given 员工已在项目工作区执行 When 查看只读监控并反馈或打开后台规划会话 Then 普通监控保留且后台回复引导至项目', async () => {
   writeFileSync(join(directory, 'entry.tsx'), `
 import React from 'react';import {createRoot} from 'react-dom/client';import {Provider,createStore} from 'jotai';
+import {AgentView} from ${JSON.stringify(join(renderer, 'components/agent/AgentView.tsx'))};
 import {ProjectOwnerConversationProgress} from ${JSON.stringify(join(renderer, 'components/projects/ProjectOwnerConversationProgress.tsx'))};
 import {ownerCommandProgressApiAtom} from ${JSON.stringify(join(renderer, 'atoms/owner-command-progress-atoms.ts'))};
 import {currentAgentSessionIdAtom,currentAgentWorkspaceIdAtom,agentStreamingStatesAtom,liveMessagesMapAtom} from ${JSON.stringify(join(renderer, 'atoms/agent-atoms.ts'))};
 import {activeViewAtom} from ${JSON.stringify(join(renderer, 'atoms/active-view.ts'))};
-import {ownerMessageComposersAtom,getOwnerMessageComposer} from ${JSON.stringify(join(renderer, 'atoms/project-owner-management-atoms.ts'))};
-const store=createStore(),subject={projectId:'p'},ok=value=>({ok:true,value});let wrongProject=false,reads=0,sends=0;
+import {ownerConversationNavigationAtom,ownerMessageComposersAtom,getOwnerMessageComposer} from ${JSON.stringify(join(renderer, 'atoms/project-owner-management-atoms.ts'))};
+const store=createStore(),subject={projectId:'p'},ok=value=>({ok:true,value});let wrongProject=false,reads=0,sends=0,carrierReads=0;
 const command={commandId:'command',executionId:'execution',employeeId:'worker',taskId:'task',taskTitle:'项目调研',role:'executor',state:'running',updatedAt:1,acceptanceCriteria:[]};
 store.set(ownerCommandProgressApiAtom,{listOwnerExecutionCommands:async()=>ok([command]),getOwnerAutonomousScheduleStatus:async()=>ok({projectId:'p',state:'running'})});
-window.electronAPI={sendAgentMessage:async()=>{sends++},getAgentSessionSDKMessages:async()=>[{type:'user',uuid:'u1',message:{role:'user',content:[{type:'text',text:'员工冻结任务'}]}},{type:'assistant',uuid:'a1',message:{role:'assistant',content:[{type:'text',text:'正在核查资料与编写成果，**重点**'}]}}],updateSettings:async()=>({}),listAgentSessions:async()=>[{id:'session',projectId:'p',workspaceId:'team-workspace',title:'调研员工会话'},{id:'unrelated',projectId:'other',workspaceId:'other-workspace',title:'无关会话'}],paa:{agentEmployees:{listExecutionsByEntity:async()=>{reads++;return [{id:'execution',projectId:wrongProject?'other':'p',entityType:'task',entityId:'task',agentId:'worker',sessionId:'session'}]}}}};
+window.electronAPI={sendAgentMessage:async()=>{sends++},getAgentSessionSDKMessages:async id=>id==='carrier'?(carrierReads++,[{type:'assistant',message:{content:[{type:'text',text:'{"kind":"conversation_reply","binding":{"contextFingerprint":"internal"},"message":"回复"}'},{type:'text',text:'{"schemaVersion":1,"selectedStepKeys":["step-1"]}'},{type:'text',text:'**svg**'}]}}]):[{type:'user',uuid:'u1',message:{role:'user',content:[{type:'text',text:'员工冻结任务'}]}},{type:'assistant',uuid:'a1',message:{role:'assistant',content:[{type:'text',text:'正在核查资料与编写成果，**重点**'}]}}],updateSettings:async()=>({}),listAgentSessions:async()=>[{id:'carrier',ownerPlanningProjectId:'p',ownerReadOnly:false},{id:'session',projectId:'p',workspaceId:'team-workspace',title:'调研员工会话'},{id:'unrelated',projectId:'other',workspaceId:'other-workspace',title:'无关会话'}],paa:{agentEmployees:{listExecutionsByEntity:async()=>{reads++;return [{id:'execution',projectId:wrongProject?'other':'p',entityType:'task',entityId:'task',agentId:'worker',sessionId:'session'}]}}}};
 window.fixture={overlap:()=>store.set(liveMessagesMapAtom,new Map([['session',[{type:'assistant',uuid:'a1',message:{role:'assistant',content:[{type:'text',text:'正在核查资料与编写成果，**重点**'}]}}]]])),live:()=>{store.set(liveMessagesMapAtom,new Map());store.set(agentStreamingStatesAtom,new Map([['session',{running:true,content:'实时核查第二份资料',toolActivities:[]}]]))},corrupt:()=>{wrongProject=true},snapshot:()=>({session:store.get(currentAgentSessionIdAtom),workspace:store.get(currentAgentWorkspaceIdAtom),view:store.get(activeViewAtom),reads,draft:getOwnerMessageComposer(store.get(ownerMessageComposersAtom),subject).text,sends})};
-createRoot(document.getElementById('root')).render(<Provider store={store}><ProjectOwnerConversationProgress subject={subject}/></Provider>);
+const root=createRoot(document.getElementById('root'));
+window.fixture.openCarrier=()=>root.render(<Provider store={store}><AgentView sessionId="carrier"/></Provider>);
+window.fixture.carrierFacts=()=>({carrierReads,navigation:store.get(ownerConversationNavigationAtom),view:store.get(activeViewAtom)});
+root.render(<Provider store={store}><ProjectOwnerConversationProgress subject={subject}/></Provider>);
 `)
   await build({ entryPoints: [join(directory, 'entry.tsx')], outfile: join(directory, 'entry.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, loader: { '.png': 'dataurl', '.svg': 'dataurl', '.woff': 'dataurl', '.woff2': 'dataurl', '.ttf': 'dataurl' }, logLevel: 'silent' })
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('<div id="root"></div><script src="/entry.js"></script>', { headers: { 'Content-Type': 'text/html' } }), routes: { '/entry.js': () => new Response(Bun.file(join(directory, 'entry.js'))) } })
@@ -60,6 +64,13 @@ createRoot(document.getElementById('root')).render(<Provider store={store}><Proj
     await page.evaluate('window.fixture.corrupt()')
     await page.getByRole('alert').getByText('命令对应的执行会话尚不可用，请刷新后核对', { exact: true }).waitFor()
     expect(await page.getByText('正在核查资料与编写成果', { exact: false }).count()).toBe(0)
+    await page.evaluate('window.fixture.openCarrier()')
+    await page.getByRole('heading', { name: '在项目对话中查看 Owner 回复' }).waitFor()
+    expect(await page.getByText(/contextFingerprint|selectedStepKeys|svg/).count()).toBe(0)
+    await page.getByRole('button', { name: '打开 Owner 项目对话' }).click()
+    expect(await page.evaluate('window.fixture.carrierFacts()')).toMatchObject({
+      carrierReads: 0, navigation: { projectId: 'p' }, view: 'projects',
+    })
     expect(errors).toEqual([])
   } finally { await browser.close(); server.stop(true) }
 }, 20000)

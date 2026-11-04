@@ -27,6 +27,17 @@ export function hasOwnerBusinessSessionEvidence(sessionId: string): boolean {
   return executions.some(execution => hasOwnerBusinessExecutionEvidence(execution.id))
 }
 
+/** 回复、方案与安排都通过规划任务落地，历史会话也可由该关联识别。 */
+export function listOwnerPlanningSessionProjects(): Map<string, string> {
+  const rows = getProjectDb().prepare(`
+    SELECT e.session_id AS sessionId, l.project_id AS projectId
+    FROM agent_executions e
+    JOIN project_owner_planning_links l ON l.planning_task_id = e.entity_id AND l.project_id = e.project_id
+    WHERE e.session_id IS NOT NULL AND e.entity_type = 'task'
+  `).all() as Array<{ sessionId: string; projectId: string }>
+  return new Map(rows.map(row => [row.sessionId, row.projectId]))
+}
+
 export function assertNoOwnerBusinessSession(sessionId: string): void {
   if (hasOwnerBusinessSessionEvidence(sessionId)) {
     preserveOwnerBusinessSessionEvidence(sessionId)
