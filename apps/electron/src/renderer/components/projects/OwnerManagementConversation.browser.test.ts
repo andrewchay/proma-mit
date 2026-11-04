@@ -26,7 +26,7 @@ const manager=projectId=>({schemaVersion:1,projectId,ownerId:'owner-'+projectId,
 const messages=[{id:'prior',projectId:'p',conversationId:'conversation-p',eventId:'event',role:'assistant',kind:'reply',content:'上次讨论保留一页建议。',createdAt:1}];
 const sources={project:{id:'p',title:'项目',description:''},roles:[{key:'research',name:'调研',version:'1.0.0',sourceSha256:'a'.repeat(64),rulesSha256:'b'.repeat(64)}]};
 let plan={projectId:'p',schemaVersion:1,revision:1,planVersion:1,goalRevision:1,goalVersion:1,state:'proposed',actor:'local-user',origin:'generated',sourceRun:{executionId:'raw-run-id',receiptId:'receipt',responseHash:'hash'},savedAt:1,changeReason:'建议',contextFingerprint:'ctx',planFingerprint:'plan',sources,proposal:{projectId:'p',goalVersion:1,mode:'proposal_only',summary:'先形成一页定位建议',assumptions:[],risks:['资料不足时再协商'],steps:[{key:'brief',title:'定位调研',outcome:'一页建议',acceptanceCriteria:['说明取舍'],dependencies:[],roleKey:'research'}]}};
-window.electronAPI={respondPermission:async input=>{approvals.push(input)},paa:{project:{getOwnerManagement:async({projectId})=>ok({manager:manager(projectId),messages:messages.filter(item=>item.projectId===projectId),questions:[],pendingEvents:0,actionRequests:projectId==='p'?actionRequests:[],trace:projectId==='p'?trace:[]}),confirmOwnerTeamWorkspaceAccess:async input=>{workspaceApprovals.push(input);const item={id:'approval-'+workspaceApprovals.length,projectId:input.projectId,conversationId:'conversation-'+input.projectId,eventId:'approval-event-'+workspaceApprovals.length,role:'user',kind:'conversation',teamWorkspaceApproval:{sourceMessageId:input.messageId,workspaceId:input.workspaceId,scopeFingerprint:input.scopeFingerprint},content:'我确认将工作区纳入本项目。',createdAt:7};messages.push(item);listeners.forEach(cb=>cb({projectId:input.projectId,messageId:item.id}));return ok(undefined)},
+window.electronAPI={respondPermission:async input=>{approvals.push(input)},paa:{project:{getOwnerManagement:async({projectId})=>ok({manager:manager(projectId),messages:messages.filter(item=>item.projectId===projectId),questions:[],pendingEvents:0,actionRequests:projectId==='p'?actionRequests:[],trace:projectId==='p'?trace:[],reviewHistory:projectId==='p'?[{id:'review-round',title:'定位调研',reworkOrdinal:0,steps:[{label:'员工交付',detail:'成果版本已保存。'},{label:'独立评审',detail:'评审运行或费用待核对。'},{label:'Owner 决定',detail:'等待独立评审及成果证据通过核对。'}]}]:[]}),confirmOwnerTeamWorkspaceAccess:async input=>{workspaceApprovals.push(input);const item={id:'approval-'+workspaceApprovals.length,projectId:input.projectId,conversationId:'conversation-'+input.projectId,eventId:'approval-event-'+workspaceApprovals.length,role:'user',kind:'conversation',teamWorkspaceApproval:{sourceMessageId:input.messageId,workspaceId:input.workspaceId,scopeFingerprint:input.scopeFingerprint},content:'我确认将工作区纳入本项目。',createdAt:7};messages.push(item);listeners.forEach(cb=>cb({projectId:input.projectId,messageId:item.id}));return ok(undefined)},
 onOwnerManagementChanged:cb=>{listeners.add(cb);return()=>listeners.delete(cb)},
 sendOwnerManagementMessage:async input=>{calls.push(input);let message=messages.find(item=>item.eventId===input.requestId);if(!message){message={id:'m-'+calls.length,projectId:input.projectId,conversationId:input.conversationId,eventId:input.requestId,goalRevision:input.expectedGoalRevision,role:'user',kind:'conversation',content:input.content,...(input.deliveryReference?{deliveryReference:input.deliveryReference}:{}),createdAt:2};messages.push(message)}if(lose){lose=false;throw Error('模拟回包丢失')}return ok(message)},
 getOwnerPlanDraft:async()=>{const captured=structuredClone(plan);if(readGate){const gate=readGate;readGate=null;await gate}return ok(captured)},getOwnerPlanningContext:async()=>ok({goal:goal('p'),sources,fingerprint:'ctx'}),listOwnerPlanHistory:async()=>ok([]),saveOwnerPlanDraft:async()=>{throw Error("禁止手工修改")},
@@ -44,6 +44,14 @@ window.dialogueFixture={render,approvals:()=>approvals,setActionRequests:async()
   try {
     await page.goto(`http://127.0.0.1:${server.port}`)
     await page.getByText('上次讨论保留一页建议。', { exact: true }).waitFor()
+    const historyDisclosure = page.getByText('查看进展与决策依据', { exact: true })
+    await historyDisclosure.click()
+    const history = historyDisclosure.locator('..')
+    expect(await history.getByRole('listitem').allTextContents()).toEqual([
+      '员工交付成果版本已保存。',
+      '独立评审评审运行或费用待核对。',
+      'Owner 决定等待独立评审及成果证据通过核对。',
+    ])
     await page.getByLabel('需要你决定').getByText('需要你选择、输入或确认的事项在这里；项目授权设置也可在此查看。').waitFor()
     await page.getByLabel('现阶段最需要关注').getByText('这里汇总项目进度、阻塞和成果；需要选择或确认时请查看上方。').waitFor()
     await page.evaluate('window.dialogueFixture.setStaleGrant()')

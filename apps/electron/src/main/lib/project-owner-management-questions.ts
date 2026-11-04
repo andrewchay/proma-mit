@@ -1,3 +1,4 @@
+import { listOwnerReviewHistory } from './project-owner-review-history'
 import { applyOwnerQualityDecision } from './project-owner-quality-actions'
 import { readOwnerClaimFacts, stripUnsupportedClaims } from './project-owner-claim-audit'
 import { createHash } from 'node:crypto'
@@ -56,7 +57,8 @@ export function listOwnerManagementQuestions(projectId: string): OwnerManagement
 }
 export function getOwnerManagementConversation(projectId: string): OwnerManagementView {
   const changes = require('./project-owner-management-changes') as typeof import('./project-owner-management-changes')
-  return { ...getOwnerManagementView(projectId), questions: listOwnerManagementQuestions(projectId), changes: changes.listOwnerConversationChanges(projectId) }
+  const reviewHistory = listOwnerReviewHistory(projectId)
+  return { ...getOwnerManagementView(projectId), ...(reviewHistory.length ? { reviewHistory } : {}), questions: listOwnerManagementQuestions(projectId), changes: changes.listOwnerConversationChanges(projectId) }
 }
 
 /** 仅从真实处理结论重建问题，不接受Renderer提供问题文本或模型自述的授权。 */
