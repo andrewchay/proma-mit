@@ -5,6 +5,16 @@ export function designDeliveryAnchor(messageId: string, stepKey: string, artifac
   return `owner-design-${encodeURIComponent(JSON.stringify([messageId, stepKey, artifactHash]))}`
 }
 
+/** 交付或授权入口可能位于折叠的对话历史里。 */
+export function revealOwnerHistoryTarget(id: string): void {
+  const target = document.getElementById(id)
+  if (!target) return
+  const history = target.closest<HTMLDetailsElement>('details[data-owner-earlier-messages]')
+  if (history) history.open = true
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  target.focus({ preventScroll: true })
+}
+
 /** 目录仅指向已保存的交付消息；预览和引用仍使用原成果内容与标识。 */
 export function OwnerDesignHistory({ messages }: { messages: readonly OwnerManagementMessage[] }): React.ReactElement | null {
   const versions = messages.flatMap(message => message.role === 'assistant' && message.kind === 'delivery'
@@ -14,10 +24,7 @@ export function OwnerDesignHistory({ messages }: { messages: readonly OwnerManag
     <summary className="cursor-pointer text-sm font-medium">设计成果版本 · {versions.length}</summary>
     <p className="mt-2 text-xs text-muted-foreground">选择已交付的版本查看原文、预览和修改意见；历史版本不会自动覆盖当前成果。</p>
     <ol className="mt-3 max-h-64 space-y-2 overflow-y-auto">{versions.map(({ message, item }) => <li key={JSON.stringify([message.id, item.stepKey, item.artifactHash])}>
-      <button type="button" className="w-full rounded-lg bg-muted/50 p-3 text-left text-sm hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring" onClick={() => {
-        const target = document.getElementById(designDeliveryAnchor(message.id, item.stepKey, item.artifactHash))
-        target?.scrollIntoView({ behavior: 'smooth', block: 'center' }); target?.focus({ preventScroll: true })
-      }}>
+      <button type="button" className="w-full rounded-lg bg-muted/50 p-3 text-left text-sm hover:bg-muted focus-visible:outline focus-visible:outline-2 focus-visible:outline-ring" onClick={() => revealOwnerHistoryTarget(designDeliveryAnchor(message.id, item.stepKey, item.artifactHash))}>
         <span className="block font-medium">{item.title}</span>
         <span className="mt-1 block text-xs text-muted-foreground">{new Date(message.createdAt).toLocaleString()} · 方案版本 {message.delivery!.planVersion} · {item.artifactHash.slice(0, 12)}</span>
       </button>

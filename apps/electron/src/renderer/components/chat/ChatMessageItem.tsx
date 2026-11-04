@@ -10,6 +10,7 @@
  */
 
 import * as React from 'react'
+import { formatMessageTime } from '@/lib/utils'
 import { useAtomValue } from 'jotai'
 import { AlertCircle, Pencil, RotateCcw, Trash2 } from 'lucide-react'
 import {
@@ -44,27 +45,8 @@ import { ChatToolActivityIndicator } from './ChatToolActivityIndicator'
 // 重导出供外部使用
 export type { InlineEditSubmitPayload } from './InlineEditForm'
 
-/**
- * 格式化消息时间（简略写法）
- * - 今年：02/12 14:30
- * - 跨年：2025/02/12 14:30
- */
-export function formatMessageTime(timestamp: number): string {
-  const date = new Date(timestamp)
-  const now = new Date()
+export { formatMessageTime } from '@/lib/utils'
 
-  const hh = date.getHours().toString().padStart(2, '0')
-  const mm = date.getMinutes().toString().padStart(2, '0')
-  const month = (date.getMonth() + 1).toString().padStart(2, '0')
-  const day = date.getDate().toString().padStart(2, '0')
-  const time = `${hh}:${mm}`
-
-  if (date.getFullYear() === now.getFullYear()) {
-    return `${month}/${day} ${time}`
-  }
-
-  return `${date.getFullYear()}/${month}/${day} ${time}`
-}
 
 interface ChatMessageItemProps {
   /** 消息数据 */

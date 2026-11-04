@@ -496,7 +496,7 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
     await new Promise(resolve => setTimeout(resolve, 100))
     expect(getOwnerManagementConversation(project.id).messages.filter(message => message.teamWorkspaceProposal)).toHaveLength(1)
     await teamScope.getByRole('button', { name: '允许本项目使用这个团队工作区', exact: true }).click()
-    await page.getByText('范围已确认，Owner正在继续核对团队安排。', { exact: true }).waitFor()
+    await page.getByText('工作区范围已确认。', { exact: true }).waitFor()
     await page.getByLabel('Owner方案摘要').getByText(options.proposalSummary, { exact: true }).waitFor().catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
     // 自主管理委托包含方案决策与派工；方案摘要是进度信息，不再要求用户批准普通方案或再次开工。
     expect(calls.slice(callStart)).toContain('owner_planning')
