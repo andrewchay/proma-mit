@@ -1271,7 +1271,7 @@ function ProjectDetail({
             <summary className="cursor-pointer text-sm font-medium text-muted-foreground">任务与项目详情</summary>
             {advancedDetailsOpen && <div className="mt-4">
       {/* 项目操作栏 */}
-      <div className="flex items-center gap-4 px-6 py-4 border-b">
+      <div className="flex flex-wrap items-start justify-between gap-3 px-3 py-3">
         <div className="flex-1">
           {isEditingProject ? (
             <div className="space-y-2">
@@ -1293,9 +1293,11 @@ function ProjectDetail({
           ) : (
             <p className="text-sm text-muted-foreground">{project.description}</p>
           )}
-          <button onClick={() => void handleCreateTemplate()} className="text-xs px-3 py-1.5 rounded border hover:bg-muted transition-colors" title="将当前项目结构保存为模板">存为模板</button>
         </div>
-        <div className="flex items-center gap-2">
+        <details className="rounded-lg bg-muted/40 px-3 py-2 text-sm">
+          <summary className="cursor-pointer font-medium">项目操作</summary>
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button onClick={() => void handleCreateTemplate()} className="text-xs px-3 py-1.5 rounded border hover:bg-muted transition-colors" title="将当前项目结构保存为模板">存为模板</button>
           {/* 编辑项目按钮 */}
           {isEditingProject ? (
             <>
@@ -1379,16 +1381,17 @@ function ProjectDetail({
               </button>
             )
           })}
-        </div>
+          </div>
+        </details>
       </div>
 
       {/* 详情标签 */}
-      <div className="flex gap-1 px-6 pt-3 border-b">
+      <div className="flex flex-wrap gap-1 px-3 pt-2 border-b" aria-label="项目详情分类">
         {([
           { key: 'pilot', label: '概览' },
           { key: 'web-watch', label: '外网扫描' },
-          { key: 'tasks', label: '工作 / Tasks' },
-          { key: 'chain', label: '治理与交付详情' },
+          { key: 'tasks', label: '任务' },
+          { key: 'chain', label: '交付详情' },
           { key: 'knowledge', label: '知识' },
           { key: 'workspaces', label: '工作空间' },
           { key: 'notes', label: '会议纪要' },
@@ -1402,7 +1405,7 @@ function ProjectDetail({
           <button
             key={tab.key}
             onClick={() => setDetailTab(tab.key)}
-            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+            className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
               detailTab === tab.key
                 ? 'border-primary text-primary'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
