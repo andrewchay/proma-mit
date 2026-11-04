@@ -213,7 +213,7 @@ function evaluate(projectId: string, now = Date.now()): Evaluation {
         try { action = readOwnerQualityAction(review.reviewerCommandId) }
         catch (cause) { return { status: status(projectId, 'stale', cause instanceof Error ? cause.message : 'Owner质量决定无效', { ...details, taskId: task.id, nextAction: 'await_owner_quality' }) } }
         if (!action) return { status: status(projectId, 'waiting', '完整成果及独立检查已就绪，等待Owner质量判断；无需用户验收子任务', { ...details, taskId: task.id, role: 'reviewer', reworkOrdinal, nextAction: 'await_owner_quality' }) }
-        if (action.state !== 'rework_authorized') return { status: status(projectId, 'waiting', action.detail, { ...details, taskId: task.id, reworkOrdinal, nextAction: 'await_owner_quality' }) }
+        if (action.state !== 'rework_authorized') return { status: status(projectId, 'waiting', action.detail, { ...details, taskId: task.id, reworkOrdinal, nextAction: action.state === 'escalated' || action.state === 'blocked' ? 'human_decision' : 'await_owner_quality' }) }
         latestApproved = undefined
         continue
       }

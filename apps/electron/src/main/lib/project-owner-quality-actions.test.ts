@@ -34,7 +34,7 @@ const rendererPlan = await import('../../renderer/atoms/project-owner-plan-atoms
 const rendererGoal = await import('../../renderer/atoms/project-owner-goal-atoms')
 const ipcHandlers = new Map<string, (event: unknown, request: unknown) => unknown>()
 registerProjectOwnerExecutionIpcHandlers({ handle: (channel, handler) => { ipcHandlers.set(channel, handler) } })
-interface Scenario { fencedReview?: boolean; missingReviewQuote?: 'verbatim' | 'paraphrase'; queueOnly?: boolean; extraQualityCriteria?: boolean; omitQualityKind?: boolean; invalidQualityQuote?: boolean; rework?: boolean; ownerDefect?: boolean; dependent?: boolean; hold?: boolean; maxRework?: number; legacy?: boolean; development?: boolean; validationFails?: boolean; durableStartIntent?: boolean; emptyReview?: boolean; localConfigurationError?: string; localConfigurationRuntimeResult?: boolean; localConfigurationNonZeroUsage?: boolean }
+interface Scenario { escalate?: boolean; fencedReview?: boolean; missingReviewQuote?: 'verbatim' | 'paraphrase'; queueOnly?: boolean; extraQualityCriteria?: boolean; omitQualityKind?: boolean; invalidQualityQuote?: boolean; rework?: boolean; ownerDefect?: boolean; dependent?: boolean; hold?: boolean; maxRework?: number; legacy?: boolean; development?: boolean; validationFails?: boolean; durableStartIntent?: boolean; emptyReview?: boolean; localConfigurationError?: string; localConfigurationRuntimeResult?: boolean; localConfigurationNonZeroUsage?: boolean }
 interface Trace { role: string; taskId: string; round: number; prompt: string }
 const scenarios = new Map<string, Scenario>(), traces = new Map<string, Trace[]>()
 const pending = new Map<string, { finish: () => void; executionId: string }>()
@@ -103,13 +103,13 @@ beforeAll(async () => {
       return
     }
     const delivery = conversation.deliveryReview
-    if (conversation.deliveryFeedback) {
+    if (conversation.deliveryFeedback || (scenario.escalate && !conversation.executionObservation)) {
       const feedback = conversation.deliveryFeedback
       const roleKey = current.context.sources.roles[0]!.key
       const response = { schemaVersion: 1, kind: 'plan_proposal', binding: { projectId: execution.projectId, goalVersion: current.context.goal.goal.goalVersion, contextFingerprint: current.context.fingerprint }, proposal: {
         summary: '在原交付基础上补充用户指定的目标用户分析，并保留原有结论依据', assumptions: [], risks: [],
-        steps: [{ key: 'revise-delivery', title: '按反馈修订定位建议', outcome: '交付补充目标用户分析的新版建议', acceptanceCriteria: feedback.acceptanceCriteria, dependencies: [], roleKey }],
-        deliveryFeedbackAssessment: { messageId: feedback.messageId, artifactHash: feedback.artifactHash, ...(feedback.stepKey ? { stepKey: feedback.stepKey } : {}), summary: '本次修改针对已验收成果的目标用户分析补充', changes: feedback.acceptanceCriteria.map(criterion => ({ criterion, disposition: 'addressed', proposedChange: '在新版中补充对应分析并保留可核对依据' })), authorizationImpact: 'within_confirmed_boundary', authorizationRationale: '修改仍在原目标和交付边界内；旧执行许可不会沿用，需确认本次方案后再执行' },
+        steps: [{ key: 'revise-delivery', title: '按反馈修订定位建议', outcome: '交付补充目标用户分析的新版建议', acceptanceCriteria: feedback?.acceptanceCriteria ?? ['明确目标范围与受众依据'], dependencies: [], roleKey }],
+        ...(feedback ? { deliveryFeedbackAssessment: { messageId: feedback.messageId, artifactHash: feedback.artifactHash, ...(feedback.stepKey ? { stepKey: feedback.stepKey } : {}), summary: '本次修改针对已验收成果的目标用户分析补充', changes: feedback.acceptanceCriteria.map(criterion => ({ criterion, disposition: 'addressed', proposedChange: '在新版中补充对应分析并保留可核对依据' })), authorizationImpact: 'within_confirmed_boundary', authorizationRationale: '修改仍在原目标和交付边界内；旧执行许可不会沿用，需确认本次方案后再执行' } } : {}),
       } }
       log.push({ role: 'owner_feedback', taskId: current.context.conversation?.tasks[0]?.id ?? '', round: 0, prompt: current.request.userPrompt })
       callbacks.onComplete([], { runtimeResult: { type: 'result', subtype: 'success', session_id: execution.sessionId, finish_reason: 'stop', result: JSON.stringify(response), owner_planning_usage: { inputTokens: 10, outputTokens: 20, cacheReadTokens: null, cacheWriteTokens: null }, usage: { input_tokens: 10, output_tokens: 20 } } })
@@ -122,7 +122,7 @@ beforeAll(async () => {
     log.push({ role: delivery?.qualityDecisionVersion ? 'owner_quality' : 'owner_analysis', taskId: observed.businessTaskId, round: artifactRound, prompt: current.request.userPrompt })
     const responseBinding = { projectId: execution.projectId, goalVersion: current.context.goal.goal.goalVersion, contextFingerprint: current.context.fingerprint }
     const defect = Boolean(scenario.rework && artifactRound === 0)
-    const decision = { reviewerCommandId: observed.commandId, artifactHash, verdict: defect ? 'rework' : 'accept', reason: defect ? '受众依据仍缺，不能只看格式通过' : '已按准确范围标准核对完整成果与独立检查', criteria: [{ criterion: delivery?.developmentArtifact ? '代码输出固定42' : '明确目标范围与受众依据', status: defect ? 'not_met' : 'met', evidence: defect ? '正文未说明受众依据' : '范围与依据对应', quote: scenario.invalidQualityQuote ? 'var bestKey = \'best-score-2048\';' : artifactContent }], findings: defect ? [{ severity: 'high', description: '受众依据未交代', requestedChange: '补充受众依据并保留明确范围' }] : [] }
+    const decision = { reviewerCommandId: observed.commandId, artifactHash, verdict: scenario.escalate && !log.some(item => item.role === 'owner_feedback') ? 'escalate' : defect ? 'rework' : 'accept', reason: defect ? '受众依据仍缺，不能只看格式通过' : '已按准确范围标准核对完整成果与独立检查', criteria: [{ criterion: delivery?.developmentArtifact ? '代码输出固定42' : '明确目标范围与受众依据', status: defect ? 'not_met' : 'met', evidence: defect ? '正文未说明受众依据' : '范围与依据对应', quote: scenario.invalidQualityQuote ? 'var bestKey = \'best-score-2048\';' : artifactContent }], findings: defect ? [{ severity: 'high', description: '受众依据未交代', requestedChange: '补充受众依据并保留明确范围' }] : [] }
     if (scenario.extraQualityCriteria && delivery?.qualityDecisionVersion === 1) decision.criteria.push({ criterion: '明确范围', status: 'met', evidence: '额外已满足项目标准', quote: artifactContent })
     const response = delivery?.qualityDecisionVersion === 1 ? { schemaVersion: 1, kind: 'quality_decision', binding: responseBinding, messageId: conversation.throughMessageId, message: '已按完整成果逐项判断，待服务核验决定。', decision } : { schemaVersion: 1, kind: 'conversation_reply', binding: responseBinding, messageId: conversation.throughMessageId, message: '成果已收到，等待独立检查和质量判断。' }
     const { kind: _kind, ...withoutKind } = response
@@ -168,7 +168,7 @@ async function fixture(scenario: Scenario = {}) {
   const subject = { projectId: project.id }, input = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: steps.map(item => item.key), executionKind: scenario.development ? 'development' : 'controlled', ...(!scenario.development ? { textDeliveryVersion: 1 } : { developmentScope: { workspaceId: workspace.id, targetPaths: ['src/solution.cjs'], allowedPaths: ['src'], verificationCommands: ['node src/verify.cjs'] } }), ...(!scenario.legacy ? { qualityManagementVersion: 1 } : {}), employeeRuntimeVersion: 2, executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id, roleAssignments: [{ roleKey, employeeId: executor.id }], workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1_000_000, maxRuns: 8, maxRework: scenario.maxRework ?? 1, expiresAt: Date.now() + 3600000, changeReason: '测试质量委托' }
   const pv = prep.previewOwnerExecutionPreparation(subject, input), saved = prep.saveOwnerExecutionPreparation(subject, input, pv.previewFingerprint)
   const materialInput = { requestId: randomUUID(), expectedMaterializationRevision: 0, expectedPreparationId: saved.id, expectedPreparationRevision: saved.revision, expectedPreparationHash: saved.integrityHash, expectedPolicyRevision: saved.policyRevision }
-  const permissionInput = { ...subject, requestId: randomUUID(), maxRequests: 12, maxCostMicros: 15_000_000, expiresAt: Date.now() + 3600000 }, permissionPreview = delegation.previewOwnerManagementDelegation(permissionInput)
+  const permissionInput = { ...subject, requestId: randomUUID(), maxRequests: 12, maxCostMicros: 15_000_000, ...(scenario.escalate ? { autonomousExecution: true } : {}), expiresAt: Date.now() + 3600000 }, permissionPreview = delegation.previewOwnerManagementDelegation(permissionInput)
   delegation.confirmOwnerManagementDelegation({ input: permissionInput, previewHash: permissionPreview.previewHash })
   const consumeInitialEvents = async () => {
     const managementStore = await import('./project-owner-management-store')
@@ -565,6 +565,39 @@ test('GivenOwner反馈修订方案 WhenRenderer确认Atom经正式IPC启动 Then
     expect(traces.get(f.project.id)!.filter(item => item.role === 'executor')).toHaveLength(priorExecutorRuns + 1)
     expect(actionRows(f.project.id).slice(-1).map(action => action.state)).toEqual(['accepted'])
   } finally { f.stop() }
+}, 15000)
+
+test.each([false, true])('Given旧批次因质量问题待协商 When用户回复修订且费用待核对=%s Then依据旧账本决定是否续派', async (unsettled) => {
+  const f = await fixture({ escalate: true })
+  try {
+    await until(() => actionRows(f.project.id).some(action => action.state === 'escalated'), f.project.id)
+    expect(scheduler.getOwnerAutonomousScheduleStatus(f.project.id).nextAction).toBe('human_decision')
+    const db = store.getProjectDb()
+    if (unsettled) {
+      db.prepare("UPDATE project_owner_execution_request_reservations SET state='needs_reconcile' WHERE command_id IN (SELECT id FROM project_owner_execution_commands WHERE grant_id=?)").run(f.grant.grantId)
+    }
+    const { getOwnerManager } = await import('./project-owner-management-store')
+    const subject = { projectId: f.project.id }
+    sendOwnerManagementMessage({ ...subject, conversationId: getOwnerManager(f.project.id)!.conversationId,
+      requestId: randomUUID(), expectedGoalRevision: 1, content: '请保留旧成果，并在原目标内补充核验。' })
+    if (unsettled) {
+      await until(() => Boolean(db.prepare("SELECT id FROM project_owner_execution_start_intents WHERE project_id=? AND recovery_status='needs_attention'").get(f.project.id)), f.project.id)
+      expect(executionGrants.listOwnerExecutionGrantHistory(subject).map(item => item.state)).toEqual(['active'])
+      return
+    }
+    await until(() => executionGrants.getOwnerExecutionGrant(subject)?.grantId !== f.grant.grantId, f.project.id)
+    const grant = executionGrants.getOwnerExecutionGrant(subject)!
+    expect(grant.materializationId).not.toBe(f.grant.materializationId)
+    expect(executionGrants.listOwnerExecutionGrantHistory(subject).map(item => item.state)).toEqual(['paused', 'active'])
+    expect(actionRows(f.project.id)[0]).toMatchObject({ grantId: f.grant.grantId, state: 'escalated' })
+    const intent = db.prepare("SELECT id FROM project_owner_execution_start_intents WHERE project_id=? AND grant_id=? AND state='completed'").get(f.project.id, grant.grantId) as { id: string } | undefined
+    expect(intent).toBeDefined()
+    const start = await import('./project-owner-execution-start-intent')
+    expect((await start.resumeOwnerExecutionStartIntent(intent!.id, subject)).grantId).toBe(grant.grantId)
+    await until(() => actionRows(f.project.id).some(action => action.grantId === grant.grantId && action.state === 'accepted'), f.project.id)
+    await until(() => Boolean(db.prepare("SELECT id FROM project_owner_management_messages WHERE project_id=? AND event_id LIKE ? AND json_extract(payload,'$.kind')='delivery'")
+      .get(f.project.id, `owner-delivery:${grant.grantId}:%`)), f.project.id)
+  } finally { await f.stop() }
 }, 15000)
 
 test('Given代码任务交付且白名单验证成功 WhenReviewer与Owner检查同一冻结快照 ThenOwner验收并解除依赖', async () => {

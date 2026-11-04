@@ -28,7 +28,7 @@ function acceptedDeliveryReference(messages: readonly OwnerManagementMessage[], 
 function progressLabel(state: string | undefined, nextAction: string | undefined): string {
   if (nextAction === 'await_business_acceptance') return '成果已准备好，等待你审阅。'
   if (nextAction === 'await_owner_quality') return 'Owner 正在核对成果与质量依据。'
-  if (nextAction === 'human_decision') return 'Owner 遇到需要你决定的问题，正在整理原因和建议。'
+  if (nextAction === 'human_decision') return 'Owner 已暂停推进，请查看问题与处理建议。'
   if (nextAction === 'rework' || nextAction === 'review' || nextAction === 'execute') return 'Owner 正在组织团队继续推进。'
   if (state === 'running' || state === 'ready') return 'Owner 正在组织团队推进目标。'
   if (state === 'paused') return '当前工作已暂停。'

@@ -11,6 +11,9 @@ import { confirmOwnerExecutionGrantRevoke, getOwnerExecutionGrant, previewOwnerE
 import { appendOwnerManagementMessage, getOwnerManagementMessage, getOwnerManager, recordOwnerManagementStartAccepted, recordOwnerManagementStartBlocked } from './project-owner-management-store'
 import { getPilotPolicy } from './project-pilot-policy'
 import { getOwnerManagementDelegation } from './project-owner-management-delegation'
+import { getOwnerPlanningRunReceipt } from './project-owner-planning-run-service'
+import { readOwnerPlanningSnapshot } from './project-owner-planning-source'
+import { readOwnerQualityActionByExecution } from './project-owner-quality-actions'
 
 interface IntentRow { id: string; project_id: string; task_id: string | null; payload: string; integrity_hash: string; state: string; grant_id: string | null; created_at: number; recovery_status: string }
 const key = (subject: ProjectOwnerGoalSubject) => subject.taskId ?? null
@@ -138,6 +141,41 @@ function supersedeDeliveredFeedbackBatch(subject: ProjectOwnerGoalSubject, plan:
     if (closed.state !== 'paused') throw new Error('原交付授权未能安全暂停；修订工作尚未开始')
   } else if (!['paused', 'archived'].includes(grant.state)) return false
   return true
+}
+
+/** 旧成果停在待协商时没有正式交付回执，以原批次的质量决定和后续用户消息核验修订来源。 */
+function supersedeEscalatedBatch(subject: ProjectOwnerGoalSubject, plan: ProjectOwnerPlanDraft, previous: OwnerTaskMaterializationRecord): boolean {
+  const source = previous.preview.preparation.source
+  if (plan.origin !== 'generated' || !plan.sourceRun || plan.goalRevision !== source.goalRevision) return false
+  const receipt = getOwnerPlanningRunReceipt(plan.sourceRun.receiptId)
+  const planning = receipt && readOwnerPlanningSnapshot(receipt.planningTaskId)
+  if (!planning?.link.conversationMessageId || planning.link.planRevision !== source.planRevision) return false
+  const message = getOwnerManagementMessage(subject.projectId, planning.link.conversationMessageId)
+  if (!message || message.role !== 'user' || message.kind !== 'conversation'
+    || message.taskId !== subject.taskId || message.goalRevision !== plan.goalRevision) return false
+
+  const grant = getOwnerExecutionGrant(subject)
+  if (!grant || grant.materializationId !== previous.id || grant.materializationIntegrityHash !== previous.integrityHash
+    || grant.dispatchMode !== 'autonomous') return false
+  const db = getProjectDb()
+  const rows = db.prepare(`
+    SELECT q.owner_execution_id FROM project_owner_quality_actions q
+    JOIN project_owner_execution_commands c ON c.id=q.reviewer_command_id AND c.grant_id=q.grant_id
+    WHERE q.project_id=? AND q.grant_id=? AND q.created_at<=? AND json_extract(q.payload,'$.state')='escalated'
+      AND NOT EXISTS (
+        SELECT 1 FROM project_owner_execution_commands newer
+        WHERE newer.grant_id=q.grant_id AND newer.source_task_id=q.task_id AND newer.rework_ordinal>c.rework_ordinal
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM project_owner_quality_actions newer
+        WHERE newer.grant_id=q.grant_id AND newer.task_id=q.task_id AND newer.rowid>q.rowid
+      )
+  `).all(subject.projectId, grant.grantId, message.createdAt) as { owner_execution_id: string }[]
+  if (!rows.some(row => readOwnerQualityActionByExecution(row.owner_execution_id)?.state === 'escalated')) return false
+  if (grant.state !== 'active') return grant.state === 'paused' || grant.state === 'archived'
+  const preview = previewOwnerExecutionGrantRevoke(subject, { grantId: grant.grantId })
+  if (preview.blockers.length) throw new Error(`旧批次的执行或费用尚未收敛，不能启动修订：${preview.blockers.join('；')}`)
+  return confirmOwnerExecutionGrantRevoke(subject, { grantId: grant.grantId, confirmedFingerprint: preview.fingerprint }).state === 'paused'
 }
 
 /** 新目标已获自主授权时追加新批次；旧任务、成果和账本保留，活动或未知费用仍禁止替换。 */
@@ -294,7 +332,7 @@ export function resumeOwnerExecutionStartIntent(intentId: string, expectedSubjec
     const materializationView = getOwnerTaskMaterialization(subject)
     const previousMaterialization = materializationView.materialization
     const replacingPreviousBatch = Boolean(previousMaterialization && previousMaterialization.input.requestId !== `owner-start:${intent.intentId}`
-      && (supersedeDeliveredFeedbackBatch(subject, plan, previousMaterialization.id) || supersedePreviousGoalBatch(subject, plan, previousMaterialization)))
+      && (supersedeDeliveredFeedbackBatch(subject, plan, previousMaterialization.id) || supersedePreviousGoalBatch(subject, plan, previousMaterialization) || supersedeEscalatedBatch(subject, plan, previousMaterialization)))
     const input = getConfirmedPreparationInput(intent, plan)
     const preparationView = getOwnerExecutionPreparation(subject)
     let preparation = preparationView.preparation
