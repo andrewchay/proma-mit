@@ -22,6 +22,26 @@ const PLATFORM_LABEL: Record<NewMediaPlatform, string> = {
   'wechat-official-account': '公众号',
 }
 
+const ACTION_STATUS: Record<NewMediaControlledAction['status'], string> = {
+  pending_approval: '待审批',
+  approved: '待执行',
+  rejected: '已拒绝',
+  executing: '执行中',
+  executed: '已执行',
+  failed: '执行失败',
+  simulated: '已模拟',
+}
+
+const HANDOFF_STATUS: Record<XiaohongshuHandoff['status'], string> = {
+  draft_ready: '待导出交付包',
+  handed_off: '待确认发布',
+  user_confirmed_published: '已由用户确认发布',
+}
+
+function needsAction(action: NewMediaControlledAction): boolean {
+  return action.status === 'pending_approval' || action.status === 'approved' || action.status === 'failed'
+}
+
 export function NewMediaModuleView(): React.ReactElement {
   const [subView, setSubView] = React.useState<SubView>('content')
   const [drafts, setDrafts] = React.useState<NewMediaContentDraft[]>([])
@@ -39,6 +59,18 @@ export function NewMediaModuleView(): React.ReactElement {
   const [sourceText, setSourceText] = React.useState('')
   const [loading, setLoading] = React.useState(false)
   const [agentEnabled, setAgentEnabled] = React.useState(false)
+
+  const actionToFocus = React.useRef<string | null>(null)
+
+  React.useLayoutEffect(() => {
+    if (subView !== 'outbound' || !actionToFocus.current) return
+    const target = document.getElementById(`outbound-${actionToFocus.current}`)
+    actionToFocus.current = null
+    target?.focus()
+  }, [subView])
+
+  const pendingActions = actions.filter(needsAction)
+  const pastActions = actions.filter((action) => !needsAction(action))
 
   const refresh = React.useCallback(async () => {
     setLoading(true)
@@ -168,13 +200,59 @@ export function NewMediaModuleView(): React.ReactElement {
               {drafts.map((draft) => <article key={draft.id} className="rounded-2xl bg-background p-4 shadow-sm">
                 <div className="mb-3 text-xs text-foreground/45">{new Date(draft.createdAt).toLocaleString()}</div>
                 <p className="mb-4 line-clamp-3 text-sm">{draft.sourceText}</p>
-                <div className="space-y-2">{Object.entries(draft.platformCopies).map(([platform, copy]) => copy && <div key={platform} className="rounded-xl bg-muted/50 p-3">
-                  <div className="flex items-center justify-between gap-2"><strong className="text-sm">{PLATFORM_LABEL[platform as NewMediaPlatform]}</strong>{platform === 'xiaohongshu' ? <button onClick={() => void prepareHandoff(draft.id)} className="text-xs text-primary hover:underline">准备官方发布交接</button> : <button onClick={() => void requestPublish(draft, platform as NewMediaPlatform)} className="text-xs text-primary hover:underline">排程并创建审批</button>}</div>
-                  <div className="mt-1 text-sm">{copy.title}</div>
-                </div>)}</div>
+                <div className="space-y-2">
+                  {(Object.keys(PLATFORM_LABEL) as NewMediaPlatform[]).map((platform) => {
+                    const copy = draft.platformCopies[platform]
+                    if (!copy) return null
+                    const handoff = platform === 'xiaohongshu'
+                      ? handoffs.find((item) => item.draftId === draft.id)
+                      : undefined
+                    const action = platform === 'wechat-official-account'
+                      ? actions.reduce<NewMediaControlledAction | undefined>((latest, item) =>
+                        item.kind === 'publish' && item.targetId === draft.id && item.platform === platform &&
+                          (!latest || item.requestedAt > latest.requestedAt) ? item : latest, undefined)
+                      : undefined
+                    const status = handoff ? HANDOFF_STATUS[handoff.status] : action ? ACTION_STATUS[action.status] : '草稿'
+                    return (
+                      <div key={platform} className="rounded-xl bg-muted/50 p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <strong className="text-sm">{PLATFORM_LABEL[platform]}</strong>
+                            <span className="text-xs text-muted-foreground">{status}</span>
+                          </div>
+                          {platform === 'xiaohongshu' ? (
+                            <button className="text-xs text-primary hover:underline" onClick={() => {
+                              if (handoff) document.getElementById('xiaohongshu-handoffs')?.focus()
+                              else void prepareHandoff(draft.id)
+                            }}>
+                              {handoff ? '查看交接' : '准备官方发布交接'}
+                            </button>
+                          ) : action ? (
+                            <button className="text-xs text-primary hover:underline" onClick={() => {
+                              actionToFocus.current = action.id
+                              setSubView('outbound')
+                            }}>查看审批与回执</button>
+                          ) : (
+                            <button className="text-xs text-primary hover:underline" onClick={() => void requestPublish(draft, platform)}>
+                              排程并创建审批
+                            </button>
+                          )}
+                        </div>
+                        <div className="mt-1 text-sm">{copy.title}</div>
+                        {action && ['rejected', 'executed', 'simulated'].includes(action.status) && (
+                          <button className="mt-2 text-xs text-primary hover:underline" onClick={() => void requestPublish(draft, platform)}>
+                            新建排程与审批
+                          </button>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
               </article>)}
             </section>
-            <XiaohongshuHandoffPanel drafts={drafts} handoffs={handoffs} onRefresh={refresh} />
+            <section id="xiaohongshu-handoffs" aria-label="小红书发布交接" tabIndex={-1}>
+              <XiaohongshuHandoffPanel drafts={drafts} handoffs={handoffs} onRefresh={refresh} />
+            </section>
             {jobs.length > 0 && <section className="rounded-2xl bg-background p-4 shadow-sm"><h2 className="mb-3 font-medium">发布排程</h2>{jobs.map((job) => <div key={job.id} className="flex justify-between border-t border-border/40 py-2 text-sm"><span>{PLATFORM_LABEL[job.platform]} · {new Date(job.scheduledAt).toLocaleString()}</span><span>{job.status}</span></div>)}</section>}
           </div>
         ) : (
@@ -189,29 +267,39 @@ export function NewMediaModuleView(): React.ReactElement {
               </div>
             </div>
             {outboundNotice && <div className="rounded-lg bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">{outboundNotice}</div>}
-            {actions.map((action) => <article key={action.id} className="rounded-2xl bg-background p-4 shadow-sm">
-            <div className="flex items-start justify-between gap-3"><div><div className="font-medium">{action.summary}</div><div className="mt-1 text-xs text-foreground/45">{PLATFORM_LABEL[action.platform]} · {action.kind}{action.attempts > 0 ? ` · 已尝试 ${action.attempts} 次` : ''}</div></div><span className="rounded-full bg-muted px-2 py-1 text-xs">{action.status}</span></div>
-            {action.status === 'pending_approval' && <div className="mt-4 flex justify-end"><button onClick={() => void approveAction(action)} className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground">批准</button></div>}
-            {action.status === 'approved' && <div className="mt-4 flex flex-wrap justify-end gap-2">
-              <button onClick={() => void simulateAction(action)} className="rounded-lg px-3 py-2 text-sm hover:bg-muted">生成模拟回执</button>
-              <button onClick={() => void executeAction(action)} className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground">真实执行（单次授权）</button>
-            </div>}
-            {action.status === 'failed' && <div className="mt-4 space-y-2">
-              <div className="rounded-lg bg-red-500/10 p-2 text-xs text-red-700 dark:text-red-300">执行失败：{action.failureCode}（{action.failureOutcome}）{action.retryRequiresReconciliation ? ' · 结果未知，必须先对账再重试' : ''}</div>
-              <div className="flex flex-wrap justify-end gap-2">
-                {action.retryRequiresReconciliation && <>
-                  <button onClick={() => void reconcileAction(action, true)} className="rounded-lg px-3 py-2 text-xs hover:bg-muted">对账：平台已接收</button>
-                  <button onClick={() => void reconcileAction(action, false)} className="rounded-lg px-3 py-2 text-xs hover:bg-muted">对账：平台未接收</button>
-                </>}
-                {!action.retryRequiresReconciliation && <button onClick={() => void retryAction(action)} className="rounded-lg bg-primary px-3 py-2 text-xs text-primary-foreground">重试执行</button>}
-              </div>
-            </div>}
-            {action.status === 'executed' && action.receipt && <div className="mt-3 rounded-lg bg-emerald-500/10 p-2 text-xs text-emerald-700 dark:text-emerald-300">
-              平台回执：{action.receipt.summary}{action.receipt.externalId ? ` · ${action.receipt.externalId}` : ''}{action.receipt.platformStatus ? ` · ${action.receipt.platformStatus}` : ''}
-              {action.receipt.platformStatus === 'publishing' ? '（已提交，尚未确认发布成功）' : ''}
-            </div>}
-            {action.simulationReceipt && <div className="mt-3 rounded-lg bg-muted p-2 text-xs text-foreground/60">{action.simulationReceipt}（本地模拟，未发生真实外部操作）</div>}
-          </article>)}</div>
+            {([
+              ['待处理', pendingActions],
+              ['执行中与历史', pastActions],
+            ] as const).map(([title, items]) => (
+              <section key={title} className="space-y-3">
+                <h2 className="text-sm font-medium">{title}（{items.length}）</h2>
+                {items.length === 0 && <p className="text-sm text-muted-foreground">暂无记录</p>}
+                {items.map((action) => <article key={action.id} id={`outbound-${action.id}`} tabIndex={-1} className="rounded-2xl bg-background p-4 shadow-sm">
+                  <div className="flex items-start justify-between gap-3"><div><div className="font-medium">{action.summary}</div><div className="mt-1 text-xs text-foreground/45">{PLATFORM_LABEL[action.platform]} · {action.kind}{action.attempts > 0 ? ` · 已尝试 ${action.attempts} 次` : ''}</div></div><span className="rounded-full bg-muted px-2 py-1 text-xs">{ACTION_STATUS[action.status]}</span></div>
+                  {action.status === 'pending_approval' && <div className="mt-4 flex justify-end"><button onClick={() => void approveAction(action)} className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground">批准</button></div>}
+                  {action.status === 'approved' && <div className="mt-4 flex flex-wrap justify-end gap-2">
+                    <button onClick={() => void simulateAction(action)} className="rounded-lg px-3 py-2 text-sm hover:bg-muted">生成模拟回执</button>
+                    <button onClick={() => void executeAction(action)} className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground">真实执行（单次授权）</button>
+                  </div>}
+                  {action.status === 'failed' && <div className="mt-4 space-y-2">
+                    <div className="rounded-lg bg-red-500/10 p-2 text-xs text-red-700 dark:text-red-300">执行失败：{action.failureCode}（{action.failureOutcome}）{action.retryRequiresReconciliation ? ' · 结果未知，必须先对账再重试' : ''}</div>
+                    <div className="flex flex-wrap justify-end gap-2">
+                      {action.retryRequiresReconciliation && <>
+                        <button onClick={() => void reconcileAction(action, true)} className="rounded-lg px-3 py-2 text-xs hover:bg-muted">对账：平台已接收</button>
+                        <button onClick={() => void reconcileAction(action, false)} className="rounded-lg px-3 py-2 text-xs hover:bg-muted">对账：平台未接收</button>
+                      </>}
+                      {!action.retryRequiresReconciliation && <button onClick={() => void retryAction(action)} className="rounded-lg bg-primary px-3 py-2 text-xs text-primary-foreground">重试执行</button>}
+                    </div>
+                  </div>}
+                  {action.status === 'executed' && action.receipt && <div className="mt-3 rounded-lg bg-emerald-500/10 p-2 text-xs text-emerald-700 dark:text-emerald-300">
+                    平台回执：{action.receipt.summary}{action.receipt.externalId ? ` · ${action.receipt.externalId}` : ''}{action.receipt.platformStatus ? ` · ${action.receipt.platformStatus}` : ''}
+                    {action.receipt.platformStatus === 'publishing' ? '（已提交，尚未确认发布成功）' : ''}
+                  </div>}
+                  {action.simulationReceipt && <div className="mt-3 rounded-lg bg-muted p-2 text-xs text-foreground/60">{action.simulationReceipt}（本地模拟，未发生真实外部操作）</div>}
+                </article>)}
+              </section>
+            ))}
+          </div>
         )}
       </main>
     </div>
