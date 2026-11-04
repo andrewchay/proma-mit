@@ -28,7 +28,7 @@ window.fixture={isReady:()=>ready,push:message=>{messages.push(message);listener
 function Harness(){useGlobalOwnerManagementListeners();const activeView=useAtomValue(activeViewAtom);return <>{activeView==='projects'?<ProjectView/>:<main>其他页面</main>}<Toaster/></>}
 createRoot(document.getElementById('root')).render(<Provider store={store}><Harness/></Provider>);
 `)
-  await build({ entryPoints: [entry], outfile: join(directory, 'entry.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.mp3': 'dataurl' }, absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
+  await build({ entryPoints: [entry], outfile: join(directory, 'entry.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.mp3': 'dataurl', '.png': 'dataurl' }, absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('<div id="root"></div><script src="/entry.js"></script>', { headers: { 'Content-Type': 'text/html' } }), routes: { '/entry.js': () => new Response(Bun.file(join(directory, 'entry.js'))) } })
   const browser = await chromium.launch({ headless: true })
   const page = await browser.newPage({ viewport: { width: 1000, height: 900 } })
