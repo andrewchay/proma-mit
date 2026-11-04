@@ -1213,6 +1213,8 @@ function migrate(database: SqliteCompat): void {
   const ownerReviewColumns = readColumnNames(database, 'project_owner_technical_reviews')
   if (!ownerReviewColumns.includes('validation_evidence_json')) database.exec("ALTER TABLE project_owner_technical_reviews ADD COLUMN validation_evidence_json TEXT NOT NULL DEFAULT '[]'")
   if (!ownerReviewColumns.includes('validation_evidence_sha256')) database.exec("ALTER TABLE project_owner_technical_reviews ADD COLUMN validation_evidence_sha256 TEXT NOT NULL DEFAULT '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945'")
+  if (!ownerReviewColumns.includes('original_response_text')) database.exec('ALTER TABLE project_owner_technical_reviews ADD COLUMN original_response_text TEXT')
+  if (!ownerReviewColumns.includes('original_response_sha256')) database.exec('ALTER TABLE project_owner_technical_reviews ADD COLUMN original_response_sha256 TEXT')
   database.exec('CREATE INDEX IF NOT EXISTS idx_owner_technical_reviews_task ON project_owner_technical_reviews(project_id, task_id, created_at)')
   database.exec(`CREATE TRIGGER IF NOT EXISTS project_owner_technical_reviews_immutable_update
     BEFORE UPDATE ON project_owner_technical_reviews BEGIN SELECT RAISE(ABORT, 'owner technical reviews are immutable'); END`)

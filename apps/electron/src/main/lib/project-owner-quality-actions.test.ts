@@ -2,7 +2,8 @@ import { afterAll, beforeAll, expect, mock, spyOn, test } from 'bun:test'
 import { createHash, randomUUID } from 'node:crypto'
 import { createStore } from 'jotai'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
+import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { OwnerExecutionPreparationInput, ProjectOwnerExecutionLaunchApi, ProjectOwnerPlanDraft } from '@gravitas/shared'
@@ -33,7 +34,7 @@ const rendererPlan = await import('../../renderer/atoms/project-owner-plan-atoms
 const rendererGoal = await import('../../renderer/atoms/project-owner-goal-atoms')
 const ipcHandlers = new Map<string, (event: unknown, request: unknown) => unknown>()
 registerProjectOwnerExecutionIpcHandlers({ handle: (channel, handler) => { ipcHandlers.set(channel, handler) } })
-interface Scenario { extraQualityCriteria?: boolean; omitQualityKind?: boolean; invalidQualityQuote?: boolean; rework?: boolean; ownerDefect?: boolean; dependent?: boolean; hold?: boolean; maxRework?: number; legacy?: boolean; development?: boolean; validationFails?: boolean; durableStartIntent?: boolean; emptyReview?: boolean; localConfigurationError?: string; localConfigurationRuntimeResult?: boolean; localConfigurationNonZeroUsage?: boolean }
+interface Scenario { fencedReview?: boolean; missingReviewQuote?: 'verbatim' | 'paraphrase'; queueOnly?: boolean; extraQualityCriteria?: boolean; omitQualityKind?: boolean; invalidQualityQuote?: boolean; rework?: boolean; ownerDefect?: boolean; dependent?: boolean; hold?: boolean; maxRework?: number; legacy?: boolean; development?: boolean; validationFails?: boolean; durableStartIntent?: boolean; emptyReview?: boolean; localConfigurationError?: string; localConfigurationRuntimeResult?: boolean; localConfigurationNonZeroUsage?: boolean }
 interface Trace { role: string; taskId: string; round: number; prompt: string }
 const scenarios = new Map<string, Scenario>(), traces = new Map<string, Trace[]>()
 const pending = new Map<string, { finish: () => void; executionId: string }>()
@@ -72,6 +73,15 @@ beforeAll(async () => {
           content = JSON.stringify({ schemaVersion: 2, artifactHash: artifact.contentSha256, verdict: change ? 'changes_requested' : 'approved', summary: change ? '缺少受众依据' : '范围清楚', criteria: [{ criterion: '明确目标范围与受众依据', status: change ? 'not_met' : 'met', evidence: change ? '未说明受众依据' : '有明确范围', quote: change ? null : artifact.content }], findings: change ? [{ severity: 'high', description: '未说明受众依据', requestedChange: '补充依据与适用范围' }] : [], blockerReason: null })
         }
       }
+      if (scenario.missingReviewQuote && command.role === 'reviewer') {
+        const receipt = JSON.parse(content) as { criteria: Array<{ quote?: string; evidence: string }> }
+        for (const criterion of receipt.criteria) {
+          if (scenario.missingReviewQuote === 'verbatim' && criterion.quote) criterion.evidence = criterion.quote
+          delete criterion.quote
+        }
+        content = JSON.stringify(receipt)
+      }
+      if (scenario.fencedReview && command.role === 'reviewer') content = '```json\n' + content + '\n```'
       callbacks.onComplete(scenario.emptyReview && command.role === 'reviewer' ? [] : [{ id: randomUUID(), role: 'assistant', content, createdAt: Date.now() }])
       return
     }
@@ -164,12 +174,12 @@ async function fixture(scenario: Scenario = {}) {
     const managementStore = await import('./project-owner-management-store')
     for (const event of managementStore.listPendingOwnerManagementEvents(project.id)) managementStore.consumeOwnerManagementEvent(event)
   }
-  let stopLifecycle = () => {}
+  let stopLifecycle = async () => {}
   const startLifecycle = async () => {
     await consumeInitialEvents()
     const stopWake = onOwnerAutonomousScheduleWake(id => { if (id === project.id) void scheduler.runOwnerAutonomousSchedule(id) })
     const stopManagement = management.startOwnerManagementLoop()
-    stopLifecycle = () => { stopWake(); stopManagement() }
+    stopLifecycle = async () => { stopWake(); await stopManagement() }
   }
   if (scenario.durableStartIntent) await startLifecycle()
   let grant: Awaited<ReturnType<typeof executionLaunch.launchOwnerPreparedExecution>>
@@ -184,9 +194,16 @@ async function fixture(scenario: Scenario = {}) {
     const preview = material.previewOwnerTaskMaterialization(subject, materialInput)
     grant = await executionLaunch.launchOwnerPreparedExecution({ ...subject, input: materialInput, previewFingerprint: preview.previewFingerprint }, { schedule: async () => {} })
   }
-  if (!scenario.durableStartIntent) await startLifecycle()
+  if (!scenario.durableStartIntent && !scenario.queueOnly) await startLifecycle()
   // 初始目标/计划及边界已确认；本用例仅测交付后管理，不伪造模型或业务授权。
-  await scheduler.runOwnerAutonomousSchedule(project.id)
+  if (scenario.queueOnly) {
+    const { reserveAndQueueAutonomousOwnerCommand } = await import('./project-owner-execution-command')
+    let queued: ReturnType<typeof reserveAndQueueAutonomousOwnerCommand>
+    await scheduler.runOwnerAutonomousSchedule(project.id, {
+      queue: (...args) => (queued = reserveAndQueueAutonomousOwnerCommand(...args)),
+      dispatch: async () => ({ ...queued, started: true }),
+    })
+  } else await scheduler.runOwnerAutonomousSchedule(project.id)
   return { project, grant, input, executor, reviewer, owner, stop: stopLifecycle, tasks: () => store.listTasks(project.id).filter(item => item.ownerStepLinkId) }
 }
 function actionRows(projectId: string): OwnerQualityAction[] { return (store.getProjectDb().prepare('SELECT owner_execution_id FROM project_owner_quality_actions WHERE project_id=? ORDER BY rowid').all(projectId) as { owner_execution_id: string }[]).map(row => actions.readOwnerQualityActionByExecution(row.owner_execution_id)!) }
@@ -218,6 +235,96 @@ async function confirmFeedbackThroughRenderer(projectId: string, planDraft: Proj
   await ui.set(rendererDeliveryFlow.reviewOwnerManagedExecutionAtom, subject)
   return calls
 }
+
+test('Given独立评审回执包有围栏并遗漏引用字段 When已有逐字依据可核验 Then原文留存且同一次评审进入Owner决定', async () => {
+  const f = await fixture({ fencedReview: true, missingReviewQuote: 'verbatim' })
+  try {
+    await until(() => actionRows(f.project.id).length === 1, f.project.id)
+    const action = actionRows(f.project.id)[0]!
+    expect(action.state).toBe('accepted')
+    const row = store.getProjectDb().prepare('SELECT response_json,original_response_text,original_response_sha256 FROM project_owner_technical_reviews WHERE reviewer_command_id=?').get(action.reviewerCommandId) as { response_json: string; original_response_text: string; original_response_sha256: string }
+    expect(row.original_response_text.startsWith('```json')).toBe(true)
+    expect(row.original_response_sha256).toBe(createHash('sha256').update(row.original_response_text).digest('hex'))
+    expect(JSON.parse(row.response_json).criteria[0].quote).toContain('目标范围')
+    expect(traces.get(f.project.id)?.filter(item => item.role === 'reviewer')).toHaveLength(1)
+    const view = managementConversation.getOwnerManagementConversation(f.project.id)
+    expect(view.reviewHistory?.[0]?.steps.map(step => step.label)).toEqual(['员工交付', '独立评审', 'Owner 决定'])
+    expect(view.reviewHistory?.[0]?.steps[2]?.detail).toContain('权威任务状态已完成')
+  } finally { await f.stop() }
+}, 15000)
+
+test('Given评审遗漏引用且只有概括 When核验回执 Then不补造证据或重派', async () => {
+  const f = await fixture({ missingReviewQuote: 'paraphrase' })
+  try {
+    await until(() => managementConversation.getOwnerManagementConversation(f.project.id).messages.some(message => message.eventId.startsWith('owner-review-evidence-rejected:')), f.project.id)
+    expect(actionRows(f.project.id)).toHaveLength(0)
+    expect(traces.get(f.project.id)?.filter(item => item.role === 'reviewer')).toHaveLength(1)
+    expect(managementConversation.getOwnerManagementConversation(f.project.id).reviewHistory?.[0]?.steps[1]?.detail).toContain('待核对')
+  } finally { await f.stop() }
+}, 15000)
+
+test.skipIf(process.platform === 'win32')('Given认领已落盘或Owner决定尚未提交 When强杀原生SQLite进程并重启 Then保留一次预留和一次合法决定', async () => {
+  const stage = mkdtempSync(join(tmpdir(), 'owner-quality-native-'))
+  const entry = join(stage, 'recovery.cjs')
+  const node = execFileSync('node', ['-p', 'process.execPath'], { encoding: 'utf8' }).trim()
+  const env = { ...process.env, NODE_PATH: join(import.meta.dir, '../../../../../node_modules') }
+  const run = (mode: string, projectId: string) => execFileSync(node, [entry, mode, projectId], { env, encoding: 'utf8', timeout: 20_000 })
+  async function killAt(mode: string, projectId: string, marker: string): Promise<string> {
+    const child = spawn(node, [entry, mode, projectId], { env, stdio: ['ignore', 'pipe', 'pipe'] })
+    let output = '', errors = ''
+    const exited = new Promise(resolve => child.once('exit', (_code, signal) => resolve(signal)))
+    child.stderr.on('data', value => { errors += String(value) })
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error(`未到达强杀窗口：${output} ${errors}`)), 15_000)
+        child.stdout.on('data', value => {
+          output += String(value)
+          if (output.includes(marker)) { clearTimeout(timeout); resolve() }
+        })
+        child.once('exit', () => { clearTimeout(timeout); reject(new Error(`子进程提前退出：${output} ${errors}`)) })
+        child.once('error', cause => { clearTimeout(timeout); reject(cause) })
+      })
+    } finally { child.kill('SIGKILL') }
+    expect(await exited).toBe('SIGKILL')
+    return output
+  }
+  try {
+    buildSync({ entryPoints: [join(import.meta.dir, 'project-owner-native-recovery-child.ts')], outfile: entry,
+      bundle: true, platform: 'node', format: 'cjs', target: 'node24',
+      external: ['better-sqlite3', 'electron', 'original-fs', 'fsevents', 'playwright-core', 'chromium-bidi/lib/cjs/bidiMapper/BidiMapper', 'chromium-bidi/lib/cjs/cdp/CdpConnection'] })
+    const queued = await fixture({ queueOnly: true })
+    store.closeProjectDb()
+    const claimed = await killAt('claim-after', queued.project.id, 'READY_OWNER_CLAIM')
+    const claimedRows = JSON.parse(claimed.split('READY_OWNER_CLAIM ')[1]!.trim()) as Array<{ id: string; reserved_cost_micros: number }>
+    const claimReplay = JSON.parse(run('claim-replay', queued.project.id).split('OWNER_CHAIN ')[1]!.trim())
+    expect(claimedRows).toHaveLength(1)
+    expect(claimReplay).toMatchObject({ recovered: [{ startBoundary: 'claim_only' }], replay: [], rows: [{
+      id: claimedRows[0]!.id, reserved_cost_micros: claimedRows[0]!.reserved_cost_micros, actual_cost_micros: null, status: 'stale',
+    }] })
+    await store.initProjectDb()
+
+    const f = await fixture({ hold: true, fencedReview: true })
+    try {
+      await until(() => pending.has(f.project.id), f.project.id)
+      await f.stop()
+      const held = pending.get(f.project.id)!
+      held.finish()
+      await until(() => runs.getOwnerPlanningRunOutcome(held.executionId)?.state === 'replied', f.project.id)
+      expect(actionRows(f.project.id)).toHaveLength(0)
+      store.closeProjectDb()
+      await killAt('quality-before-commit', f.project.id, 'READY_OWNER_QUALITY_BEFORE_COMMIT')
+      const result = JSON.parse(run('quality-replay', f.project.id).split('OWNER_CHAIN ')[1]!.trim())
+      expect(result.actionsBefore).toBe(0)
+      expect(result.actions).toEqual([{ owner_execution_id: held.executionId }])
+      expect(result.commandsBefore).toHaveLength(2)
+      expect(result.commands).toEqual(result.commandsBefore)
+      expect(result.history[0].steps[2].detail).toContain('权威任务状态已完成')
+    } finally { await f.stop() }
+  } finally {
+    await store.initProjectDb()
+    rmSync(stage, { recursive: true, force: true })
+  }
+}, 60000)
 
 test('Given上游正文含提示分隔符 When序列化交接 Then文本按JSON转义且解析后原文不变', async () => {
   const command = await import('./project-owner-execution-command')

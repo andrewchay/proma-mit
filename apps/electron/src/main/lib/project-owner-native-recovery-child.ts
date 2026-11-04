@@ -11,6 +11,56 @@ async function main(): Promise<void> {
   const database = getProjectDb()
   if (database.constructor.name !== 'NativeSqliteCompat') throw new Error(`未使用原生SQLite：${database.constructor.name}`)
 
+  if (mode === 'claim-after' || mode === 'claim-replay') {
+    const projectId = process.argv[3]
+    if (!projectId) throw new Error('强杀夹具缺少项目ID')
+    const rows = () => database.prepare(`SELECT c.id,c.state,c.reserved_cost_micros,c.actual_cost_micros,e.status
+      FROM project_owner_execution_commands c JOIN agent_executions e ON e.id=c.execution_id
+      WHERE c.project_id=? ORDER BY c.id`).all(projectId)
+    const command = database.prepare(`SELECT c.id,c.execution_id,l.revalidation_revision FROM project_owner_execution_commands c
+      JOIN project_owner_execution_command_links l ON l.command_id=c.id AND l.execution_id=c.execution_id
+      WHERE c.project_id=? AND c.role='executor'`).get(projectId) as { id: string; execution_id: string; revalidation_revision: number }
+    if (mode === 'claim-after') {
+      const { claimOwnerCommandStart } = await import('./project-owner-execution-start')
+      claimOwnerCommandStart(command.execution_id, command.id, command.revalidation_revision, randomUUID())
+      process.stdout.write(`READY_OWNER_CLAIM ${JSON.stringify(rows())}\n`)
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30_000)
+    } else {
+      const recovered = recoverInterruptedOwnerRuntimeExecutions(now, command.execution_id)
+      const replay = recoverInterruptedOwnerRuntimeExecutions(now + 1, command.execution_id)
+      process.stdout.write(`OWNER_CHAIN ${JSON.stringify({ recovered, replay, rows: rows() })}\n`)
+    }
+    return
+  }
+  if (mode === 'quality-before-commit' || mode === 'quality-replay') {
+    const projectId = process.argv[3]
+    if (!projectId) throw new Error('强杀夹具缺少项目ID')
+    const { reconcileOwnerManagement } = await import('./project-owner-management-loop')
+    const { listOwnerReviewHistory } = await import('./project-owner-review-history')
+    const readActions = () => database.prepare('SELECT owner_execution_id FROM project_owner_quality_actions WHERE project_id=?').all(projectId)
+    const commands = () => database.prepare('SELECT id,role,state,reserved_cost_micros FROM project_owner_execution_commands WHERE project_id=? ORDER BY role').all(projectId)
+    if (mode === 'quality-before-commit') {
+      if (readActions().length) throw new Error('强杀前已有Owner决定')
+      const transaction = database.transaction.bind(database)
+      let depth = 0
+      database.transaction = ((callback: () => void) => transaction(() => {
+        depth++
+        try { callback() } finally { depth-- }
+        if (depth === 0 && readActions().length) {
+          process.stdout.write('READY_OWNER_QUALITY_BEFORE_COMMIT\n')
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 30_000)
+        }
+      })) as typeof database.transaction
+      reconcileOwnerManagement(projectId)
+    } else {
+      const actionsBefore = readActions().length, commandsBefore = commands()
+      reconcileOwnerManagement(projectId)
+      reconcileOwnerManagement(projectId)
+      process.stdout.write(`OWNER_CHAIN ${JSON.stringify({ actionsBefore, commandsBefore, commands: commands(), actions: readActions(), history: listOwnerReviewHistory(projectId) })}\n`)
+    }
+    return
+  }
+
   if (mode === 'setup') {
     const project = createProject({ title: 'Owner原生恢复', description: '' })
     saveProjectOwnerGoalDraft(project.id, 0, { objective: '验证恢复后审批和旧回调的处理状态' })
