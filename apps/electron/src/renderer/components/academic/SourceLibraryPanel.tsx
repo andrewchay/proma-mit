@@ -6,7 +6,7 @@
  */
 
 import * as React from 'react'
-import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { atom, useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { Loader2, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -302,10 +302,19 @@ function screeningStateFor(
   return mine.length > 0 ? mine[mine.length - 1]!.decision : null
 }
 
+const sourceListQueryAtom = atom('')
+
 function SourceListSection({ project }: { project: ResearchProject }): React.ReactElement {
   const sources = useAtomValue(researchSourcesAtom)
   const screening = useAtomValue(researchScreeningAtom)
   const recordScreening = useSetAtom(recordScreeningAtom)
+  const [query, setQuery] = useAtom(sourceListQueryAtom)
+  const term = query.trim().toLocaleLowerCase()
+  const visibleSources = sources.filter(({ versions: [version] }) =>
+    version && [version.title, ...version.authors, version.abstract].some((field) =>
+      field?.toLocaleLowerCase().includes(term),
+    ),
+  )
 
   if (sources.length === 0) {
     return <div className="text-sm text-muted-foreground">还没有来源：先检索或导入文献。</div>
@@ -314,7 +323,14 @@ function SourceListSection({ project }: { project: ResearchProject }): React.Rea
   return (
     <div className="space-y-2">
       <div className="text-sm font-medium">来源（{sources.length}）</div>
-      {sources.map((source) => {
+      <Input
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        aria-label="筛选已收录文献"
+        placeholder="按标题、作者或摘要筛选已收录文献"
+      />
+      {visibleSources.length === 0 && <p className="text-sm text-muted-foreground">没有匹配的文献</p>}
+      {visibleSources.map((source) => {
         const version = source.versions[0]!
         const state = screeningStateFor(source.id, screening)
         return (
@@ -356,6 +372,12 @@ function SourceListSection({ project }: { project: ResearchProject }): React.Rea
                 ))}
               </div>
             </div>
+            {version.abstract && (
+              <details className="mt-2 text-sm">
+                <summary className="w-fit cursor-pointer rounded text-primary">查看摘要</summary>
+                <p className="mt-2 whitespace-pre-wrap break-words leading-relaxed">{version.abstract}</p>
+              </details>
+            )}
           </div>
         )
       })}

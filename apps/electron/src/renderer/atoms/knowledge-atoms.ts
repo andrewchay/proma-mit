@@ -31,7 +31,7 @@ export const knowledgeNotesAtom = atom<KnowledgeNote[]>([])
 export const activeNoteAtom = atom<KnowledgeNote | null>(null)
 
 /** 当前阅读路径，用于从链接打开笔记后返回上一笔记。 */
-export const knowledgeNoteHistoryAtom = atom<string[]>([])
+export const knowledgeNoteHistoryAtom = atom<Array<{ noteId: string; scrollTop: number }>>([])
 
 /** 当前笔记内需要定位的标题锚点。 */
 export const knowledgeFragmentTargetAtom = atom<{ noteId: string; fragment: string } | null>(null)

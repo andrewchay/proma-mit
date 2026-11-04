@@ -79,6 +79,21 @@ function formatPeriod(period: { start: string; end: string }): string {
   return `${period.start} ~ ${period.end}`
 }
 
+const archiveMonth = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: 'long' })
+const archiveDay = new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' })
+
+function groupReportsByMonth(reports: AnalysisReport[]): Map<string, AnalysisReport[]> {
+  const months = new Map<string, AnalysisReport[]>()
+  for (const report of reports) {
+    const created = new Date(report.createdAt)
+    const month = Number.isFinite(created.getTime()) ? archiveMonth.format(created) : '日期未知'
+    const entries = months.get(month)
+    if (entries) entries.push(report)
+    else months.set(month, [report])
+  }
+  return months
+}
+
 export function AnalysisModuleView(): React.ReactElement {
   const [reports, setReports] = useAtom(analysisReportsAtom)
   const [activeReport, setActiveReport] = useAtom(activeAnalysisReportAtom)
@@ -89,6 +104,7 @@ export function AnalysisModuleView(): React.ReactElement {
   const [notice, setNotice] = useAtom(analysisNoticeAtom)
   const [range, setRange] = useAtom(analysisDateRangeAtom)
   const filteredReports = useAtomValue(filteredAnalysisReportsAtom)
+  const archive = React.useMemo(() => groupReportsByMonth(filteredReports), [filteredReports])
 
   const api = window.electronAPI?.analysis
 
@@ -178,7 +194,7 @@ export function AnalysisModuleView(): React.ReactElement {
         </div>
         <div className="flex-1" />
         <span className="text-[12px] text-foreground/45">
-          范围 {range.startDate} ~ {range.endDate}
+          生成范围 {range.startDate} ~ {range.endDate}
         </span>
       </div>
 
@@ -191,12 +207,14 @@ export function AnalysisModuleView(): React.ReactElement {
             <div className="flex gap-1.5">
               <Input
                 type="date"
+                aria-label="生成范围开始日期"
                 value={range.startDate}
                 onChange={(e) => setRange((prev) => ({ ...prev, startDate: e.target.value }))}
                 className="h-7 text-[12px] px-2"
               />
               <Input
                 type="date"
+                aria-label="生成范围结束日期"
                 value={range.endDate}
                 onChange={(e) => setRange((prev) => ({ ...prev, endDate: e.target.value }))}
                 className="h-7 text-[12px] px-2"
@@ -251,11 +269,12 @@ export function AnalysisModuleView(): React.ReactElement {
             )}
           </div>
 
-          {/* 报告列表 */}
+          <h2 className="px-3 pt-2 text-xs font-medium">报告归档</h2>
           <div className="px-3 py-2 flex items-center gap-1 border-b border-border/50">
             {TYPE_FILTERS.map(({ id, label }) => (
               <button
                 key={label}
+                aria-pressed={typeFilter === id}
                 onClick={() => setTypeFilter(id)}
                 className={`px-2 py-0.5 rounded text-[11px] transition-colors ${
                   typeFilter === id
@@ -286,39 +305,52 @@ export function AnalysisModuleView(): React.ReactElement {
                 )}
               </div>
             ) : (
-              <div className="p-1.5 space-y-0.5">
-                {filteredReports.map((report) => {
-                  const Icon = TYPE_META[report.type].icon
-                  return (
-                    <div key={report.id} className="group flex items-center">
-                      <button
-                        onClick={() => setActiveReport(report)}
-                        className={`flex-1 min-w-0 text-left px-2.5 py-2 rounded-md transition-colors ${
-                          activeReport?.id === report.id
-                            ? 'bg-foreground/[0.08]'
-                            : 'hover:bg-foreground/[0.05]'
-                        }`}
-                      >
-                        <div className="flex items-center gap-1.5">
-                          <Icon size={12} className="text-foreground/35 flex-shrink-0" />
-                          <span className="text-[13px] text-foreground/85 truncate">
-                            {TYPE_META[report.type].label}
-                          </span>
-                        </div>
-                        <div className="mt-0.5 text-[11px] text-foreground/40 truncate">
-                          {formatPeriod(report.period)}
-                        </div>
-                      </button>
-                      <button
-                        onClick={() => handleDelete(report)}
-                        className="opacity-0 group-hover:opacity-100 p-1.5 rounded text-foreground/40 hover:text-destructive transition-all"
-                        title="删除报告"
-                      >
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  )
-                })}
+              <div className="space-y-3 p-2">
+                {[...archive].map(([month, entries]) => (
+                  <section key={month}>
+                    <h3 className="px-2 py-1 text-xs font-medium text-muted-foreground">{month}</h3>
+                    <ul className="space-y-0.5">
+                      {entries.map((report) => {
+                        const Icon = TYPE_META[report.type].icon
+                        const created = new Date(report.createdAt)
+                        return (
+                          <li key={report.id} className="group flex items-center">
+                            <button
+                              onClick={() => setActiveReport(report)}
+                              aria-current={activeReport?.id === report.id ? true : undefined}
+                              className={`flex-1 min-w-0 text-left px-2.5 py-2 rounded-md transition-colors ${
+                                activeReport?.id === report.id
+                                  ? 'bg-primary/15 ring-1 ring-inset ring-primary/35'
+                                  : 'hover:bg-foreground/[0.05]'
+                              }`}
+                            >
+                              <div className="flex items-center gap-1.5">
+                                <time dateTime={created.toJSON() ?? undefined} className="text-xs tabular-nums text-muted-foreground">
+                                  {Number.isFinite(created.getTime()) ? archiveDay.format(created) : '未知日期'}
+                                </time>
+                                <Icon size={12} aria-hidden="true" className="text-foreground/35 flex-shrink-0" />
+                                <span className="text-[13px] text-foreground/85 truncate">
+                                  {TYPE_META[report.type].label}
+                                </span>
+                              </div>
+                              <div className="mt-0.5 text-[11px] text-muted-foreground">
+                                {formatPeriod(report.period)}
+                              </div>
+                            </button>
+                            <button
+                              onClick={() => handleDelete(report)}
+                              className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 p-1.5 rounded text-foreground/40 hover:text-destructive transition-all"
+                              aria-label={`删除报告：${report.title}`}
+                              title="删除报告"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </section>
+                ))}
               </div>
             )}
           </div>
@@ -327,7 +359,7 @@ export function AnalysisModuleView(): React.ReactElement {
         {/* 右侧：报告详情 */}
         <div className="flex-1 min-w-0 flex flex-col">
           {activeReport ? (
-            <ReportDetail report={activeReport} onClose={() => setActiveReport(null)} />
+            <ReportDetail key={activeReport.id} report={activeReport} onClose={() => setActiveReport(null)} />
           ) : (
             <div className="flex-1 flex flex-col items-center justify-center gap-3 text-foreground/35">
               <BarChart3 size={28} className="text-foreground/20" />
@@ -379,12 +411,14 @@ function ReportDetail({
         <Icon size={16} className="text-foreground/45 mt-0.5 flex-shrink-0" />
         <div className="flex-1 min-w-0">
           <h2 className="text-[15px] font-medium text-foreground/90">{report.title}</h2>
-          <div className="mt-0.5 text-[11px] text-foreground/45">
-            生成于 {new Date(report.createdAt).toLocaleString('zh-CN')}
+          <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span>报告覆盖 {formatPeriod(report.period)}</span>
+            <span>生成于 {new Date(report.createdAt).toLocaleString('zh-CN')}</span>
           </div>
         </div>
         <button
           onClick={onClose}
+          aria-label="关闭报告"
           className="p-1.5 rounded text-foreground/40 hover:text-foreground/70 hover:bg-foreground/[0.05]"
         >
           <X size={15} />
