@@ -86,7 +86,7 @@ test('Given 原问题有效 When 答复并重复提交 Then 同事务保存约�
     expect(saved.goal.constraints).toEqual(['保留原约束', 'Owner澄清答复（主要服务谁？）：现有用户'])
     expect(answerOwnerManagementQuestion(input)).toEqual(saved)
     expect(() => answerOwnerManagementQuestion({ ...input, answers: { audience: '不同答案' } })).toThrow('已有不同答复')
-    await tick()
+    for (let i = 0; i < 100 && !getOwnerManagementConversation(f.project.id).messages.some(message => message.kind === 'planning_confirmation'); i++) await Bun.sleep(10)
     const view = getOwnerManagementConversation(f.project.id)
     expect(view.questions[0]?.state).toBe('answered')
     expect(view.messages.filter(message => message.kind === 'answer')).toHaveLength(1)

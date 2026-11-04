@@ -108,6 +108,9 @@ export function readOwnerPlanningSnapshot(taskId: string, options?: OwnerPlannin
     return { link, context, ...(request ? { request } : {}), ...(assignmentContext ? { assignmentContext } : {}), ...(sourceWarning ? { sourceWarning } : {}) }
   } catch { throw new Error('Owner规划来源记录无效，请保留数据核查或重新准备') }
 }
+/** 冻结来源有效，但已被当前目标、方案或配置替代。 */
+export class OwnerPlanningSourceChangedError extends Error {}
+
 /** 仅当前来源可送模型。解析无Caller/Runner/费用授权副作用。 */
 export function resolveOwnerPlanningTask(taskId: string, allowTerminalTask = false): OwnerPlanningTaskSource | null {
   const frozen = readOwnerPlanningSnapshot(taskId)
@@ -117,7 +120,7 @@ export function resolveOwnerPlanningTask(taskId: string, allowTerminalTask = fal
   const task = store.getTask(taskId)
   const binding = getOwnerRuntimeBinding(link.projectId)
   const allowedTaskStatuses = allowTerminalTask ? ['paused', 'pending', 'in_progress', 'completed', 'failed', 'cancelled', 'stale'] : ['paused', 'pending', 'in_progress']
-  if (!binding || binding.revision !== link.bindingRevision || binding.carrierFingerprint !== link.carrierFingerprint || !task || task.projectId !== link.projectId || task.parentId || task.assignee?.userId !== `agent-${binding.carrierId}` || task.workspaceId !== binding.workspaceId || !allowedTaskStatuses.includes(task.status)) throw new Error('Owner规划目标身份或载体绑定已变化')
+  if (!binding || binding.revision !== link.bindingRevision || binding.carrierFingerprint !== link.carrierFingerprint || !task || task.projectId !== link.projectId || task.parentId || task.assignee?.userId !== `agent-${binding.carrierId}` || task.workspaceId !== binding.workspaceId || !allowedTaskStatuses.includes(task.status)) throw new OwnerPlanningSourceChangedError('Owner规划目标身份或载体绑定已变化')
   if ((link.protocolVersion === '3' || link.protocolVersion === '5') && (getChannelById(binding.channelId)?.provider !== 'zhipu' || !/^glm-5\.3(?:-flash)?$/i.test(binding.modelId))) throw new Error('Owner规划推理协议与冻结模型不匹配')
   if (link.protocolVersion === '4' && (binding.modelId !== 'deepseek-flash' || getAgentProviderProtocol(getChannelById(binding.channelId)!.provider, 'ai-sdk') !== 'openai-chat')) throw new Error('Owner规划JSON协议与冻结模型不匹配')
   const facts = getOwnerCarrierFacts(link.projectId, binding.carrierId, binding.workspaceId)
@@ -127,7 +130,7 @@ export function resolveOwnerPlanningTask(taskId: string, allowTerminalTask = fal
   const assignmentApprovalTransition = link.purpose === 'owner_execution_assignment' && plan?.state === 'confirmed'
     && plan.planFingerprint === frozen.assignmentContext?.planFingerprint && plan.revision === link.planRevision + 1
   if (!ownerCarrierBindingMatches(binding, facts) || current.goal.revision !== link.goalRevision || current.fingerprint !== link.contextFingerprint || JSON.stringify(current) !== JSON.stringify(frozen.context)
-    || !((plan?.revision ?? 0) === link.planRevision || assignmentApprovalTransition)) throw new Error('Owner规划目标、资料、计划或载体配置已更新，请重新准备确认')
+    || !((plan?.revision ?? 0) === link.planRevision || assignmentApprovalTransition)) throw new OwnerPlanningSourceChangedError('Owner规划目标、资料、计划或载体配置已更新，请重新准备确认')
   if (link.purpose === 'owner_execution_assignment') {
     const previous = frozen.assignmentContext
     if (!previous) throw new Error('Owner安排冻结资料缺失')
