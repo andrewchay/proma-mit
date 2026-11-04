@@ -35,6 +35,13 @@ function bind(projectId: string) {
   return saveOwnerRuntimeBinding(projectId, 0, { ownerName: '项目负责人', carrierId: carrier.id, workspaceId: workspace.id, changeReason: '确认本项目规划配置' })
 }
 const tick = () => new Promise<void>(resolve => queueMicrotask(resolve))
+async function waitForEvents(projectId: string) {
+  for (let i = 0; i < 100; i++) {
+    if (listPendingOwnerManagementEvents(projectId).length === 0) return
+    await Bun.sleep(10)
+  }
+  throw new Error('等待Owner处理项目事件超时')
+}
 
 test('Given 新目标 When 保存与后台处理 Then 产生稳定Owner及同一对话中的主动配置问题，零执行和费用授权', async () => {
   const p = project()
@@ -44,7 +51,7 @@ test('Given 新目标 When 保存与后台处理 Then 产生稳定Owner及同一
     saveProjectOwnerGoalDraft(p.id, 0, { objective: '给出有证据的产品定位', constraints: ['不要发布'] })
     const manager = getOwnerManager(p.id)!
     expect(manager).toMatchObject({ projectId: p.id, revision: 1, status: 'active' })
-    await tick()
+    await waitForEvents(p.id)
     const view = getOwnerManagementView(p.id)
     expect(view.messages.map(message => message.role)).toEqual(['user', 'assistant'])
     expect(view.messages[1]).toMatchObject({ kind: 'configuration_required', conversationId: manager.conversationId })
@@ -69,7 +76,7 @@ test('Given 新目标/默认模型和既有项目工作区授权 When Owner后�
   const stop = startOwnerManagementLoop()
   try {
     saveProjectOwnerGoalDraft(p.id, 0, { objective: '形成可审阅定位方案' })
-    await tick()
+    await waitForEvents(p.id)
     const binding = getOwnerRuntimeBinding(p.id)
     const view = getOwnerManagementView(p.id)
     expect(binding).toMatchObject({ actor: 'system:owner-manager', workspaceId: workspace.id, channelId: channel.id, modelId: 'deepseek-flash' })
@@ -125,7 +132,7 @@ test('Given Owner仅暂停管理循环 When 新目标到达及恢复 Then 暂停
   const stop = startOwnerManagementLoop()
   try {
     setOwnerManagerStatus(p.id, paused.revision, 'active')
-    await tick()
+    await waitForEvents(p.id)
     expect(getOwnerManagementView(p.id).pendingEvents).toBe(0)
     expect(getOwnerManagementView(p.id).messages).toHaveLength(4)
     expect(getOwnerManager(p.id)?.conversationId).toBe(paused.conversationId)
@@ -139,7 +146,7 @@ test('Given 目标缺配置 When 用户确认绑定 Then 无页面参与即自�
   const stop = startOwnerManagementLoop()
   try {
     bind(p.id)
-    await tick()
+    await waitForEvents(p.id)
     const messages = getOwnerManagementView(p.id).messages
     expect(messages.at(-1)?.kind).toBe('planning_confirmation')
     const taskId = messages.at(-1)?.planningTaskId
@@ -201,7 +208,7 @@ test('Given 只有任务目标且配置后补 When 绑定变化 Then 恢复准�
   const stop = startOwnerManagementLoop()
   try {
     bind(p.id)
-    await tick()
+    await waitForEvents(p.id)
     const last = getOwnerManagementView(p.id).messages.at(-1)
     expect(last?.kind).toBe('planning_confirmation')
     const link = store.getProjectDb().prepare('SELECT payload FROM project_owner_planning_links WHERE planning_task_id = ?').get(last!.planningTaskId!) as { payload: string }
