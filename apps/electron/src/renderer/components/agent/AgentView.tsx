@@ -20,6 +20,7 @@ import { toast } from 'sonner'
 import { Bot, CornerDownLeft, Square, Settings, Paperclip, FolderPlus, X, Copy, Check, Brain, Map as MapIcon, Sparkles, Box, ChevronDown, Target, Network, ShieldCheck, Pencil } from 'lucide-react'
 import { AgentMessages } from './AgentMessages'
 import { OwnerEmployeeSessionReadOnly } from './OwnerEmployeeSessionReadOnly'
+import { OwnerPlanningSessionNotice } from './OwnerPlanningSessionNotice'
 import { AgentHeader } from './AgentHeader'
 import { ContextUsageBadge } from './ContextUsageBadge'
 import { PermissionBanner } from './PermissionBanner'
@@ -436,7 +437,7 @@ function GoalVerificationBadge({ goal }: { goal: AgentGoal }) {
 
 /** 从侧边栏/历史标签进入Owner员工会话，也只允许监控。服务端状态未确认前不挂载输入。 */
 export function AgentView({ sessionId }: { sessionId: string }): React.ReactElement {
-  const [access, setAccess] = React.useState<{ sessionId: string; readOnly: boolean } | null>(null)
+  const [access, setAccess] = React.useState<{ sessionId: string; readOnly: boolean; planningProjectId?: string } | null>(null)
   const [error, setError] = React.useState('')
   React.useEffect(() => {
     let disposed = false
@@ -444,11 +445,12 @@ export function AgentView({ sessionId }: { sessionId: string }): React.ReactElem
     window.electronAPI.listAgentSessions().then(sessions => {
       const session = sessions.find(item => item.id === sessionId)
       if (!session) throw new Error('会话身份尚不可核对')
-      if (!disposed) setAccess({ sessionId, readOnly: session.ownerReadOnly === true })
+      if (!disposed) setAccess({ sessionId, readOnly: session.ownerReadOnly === true, planningProjectId: session.ownerPlanningProjectId })
     }).catch(cause => { if (!disposed) setError(cause instanceof Error ? cause.message : '会话用途读取失败') })
     return () => { disposed = true }
   }, [sessionId])
   if (access?.sessionId !== sessionId) return <p role={error ? 'alert' : 'status'} className="p-6 text-sm">{error || '正在核对会话用途…'}</p>
+  if (access.planningProjectId) return <OwnerPlanningSessionNotice projectId={access.planningProjectId} />
   return access.readOnly ? <OwnerEmployeeSessionReadOnly sessionId={sessionId} /> : <InteractiveAgentView sessionId={sessionId} />
 }
 
