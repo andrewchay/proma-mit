@@ -84,22 +84,26 @@ export function ProjectOwnerConversation({ projectId, taskId }: { projectId: str
         <div className="flex flex-wrap items-center gap-3"><button className={actionClass} type="submit" disabled={!canSubmitGoal}>{goal.snapshot ? '保存目标修改' : '提交目标'}</button><span className="text-xs text-muted-foreground">这里修改的是项目正式目标，会影响后续方案和执行范围；保存后，当前目标与方案会更新，必要时会请你重新确认。</span></div>
       </form>}
       {goalReady && currentGoal && <OwnerManagementConversation projectId={projectId} taskId={taskId}
-        currentFocus={<div className="mt-3 space-y-4">
-          <section className="rounded-xl bg-primary/5 p-4" aria-label="当前项目目标">
+        workspaceName={workspace?.name}
+        currentFocus={<>
+          <section className="min-w-0 rounded-xl bg-primary/5 p-4 [overflow-wrap:anywhere]" aria-label="当前项目目标">
             <div className="flex items-start justify-between gap-3"><h4 className="text-sm font-semibold">项目目标</h4><div className="flex shrink-0 items-center gap-2"><OwnerModuleStatus tone="accent">已保存 · v{currentGoal.goal.goalVersion}</OwnerModuleStatus><button type="button" className="text-xs text-primary underline-offset-4 hover:underline" onClick={() => change({ editingGoal: true })}>调整目标</button></div></div>
             <p className="mt-2 whitespace-pre-wrap text-sm leading-6">{currentGoal.goal.objective}</p>
             {currentGoal.goal.constraints.length > 0 && <p className="mt-2 text-xs leading-5 text-muted-foreground"><span className="font-medium">约束：</span>{currentGoal.goal.constraints.join('；')}</p>}
             {currentGoal.goal.acceptanceCriteria.length > 0 && <p className="mt-2 text-xs leading-5 text-muted-foreground"><span className="font-medium">完成标准：</span>{currentGoal.goal.acceptanceCriteria.join('；')}</p>}
           </section>
-          <ProjectOwnerConversationProgress subject={subject} />
-          {plan.snapshot && <ProjectOwnerPlanPanel projectId={projectId} taskId={taskId} conversational />}
-        </div>}
-        historyFacts={<div className="grid gap-2 sm:grid-cols-2">
-          <details className="rounded-xl bg-card p-3 shadow-sm"><summary className="cursor-pointer text-sm font-medium">已确认目标与边界</summary><div className="mt-2 space-y-2 text-xs leading-5 text-muted-foreground"><p><span className="font-medium text-foreground">目标：</span>{currentGoal.goal.objective}</p><p><span className="font-medium text-foreground">必须遵守：</span>{currentGoal.goal.constraints.join('；') || '暂无单独约束'}</p><p><span className="font-medium text-foreground">完成标准：</span>{currentGoal.goal.acceptanceCriteria.join('；') || '尚未单独设定'}</p></div></details>
-          <details className="rounded-xl bg-card p-3 shadow-sm"><summary className="cursor-pointer text-sm font-medium">项目资料范围与管理额度</summary><div className="mt-2 space-y-2 text-xs leading-5 text-muted-foreground"><p>资料工作区：{workspace?.name ?? '尚未绑定'}</p><p>Owner与团队共用已确认的管理预算；具体额度和有效期见右侧授权卡。</p><p>发布和对外发送不在当前授权范围内。</p></div></details>
-          {plan.snapshot && <details className="rounded-xl bg-card p-3 shadow-sm sm:col-span-2"><summary className="cursor-pointer text-sm font-medium">方案记录 · {plan.snapshot.state === 'confirmed' ? '已确认' : plan.snapshot.state === 'stale' ? '需更新' : '待审阅'}</summary><div className="mt-2 space-y-2 text-xs leading-5 text-muted-foreground"><p>{plan.snapshot.proposal.summary}</p><p><span className="font-medium text-foreground">交付步骤：</span>{plan.snapshot.proposal.steps.map(step => step.title).join('、')}</p></div></details>}
-          <div className="rounded-xl bg-card p-3 text-xs leading-5 text-muted-foreground shadow-sm sm:col-span-2">每轮交付、验收意见和后续修改记录会按时间保留在下方对话历史中。</div>
-        </div>}>
+          <section className="min-w-0 rounded-xl bg-muted/40 p-4 [overflow-wrap:anywhere]" aria-label="当前项目方案">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h4 className="text-sm font-semibold">方案</h4>
+              {plan.snapshot && <OwnerModuleStatus tone={plan.snapshot.state === 'confirmed' ? 'accent' : 'warn'}>{plan.snapshot.state === 'confirmed' ? '已确认' : plan.snapshot.state === 'stale' ? '需更新' : '待审阅'}</OwnerModuleStatus>}
+            </div>
+            <p className="mt-2 line-clamp-3 text-sm leading-6">{plan.snapshot?.proposal.summary ?? (plan.loading ? '正在读取方案…' : '暂无已保存方案。')}</p>
+            {plan.snapshot && <a href={`#${id}-plan`} className="mt-2 inline-block text-xs text-primary underline underline-offset-4">查看方案详情</a>}
+          </section>
+        </>}
+        progress={<ProjectOwnerConversationProgress subject={subject} />}
+        planDetailsId={`${id}-plan`}
+        planDetails={plan.snapshot && <div id={`${id}-plan`} tabIndex={-1}><ProjectOwnerPlanPanel projectId={projectId} taskId={taskId} conversational /></div>}>
         {facts?.binding && <details className="rounded-xl bg-muted/40 px-4 py-3 text-xs"><summary className="cursor-pointer font-medium">Owner 模型设置</summary><div className="mt-3 flex flex-wrap items-center justify-between gap-2">
           <p>当前 Owner 模型：{facts.binding.modelId}</p>
           <button type="button" className="text-primary underline underline-offset-4" disabled={busy} onClick={() => change({ editingConfiguration: true })}>更换 Owner 模型</button>

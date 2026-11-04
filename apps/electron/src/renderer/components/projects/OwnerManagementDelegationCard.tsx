@@ -50,7 +50,7 @@ export function OwnerManagementDelegationCard({ projectId, taskId }: { projectId
   }, [act, canOffer, editor.busy, editor.error, editor.preview, editor.view, subject])
   if (typeof window === 'undefined' || !window.electronAPI?.paa?.project?.previewOwnerManagementDelegation) return null
   if (active && current) return <p role="status" className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
-    <span>项目管理授权有效。实际进度及需要处理的事项见下方。</span><span>Owner模型：{current.modelId}</span>
+    <span>项目管理授权有效。实际进度及需要处理的事项见项目概览。</span><span>Owner模型：{current.modelId}</span>
     <button type="button" className="underline underline-offset-2" disabled={editor.busy} onClick={() => void act({ subject, action: 'revoke' })}>撤销授权</button>
   </p>
   return <section aria-label="Owner管理委托" className="space-y-3 rounded-2xl bg-primary/5 p-4 shadow-sm">

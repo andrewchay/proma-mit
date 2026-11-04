@@ -293,7 +293,7 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
     expect(getOwnerManagementConversation(project.id).messages.filter(message => message.teamWorkspaceProposal)).toHaveLength(1)
     expect(await teamScope.innerText()).toContain('owner-team-journey')
     await teamScope.getByRole('button', { name: '允许本项目使用这个团队工作区', exact: true }).click()
-    await page.getByText('范围已确认，Owner正在继续核对团队安排。', { exact: true }).waitFor()
+    await page.getByText('工作区范围已确认。', { exact: true }).waitFor()
     await page.getByLabel('Owner方案摘要').getByText('为新项目整理一页可评审的定位建议', { exact: true }).waitFor().catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
     expect(calls).toContain('owner_planning')
     expect(calls).toContain('owner_execution_assignment')

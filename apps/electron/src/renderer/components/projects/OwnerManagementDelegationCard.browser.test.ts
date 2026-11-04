@@ -62,7 +62,7 @@ createRoot(document.getElementById('root')).render(<Provider><OwnerManagementDel
     expect(await page.evaluate<number>('window.fixture.facts().confirms[0].input.maxRequests')).toBe(Number.MAX_SAFE_INTEGER)
     expect(await page.evaluate<boolean>('window.fixture.facts().confirms[0].input.autonomousExecution')).toBe(true)
     expect(await page.locator('section[aria-label="Owner管理委托"]').count()).toBe(0)
-    expect(await page.getByRole('status').filter({ hasText: '项目管理授权有效。实际进度及需要处理的事项见下方。' }).count()).toBe(1)
+    expect(await page.getByRole('status').filter({ hasText: '项目管理授权有效。' }).count()).toBe(1)
     await page.getByRole('button', { name: '撤销授权', exact: true }).click()
     await page.getByText('管理委托已撤销', { exact: true }).waitFor()
     expect(await page.evaluate<string>('window.fixture.facts().revokes[0].projectId')).toBe('p')

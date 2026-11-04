@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { atom, useAtomValue, useSetAtom } from 'jotai'
 import { confirmOwnerTeamWorkspaceAccessAtom, editOwnerMessageAtom, getOwnerManagementEditor, getOwnerMessageComposer, loadOwnerManagementAtom, ownerManagementEditorsAtom, ownerMessageComposersAtom, ownerTeamWorkspaceApprovalStatesAtom, sendOwnerMessageAtom } from '../../atoms/project-owner-management-atoms'
 import { getOwnerDelegationEditor, ownerDelegationEditorsAtom } from '../../atoms/owner-management-delegation-atoms'
@@ -9,18 +9,20 @@ import { retakeOwnerAssignmentAtom } from '../../atoms/project-owner-management-
 import { PermissionBanner } from '../agent/PermissionBanner'
 import { Button } from '../ui/button'
 import { RichTextInput } from '../ai-elements/rich-text-input'
-import { cn } from '../../lib/utils'
+import { cn, formatMessageTime } from '../../lib/utils'
 import { OwnerConversationChanges } from './OwnerConversationChanges'
 import { OwnerDeliveredArtifact } from './OwnerDeliveredArtifact'
-import { OwnerDesignHistory, designDeliveryAnchor } from './OwnerDesignHistory'
+import { OwnerDesignHistory, designDeliveryAnchor, revealOwnerHistoryTarget } from './OwnerDesignHistory'
 import { OwnerDesignBrief } from './OwnerDesignBrief'
 import { findReferencedDelivery } from './owner-delivery-reference'
 import { OwnerManagementQuestions } from './OwnerManagementQuestions'
 import { WebChangeObservationCard } from './WebChangeObservationCard'
-import { isOwnerWaitingForUser } from './project-owner-progress-state'
+import { getOwnerWaitingLabel, getOwnerWaitingMessage, isOwnerWaitingForUser } from './project-owner-progress-state'
+import { getOwnerCommandProgress, ownerCommandProgressAtom } from '@/atoms/owner-command-progress-atoms'
 import { CornerDownLeft } from 'lucide-react'
 import { sendWithCmdEnterAtom } from '../../atoms/shortcut-atoms'
 
+const dollars = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 6 })
 const ORGANIZATION_STALL_HINT_MS = 2 * 60 * 1000
 function ownerFacingMessage(content: string): string {
   try {
@@ -53,10 +55,11 @@ function elapsedLabel(milliseconds: number): string {
   return seconds < 60 ? `已等待 ${seconds} 秒` : `已等待 ${Math.floor(seconds / 60)} 分钟`
 }
 /** 一个项目入口承载历史、必要卡片与同一输入框；草稿按主体保留，不随切页丢失。 */
-export function OwnerManagementConversation({ projectId, taskId, children, currentFocus, historyFacts }: { projectId: string; taskId?: string; children: ReactNode; currentFocus?: ReactNode; historyFacts?: ReactNode }): React.ReactElement {
+export function OwnerManagementConversation({ projectId, taskId, children, currentFocus, progress, planDetails, planDetailsId, workspaceName }: { projectId: string; taskId?: string; children: ReactNode; currentFocus?: ReactNode; progress?: ReactNode; planDetails?: ReactNode; planDetailsId?: string; workspaceName?: string }): React.ReactElement {
+  const settingsId = useId()
   const subject = useMemo(() => ({ projectId, ...(taskId ? { taskId } : {}) }), [projectId, taskId])
-  const view = useMemo(() => atom(get => ({ editor: getOwnerManagementEditor(get(ownerManagementEditorsAtom), projectId), composer: getOwnerMessageComposer(get(ownerMessageComposersAtom), subject), plan: getOwnerPlanEditor(get(ownerPlanEditorsAtom), subject), delegation: getOwnerDelegationEditor(get(ownerDelegationEditorsAtom), subject) })), [projectId, subject])
-  const { editor, composer, plan, delegation } = useAtomValue(view)
+  const view = useMemo(() => atom(get => ({ editor: getOwnerManagementEditor(get(ownerManagementEditorsAtom), projectId), composer: getOwnerMessageComposer(get(ownerMessageComposersAtom), subject), plan: getOwnerPlanEditor(get(ownerPlanEditorsAtom), subject), delegation: getOwnerDelegationEditor(get(ownerDelegationEditorsAtom), subject), usage: getOwnerCommandProgress(get(ownerCommandProgressAtom), subject) })), [projectId, subject])
+  const { editor, composer, plan, delegation, usage } = useAtomValue(view)
   const pendingPermissions = useAtomValue(allPendingPermissionRequestsAtom)
   const sendWithCmdEnter = useAtomValue(sendWithCmdEnterAtom)
   const pendingAction = editor.view?.actionRequests?.find(item =>
@@ -79,16 +82,15 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const reviewHistory = editor.view?.reviewHistory?.filter(round => taskId === undefined || round.taskId === taskId) ?? []
   const messages = editor.view?.messages.filter(message => message.taskId === taskId && message.kind !== 'goal') ?? []
   const latestUserMessageIndex = messages.findLastIndex(message => message.role === 'user')
-  const latestUserMessage = latestUserMessageIndex >= 0 ? messages[latestUserMessageIndex] : undefined
+  const latestRoundStart = latestUserMessageIndex >= 0 ? latestUserMessageIndex : Math.max(0, messages.length - 1)
+  const olderMessages = messages.slice(0, latestRoundStart)
+  const latestMessages = messages.slice(latestRoundStart)
   const latestAssistantMessage = messages.findLast(message => message.role === 'assistant')
   const latestAttention = latestAssistantMessage?.kind === 'attention' ? latestAssistantMessage : undefined
   const latestWorkspaceProposal = latestAssistantMessage?.teamWorkspaceProposal
     && !workspaceApprovalStates.get(latestAssistantMessage.id)?.approved
     && !messages.some(message => message.teamWorkspaceApproval?.sourceMessageId === latestAssistantMessage.id)
     ? latestAssistantMessage : undefined
-  const latestOwnerResponse = latestUserMessageIndex >= 0 ? messages.slice(latestUserMessageIndex + 1).findLast(message =>
-    message.role === 'assistant' && ['reply', 'conversation', 'clarification', 'answer', 'plan_proposal', 'change_proposal', 'change_decision', 'delivery'].includes(message.kind),
-  ) : undefined
   const allTraces = editor.view?.trace ?? []
   const assignmentRunIndex = allTraces.findLastIndex(entry => entry.phase === 'assignment_run' && (taskId === undefined || entry.taskId === taskId))
   const latestAssignmentRun = assignmentRunIndex >= 0 ? allTraces[assignmentRunIndex] : undefined
@@ -132,11 +134,18 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   // 项目Owner消息属于同一段持续对话：执行、确认与交付都必须留在用户眼前，
   // 不能因为写入时的目标版本较旧就在确认后整段消失。
   const waitingForUser = isOwnerWaitingForUser(messages)
+  const waitingMessage = getOwnerWaitingMessage(messages, taskId)
+  const decisionLabel = waitingMessage?.kind !== 'attention' ? getOwnerWaitingLabel(messages, taskId) : null
+  const waitingForDecision = decisionLabel !== null
+  const authorizationDecision = ['none', 'expired', 'stale', 'revoked', 'exhausted'].includes(delegation.view?.state ?? '')
+  const needsArrangementRetry = staleAssignment || Boolean(latestAttention?.content.includes('人员安排'))
+  const hasOpenQuestions = editor.view?.questions.some(question => question.state === 'open' && question.taskId === taskId)
+  const hasPendingChange = editor.view?.changes?.some(change => change.state === 'pending' && change.taskId === taskId)
+  const planRisks = plan.snapshot?.proposal.risks ?? []
+  const ownerBudget = delegation.view?.ownerModelBudget
+  const teamUsage = usage.loaded && usage.schedule?.grantId ? usage.schedule : undefined
   const ownerProcessing = (composer.sending || hasActiveTrace) && !waitingForUser
     && editor.view?.manager?.status !== 'paused' && delegation.view?.state !== 'stale' && delegation.view?.state !== 'attention'
-  const focusLatestRecord = (): void => {
-    document.querySelector<HTMLElement>('[aria-label=\"Owner历史对话\"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }
   const focusReplyComposer = (): void => {
     requestAnimationFrame(() => {
       const reply = document.querySelector<HTMLElement>('form[aria-label="向Owner发送消息"] [contenteditable="true"][aria-label="给项目 Owner 的消息"]')
@@ -149,49 +158,19 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     : undefined
   const canSendMessage = !composer.sending && Boolean(composer.text.trim())
     && !(composer.deliveryReference && !referencedDelivery)
-  return <div className="space-y-5" aria-label="项目Owner持续对话">
-    {editor.loading && <p role="status" className="text-sm text-muted-foreground">正在读取 Owner 对话…</p>}
-    {editor.error && <div className="space-y-2"><p role="alert" className="text-sm text-destructive">Owner对话读取失败：{editor.error}</p><button type="button" className="text-xs text-primary underline" disabled={editor.loading} onClick={() => void load(projectId)}>重新读取 Owner 对话</button></div>}
-    {!editor.view?.manager && delegation.view?.state === 'none' && !plan.snapshot && <p role="status" className="rounded-xl bg-primary/5 px-4 py-3 text-sm leading-6">Owner尚未开始规划：当前没有已确认的项目总模型费用额度。请在下方确认预算与有效期；确认后，Owner会在额度内自动整理方案并回到这里回应。</p>}
-    <aside className="min-w-0 space-y-3 rounded-2xl bg-card p-4 shadow-sm sm:p-5" aria-label="需要你决定">
-      <h3 className="text-base font-semibold">需要你决定</h3>
-      <p className="text-xs leading-5 text-muted-foreground">需要你选择、输入或确认的事项在这里；项目授权设置也可在此查看。</p>
-      {pendingAction && <section aria-label="员工动作需要你逐次审批" className="space-y-3 rounded-xl bg-amber-500/10 p-3">
-        <p className="text-sm leading-6">员工执行已暂停，等待你核对下面的准确操作。Owner不能代签；在对话中讨论不等于批准。一次确认仅适用于本次参数，不扩大预算或范围。</p>
-        <PermissionBanner key={pendingAction.requestId} sessionId={pendingAction.sessionId} keyboardShortcuts={false} />
-      </section>}
-      {latestWorkspaceProposal && <div className="rounded-xl bg-amber-500/10 p-3 text-sm" aria-label="待查看团队工作区建议">
-        <p>Owner 建议将“{latestWorkspaceProposal.teamWorkspaceProposal?.workspaceName}”纳入项目资料范围。</p>
-        <button type="button" className="mt-2 text-primary underline underline-offset-4" onClick={() => document.getElementById(`owner-workspace-proposal-${latestWorkspaceProposal.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })}>查看范围与确认选项</button>
-      </div>}
-      {staleAssignment && <section className="space-y-2 rounded-xl bg-amber-500/10 p-3 text-sm" aria-label="团队安排需要重新核对">
-        <p>项目资料或团队范围已经变化，旧安排不能继续使用。可以让 Owner 按当前已确认方案重新安排；旧记录会保留。</p>
-        {delegation.view?.state !== 'active' && <p>请先重新核对项目管理授权，再重新安排。</p>}
-        <button type="button" className="rounded-lg bg-primary px-3 py-2 text-primary-foreground disabled:opacity-50" disabled={delegation.view?.state !== 'active' || retakeStatus === 'sending' || retakeRequested} onClick={() => { setRetakeStatus('sending'); void retakeAssignment(subject).then(result => { setRetakeStatus(result.message); setRetakeRequested(result.ok) }) }}>{retakeStatus === 'sending' ? '正在重新安排…' : '按当前方案重新安排'}</button>
-        {retakeStatus && retakeStatus !== 'sending' && <p role="status">{retakeStatus}</p>}
-      </section>}
-      <OwnerConversationChanges projectId={projectId} taskId={taskId} />
-      {children}
-      <OwnerManagementQuestions projectId={projectId} taskId={taskId} embedded />
-    </aside>
-    <div className="grid min-w-0 items-start gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.85fr)]" aria-label="Owner当前工作台">
-    <section className="space-y-4 rounded-2xl bg-muted/20 p-4 sm:p-5" aria-label="项目历史与事实">
-    <div><h3 className="text-base font-semibold">对话与成果</h3><p className="mt-1 text-xs text-muted-foreground">查看 Owner 的回应、交付成果和后续修改。</p></div>
-    {editor.view?.manager && <OwnerDesignBrief key={JSON.stringify([projectId, taskId ?? null])} projectId={projectId} disabled={composer.sending || Boolean(composer.pending)} onAdd={text => {
-      const next = composer.text.trim() ? `${composer.text}\n\n${text}` : text
-      if (next.length > 4000) return false
-      edit({ subject, text: next }); focusReplyComposer(); return true
-    }} />}
-    <OwnerDesignHistory messages={messages} />
-    {messages.length > 0 && <div className="space-y-3 border-t border-border/60 pt-4" role="log" aria-label="Owner历史对话" aria-live="polite" aria-relevant="additions">
-      {[...messages].reverse().map(message => <article key={message.id} className={`max-w-3xl rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm ${message.role === 'user' ? 'ml-6 rounded-tr-sm bg-primary/10' : 'mr-6 rounded-tl-sm bg-muted/60'}`}>
-        <p className="mb-1 text-xs font-medium text-muted-foreground">{message.role === 'user' ? '你' : '项目 Owner'}</p>
+  const renderMessage = (message: (typeof messages)[number]) => (
+    <article key={message.id} id={`owner-message-${message.id}`} tabIndex={-1} className={`max-w-3xl rounded-2xl px-4 py-3 text-sm leading-6 shadow-sm ${message.role === 'user' ? 'ml-6 rounded-tr-sm bg-primary/10' : 'mr-6 rounded-tl-sm bg-muted/60'}`}>
+        <header className="mb-1 flex flex-wrap items-baseline justify-between gap-x-3 text-xs text-muted-foreground">
+          <span className="font-medium">{message.role === 'user' ? '你' : '项目 Owner'}</span>
+          <time dateTime={new Date(message.createdAt).toISOString()}>{formatMessageTime(message.createdAt)}</time>
+        </header>
         {message.kind === 'employee_interaction' && message.employeeInteraction && <section className="mb-3 rounded-xl bg-amber-500/10 p-3" aria-label="员工待决事项">
           <div className="flex items-center justify-between gap-3"><p className="font-medium">员工需要 Owner 判断</p><span className="rounded-full bg-background/70 px-2 py-1 text-xs">{({ pending_owner: '等待 Owner', discussing_user: '讨论中', decided: '已决定', delivering: '回传中', resolved: '已回传', cancelled: '已取消', stale: '已失联', delivery_failed: '回传失败' } as Record<string, string>)[(editor.view?.employeeInteractions?.find(item => item.id === message.employeeInteraction?.id) ?? message.employeeInteraction).state] ?? '状态待核对'}</span></div>
           <p className="mt-2 whitespace-pre-wrap break-words text-sm">{message.employeeInteraction.summary}</p>
           <p className="mt-2 text-xs leading-5 text-muted-foreground">这是员工执行中的待决事项，不是用户授权。权限、预算、访问范围和系统接管仍须由你在明确入口中确认；Owner不能代签。</p>
         </section>}
         <p className="whitespace-pre-wrap break-words">{ownerFacingMessage(message.content)}</p>
+        {message.teamWorkspaceApproval && <p className="mt-2 text-xs text-muted-foreground">工作区范围已确认。</p>}
         {message.runEvidence && <details className="mt-2 rounded-lg bg-background/70 p-3 text-xs" aria-label="本轮请求证据（只读）">
           <summary className="cursor-pointer font-medium">本轮请求证据（只读）</summary>
           <dl className="mt-2 grid gap-1 sm:grid-cols-2">
@@ -203,7 +182,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
           </dl>
           <p className="mt-2 text-muted-foreground">这些是本地保存的证据摘要，不代表已确认账单，也不是执行许可。</p>
         </details>}
-        {message.teamWorkspaceProposal && <section id={`owner-workspace-proposal-${message.id}`} className="mt-3 space-y-2 rounded-xl bg-background/80 p-3 shadow-sm" aria-label="团队工作区范围建议">
+        {message.teamWorkspaceProposal && <section id={`owner-workspace-proposal-${message.id}`} tabIndex={-1} className="mt-3 space-y-2 rounded-xl bg-background/80 p-3 shadow-sm" aria-label="团队工作区范围建议">
           <p className="font-medium">建议扩大本项目可用资料范围</p>
           <p>允许后，“{message.teamWorkspaceProposal.workspaceName}”工作区的资料、技能和配置会纳入本项目上下文。Owner会自行选择员工并准备安排；这次授权只确认资料范围，不会提前启动员工。</p>
           <p className="text-xs text-muted-foreground">这是项目资料范围授权，会影响本项目后续规划与执行。只确认当前工作区；项目目标和员工执行权限不变。</p>
@@ -212,7 +191,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
             const approved = state?.approved || messages.some(item => item.teamWorkspaceApproval?.sourceMessageId === message.id)
             return <>
               {state?.error && <p role="alert" className="text-sm text-destructive">{state.error}</p>}
-              {approved ? <p role="status" className="text-sm text-emerald-700">范围已确认，Owner正在继续核对团队安排。</p> : <button type="button" className="rounded-xl bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50" disabled={state?.busy} onClick={() => void approveWorkspace({ projectId, ...(message.taskId ? { taskId: message.taskId } : {}), messageId: message.id, workspaceId: message.teamWorkspaceProposal!.workspaceId, scopeFingerprint: message.teamWorkspaceProposal!.scopeFingerprint })}>{state?.busy ? '正在确认并恢复安排…' : '允许本项目使用这个团队工作区'}</button>}
+              {approved ? <p role="status" className="text-sm text-emerald-700">该工作区已获项目授权。</p> : <button type="button" className="rounded-xl bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50" disabled={state?.busy} onClick={() => void approveWorkspace({ projectId, ...(message.taskId ? { taskId: message.taskId } : {}), messageId: message.id, workspaceId: message.teamWorkspaceProposal!.workspaceId, scopeFingerprint: message.teamWorkspaceProposal!.scopeFingerprint })}>{state?.busy ? '正在确认并恢复安排…' : '允许本项目使用这个团队工作区'}</button>}
             </>
           })()}
         </section>}
@@ -220,59 +199,124 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
         {message.kind === 'delivery' && message.delivery && <section className="mt-3 space-y-2" aria-label="已验收成果">
           {message.delivery.items.map(item => <div key={item.stepKey} id={designDeliveryAnchor(message.id, item.stepKey, item.artifactHash)} tabIndex={-1}><OwnerDeliveredArtifact item={item} feedbackCapacity={4000 - composer.text.length} feedbackDisabled={composer.sending || Boolean(composer.pending) || !editor.view?.manager} onRequestChanges={(excerpt) => { const text = excerpt ? `${composer.text}${composer.text.trim() ? '\n\n' : ''}针对这段内容提出修改：\n“${excerpt}”\n` : composer.text; if (text.length > 4000) return; edit({ subject, text, deliveryReference: { messageId: message.id, artifactHash: item.artifactHash, stepKey: item.stepKey } }); focusReplyComposer() }} /></div>)}
         </section>}
-      </article>)}
-    </div>}
-    </section>
-    <section className="min-w-0 rounded-2xl bg-card p-4 shadow-sm sm:p-5" aria-label="现阶段最需要关注">
-      <h3 className="text-base font-semibold">现在最需要关注</h3>
-      <p className="mt-1 text-xs leading-5 text-muted-foreground">这里汇总项目进度、阻塞和成果；需要选择或确认时请查看上方。</p>
-      {(assignmentTrace || ownerProcessing) && <div className="mt-3 rounded-xl bg-primary/5 px-4 py-3 text-sm" role="status" aria-label="Owner组织进度">
-      <div className="flex items-center gap-2">
-        {ownerProcessing && <span className="sidebar-breathe-dot sidebar-breathe-running size-2 flex-shrink-0 bg-current text-blue-500" aria-label="Owner正在处理" />}
-        <p>{waitingForUser ? 'Owner正在等你处理一项待确认内容。' : assignmentTrace ? ownerTraceStatus(assignmentTrace) : 'Owner正在处理你的消息。'}</p>
+      </article>
+  )
+  return <div className="space-y-5" aria-label="项目Owner持续对话">
+    {editor.loading && <p role="status" className="text-sm text-muted-foreground">正在读取 Owner 对话…</p>}
+    {editor.error && <div className="space-y-2"><p role="alert" className="text-sm text-destructive">Owner对话读取失败：{editor.error}</p><button type="button" className="text-xs text-primary underline" disabled={editor.loading} onClick={() => void load(projectId)}>重新读取 Owner 对话</button></div>}
+    {!editor.view?.manager && delegation.view?.state === 'none' && !plan.snapshot && <p role="status" className="rounded-xl bg-primary/5 px-4 py-3 text-sm leading-6">Owner尚未开始规划：当前没有已确认的项目总模型费用额度。请在授权设置中确认预算与有效期；确认后，Owner会在额度内自动整理方案并回到这里回应。</p>}
+    <section className="space-y-3" aria-label="Owner当前工作台">
+      <h3 className="text-base font-semibold">项目概览</h3>
+      <div className="grid min-w-0 items-start gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))]">
+        {currentFocus}
+        <section className="min-w-0 space-y-3 rounded-xl bg-primary/5 p-4" aria-label="需要你决定">
+          <h4 className="text-sm font-semibold">决策 · 需要你决定</h4>
+          <p className="text-xs leading-5 text-muted-foreground">需要你选择、补充信息、确认或授权。请使用事项对应的操作入口。</p>
+          {!editor.loading && editor.view && !pendingAction && !latestWorkspaceProposal && !needsArrangementRetry && !authorizationDecision && !waitingForDecision && !hasOpenQuestions && !hasPendingChange
+            && <p className="text-sm text-muted-foreground">暂无待你决定的事项。</p>}
+          {waitingForDecision && <div className="flex flex-wrap items-center gap-3 rounded-lg bg-amber-500/10 p-3 text-sm">
+            <p>{decisionLabel}</p>
+            {waitingMessage?.kind === 'clarification' && !hasOpenQuestions && <button type="button" className="text-primary underline underline-offset-4" onClick={focusReplyComposer}>回复 Owner</button>}
+            {planDetails && planDetailsId && waitingMessage && ['plan_proposal', 'planning_confirmation', 'execution_arranged'].includes(waitingMessage.kind)
+              && <a href={`#${planDetailsId}`} className="text-primary underline underline-offset-4">查看方案与确认项</a>}
+            {waitingMessage?.kind === 'configuration_required' && children && <a href={`#${settingsId}`} className="text-primary underline underline-offset-4">查看项目配置</a>}
+          </div>}
+          {authorizationDecision && children && <a href={`#${settingsId}`} className="block text-sm text-primary underline underline-offset-4">
+            {delegation.view?.state === 'none' ? '确认项目预算与授权范围' : '核对项目预算与授权范围'}
+          </a>}
+          {pendingAction && <section aria-label="员工动作需要你逐次审批" className="space-y-3 rounded-xl bg-amber-500/10 p-3">
+            <p className="text-sm leading-6">员工执行已暂停，等待你核对下面的准确操作。Owner不能代签；在对话中讨论不等于批准。一次确认仅适用于本次参数，不扩大预算或范围。</p>
+            <PermissionBanner key={pendingAction.requestId} sessionId={pendingAction.sessionId} keyboardShortcuts={false} />
+          </section>}
+          {latestWorkspaceProposal && <div className="rounded-xl bg-amber-500/10 p-3 text-sm" aria-label="待查看团队工作区建议">
+            <p>Owner 建议将“{latestWorkspaceProposal.teamWorkspaceProposal?.workspaceName}”纳入项目资料范围。</p>
+            <button type="button" className="mt-2 text-primary underline underline-offset-4" onClick={() => revealOwnerHistoryTarget(`owner-workspace-proposal-${latestWorkspaceProposal.id}`)}>查看范围与确认选项</button>
+          </div>}
+          {needsArrangementRetry && <section className="space-y-2 rounded-xl bg-amber-500/10 p-3 text-sm" aria-label="团队安排需要重新核对">
+            <p>{staleAssignment ? '项目资料或团队范围已经变化，旧安排不能继续使用。' : '人员安排需要重新核对。'}可以让 Owner 按当前已确认方案重新安排。</p>
+            {delegation.view?.state !== 'active' && <p>请先重新核对项目管理授权，再重新安排。</p>}
+            <button type="button" className="rounded-lg bg-primary px-3 py-2 text-primary-foreground disabled:opacity-50" disabled={delegation.view?.state !== 'active' || retakeStatus === 'sending' || retakeRequested} onClick={() => { setRetakeStatus('sending'); void retakeAssignment(subject).then(result => { setRetakeStatus(result.message); setRetakeRequested(result.ok) }) }}>{retakeStatus === 'sending' ? '正在重新安排…' : '按当前方案重新安排'}</button>
+            {retakeStatus && retakeStatus !== 'sending' && <p role="status">{retakeStatus}</p>}
+          </section>}
+          <OwnerConversationChanges projectId={projectId} taskId={taskId} />
+          <OwnerManagementQuestions projectId={projectId} taskId={taskId} embedded />
+        </section>
+        <section className="min-w-0 rounded-xl bg-muted/40 p-4" aria-label="项目风险">
+          <h4 className="text-sm font-semibold">风险 · 需要关注</h4>
+          <p className="mt-1 text-xs text-muted-foreground">这里显示预警和阻塞。若有明确的选择或确认项，会出现在「决策」。</p>
+          {planRisks.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-5 text-sm [overflow-wrap:anywhere]">{planRisks.map((risk, index) => <li key={index}>{risk}</li>)}</ul>}
+          {delegation.view?.state === 'attention' && children && <a href={`#${settingsId}`} className="mt-2 block text-sm text-primary underline underline-offset-4">上次请求待核对，查看请求记录</a>}
+          {!latestAttention && delegation.view?.state !== 'attention' && planRisks.length === 0 && <p className="mt-2 text-sm text-muted-foreground">暂无已记录的风险提示。</p>}
+          {latestAttention && <section className="mt-3 space-y-2 rounded-xl bg-amber-500/10 p-4" role="alert" aria-label="Owner最新处理结果">
+            <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-semibold">Owner 最新处理结果</h4><time className="text-xs text-muted-foreground">{new Date(latestAttention.createdAt).toLocaleString('zh-CN')}</time></div>
+            <p className="whitespace-pre-wrap break-words text-sm leading-6">{ownerFacingMessage(latestAttention.content)}</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <button type="button" className="text-xs text-primary underline underline-offset-4" onClick={() => revealOwnerHistoryTarget(`owner-message-${latestAttention.id}`)}>查看 Owner 历史记录</button>
+            </div>
+          </section>}
+        </section>
+        <section className="min-w-0 rounded-xl bg-muted/40 p-4" aria-label="资源消耗">
+          <h4 className="text-sm font-semibold">资源消耗</h4>
+          {delegation.view?.delegation ? <dl className="mt-2 grid grid-cols-2 gap-3 text-sm tabular-nums">
+            <div><dt className="text-xs text-muted-foreground">项目模型预算上限</dt><dd>{dollars.format(delegation.view.delegation.maxCostMicros / 1_000_000)}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">Owner 请求次数</dt><dd>{delegation.view.usedRequests}</dd></div>
+            <div><dt className="text-xs text-muted-foreground">项目预算占用</dt><dd>{dollars.format(delegation.view.reservedCostMicros / 1_000_000)}</dd></div>
+            {ownerBudget && <div><dt className="text-xs text-muted-foreground">Owner 已结算 / 保留占额</dt><dd>{dollars.format(ownerBudget.settledMicros / 1_000_000)} / {dollars.format(ownerBudget.inFlightMicros / 1_000_000)}</dd></div>}
+            {teamUsage && <div><dt className="text-xs text-muted-foreground">执行已记账 / 预留</dt><dd>{dollars.format(teamUsage.committedCostMicros / 1_000_000)} / {dollars.format(teamUsage.reservedCostMicros / 1_000_000)}</dd></div>}
+          </dl> : <p className="mt-2 text-sm text-muted-foreground">{delegation.view ? '尚未确认项目模型预算。' : '暂无预算数据。'}</p>}
+          <p className="mt-2 text-xs text-muted-foreground">预算占用含预留，实际费用以服务商账单为准。{workspaceName && `资料工作区：${workspaceName}。`}</p>
+        </section>
+        <section className="min-w-0 rounded-xl bg-muted/40 p-4" aria-label="项目进展">
+          <h4 className="text-sm font-semibold">进展</h4>
+          {(assignmentTrace || ownerProcessing) && <div className="mt-3 rounded-xl bg-primary/5 px-4 py-3 text-sm" role="status" aria-label="Owner组织进度">
+          <div className="flex items-center gap-2">
+            {ownerProcessing && <span className="sidebar-breathe-dot sidebar-breathe-running size-2 flex-shrink-0 bg-current text-blue-500" aria-label="Owner正在处理" />}
+            <p>{waitingForDecision ? 'Owner 正在等你处理决策事项。' : latestAttention ? 'Owner 已暂停推进，详情见风险。' : assignmentTrace ? ownerTraceStatus(assignmentTrace) : 'Owner正在处理你的消息。'}</p>
+          </div>
+          {assignmentActive && !waitingForUser && <p className="mt-1 text-xs text-muted-foreground">{elapsedLabel(clock - assignmentTrace.createdAt)}；这类安排没有可靠的固定预计时长。{clock - assignmentTrace.createdAt >= ORGANIZATION_STALL_HINT_MS ? '暂时还没有新进展；Owner会继续检查处理状态，你不必重复发送。收到结果或需要你决定的事项时，我会在这里更新。' : ''}</p>}
+          </div>}
+          {progress ?? (!assignmentTrace && !ownerProcessing && <p className="mt-2 text-sm text-muted-foreground">暂无新的进展记录。</p>)}
+          {reviewHistory.length > 0 && <details className="mt-3 rounded-xl bg-muted/40 p-4">
+            <summary className="cursor-pointer text-sm font-medium">查看进展与决策依据</summary>
+            {reviewHistory.map(round => <section key={round.id} className="mt-3 rounded-lg bg-background/70 p-3">
+              <h4 className="text-sm font-medium">{round.title}{round.reworkOrdinal > 0 ? ` · 返工第 ${round.reworkOrdinal} 轮` : ''}</h4>
+              <ol className="mt-2 space-y-2 text-sm">
+                {round.steps.map(step => <li key={step.label}><div className="flex flex-wrap items-center gap-x-2"><span className="font-medium">{step.label}</span>{step.at !== undefined && <time className="text-xs text-muted-foreground" dateTime={new Date(step.at).toISOString()}>{new Date(step.at).toLocaleString('zh-CN')}</time>}</div><p className="whitespace-pre-wrap break-words text-muted-foreground">{step.detail}</p></li>)}
+              </ol>
+            </section>)}
+          </details>}
+        </section>
       </div>
-      {waitingForUser && <div role="alert" className="mt-2 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-500/10 p-3"><p>查看 Owner 的最新说明后，可以直接在对话里回复。</p><button type="button" className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground" onClick={focusReplyComposer}>回复 Owner</button></div>}
-      {assignmentActive && !waitingForUser && <p className="mt-1 text-xs text-muted-foreground">{elapsedLabel(clock - assignmentTrace.createdAt)}；这类安排没有可靠的固定预计时长。{clock - assignmentTrace.createdAt >= ORGANIZATION_STALL_HINT_MS ? '暂时还没有新进展；Owner会继续检查处理状态，你不必重复发送。收到结果或需要你决定的事项时，我会在这里更新。' : ''}</p>}
-      </div>}
-      {latestAttention && <section className="mt-3 space-y-2 rounded-xl bg-amber-500/10 p-4" role="alert" aria-label="Owner最新处理结果">
-        <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-semibold">Owner 最新处理结果</h4><time className="text-xs text-muted-foreground">{new Date(latestAttention.createdAt).toLocaleString('zh-CN')}</time></div>
-        <p className="whitespace-pre-wrap break-words text-sm leading-6">{ownerFacingMessage(latestAttention.content)}</p>
-        <div className="flex flex-wrap items-center gap-3">
-          <button type="button" className="text-xs text-primary underline underline-offset-4" onClick={focusLatestRecord}>查看 Owner 历史记录</button>
-          {!staleAssignment && latestAttention.content.includes('人员安排') && <button type="button" className="rounded-lg bg-primary px-3 py-2 text-xs text-primary-foreground disabled:opacity-50" disabled={retakeStatus === 'sending' || retakeRequested} onClick={() => { setRetakeStatus('sending'); void retakeAssignment(subject).then(result => { setRetakeStatus(result.message); setRetakeRequested(result.ok) }) }}>{retakeStatus === 'sending' ? '正在重新安排…' : '按当前已确认方案重新安排'}</button>}
-        </div>
-        {retakeStatus && retakeStatus !== 'sending' && <p role="status" className="text-xs text-muted-foreground">{retakeStatus}</p>}
-      </section>}
-      {reviewHistory.length > 0 && <details className="mt-3 rounded-xl bg-muted/40 p-4">
-        <summary className="cursor-pointer text-sm font-medium">查看进展与决策依据</summary>
-        {reviewHistory.map(round => <section key={round.id} className="mt-3 rounded-lg bg-background/70 p-3">
-          <h4 className="text-sm font-medium">{round.title}{round.reworkOrdinal > 0 ? ` · 返工第 ${round.reworkOrdinal} 轮` : ''}</h4>
-          <ol className="mt-2 space-y-2 text-sm">
-            {round.steps.map(step => <li key={step.label}><div className="flex flex-wrap items-center gap-x-2"><span className="font-medium">{step.label}</span>{step.at !== undefined && <time className="text-xs text-muted-foreground" dateTime={new Date(step.at).toISOString()}>{new Date(step.at).toLocaleString('zh-CN')}</time>}</div><p className="whitespace-pre-wrap break-words text-muted-foreground">{step.detail}</p></li>)}
-          </ol>
-        </section>)}
-      </details>}
-      {currentFocus ?? <p className="mt-3 text-sm text-muted-foreground">当前没有需要优先处理的项目事项。</p>}
-      {latestUserMessage && <section className="mt-4 rounded-xl bg-muted/40 p-4" aria-label="最近补充对项目的影响">
-        <h4 className="text-sm font-semibold">你最近补充的内容</h4>
-        <p className="mt-2 line-clamp-3 whitespace-pre-wrap break-words text-sm">{latestUserMessage.content}</p>
-        <p role="status" className="mt-2 text-xs leading-5 text-muted-foreground">{latestOwnerResponse ? 'Owner已对此回应；请看上方当前目标、方案和进度，那里会显示已经产生的项目变化。若尚未变化，这条补充目前只作为后续判断依据。' : ownerProcessing ? '已记录，Owner正在处理；结果会更新当前目标或方案，或在这里说明需要你决定的事项。' : waitingForUser ? '已记录；Owner正在等待上方的决定，之后会继续推进。' : '已记录在项目历史中，尚无对应的Owner回复。'}</p>
-        {latestOwnerResponse && <details className="mt-2 rounded-lg bg-background/70 p-3"><summary className="cursor-pointer text-xs font-medium">查看Owner对此的最近回应</summary><p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6">{ownerFacingMessage(latestOwnerResponse.content)}</p></details>}
-      </section>}
-    {historyFacts && <details className="rounded-xl bg-card p-3 shadow-sm"><summary className="cursor-pointer text-sm font-medium">项目概览与授权范围</summary><div className="mt-3">{historyFacts}</div></details>}
     </section>
-    </div>
+    <section className="space-y-4 rounded-2xl bg-muted/20 p-4 sm:p-5" aria-label="项目历史与事实">
+      <div><h3 className="text-base font-semibold">对话与成果</h3><p className="mt-1 text-xs text-muted-foreground">查看 Owner 的回应、交付成果和后续修改。</p></div>
+      {editor.view?.manager && <OwnerDesignBrief key={JSON.stringify([projectId, taskId ?? null])} projectId={projectId} disabled={composer.sending || Boolean(composer.pending)} onAdd={text => {
+        const next = composer.text.trim() ? `${composer.text}\n\n${text}` : text
+        if (next.length > 4000) return false
+        edit({ subject, text: next }); focusReplyComposer(); return true
+      }} />}
+      <OwnerDesignHistory messages={messages} />
+      {messages.length > 0 && <div className="space-y-3" role="log" aria-label="Owner历史对话" aria-live="polite" aria-relevant="additions">
+        {olderMessages.length > 0 && <details key={JSON.stringify([projectId, taskId])} data-owner-earlier-messages className="rounded-xl bg-background/70 p-3">
+          <summary className="cursor-pointer text-sm font-medium">展开更早的对话 · {olderMessages.length} 条</summary>
+          <div className="mt-3 space-y-3">{olderMessages.map(renderMessage)}</div>
+        </details>}
+        <div className="space-y-3" aria-label="最新一轮对话">{latestMessages.map(renderMessage)}</div>
+      </div>}
+    </section>
     {editor.view?.manager && <form className="sticky bottom-0 z-10 px-2.5 pb-2.5 md:px-[18px] md:pb-[18px]" aria-label="向Owner发送消息" onSubmit={event => { event.preventDefault(); void send(subject) }}>
       <div className="rounded-[10px] border border-solid border-border/80 bg-muted/30 backdrop-blur-sm transition-all duration-200 focus-within:border-ring focus-within:bg-muted/50" data-input-mode="chat">
         <RichTextInput ariaLabel="给项目 Owner 的消息" value={composer.text} onChange={text => edit({ subject, text: text.slice(0, 4000) })} onSubmit={() => { void send(subject) }} placeholder={sendWithCmdEnter ? '回答问题、补充想法或询问进度… (⌘/Ctrl+Enter 发送，Enter 换行)' : '回答问题、补充想法或询问进度… (Enter 发送，Shift+Enter 换行)'} disabled={composer.sending || Boolean(composer.pending)} sendWithCmdEnter={sendWithCmdEnter} />
-        <p className="px-[15px] pb-2 text-xs leading-5 text-muted-foreground">这条消息会进入项目记录并交给 Owner 判断；实际目标、方案或进度变化会显示在上方“现在最需要关注”。要直接修改正式目标，请使用“调整目标”。</p>
+        <p className="px-[15px] pb-2 text-xs leading-5 text-muted-foreground">这条消息会进入项目记录并交给 Owner 判断；实际目标、方案或进度变化会显示在上方项目概览。要直接修改正式目标，请使用“调整目标”。</p>
         {composer.deliveryReference && <div className={`flex items-center gap-2 px-[15px] pb-2 text-xs ${referencedDelivery ? 'text-muted-foreground' : 'text-destructive'}`}><p role={referencedDelivery ? 'status' : 'alert'}>{referencedDelivery ? `本条意见将关联已验收成果《${referencedDelivery.title}》及其准确版本。` : '关联成果版本已无法核对；这条消息不会发送，请从当前交付卡重新选择成果。'}</p><button type="button" className="shrink-0 text-primary underline disabled:opacity-50" disabled={composer.sending || Boolean(composer.pending)} onClick={() => edit({ subject, text: composer.text, deliveryReference: null })}>取消关联</button></div>}
         {composer.error && <p role="alert" className="px-[15px] pb-2 text-sm text-destructive">{composer.error}。原消息已保留。</p>}
         <div className="flex items-center justify-between gap-3 border-t border-border/40 px-2.5 py-2">
-          <p role={delegation.view?.state === 'stale' ? 'alert' : undefined} className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">{editor.view.manager.status === 'paused' ? '管理已暂停，消息会保留，恢复后再处理。' : delegation.view?.state === 'stale' ? '管理授权因项目目标、配置、资料或费用依据变化而暂停。消息会保留且不会发送；请在上方重新核对并确认当前范围，Owner随后会继续处理。' : delegation.view?.state === 'attention' ? '你的消息会保存，但 Owner 正暂停在上次请求核对；当前不会发送新模型请求。请勿重复提交，先在上方核对原请求状态。' : 'Owner 在已确认的管理额度内回应；必要的方案或执行确认会在这里提出。'}</p>
+          <p role={delegation.view?.state === 'stale' ? 'alert' : undefined} className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">{editor.view.manager.status === 'paused' ? '管理已暂停，消息会保留，恢复后再处理。' : delegation.view?.state === 'stale' ? '管理授权因项目目标、配置、资料或费用依据变化而暂停。消息会保留且不会发送；请在授权设置中重新核对并确认当前范围，Owner随后会继续处理。' : delegation.view?.state === 'attention' ? '你的消息会保存，但 Owner 正暂停在上次请求核对；当前不会发送新模型请求。请勿重复提交，先在授权设置中核对原请求状态。' : 'Owner 在已确认的管理额度内回应；必要的方案或执行确认会在这里提出。'}</p>
           <Button type="submit" variant="ghost" size="icon" className={cn('size-[36px] rounded-full', canSendMessage ? 'text-primary hover:bg-primary/10' : 'cursor-not-allowed text-foreground/30')} disabled={!canSendMessage} aria-label={composer.pending ? '重新确认原消息已保存' : '发送给 Owner'} title={composer.pending ? '重新确认原消息已保存' : '发送给 Owner'}><CornerDownLeft className="size-[22px]" /></Button>
         </div>
       </div>
     </form>}
+    {planDetails}
+    {children && <div id={settingsId} tabIndex={-1} className="space-y-3">{children}</div>}
   </div>
 }
