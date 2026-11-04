@@ -124,6 +124,28 @@ export function chooseOwnerPendingSource(input: { hasUser: boolean; userPrepared
   return input.hasObservation ? 'observation' : null
 }
 
+/** 同一业务任务在两次人工输入之间最多触发八轮自动分析。计数只从已落库的运行得出。 */
+export function findOwnerFollowupFuse(projectId: string, messageId: string): string | null {
+  const source = getOwnerManagementMessage(projectId, messageId)
+  const businessTaskId = source?.executionObservation?.businessTaskId ?? source?.employeeInteraction?.taskId
+  if (!source || !businessTaskId) return null
+  const database = store.getProjectDb()
+  const boundary = database.prepare(`SELECT MAX(rowid) AS rowId FROM project_owner_management_messages
+    WHERE project_id=? AND json_extract(payload, '$.role')='user'
+    AND json_extract(payload, '$.taskId') IS ?
+    AND rowid < (SELECT rowid FROM project_owner_management_messages WHERE id=?)
+  `).get(projectId, source.taskId ?? null, messageId) as { rowId: number | null }
+  const count = database.prepare(`SELECT COUNT(DISTINCT e.id) AS count
+    FROM project_owner_management_messages m
+    JOIN project_owner_planning_links l ON l.project_id=m.project_id AND json_extract(l.payload, '$.conversationMessageId')=m.id
+    JOIN agent_executions e ON e.project_id=l.project_id AND e.entity_type='task' AND e.entity_id=l.planning_task_id
+    WHERE m.project_id=? AND m.rowid>? AND json_extract(l.payload, '$.goalRevision')=?
+      AND json_extract(m.payload, '$.taskId') IS ?
+      AND COALESCE(json_extract(m.payload, '$.executionObservation.businessTaskId'), json_extract(m.payload, '$.employeeInteraction.taskId'))=?
+  `).get(projectId, boundary.rowId ?? 0, source.goalRevision ?? null, source.taskId ?? null, businessTaskId) as { count: number }
+  return count.count >= 8 ? hash({ projectId, businessTaskId, goalRevision: source.goalRevision, boundary: boundary.rowId }) : null
+}
+
 /** 已落库但尚未建立Owner请求的员工结果，重启后仍须补齐交接。 */
 function pendingOwnerObservation(projectId: string, taskId?: string): { id: string } | undefined {
   return store.getProjectDb().prepare("SELECT m.id FROM project_owner_management_messages m WHERE m.project_id=? AND json_extract(m.payload, '$.kind') IN ('execution_observation','employee_interaction','file_change_observation','web_change_observation') AND json_extract(m.payload, '$.taskId') IS ? AND NOT EXISTS (SELECT 1 FROM project_owner_management_messages ignored WHERE ignored.project_id=m.project_id AND ignored.event_id='conversation-stale:' || m.id) AND NOT EXISTS (SELECT 1 FROM project_owner_planning_links l WHERE l.project_id=m.project_id AND json_extract(l.payload, '$.conversationMessageId')=m.id) ORDER BY m.rowid LIMIT 1").get(projectId, taskId ?? null) as { id: string } | undefined

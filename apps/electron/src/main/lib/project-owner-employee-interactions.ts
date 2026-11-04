@@ -177,6 +177,14 @@ export function cancelOwnerEmployeeInteraction(requestId: string): void {
 }
 
 
+/** 从已保存的员工等待重建下一次核对时间。 */
+export function nextOwnerEmployeeInteractionDeadline(projectId: string, after: number): number {
+  return listOwnerEmployeeInteractions(projectId).reduce((next, interaction) => {
+    const deadline = interactionDeadline(interaction)
+    return interaction.state === 'pending_owner' && deadline > after ? Math.min(next, deadline) : next
+  }, Infinity)
+}
+
 /**
  * 等待到期收尾：先拒绝原等待，再登记失联；不重建Promise、不投旧决定、不释放未知费用。
  * 拒绝只结束员工本轮提问，不宣称Runtime已停，也不代表Provider用量已结清。

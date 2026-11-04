@@ -78,7 +78,7 @@ afterEach(async () => {
   await new Promise(resolve => setTimeout(resolve, 25))
 })
 async function until(predicate: () => boolean) { for (let i = 0; i < 150; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)) } throw new Error('等待主动跟进超时') }
-async function fixture(running = false, failed = false, unknownUsage = false, textDelivery = false, body?: string, durableStartIntent = false) {
+async function fixture(running = false, failed = false, unknownUsage = false, textDelivery = false, body?: string, durableStartIntent = false, maxRequests = 6) {
   workerBody = body ?? (textDelivery ? 'report '.repeat(4000) + '全文末端：受众依据尚待原始访谈验证。' : '资料整理完成，但缺受众来源与成果文件核验。')
   leaveWorkerRunning = running; failWorker = failed; unknownWorkerUsage = unknownUsage
   const project = store.createProject({ title: '主动管理样例', description: '' }), workspace = workspaces.createAgentWorkspace(`跟进-${randomUUID()}`)
@@ -89,7 +89,7 @@ async function fixture(running = false, failed = false, unknownUsage = false, te
   goals.saveProjectOwnerGoalDraft(project.id, 0, { objective: '形成定位建议' })
   binding.saveOwnerRuntimeBinding(project.id, 0, { ownerName: 'Owner', carrierId: owner.id, workspaceId: workspace.id, changeReason: '测试' })
   reconcileOwnerManagement(project.id)
-  const budgetInput = { projectId: project.id, requestId: randomUUID(), maxRequests: 6, maxCostMicros: 20_000_000, expiresAt: Date.now() + 6 * 3600000 }
+  const budgetInput = { projectId: project.id, requestId: randomUUID(), maxRequests, maxCostMicros: 20_000_000, expiresAt: Date.now() + 6 * 3600000 }
   const budgetPreview = delegation.previewOwnerManagementDelegation(budgetInput)
   const projectBudget = delegation.confirmOwnerManagementDelegation({ input: budgetInput, previewHash: budgetPreview.previewHash })
   const context = plans.getProjectOwnerPlanningContext(project.id), roleKey = context.sources.roles[0]!.key
@@ -233,6 +233,57 @@ test('Given长时间无心跳及过期在途任务 When重复定时观察 Then�
   expect(management.getOwnerManagementView(f.project.id).trace?.some(item => item.state === 'expired')).toBe(true)
   expect(delegation.getOwnerManagementDelegation(f.project.id).usedRequests).toBe(0)
 })
+
+test('Given执行许可即将到期 When启动后台管理 Then不等待全量巡检就留下观察', async () => {
+  const f = await fixture(true)
+  const now = Date.now()
+  store.getProjectDb().prepare('UPDATE project_owner_execution_grants SET expires_at=? WHERE id=?').run(now + 500, f.grant.grantId)
+  expect(observation.nextOwnerExecutionObservationDeadline(f.project.id, now)).toBe(now + 500)
+  const stop = startOwnerManagementLoop()
+  try {
+    expect(management.getOwnerManagementView(f.project.id).trace?.some(item => item.state === 'expired')).toBe(false)
+    await until(() => management.getOwnerManagementView(f.project.id).trace?.some(item => item.state === 'expired') === true)
+    expect(management.getOwnerManagementView(f.project.id).trace?.filter(item => item.state === 'expired')).toHaveLength(1)
+  } finally { await stop() }
+})
+
+test('Given同一任务反复触发自动跟进 When达到八轮并重启 Then只提醒一次且人工输入可继续', async () => {
+  const f = await fixture(false, false, false, false, undefined, false, 12)
+  const original = observation.readOwnerExecutionObservation(f.project.id, f.execution.id, 'terminal')
+  // 已有业务团队；安排链已有终态，本用例只推动同一员工事实的自动跟进。
+  reconcileOwnerManagement(f.project.id)
+  const assignment = store.getProjectDb().prepare("SELECT planning_task_id FROM project_owner_planning_links WHERE project_id=? AND json_extract(payload, '$.purpose')='owner_execution_assignment'").get(f.project.id) as { planning_task_id: string }
+  store.createAgentExecution({ id: randomUUID(), projectId: f.project.id, entityType: 'task', entityId: assignment.planning_task_id, agentId: f.owner.id, sessionId: randomUUID(), status: 'completed', prompt: '已有团队安排' })
+  let stop = startOwnerManagementLoop()
+  try {
+    for (let i = 0; i < 8; i++) {
+      if (i > 0) management.recordOwnerManagementObservation(f.project.id, 1, original.observation, original.taskId, 'fuse-test:' + i)
+      await until(() => Boolean(active(f.project.id)))
+      const id = active(f.project.id)!.id
+      finish(f.project.id)
+      await until(() => store.getAgentExecution(id)?.status === 'completed')
+    }
+    await stop()
+    management.recordOwnerManagementObservation(f.project.id, 1, original.observation, original.taskId, 'fuse-test:8')
+    stop = startOwnerManagementLoop()
+    const notices = () => management.getOwnerManagementView(f.project.id).messages.filter(item => item.eventId.startsWith('owner-followup-fuse:'))
+    await until(() => notices().length === 1)
+    const blocked = store.getProjectDb().prepare(`SELECT l.planning_task_id FROM project_owner_planning_links l
+      LEFT JOIN agent_executions e ON e.entity_id=l.planning_task_id AND e.project_id=l.project_id
+      WHERE l.project_id=? AND json_extract(l.payload, '$.conversationMessageId') IS NOT NULL AND e.id IS NULL
+      ORDER BY l.rowid DESC LIMIT 1`).get(f.project.id) as { planning_task_id: string }
+    const { startDelegatedOwnerPlanningTask } = await import('./controlled-project-task-service')
+    await expect(startDelegatedOwnerPlanningTask(blocked.planning_task_id)).rejects.toThrow('自动跟进已达到上限')
+    await stop()
+    stop = startOwnerManagementLoop()
+    expect(notices()).toHaveLength(1)
+    expect(delegation.getOwnerManagementDelegation(f.project.id).usedRequests).toBe(8)
+    const { sendOwnerManagementMessage } = await import('./project-owner-management-conversation')
+    sendOwnerManagementMessage({ projectId: f.project.id, conversationId: management.getOwnerManager(f.project.id)!.conversationId, requestId: randomUUID(), expectedGoalRevision: 1, content: '请说明下一步。' })
+    await until(() => Boolean(active(f.project.id)))
+    expect(planning.readOwnerPlanningSnapshot(active(f.project.id)!.entityId)?.context.conversation?.executionObservation).toBeUndefined()
+  } finally { await stop() }
+}, 20000)
 
 test('Given员工结果含业务缺口 WhenOwner主动提出必要问题 Then同一会话持久呈现建议、不变更业务许可', async () => {
   const f = await fixture(); f.issue(); const stop = startOwnerManagementLoop()
