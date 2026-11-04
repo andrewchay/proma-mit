@@ -109,6 +109,14 @@ export interface OwnerManagementTraceEntry {
   detailCode?: OwnerManagementTraceDetailCode
 }
 
+export interface OwnerReviewHistory {
+  id: string
+  taskId?: string
+  title: string
+  reworkOrdinal: number
+  steps: Array<{ label: string; detail: string; at?: number }>
+}
+
 export interface OwnerManagementView {
   manager: ProjectOwnerManager | null
   messages: OwnerManagementMessage[]
@@ -121,6 +129,7 @@ export interface OwnerManagementView {
   questions: OwnerManagementQuestion[]
   changes?: OwnerConversationChangeView[]
   trace?: OwnerManagementTraceEntry[]
+  reviewHistory?: OwnerReviewHistory[]
 }
 
 export interface SendOwnerManagementMessageRequest {
