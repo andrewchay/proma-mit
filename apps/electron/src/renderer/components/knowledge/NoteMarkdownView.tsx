@@ -81,12 +81,14 @@ interface NoteMarkdownViewProps {
   note: KnowledgeNote
   /** 点击正文双链时跳转（由父组件按标题解析目标笔记） */
   onOpenLinked: (target: string, kind: NoteLinkKind) => void
+  scrollRef?: React.RefObject<HTMLDivElement>
   fragmentTarget?: { noteId: string; fragment: string } | null
 }
 
-export function NoteMarkdownView({ note, onOpenLinked, fragmentTarget }: NoteMarkdownViewProps): React.ReactElement {
+export function NoteMarkdownView({ note, onOpenLinked, fragmentTarget, scrollRef }: NoteMarkdownViewProps): React.ReactElement {
   const isHtml = note.filePath.toLowerCase().endsWith('.html')
-  const contentRef = React.useRef<HTMLDivElement>(null)
+  const fallbackRef = React.useRef<HTMLDivElement>(null)
+  const contentRef = scrollRef ?? fallbackRef
 
   React.useEffect(() => {
     if (!fragmentTarget || fragmentTarget.noteId !== note.id) return
@@ -98,7 +100,7 @@ export function NoteMarkdownView({ note, onOpenLinked, fragmentTarget }: NoteMar
       element.id.toLowerCase() === fragment || slug(element.textContent ?? '') === slug(fragment),
     )
     target?.scrollIntoView({ block: 'start' })
-  }, [fragmentTarget, note.id])
+  }, [contentRef, fragmentTarget, note.id])
 
   // HTML 笔记：索引层已剔除 script/style/head，这里经 DOMPurify 二次净化后渲染
   const sanitizedHtml = React.useMemo(

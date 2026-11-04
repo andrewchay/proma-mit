@@ -84,7 +84,7 @@ export function KnowledgeModuleView(): React.ReactElement {
   const [activeNote, setActiveNote] = useAtom(activeNoteAtom)
   const [noteHistory, setNoteHistory] = useAtom(knowledgeNoteHistoryAtom)
   const [fragmentTarget, setFragmentTarget] = useAtom(knowledgeFragmentTargetAtom)
-  const [_searchResults, setSearchResults] = useAtom(knowledgeSearchResultsAtom)
+  const setSearchResults = useSetAtom(knowledgeSearchResultsAtom)
   const [searchQuery, setSearchQuery] = useAtom(knowledgeSearchQueryAtom)
   const [tags, setTags] = useAtom(knowledgeTagsAtom)
   const [selectedTag, setSelectedTag] = useAtom(selectedTagAtom)
@@ -109,6 +109,21 @@ export function KnowledgeModuleView(): React.ReactElement {
   const [vaultName, setVaultName] = React.useState('')
   const [vaultPath, setVaultPath] = React.useState('')
   const [creating, setCreating] = React.useState(false)
+
+  const searchInputRef = React.useRef<HTMLInputElement>(null)
+  const noteListRef = React.useRef<HTMLDivElement>(null)
+  const readingRef = React.useRef<HTMLDivElement>(null)
+  const listOrigin = React.useRef<{ button: HTMLButtonElement; scrollTop: number; scope: string } | null>(null)
+  const readingReturn = React.useRef<{ noteId: string; scrollTop: number } | null>(null)
+  const listScope = JSON.stringify([selectedVaultId, selectedTag, searchQuery.trim()])
+
+  React.useLayoutEffect(() => {
+    const previous = readingReturn.current
+    if (previous && previous.noteId === activeNote?.id && readingRef.current) {
+      readingRef.current.scrollTop = previous.scrollTop
+      readingReturn.current = null
+    }
+  }, [activeNote])
 
   const api = window.electronAPI?.knowledge
 
@@ -184,13 +199,17 @@ export function KnowledgeModuleView(): React.ReactElement {
       setSearchResults([])
       return
     }
+    let cancelled = false
     const timer = setTimeout(() => {
       void run(async () => {
         const results = await api.searchNotes(query, selectedVaultId ?? undefined)
-        setSearchResults(results)
+        if (!cancelled) setSearchResults(results)
       })
     }, 250)
-    return () => clearTimeout(timer)
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
   }, [searchQuery, selectedVaultId, api, run, setSearchResults])
 
   /** 选择 Vault 目录 */
@@ -306,31 +325,58 @@ export function KnowledgeModuleView(): React.ReactElement {
   }
 
   /** 打开笔记详情 */
-  const openNote = async (noteId: string, fragment: string | null = null): Promise<void> => {
+  const openNote = async (noteId: string, fragment: string | null = null, origin?: HTMLButtonElement): Promise<void> => {
     if (!api) return
+    const previous = activeNote && { noteId: activeNote.id, scrollTop: readingRef.current?.scrollTop ?? 0 }
+    const source = origin && { button: origin, scrollTop: noteListRef.current?.scrollTop ?? 0, scope: listScope }
     if (activeNote?.id === noteId) {
+      if (source) {
+        listOrigin.current = source
+        setNoteHistory([])
+      }
       setFragmentTarget(fragment ? { noteId, fragment } : null)
       return
     }
     await run(async () => {
       const note = await api.getNote(noteId)
       if (!note) throw new Error('目标笔记已不在索引中，请重新索引知识库')
-      if (activeNote) setNoteHistory((history) => [...history, activeNote.id])
+      if (source) {
+        listOrigin.current = source
+        setNoteHistory([])
+      } else if (previous) {
+        setNoteHistory((history) => [...history, previous])
+      }
       setActiveNote(note)
       setFragmentTarget(fragment ? { noteId, fragment } : null)
     })
   }
 
   const goBack = async (): Promise<void> => {
-    const previousId = noteHistory.at(-1)
-    if (!api || !previousId) return
+    const previous = noteHistory.at(-1)
+    if (!api || !previous) return
     await run(async () => {
-      const note = await api.getNote(previousId)
+      const note = await api.getNote(previous.noteId)
       if (!note) throw new Error('上一笔记已不在索引中，请重新索引知识库')
+      readingReturn.current = previous
       setNoteHistory((history) => history.slice(0, -1))
       setActiveNote(note)
       setFragmentTarget(null)
     })
+  }
+
+  const returnToList = (): void => {
+    setEditing(false)
+    setActiveNote(null)
+    setNoteHistory([])
+    setFragmentTarget(null)
+    const origin = listOrigin.current
+    listOrigin.current = null
+    if (origin?.scope === listScope && origin.button.isConnected && noteListRef.current) {
+      noteListRef.current.scrollTop = origin.scrollTop
+      origin.button.focus({ preventScroll: true })
+    } else {
+      searchInputRef.current?.focus({ preventScroll: true })
+    }
   }
 
   return (
@@ -453,6 +499,7 @@ export function KnowledgeModuleView(): React.ReactElement {
             <div className="relative">
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-foreground/35" />
               <Input
+                ref={searchInputRef}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder="搜索笔记标题、正文或标签"
@@ -470,7 +517,7 @@ export function KnowledgeModuleView(): React.ReactElement {
             </div>
           </div>
 
-          <div className="flex-1 min-h-0 overflow-y-auto">
+          <div ref={noteListRef} className="flex-1 min-h-0 overflow-y-auto">
             {loading && visibleNotes.length === 0 ? (
               <div className="flex items-center justify-center py-12 text-foreground/40">
                 <Loader2 size={16} className="animate-spin" />
@@ -486,7 +533,7 @@ export function KnowledgeModuleView(): React.ReactElement {
                 {visibleNotes.map((note) => (
                   <button
                     key={note.id}
-                    onClick={() => openNote(note.id)}
+                    onClick={(event) => void openNote(note.id, null, event.currentTarget)}
                     className={`w-full text-left px-2.5 py-2 rounded-md transition-colors ${
                       activeNote?.id === note.id
                         ? 'bg-foreground/[0.08]'
@@ -551,6 +598,7 @@ export function KnowledgeModuleView(): React.ReactElement {
             ) : (
               <NoteDetail
                 note={activeNote}
+                scrollRef={readingRef}
                 canEdit={canEdit}
                 notes={allNotes}
                 canGoBack={noteHistory.length > 0}
@@ -565,12 +613,7 @@ export function KnowledgeModuleView(): React.ReactElement {
                     setNotice(`未找到链接目标「${target}」`)
                   }
                 }}
-                onClose={() => {
-                  setEditing(false)
-                  setActiveNote(null)
-                  setNoteHistory([])
-                  setFragmentTarget(null)
-                }}
+                onClose={returnToList}
               />
             )
           ) : (
@@ -756,6 +799,7 @@ function EmptyState({
 /** 笔记详情：正文阅读 + frontmatter + 标签 + 出链/反链 */
 function NoteDetail({
   note,
+  scrollRef,
   canEdit,
   onEdit,
   canGoBack,
@@ -766,6 +810,7 @@ function NoteDetail({
   notes,
 }: {
   note: import('@gravitas/shared').KnowledgeNote
+  scrollRef: React.RefObject<HTMLDivElement>
   canEdit: boolean
   onEdit: () => void
   canGoBack: boolean
@@ -805,6 +850,8 @@ function NoteDetail({
         <EditToggle canEdit={canEdit && !isHtml} editing={false} onToggle={onEdit} />
         <button
           onClick={onClose}
+          aria-label="返回笔记列表"
+          title="返回笔记列表"
           className="p-1.5 rounded text-foreground/40 hover:text-foreground/70 hover:bg-foreground/[0.05]"
         >
           <X size={15} />
@@ -845,7 +892,7 @@ function NoteDetail({
 
         {/* 正文：笔记专用的 Markdown/HTML 阅读渲染（双链可点击、HTML 净化渲染） */}
         <div className="flex-1 min-h-0">
-          <NoteMarkdownView key={note.id} note={note} onOpenLinked={onOpenLinked} fragmentTarget={fragmentTarget} />
+          <NoteMarkdownView key={note.id} note={note} scrollRef={scrollRef} onOpenLinked={onOpenLinked} fragmentTarget={fragmentTarget} />
         </div>
 
         {(note.links.length > 0 || note.backlinks.length > 0) && (
