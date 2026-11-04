@@ -120,6 +120,26 @@ function artifactContainsQuote(content: string | undefined, quote: string): bool
   return content.includes(quote)
 }
 
+/** 只去掉包住整个回执的 Markdown 围栏，保留原文及摘要供审计。 */
+function unwrapReviewReceipt(raw: string): string {
+  return /^\s*```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*$/i.exec(raw)?.[1] ?? raw
+}
+
+/** 仅把评审已经逐字引用的依据补入缺失的 quote 字段。 */
+function restoreVerbatimReviewQuotes(receipt: string, artifactContent: string | undefined): string {
+  if (artifactContent === undefined || receipt.length > MAX_RESPONSE_LENGTH) return receipt
+  let value: unknown
+  try { value = JSON.parse(receipt) } catch { return receipt }
+  if (!isRecord(value) || !Array.isArray(value.criteria)) return receipt
+  let changed = false
+  const criteria = value.criteria.map((item: unknown) => {
+    if (!isRecord(item) || Object.hasOwn(item, 'quote') || !boundedText(item.evidence, 1000) || !artifactContainsQuote(artifactContent, item.evidence)) return item
+    changed = true
+    return { ...item, quote: item.evidence }
+  })
+  return changed ? JSON.stringify({ ...value, criteria }) : receipt
+}
+
 /**
  * 严格解析 Reviewer 的 JSON 回执。自然语言猜测、Markdown 包裹、漏项和额外字段均不作为调度依据。
  * 此回执只表达技术建议，不代表业务验收、费用结算或外部验证事实。
@@ -300,43 +320,54 @@ export function recordOwnerTechnicalReviewEvidence(reviewerCommandId: string, re
       throw new Error('Owner代码Reviewer缺少完整且绑定冻结命令的验证回执')
     }
   }
-  const response = parseOwnerTechnicalReviewResponse(rawResponse, listFrozenCriteria(row), artifactHash, artifactContent, frozenSource.executionKind === 'development' ? 'development' : 'text')
+  const receiptJson = artifactHash && rawResponse.length <= MAX_RESPONSE_LENGTH
+    ? restoreVerbatimReviewQuotes(unwrapReviewReceipt(rawResponse), artifactContent)
+    : rawResponse
+  const response = parseOwnerTechnicalReviewResponse(receiptJson, listFrozenCriteria(row), artifactHash, artifactContent, frozenSource.executionKind === 'development' ? 'development' : 'text')
   if (validationEvidence) assertOwnerDevelopmentValidationForVerdict(response.verdict, validationEvidence)
-  const evidence = toEvidence(row, executor, response, rawResponse, createdAt, validationEvidence)
+  const evidence = toEvidence(row, executor, response, receiptJson, createdAt, validationEvidence)
+  const originalResponse = receiptJson === rawResponse ? null : rawResponse
+  const originalResponseSha256 = originalResponse === null ? null : createHash('sha256').update(originalResponse, 'utf8').digest('hex')
   const database = store.getProjectDb()
   const validationEvidenceJson = JSON.stringify(validationEvidence ?? [])
   const validationEvidenceSha256 = createHash('sha256').update(validationEvidenceJson, 'utf8').digest('hex')
-  const existing = database.prepare('SELECT response_sha256, validation_evidence_sha256 FROM project_owner_technical_reviews WHERE reviewer_command_id=?').get(row.id) as { response_sha256: string; validation_evidence_sha256: string } | undefined
+  const existing = database.prepare('SELECT response_sha256, validation_evidence_sha256, original_response_sha256 FROM project_owner_technical_reviews WHERE reviewer_command_id=?').get(row.id) as { response_sha256: string; validation_evidence_sha256: string; original_response_sha256: string | null } | undefined
   if (existing) {
-    if (existing.response_sha256 !== evidence.responseSha256 || existing.validation_evidence_sha256 !== validationEvidenceSha256) throw new Error('Owner 技术评审 command 已记录不同回执或验证来源，拒绝覆盖')
+    if (existing.response_sha256 !== evidence.responseSha256 || existing.validation_evidence_sha256 !== validationEvidenceSha256 || existing.original_response_sha256 !== originalResponseSha256) throw new Error('Owner 技术评审 command 已记录不同回执或验证来源，拒绝覆盖')
     return evidence
   }
   database.prepare(`INSERT INTO project_owner_technical_reviews
     (reviewer_command_id, project_id, grant_id, task_id, step_link_id, rework_ordinal,
      executor_command_id, executor_execution_id, reviewer_execution_id, source_hash, verdict,
-     validation_evidence_json, validation_evidence_sha256, response_json, response_sha256, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+     validation_evidence_json, validation_evidence_sha256, response_json, response_sha256, original_response_text, original_response_sha256, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
     .run(row.id, row.project_id, row.grant_id, row.source_task_id, row.source_step_link_id, row.rework_ordinal,
       executor.id, executor.execution_id, row.execution_id, row.source_hash, response.verdict, validationEvidenceJson, validationEvidenceSha256,
-      rawResponse, evidence.responseSha256, createdAt)
+      receiptJson, evidence.responseSha256, originalResponse, originalResponseSha256, createdAt)
   return evidence
 }
 
-export function listOwnerTechnicalReviewEvidence(projectId: string, taskId?: string): OwnerTechnicalReviewEvidence[] {
+export function listOwnerTechnicalReviewEvidence(projectId: string, taskId?: string, reviewerCommandIds?: string[]): OwnerTechnicalReviewEvidence[] {
   if (!projectId.trim() || (taskId !== undefined && !taskId.trim())) throw new Error('Owner 技术评审查询主体无效')
   const rows = store.getProjectDb().prepare(`SELECT reviewer_command_id, project_id, grant_id, task_id, step_link_id, rework_ordinal,
       executor_command_id, executor_execution_id, reviewer_execution_id, source_hash, verdict,
-      validation_evidence_json, validation_evidence_sha256, response_json, response_sha256, created_at
-    FROM project_owner_technical_reviews WHERE project_id=? AND (? IS NULL OR task_id=?) ORDER BY created_at, reviewer_command_id`)
-    .all(projectId, taskId ?? null, taskId ?? null) as Array<{
+      validation_evidence_json, validation_evidence_sha256, response_json, response_sha256, original_response_text, original_response_sha256, created_at
+    FROM project_owner_technical_reviews WHERE project_id=? AND (? IS NULL OR task_id=?)
+      AND (? IS NULL OR reviewer_command_id IN (SELECT value FROM json_each(?)))
+    ORDER BY created_at, reviewer_command_id`)
+    .all(projectId, taskId ?? null, taskId ?? null, reviewerCommandIds ? 1 : null, JSON.stringify(reviewerCommandIds ?? [])) as Array<{
       reviewer_command_id: string; project_id: string; grant_id: string; task_id: string; step_link_id: string; rework_ordinal: number
       executor_command_id: string; executor_execution_id: string; reviewer_execution_id: string; source_hash: string
       validation_evidence_json: string; validation_evidence_sha256: string
       verdict: OwnerTechnicalReviewVerdict; response_json: string; response_sha256: string; created_at: number
+      original_response_text: string | null; original_response_sha256: string | null
     }>
   return rows.map(row => {
     if (!/^[a-f0-9]{64}$/.test(row.response_sha256) || createHash('sha256').update(row.response_json, 'utf8').digest('hex') !== row.response_sha256) {
       throw new Error('Owner 技术评审记录完整性校验失败')
+    }
+    if (row.original_response_sha256 !== (row.original_response_text === null ? null : createHash('sha256').update(row.original_response_text, 'utf8').digest('hex'))) {
+      throw new Error('Owner原始评审回执完整性校验失败')
     }
     let raw: unknown
     try { raw = JSON.parse(row.response_json) } catch { throw new Error('Owner 技术评审记录不是有效 JSON') }

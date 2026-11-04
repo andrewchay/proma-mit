@@ -76,6 +76,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const load = useSetAtom(loadOwnerManagementAtom), loadPlan = useSetAtom(loadOwnerPlanAtom), edit = useSetAtom(editOwnerMessageAtom), send = useSetAtom(sendOwnerMessageAtom)
   const loadedMessage = useRef('')
   const [clock, setClock] = useState(Date.now())
+  const reviewHistory = editor.view?.reviewHistory?.filter(round => taskId === undefined || round.taskId === taskId) ?? []
   const messages = editor.view?.messages.filter(message => message.taskId === taskId && message.kind !== 'goal') ?? []
   const latestUserMessageIndex = messages.findLastIndex(message => message.role === 'user')
   const latestUserMessage = latestUserMessageIndex >= 0 ? messages[latestUserMessageIndex] : undefined
@@ -242,6 +243,15 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
         </div>
         {retakeStatus && retakeStatus !== 'sending' && <p role="status" className="text-xs text-muted-foreground">{retakeStatus}</p>}
       </section>}
+      {reviewHistory.length > 0 && <details className="mt-3 rounded-xl bg-muted/40 p-4">
+        <summary className="cursor-pointer text-sm font-medium">查看进展与决策依据</summary>
+        {reviewHistory.map(round => <section key={round.id} className="mt-3 rounded-lg bg-background/70 p-3">
+          <h4 className="text-sm font-medium">{round.title}{round.reworkOrdinal > 0 ? ` · 返工第 ${round.reworkOrdinal} 轮` : ''}</h4>
+          <ol className="mt-2 space-y-2 text-sm">
+            {round.steps.map(step => <li key={step.label}><div className="flex flex-wrap items-center gap-x-2"><span className="font-medium">{step.label}</span>{step.at !== undefined && <time className="text-xs text-muted-foreground" dateTime={new Date(step.at).toISOString()}>{new Date(step.at).toLocaleString('zh-CN')}</time>}</div><p className="whitespace-pre-wrap break-words text-muted-foreground">{step.detail}</p></li>)}
+          </ol>
+        </section>)}
+      </details>}
       {currentFocus ?? <p className="mt-3 text-sm text-muted-foreground">当前没有需要优先处理的项目事项。</p>}
       {latestUserMessage && <section className="mt-4 rounded-xl bg-muted/40 p-4" aria-label="最近补充对项目的影响">
         <h4 className="text-sm font-semibold">你最近补充的内容</h4>

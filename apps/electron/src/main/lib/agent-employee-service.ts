@@ -1456,6 +1456,8 @@ async function finalizeOwnerCommandRunCallback(execution: AgentExecution, messag
   const usage: PilotUsageEvidence = allSettled && !openStop && !conflictingTerminal
     ? { source: 'request_settled', executionId: execution.id, sessionId: execution.sessionId, channelId: grant.channel_id, modelId: grant.model_id, capturedAt: completedAt, requestSettlementIds: rows.map(row => row.request_id), costMicros: rows.reduce((sum, row) => sum + (row.settled_cost_micros ?? 0), 0) }
     : { source: 'unknown', executionId: execution.id, sessionId: execution.sessionId, channelId: grant.channel_id, modelId: grant.model_id, capturedAt: completedAt, reason: conflictingTerminal ? '运行时终态回调冲突' : openStop ? '停止升级仍待人工对账' : 'Runtime终态缺少完整逐请求用量结算' }
+  let reviewError: string | undefined
+  const reviewerOutput = command.role === 'reviewer' ? messages?.findLast(message => message.role === 'assistant' && typeof message.content === 'string' && message.content.trim())?.content : undefined
   try {
     database.transaction(() => {
       const updated = database.prepare("UPDATE agent_executions SET status=?, result_summary=?, error=?, last_heartbeat_at=?, completed_at=? WHERE id=? AND owner_command_id=? AND session_id=? AND status='running'").run(nextStatus, summary, error?.slice(0, 500) ?? '', completedAt, completedAt, execution.id, commandId, execution.sessionId)
@@ -1465,23 +1467,25 @@ async function finalizeOwnerCommandRunCallback(execution: AgentExecution, messag
         if (frozen.changes !== 1) throw new Error('完整文本成果摘要已存在，拒绝改写')
       }
       settleOwnerCommandUsage(commandId, usage, completedAt, { deferSchedulerWake: true })
+      if (command.role === 'reviewer') {
+        try {
+          if (nextStatus !== 'completed') throw new Error(error || '独立评审运行未成功结束')
+          if (typeof reviewerOutput !== 'string') throw new Error('独立评审没有返回可校验的原文')
+          recordOwnerTechnicalReviewEvidence(commandId, execution.id, reviewerOutput, completedAt)
+        } catch (cause) {
+          reviewError = cause instanceof Error ? cause.message : '回执校验失败'
+        }
+      }
     })()
   } catch (cause) {
     console.warn(`[AgentEmployee] Owner命令 ${commandId} 终态结算失败，转未知恢复:`, cause instanceof Error ? cause.message : '账本错误')
     try { recoverInterruptedOwnerRuntimeExecutions(completedAt, execution.id) } catch { /* fail-closed，保留待核 */ }
   }
-  if (command.role === 'reviewer') {
-    const rawResponse = messages?.filter(message => message.role === 'assistant' && typeof message.content === 'string' && message.content.trim()).at(-1)?.content
-    try {
-      if (nextStatus !== 'completed') throw new Error(error || '独立评审运行未成功结束')
-      if (typeof rawResponse !== 'string') throw new Error('独立评审没有返回可校验的原文')
-      recordOwnerTechnicalReviewEvidence(commandId, execution.id, rawResponse, completedAt)
-    } catch (cause) {
-      console.warn(`[AgentEmployee] Owner Reviewer ${commandId} 回执不可用于自动续派:`, cause instanceof Error ? cause.message : '回执校验失败')
-      appendOwnerManagementMessage({ projectId: execution.projectId, taskId: command.source_task_id,
-        eventId: `owner-review-evidence-rejected:${commandId}:${execution.id}`, role: 'assistant', kind: 'attention',
-        content: `独立评审未能形成通过正式校验的回执，当前没有可采信的评审结果。原因：${ownerAssignmentFailureReason(cause instanceof Error ? cause.message : '回执校验失败')}。项目尚未因此通过验收或交付；原运行与费用记录保留，未自动重试。` })
-    }
+  if (reviewError) {
+    console.warn(`[AgentEmployee] Owner Reviewer ${commandId} 回执不可用于自动续派:`, reviewError)
+    appendOwnerManagementMessage({ projectId: execution.projectId, taskId: command.source_task_id,
+      eventId: `owner-review-evidence-rejected:${commandId}:${execution.id}`, role: 'assistant', kind: 'attention',
+      content: `独立评审未能形成通过正式校验的回执，当前没有可采信的评审结果。原因：${ownerAssignmentFailureReason(reviewError)}。项目尚未因此通过验收或交付；原运行与费用记录保留，未自动重试。` })
   }
   if (nextStatus === 'completed' && command.role === 'executor') {
     const task = store.getTask(command.source_task_id)
