@@ -1014,6 +1014,8 @@ export interface AgentContextUsageObservation {
 export interface AgentSessionMeta {
   /** IPC按Owner权威用途派生；不作为可写元数据或执行许可。 */
   ownerReadOnly?: boolean
+  /** 由 IPC 根据 Owner 规划任务关联派生，仅用于导航。 */
+  ownerPlanningProjectId?: string
   /** 会话唯一标识 */
   id: string
   /** 会话标题 */

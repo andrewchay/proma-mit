@@ -1787,8 +1787,13 @@ export async function registerIpcHandlers(): Promise<void> {
           }
         }
       }
-      const { hasOwnerBusinessSessionEvidence } = await import('./lib/project-owner-task-evidence')
-      return sessions.map(session => ({ ...session, ownerReadOnly: hasOwnerBusinessSessionEvidence(session.id) }))
+      const { listOwnerPlanningSessionProjects, hasOwnerBusinessSessionEvidence } = await import('./lib/project-owner-task-evidence')
+      const planningProjects = listOwnerPlanningSessionProjects()
+      return sessions.map(session => ({
+        ...session,
+        ownerReadOnly: hasOwnerBusinessSessionEvidence(session.id),
+        ownerPlanningProjectId: planningProjects.get(session.id),
+      }))
     }
   )
 
