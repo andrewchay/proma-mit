@@ -2109,7 +2109,7 @@ export async function registerIpcHandlers(): Promise<void> {
     }
   )
 
-  // 测试 MCP 服务器连接
+  // 检查 MCP 配置，不建立协议连接
   ipcMain.handle(
     AGENT_IPC_CHANNELS.TEST_MCP_SERVER,
     async (_, name: string, entry: import('@gravitas/shared').McpServerEntry): Promise<{ success: boolean; message: string }> => {
@@ -2117,7 +2117,7 @@ export async function registerIpcHandlers(): Promise<void> {
       const result = await validateMcpServer(name, entry)
       return {
         success: result.valid,
-        message: result.valid ? '连接成功' : (result.reason || '连接失败'),
+        message: result.valid ? '配置检查通过' : (result.reason || '配置检查失败'),
       }
     }
   )

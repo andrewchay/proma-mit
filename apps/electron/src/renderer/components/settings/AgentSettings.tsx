@@ -703,6 +703,8 @@ interface McpServerRowProps {
 
 function McpServerRow({ name, entry, onEdit, onDelete, onToggle }: McpServerRowProps): React.ReactElement {
   const isBuiltin = entry.isBuiltin === true
+  const connection = entry.lastTestResult
+  const connectionLabel = connection ? (connection.success ? '上次配置检查通过' : '上次配置检查失败') : '未检查配置'
   return (
     <SettingsRow
       label={name}
@@ -720,8 +722,10 @@ function McpServerRow({ name, entry, onEdit, onDelete, onToggle }: McpServerRowP
         <span className="text-[11px] px-1.5 py-0.5 rounded-md bg-muted text-muted-foreground font-medium">
           {TRANSPORT_LABELS[entry.type] ?? entry.type}
         </span>
-        <button onClick={onEdit} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors opacity-0 group-hover:opacity-100" title="编辑">
-          <Pencil size={14} />
+        <span className="text-xs text-muted-foreground">{entry.enabled ? '已启用' : '已停用'} · {connectionLabel}</span>
+        <button onClick={onEdit} className="inline-flex items-center gap-1 rounded-md p-1.5 text-xs hover:bg-muted/50" aria-label={`检查 ${name} 的连接设置`}>
+          <Pencil size={14} aria-hidden="true" />
+          检查配置
         </button>
         {!isBuiltin && (
           <button onClick={onDelete} className="p-1.5 rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors opacity-0 group-hover:opacity-100" title="删除">

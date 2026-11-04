@@ -516,9 +516,11 @@ export function McpServerForm({ server, workspaceSlug, onSaved, onCancel }: McpS
           <div className="px-4 py-3 space-y-3 border-t border-border">
             <div className="flex items-center justify-between">
               <div>
-                <div className="text-sm font-medium text-foreground">连接测试</div>
+                <div className="text-sm font-medium text-foreground">配置检查</div>
                 <div className="text-xs text-muted-foreground mt-0.5">
-                  必须测试成功后才能启用
+                  {!canTest()
+                    ? `填写服务器名称和${transportType === 'stdio' ? '启动命令' : '服务器 URL'}后即可检查`
+                    : '检查命令或 URL 格式，实际连接由 Agent 会话建立'}
                 </div>
               </div>
               <Button
@@ -529,13 +531,13 @@ export function McpServerForm({ server, workspaceSlug, onSaved, onCancel }: McpS
                 disabled={testing || !canTest()}
               >
                 {testing && <Loader2 size={14} className="animate-spin" />}
-                <span>{testing ? '测试中...' : '测试连接'}</span>
+                <span>{testing ? '检查中…' : '检查配置'}</span>
               </Button>
             </div>
 
             {/* 测试结果显示 */}
             {testResult && (
-              <div
+              <div role="status"
                 className={cn(
                   'flex items-start gap-2 px-3 py-2 rounded-md text-sm',
                   testResult.success
@@ -550,9 +552,9 @@ export function McpServerForm({ server, workspaceSlug, onSaved, onCancel }: McpS
                 )}
                 <div className="flex-1">
                   <div className="font-medium">
-                    {testResult.success ? '测试成功' : '测试失败'}
+                    {testResult.success ? '配置检查通过' : '配置检查失败'}
                   </div>
-                  <div className="text-xs mt-0.5 opacity-90">{testResult.message}</div>
+                  {!testResult.success && <div className="text-xs mt-0.5 opacity-90">{testResult.message}</div>}
                 </div>
               </div>
             )}
@@ -562,7 +564,7 @@ export function McpServerForm({ server, workspaceSlug, onSaved, onCancel }: McpS
               <div className="flex items-start gap-2 px-3 py-2 rounded-md text-sm bg-amber-500/10 text-amber-700 dark:text-amber-400">
                 <AlertCircle size={16} className="mt-0.5 shrink-0" />
                 <div className="text-xs">
-                  尚未测试连接。请先点击"测试连接"按钮验证配置是否正确。
+                  尚未检查配置。启用前请先检查当前配置。
                 </div>
               </div>
             )}
