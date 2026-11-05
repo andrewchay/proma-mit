@@ -1,4 +1,5 @@
 import type { ProviderType } from './channel'
+import type { AgentWorkspace } from './agent'
 
 /** 项目 Owner 的规划元数据；不是任务、执行或授权账本。 */
 export interface ProjectOwnerGoalSubject {
@@ -406,6 +407,8 @@ export interface ProjectOwnerRuntimeApi {
   getOwnerRuntimeBinding: (subject: { projectId: string }) => Promise<ProjectOwnerGoalResult<OwnerRuntimeBinding | null>>
   /** 由主进程按审核价格证据和项目已授权工作区自动建立首次Owner绑定；不发送模型请求。 */
   ensureOwnerRuntimeBinding: (subject: { projectId: string }) => Promise<ProjectOwnerGoalResult<OwnerRuntimeBinding | null>>
+  /** 创建 Owner 专用工作区：在受管目录建立 Git 基线以支持绿地研发；Git 不可用时回退为无 rootPath 的托管工作区。 */
+  createOwnerDedicatedWorkspace: (input: { name: string }) => Promise<ProjectOwnerGoalResult<AgentWorkspace>>
   saveOwnerRuntimeBinding: (request: { projectId: string; expectedRevision: number; input: { ownerName: string; carrierId: string; workspaceId: string; changeReason: string } }) => Promise<ProjectOwnerGoalResult<OwnerRuntimeBinding>>
   prepareOwnerPlanning: (request: { projectId: string; input: { requestId: string; taskId?: string; conversationMessageId?: string; expectedBindingRevision: number; expectedGoalRevision: number; expectedPlanRevision: number; expectedContextFingerprint: string } }) => Promise<ProjectOwnerGoalResult<OwnerPlanningLink>>
   listOwnerPlanningRuns: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<ProjectOwnerRunView[]>>

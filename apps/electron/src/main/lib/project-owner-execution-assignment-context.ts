@@ -1,9 +1,7 @@
 import { supportsOwnerExecutionKind } from '@gravitas/shared'
 import { createHash } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
 import type { OwnerExecutionAssignmentCandidate, OwnerExecutionAssignmentContext, ProjectOwnerPlanDraft, ProjectOwnerPlanningContext } from '@gravitas/shared'
+import { isGitRepositoryWithHead } from './project-owner-dev-workspace'
 
 export interface CreateOwnerExecutionAssignmentContextInput {
   context: ProjectOwnerPlanningContext
@@ -142,15 +140,6 @@ export function ownerAssignmentContextMatchesApprovalTransition(previous: OwnerE
 
 /**
  * 研发交付依赖 worktree 快照，其基线来自仓库 HEAD。
- * 只有 `git init` 而没有首个提交的空仓会在执行准备阶段失败，因此这里就要求 HEAD 可解析，
- * 避免把一条必然失败的路径提供成候选。
+ * 实现见 project-owner-dev-workspace.ts，避免两处判定口径漂移。
  */
-function isGitRepositoryWithHead(rootPath: string): boolean {
-  if (!existsSync(join(rootPath, '.git'))) return false
-  try {
-    execFileSync('git', ['-C', rootPath, 'rev-parse', '--verify', 'HEAD'], { stdio: 'ignore', timeout: 5_000 })
-    return true
-  } catch {
-    return false
-  }
-}
+

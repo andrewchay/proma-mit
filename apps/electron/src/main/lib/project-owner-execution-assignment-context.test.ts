@@ -133,11 +133,16 @@ test('Given 无代码候选但工作区是git仓库 When 构造上下文 Then �
     const protocol = await import('./project-owner-execution-assignment-protocol')
     const { OWNER_RUNTIME_ASSERTION_TEMPLATES } = await import('./owner-runtime-assertion-templates')
     const { createHash } = await import('node:crypto')
-    for (const current of [true,false]) {
-      const request = protocol.buildOwnerExecutionAssignmentRequest(value,true,current)
-      expect(protocol.resolveOwnerExecutionAssignmentRequest(value,createHash('sha256').update(JSON.stringify(request)).digest('hex'))).toEqual(request)
-      if (current) for (const item of OWNER_RUNTIME_ASSERTION_TEMPLATES) expect(request.systemPrompt).toContain(item.id)
-      else expect(request.systemPrompt).not.toContain('behavior.game-over')
+    for (const variant of ['current', 'registry-v1', 'legacy-6'] as const) {
+      const request = protocol.buildOwnerExecutionAssignmentRequest(value, true, variant)
+      expect(protocol.resolveOwnerExecutionAssignmentRequest(value, createHash('sha256').update(JSON.stringify(request)).digest('hex'))).toEqual(request)
+      if (variant === 'current') for (const item of OWNER_RUNTIME_ASSERTION_TEMPLATES) expect(request.systemPrompt).toContain(item.id)
+      if (variant === 'registry-v1') {
+        // 三消断言加入前的冻结注册表：保留旧提示可解析，且不夹带新断言。
+        expect(request.systemPrompt).toContain('behavior.game-over')
+        expect(request.systemPrompt).not.toContain('match3.board')
+      }
+      if (variant === 'legacy-6') expect(request.systemPrompt).not.toContain('behavior.game-over')
     }
 
     expect(value.codeFiles).toBeUndefined()

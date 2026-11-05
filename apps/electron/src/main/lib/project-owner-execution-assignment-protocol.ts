@@ -6,7 +6,21 @@ import { isProtectedDevelopmentPath, normalizeRepoRelativePath, pathWithinAllowe
 import { parseBrowserVerificationCheckIds } from './owner-runtime-verification-command'
 
 export interface OwnerExecutionAssignmentRequest { expectedGoalRevision: number; expectedContextFingerprint: string; systemPrompt: string; userPrompt: string }
-export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, requireRoleCoverage = true, currentBrowserRegistry = true): OwnerExecutionAssignmentRequest {
+/**
+ * 断言注册表会进入冻结安排提示，历史请求只能按当时的注册表文本还原。
+ * - current：当前注册表全量（随版本演进）；
+ * - registry-v1：2026-11 增加三消断言前的 7 项注册表文本；
+ * - legacy-6：更早的 6 项简写清单。
+ */
+export type OwnerBrowserRegistryVariant = 'current' | 'registry-v1' | 'legacy-6'
+const BROWSER_REGISTRY_V1_TEXT = 'html.loads（页面可加载且无脚本错误）、dom.board（存在 16 格棋盘容器）、dom.initial-tiles（开局至少两个数字块）、behavior.merge（同向按键可合并并计分）、storage.best-score（最高分可持久化）、behavior.game-over（无法移动时显示游戏结束）、dom.restart（重新开始恢复开局与零分）'
+const BROWSER_REGISTRY_LEGACY_6_TEXT = 'html.loads（页面可加载）、dom.board（16格棋盘）、dom.initial-tiles（开局数字块）、behavior.merge（按键合并计分）、storage.best-score（最高分持久化）、dom.restart（重开入口）'
+function browserRegistryText(variant: OwnerBrowserRegistryVariant): string {
+  if (variant === 'registry-v1') return BROWSER_REGISTRY_V1_TEXT
+  if (variant === 'legacy-6') return BROWSER_REGISTRY_LEGACY_6_TEXT
+  return OWNER_RUNTIME_ASSERTION_TEMPLATES.map(item => `${item.id}（${item.title}）`).join('、')
+}
+export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, requireRoleCoverage = true, browserRegistryVariant: OwnerBrowserRegistryVariant = 'current'): OwnerExecutionAssignmentRequest {
   return {
     expectedGoalRevision: context.goalRevision,
     expectedContextFingerprint: context.sourceContextFingerprint,
@@ -21,7 +35,7 @@ export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssi
         ? '本次为绿地研发：项目没有既有代码候选，executionKind应选development并在developmentScope中声明本次要新建的文件。targetPaths写工作区内的新文件相对路径（禁止绝对路径、..、反斜杠、受保护文件）；allowedPaths必须是targetPaths的子集；verificationCommands只能用browser:<断言标识>。controlled时不得输出developmentScope。'
         : 'executionKind为development时必须给developmentScope：目标路径必须来自所选步骤sourceReferences；允许修改路径必须来自冻结codeFiles，且只选本次真正需要的最小范围；至少提出一条验证命令供执行边界核对。代码依据不足时不得编造路径。controlled时不得输出developmentScope。',
       ...(context.executionKinds.includes('development')
-        ? [currentBrowserRegistry ? `本次提供development方式：验证命令只接受内置运行验证形式 browser:<断言标识>，多个用+连接，可选标识：${OWNER_RUNTIME_ASSERTION_TEMPLATES.map(item => `${item.id}（${item.title}）`).join('、')}。禁止提出bun test、npm test、pytest等仓库自带测试或自写验证脚本：Owner员工不执行仓库代码。成果含HTML页面时必须至少声明一条browser断言；无法用内置断言覆盖时，在reason中如实说明验证缺口。` : '本次提供development方式：验证命令只接受内置运行验证形式 browser:<断言标识>，多个用+连接，可选标识：html.loads（页面可加载）、dom.board（16格棋盘）、dom.initial-tiles（开局数字块）、behavior.merge（按键合并计分）、storage.best-score（最高分持久化）、dom.restart（重开入口）。禁止提出bun test、npm test、pytest等仓库自带测试或自写验证脚本：Owner员工不执行仓库代码。成果含HTML页面时必须至少声明一条browser断言；无法用内置断言覆盖时，在reason中如实说明验证缺口。']
+        ? [`本次提供development方式：验证命令只接受内置运行验证形式 browser:<断言标识>，多个用+连接，可选标识：${browserRegistryText(browserRegistryVariant)}。禁止提出bun test、npm test、pytest等仓库自带测试或自写验证脚本：Owner员工不执行仓库代码。成果含HTML页面时必须至少声明一条browser断言；无法用内置断言覆盖时，在reason中如实说明验证缺口。`]
         : ['本次只提供controlled方式：绝不能输出developmentScope，也不得声明browser断言或任何验证命令。执行员工只能交付文本，无法运行或打开成果；请在scopeReason中如实说明这一验证缺口，不要虚构代码范围、路径或运行证据。']),
       '仅输出一个符合此JSON schema的对象：{"schemaVersion":1,"contextFingerprint":"<输入中的指纹>","selectedStepKeys":["<已有步骤键>"],"scopeReason":"<范围理由>","workspaceId":"<项目工作区ID>","workspaceReason":"<工作区理由>","executionKind":"controlled或development","executionKindReason":"<执行方式理由>","assignments":[{"roleKey":"<所选岗位键>","employeeId":"<候选ID>","reason":"<匹配理由>"}],"reviewerEmployeeId":"<候选ID>","reviewerReason":"<评审理由>","developmentScope":{"targetPaths":["<所选计划源码引用路径>"],"allowedPaths":["<冻结代码候选路径>"],"verificationCommands":["<验证建议>"],"reason":"<范围理由>"}}。controlled时省略developmentScope。不要Markdown代码围栏或额外字段。',
     ].join('\n'),
@@ -30,9 +44,10 @@ export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssi
 }
 /** 历史安排请求保留原提示，仅按完整hash识别已知格式。 */
 export function resolveOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, promptHash: string): OwnerExecutionAssignmentRequest {
+  const registryVariants: readonly OwnerBrowserRegistryVariant[] = ['current', 'registry-v1', 'legacy-6']
   for (const requireRoleCoverage of [true, false]) {
-    for (const currentBrowserRegistry of [true, false]) {
-      const request = buildOwnerExecutionAssignmentRequest(context, requireRoleCoverage, currentBrowserRegistry)
+    for (const registryVariant of registryVariants) {
+      const request = buildOwnerExecutionAssignmentRequest(context, requireRoleCoverage, registryVariant)
       if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) return request
     }
   }

@@ -257,6 +257,35 @@ test('Given待恢复列表中有损坏意图 WhenOwner逐条核对 Then隔离损
   expect(ownerManagement.getOwnerManagementView(f.subject.projectId).messages.some(message => message.eventId === `execution-start-recovery:${brokenId}:attention`)).toBe(true)
 })
 
+test('Given同一启动意图被并发恢复 When两处同时核对 Then只派发一次且返回同一授权', async () => {
+  const f = fixture()
+  authorizeProjectBudget(f)
+  const plan = getOwnerPlanEditor(f.store.get(ownerPlanEditorsAtom), f.subject).snapshot!
+  const input = f.preparation.input, intentId = randomUUID()
+  startIntents.saveOwnerExecutionStartIntent({ ...f.subject, intentId, expectedGoalRevision: input.expectedGoalRevision,
+    expectedPlanRevision: input.expectedPlanRevision, planFingerprint: plan.planFingerprint, contextFingerprint: plan.contextFingerprint, input })
+  let launches = 0
+  const dependencies = {
+    launch: async (request: Parameters<typeof launchOwnerPreparedExecution>[0]) => {
+      launches++
+      // 拉长派发窗口，确保两次恢复确实重叠，验证的是去重而不是时序运气。
+      await new Promise(resolve => setTimeout(resolve, 30))
+      return launchOwnerPreparedExecution(request, { schedule: async () => {} })
+    },
+  }
+
+  const [first, second] = await Promise.all([
+    startIntents.resumeOwnerExecutionStartIntent(intentId, f.subject, dependencies),
+    startIntents.resumeOwnerExecutionStartIntent(intentId, f.subject, dependencies),
+  ])
+
+  expect(first.grantId).toBe(second.grantId)
+  expect(launches).toBe(1)
+  expect(grants.listOwnerExecutionGrantHistory(f.subject)).toHaveLength(1)
+  expect(tasks.listOwnerTaskMaterializationHistory(f.subject)).toHaveLength(1)
+  expect(startIntents.listPendingOwnerExecutionStartIntents().map(intent => intent.intentId)).not.toContain(intentId)
+})
+
 test('Given来源变化提醒暂时无法落盘 WhenOwner再次核对 Then重试提醒后隔离意图且不派发', async () => {
   const f = fixture()
   const plan = getOwnerPlanEditor(f.store.get(ownerPlanEditorsAtom), f.subject).snapshot!

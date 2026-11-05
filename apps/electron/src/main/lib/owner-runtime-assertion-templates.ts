@@ -43,6 +43,96 @@ const BOARD_HELPER = `
   const readTiles = () => readBoard().filter(value => value > 0)
 `
 
+/**
+ * 三消断言共用：8×8 棋盘、棋子签名（忽略选中/动画等状态类）、稳定等待、点击模拟与交换求解。
+ * 棋子签名只取结构性特征（子元素标签、去状态类后的 class、填充/背景色或文字），
+ * 让消除、下落、选中高亮等过渡态不改变签名语义；动画期间一律先等棋盘稳定再读写。
+ */
+const MATCH3_HELPER = `
+  const gridCells = element => [...element.children].filter(cell => {
+    const style = getComputedStyle(cell)
+    return style.display !== 'none' && style.visibility !== 'hidden' && !['absolute', 'fixed'].includes(style.position)
+  })
+  const findBoard = () => [...document.querySelectorAll('*')].find(element => {
+    const display = getComputedStyle(element).display
+    return (display === 'grid' || display === 'inline-grid') && gridCells(element).length === 64
+  })
+  let board = findBoard()
+  const STATE_CLASSES = new Set(['selected', 'active', 'hover', 'focus', 'focused', 'drag', 'dragging', 'swap', 'swapping', 'moving', 'falling', 'fall', 'drop', 'dropping', 'matched', 'matching', 'pop', 'popping', 'clear', 'clearing', 'hint', 'hinted', 'shake', 'shaking'])
+  const sig = (cell) => {
+    const kid = cell.firstElementChild
+    if (kid) {
+      const raw = kid.className && kid.className.baseVal !== undefined ? kid.className.baseVal : String(kid.className || '')
+      const cls = raw.split(/\\s+/).filter(name => name && !STATE_CLASSES.has(name.toLowerCase())).sort().join('.')
+      const style = getComputedStyle(kid)
+      const fill = style.fill && style.fill !== 'none' ? style.fill : ''
+      return kid.tagName + '|' + cls + '|' + (fill || style.backgroundColor)
+    }
+    const text = (cell.textContent || '').trim()
+    if (text) return 'text|' + text
+    return 'bg|' + getComputedStyle(cell).backgroundColor
+  }
+  const cells = () => gridCells(board)
+  const pieces = () => cells().map(sig)
+  const boardSig = () => pieces().join(';')
+  const isEmptySig = value => /^bg\\|(rgba\\(0, 0, 0, 0\\)|transparent)$/.test(value)
+  const settle = async () => {
+    let last = boardSig(), stable = 0
+    for (let round = 0; round < 30 && stable < 3; round += 1) {
+      await new Promise(resolve => setTimeout(resolve, 100))
+      const current = boardSig()
+      stable = current === last ? stable + 1 : 0
+      last = current
+    }
+    return last
+  }
+  const tap = (cell) => {
+    const rect = cell.getBoundingClientRect()
+    const init = { bubbles: true, cancelable: true, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }
+    for (const type of ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click']) {
+      cell.dispatchEvent(type.startsWith('pointer') && typeof PointerEvent === 'function' ? new PointerEvent(type, init) : new MouseEvent(type, init))
+    }
+  }
+  const matchAt = (grid, index) => {
+    const row = Math.floor(index / 8), col = index % 8, value = grid[index]
+    let run = 1
+    for (let c = col - 1; c >= 0 && grid[row * 8 + c] === value; c -= 1) run += 1
+    for (let c = col + 1; c < 8 && grid[row * 8 + c] === value; c += 1) run += 1
+    if (run >= 3) return true
+    run = 1
+    for (let r = row - 1; r >= 0 && grid[r * 8 + col] === value; r -= 1) run += 1
+    for (let r = row + 1; r < 8 && grid[r * 8 + col] === value; r += 1) run += 1
+    return run >= 3
+  }
+  const hasMatch = grid => grid.some((_, index) => matchAt(grid, index))
+  // 只比较交换两格是否形成新三连；已存在的三连由调用方先排除，避免误判。
+  const findSwap = (grid, wantMatch) => {
+    for (let index = 0; index < 64; index += 1) {
+      const row = Math.floor(index / 8), col = index % 8
+      const neighbors = []
+      if (col < 7) neighbors.push(index + 1)
+      if (row < 7) neighbors.push(index + 8)
+      for (const other of neighbors) {
+        if (grid[index] === grid[other]) continue
+        const next = grid.slice()
+        next[index] = grid[other]
+        next[other] = grid[index]
+        if ((matchAt(next, index) || matchAt(next, other)) === wantMatch) return [index, other]
+      }
+    }
+    return null
+  }
+  const readScore = () => {
+    const match = (document.body.innerText || '').match(/(?:分数|得分|score)[^0-9]{0,10}([0-9]+)/i)
+    return match ? Number(match[1]) : null
+  }
+  const readMoves = () => {
+    const match = (document.body.innerText || '').match(/(?:剩余步数|步数|moves(?:\\s*left)?)[^0-9]{0,10}([0-9]+)/i)
+    return match ? Number(match[1]) : null
+  }
+`
+
+
 export const OWNER_RUNTIME_ASSERTION_TEMPLATES: readonly OwnerRuntimeAssertionTemplate[] = [
   {
     id: 'html.loads',
@@ -172,6 +262,110 @@ export const OWNER_RUNTIME_ASSERTION_TEMPLATES: readonly OwnerRuntimeAssertionTe
       const score = (document.body.innerText || '').match(/(?:分数|得分|score)[^0-9]{0,10}([0-9]+)/i)
       const passed = tiles === 2 && score !== null && Number(score[1]) === 0
       return { passed, detail: '点击重开后数字块=' + tiles + '，分数=' + (score ? score[1] : '不可读') }
+    })()`,
+  },
+  {
+    id: 'match3.board',
+    title: '存在 8×8 满盘棋子棋盘',
+    intentKeywords: ['三消', '棋子'],
+    script: `(async () => {
+      ${MATCH3_HELPER}
+      if (!board) return { passed: false, skipped: true, detail: '没有找到恰好64格的网格容器' }
+      await settle()
+      const current = pieces()
+      const empty = current.filter(isEmptySig).length
+      const kinds = new Set(current.filter(value => !isEmptySig(value)))
+      return { passed: kinds.size >= 4 && empty === 0, detail: '64格棋盘，棋子种类 ' + kinds.size + '，空格 ' + empty }
+    })()`,
+  },
+  {
+    id: 'match3.swap',
+    title: '有效交换使棋盘变化',
+    intentKeywords: ['交换', '三消'],
+    script: `(async () => {
+      ${MATCH3_HELPER}
+      if (!board) return { passed: false, skipped: true, detail: '没有找到恰好64格的网格容器' }
+      const before = await settle()
+      const grid = before.split(';')
+      if (hasMatch(grid)) return { passed: false, detail: '棋盘稳定后仍存在未消除的三连，无法核验交换' }
+      const pair = findSwap(grid, true)
+      if (!pair) return { passed: false, skipped: true, detail: '当前棋盘找不到可形成三连的交换' }
+      tap(cells()[pair[0]])
+      tap(cells()[pair[1]])
+      const after = await settle()
+      const passed = after !== before && cells().length === 64
+      return { passed, detail: passed ? '有效交换后棋盘发生变化且仍为64格' : '交换后棋盘未变化或格子数异常（' + cells().length + '）' }
+    })()`,
+  },
+  {
+    id: 'match3.invalid-revert',
+    title: '无效交换自动还原且不扣步数',
+    intentKeywords: ['无效交换', '还原'],
+    script: `(async () => {
+      ${MATCH3_HELPER}
+      if (!board) return { passed: false, skipped: true, detail: '没有找到恰好64格的网格容器' }
+      const before = await settle()
+      const grid = before.split(';')
+      if (hasMatch(grid)) return { passed: false, detail: '棋盘稳定后仍存在未消除的三连，无法核验无效交换' }
+      const pair = findSwap(grid, false)
+      if (!pair) return { passed: false, skipped: true, detail: '当前棋盘任意相邻交换都会形成三连，无法核验无效交换还原' }
+      const movesBefore = readMoves()
+      tap(cells()[pair[0]])
+      tap(cells()[pair[1]])
+      const after = await settle()
+      const reverted = after === before
+      const movesAfter = readMoves()
+      const movesKept = movesBefore === null || movesAfter === movesBefore
+      return { passed: reverted && movesKept, detail: '无效交换后棋盘' + (reverted ? '已还原' : '未还原') + '；步数' + (movesBefore === null ? '不可读，未核验' : movesKept ? '未扣减' : '被错误扣减：' + movesBefore + '→' + movesAfter) }
+    })()`,
+  },
+  {
+    id: 'match3.score',
+    title: '消除后计分且棋盘补满',
+    intentKeywords: ['消除', '补满'],
+    script: `(async () => {
+      ${MATCH3_HELPER}
+      if (!board) return { passed: false, skipped: true, detail: '没有找到恰好64格的网格容器' }
+      const before = await settle()
+      const grid = before.split(';')
+      if (hasMatch(grid)) return { passed: false, detail: '棋盘稳定后仍存在未消除的三连，无法核验计分' }
+      const pair = findSwap(grid, true)
+      if (!pair) return { passed: false, skipped: true, detail: '当前棋盘找不到可形成三连的交换' }
+      const scoreBefore = readScore()
+      if (scoreBefore === null) return { passed: false, skipped: true, detail: '无法从页面读取分数，计分行为不可核验' }
+      const movesBefore = readMoves()
+      tap(cells()[pair[0]])
+      tap(cells()[pair[1]])
+      const after = await settle()
+      const current = after.split(';')
+      const scoreAfter = readScore()
+      const gained = scoreAfter !== null && scoreAfter > scoreBefore
+      const refilled = current.length === 64 && !current.some(isEmptySig)
+      const movesAfter = readMoves()
+      const movesOk = movesBefore === null || movesAfter === movesBefore - 1
+      return { passed: gained && refilled && movesOk, detail: '分数 ' + scoreBefore + '→' + scoreAfter + '；消除后棋盘' + (refilled ? '已补满64格' : '未补满') + '；步数' + (movesBefore === null ? '不可读，未核验' : movesBefore + '→' + movesAfter) }
+    })()`,
+  },
+  {
+    id: 'match3.restart',
+    title: '重开后棋盘满盘且分数归零',
+    intentKeywords: ['满盘重开', '归零'],
+    script: `(async () => {
+      ${MATCH3_HELPER}
+      if (!board) return { passed: false, skipped: true, detail: '没有找到恰好64格的网格容器' }
+      const button = [...document.querySelectorAll('button, [role="button"]')]
+        .find(element => /重新开始|重开|再来一局|restart|reset|new game/i.test(element.textContent || ''))
+      if (!button) return { passed: false, skipped: true, detail: '未找到明确的重开按钮' }
+      const scoreBefore = readScore()
+      button.click()
+      board = findBoard()
+      if (!board) return { passed: false, detail: '重开后找不到64格棋盘' }
+      await settle()
+      const current = pieces()
+      const full = current.length === 64 && !current.some(isEmptySig)
+      const scoreAfter = readScore()
+      const zeroed = scoreBefore === null ? scoreAfter === null || scoreAfter === 0 : scoreAfter === 0
+      return { passed: full && zeroed, detail: '重开后棋盘' + (full ? '满盘64格' : '未满盘') + '；分数=' + (scoreAfter === null ? '不可读' : scoreAfter) }
     })()`,
   },
 ]

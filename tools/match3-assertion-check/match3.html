@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>三消夹具</title>
+<style>
+#board{display:grid;grid-template-columns:repeat(8,32px);gap:2px}
+.cell{width:32px;height:32px;background:#f4f4f4}
+.piece{width:100%;height:100%}
+.p0{background:#e74c3c}.p1{background:#3498db}.p2{background:#2ecc71}.p3{background:#f1c40f}.p4{background:#9b59b6}
+.piece.selected{outline:3px solid #000}
+</style></head><body>
+<h1>三消夹具</h1>
+<p>分数 <span id="score">0</span></p>
+<p>剩余步数 <span id="moves">30</span></p>
+<button id="restart" type="button">重新开始</button>
+<div id="board"></div>
+<script>
+const SIZE = 8, TYPES = 5
+const boardEl = document.getElementById('board')
+const cellEls = []
+const pieceEls = []
+for (let index = 0; index < SIZE * SIZE; index += 1) {
+  const cell = document.createElement('div')
+  cell.className = 'cell'
+  const piece = document.createElement('div')
+  piece.className = 'piece'
+  cell.appendChild(piece)
+  boardEl.appendChild(cell)
+  cellEls.push(cell)
+  pieceEls.push(piece)
+}
+const state = new Array(SIZE * SIZE).fill(0)
+let score = 0, moves = 30, selected = -1, busy = false
+
+const render = () => {
+  pieceEls.forEach((piece, index) => { piece.className = 'piece p' + state[index] + (index === selected ? ' selected' : '') })
+  document.getElementById('score').textContent = String(score)
+  document.getElementById('moves').textContent = String(moves)
+}
+const matchAt = (grid, index) => {
+  const row = Math.floor(index / SIZE), col = index % SIZE, value = grid[index]
+  if (value < 0) return false
+  let run = 1
+  for (let c = col - 1; c >= 0 && grid[row * SIZE + c] === value; c -= 1) run += 1
+  for (let c = col + 1; c < SIZE && grid[row * SIZE + c] === value; c += 1) run += 1
+  if (run >= 3) return true
+  run = 1
+  for (let r = row - 1; r >= 0 && grid[r * SIZE + col] === value; r -= 1) run += 1
+  for (let r = row + 1; r < SIZE && grid[r * SIZE + col] === value; r += 1) run += 1
+  return run >= 3
+}
+const findMatches = (grid) => {
+  const matched = new Set()
+  for (let r = 0; r < SIZE; r += 1) for (let c = 0; c < SIZE - 2; c += 1) {
+    const value = grid[r * SIZE + c]
+    if (value >= 0 && value === grid[r * SIZE + c + 1] && value === grid[r * SIZE + c + 2]) { matched.add(r * SIZE + c); matched.add(r * SIZE + c + 1); matched.add(r * SIZE + c + 2) }
+  }
+  for (let c = 0; c < SIZE; c += 1) for (let r = 0; r < SIZE - 2; r += 1) {
+    const value = grid[r * SIZE + c]
+    if (value >= 0 && value === grid[(r + 1) * SIZE + c] && value === grid[(r + 2) * SIZE + c]) { matched.add(r * SIZE + c); matched.add((r + 1) * SIZE + c); matched.add((r + 2) * SIZE + c) }
+  }
+  return matched
+}
+const hasValidSwap = (grid) => {
+  for (let index = 0; index < SIZE * SIZE; index += 1) {
+    const row = Math.floor(index / SIZE), col = index % SIZE
+    const neighbors = []
+    if (col < SIZE - 1) neighbors.push(index + 1)
+    if (row < SIZE - 1) neighbors.push(index + SIZE)
+    for (const other of neighbors) {
+      const next = grid.slice()
+      next[index] = grid[other]
+      next[other] = grid[index]
+      if (matchAt(next, index) || matchAt(next, other)) return true
+    }
+  }
+  return false
+}
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
+const resolveBoard = async () => {
+  let matched = findMatches(state)
+  while (matched.size > 0) {
+    score += matched.size * 10
+    matched.forEach(index => { state[index] = -1 })
+    render()
+    await delay(150)
+    for (let c = 0; c < SIZE; c += 1) {
+      const kept = []
+      for (let r = 0; r < SIZE; r += 1) if (state[r * SIZE + c] >= 0) kept.push(state[r * SIZE + c])
+      while (kept.length < SIZE) kept.unshift(Math.floor(Math.random() * TYPES))
+      for (let r = 0; r < SIZE; r += 1) state[r * SIZE + c] = kept[r]
+    }
+    render()
+    await delay(150)
+    matched = findMatches(state)
+  }
+}
+const init = () => {
+  do {
+    for (let index = 0; index < SIZE * SIZE; index += 1) state[index] = Math.floor(Math.random() * TYPES)
+  } while (findMatches(state).size > 0 || !hasValidSwap(state))
+  score = 0
+  moves = 30
+  selected = -1
+  busy = false
+  render()
+}
+cellEls.forEach((cell, index) => cell.addEventListener('click', async () => {
+  if (busy) return
+  if (selected < 0) { selected = index; render(); return }
+  if (selected === index) { selected = -1; render(); return }
+  const rowA = Math.floor(selected / SIZE), colA = selected % SIZE
+  const rowB = Math.floor(index / SIZE), colB = index % SIZE
+  if (Math.abs(rowA - rowB) + Math.abs(colA - colB) !== 1) { selected = index; render(); return }
+  const a = selected, b = index
+  selected = -1
+  busy = true
+  state[a] = state[a] ^ state[b]
+  state[b] = state[a] ^ state[b]
+  state[a] = state[a] ^ state[b]
+  render()
+  await delay(150)
+  if (findMatches(state).size > 0) {
+    moves -= 1
+    render()
+    await resolveBoard()
+  } else {
+    state[a] = state[a] ^ state[b]
+    state[b] = state[a] ^ state[b]
+    state[a] = state[a] ^ state[b]
+    render()
+    await delay(150)
+  }
+  busy = false
+}))
+document.getElementById('restart').addEventListener('click', init)
+init()
+</script>
+</body></html>
