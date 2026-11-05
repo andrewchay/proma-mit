@@ -488,7 +488,9 @@ createRoot(document.getElementById('root')).render(<Provider store={store}><Proj
   page.on('pageerror', error => errors.push(error.message))
   try {
     console.info(`[交付测试] ${managed ? '自主' : '手动'}：加载页面`)
-    await page.clock.install()
+    // 自主场景不推进虚拟时间；仅手动交付场景需要快进轮询。
+    if (!managed) await page.clock.install()
+    console.info(`[交付测试] ${managed ? '自主' : '手动'}：打开页面`)
     await page.goto(`http://127.0.0.1:${server.port}`)
     console.info(`[交付测试] ${managed ? '自主' : '手动'}：页面已加载`)
     if (managed) {
