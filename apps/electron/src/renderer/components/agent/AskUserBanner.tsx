@@ -8,6 +8,7 @@
  */
 
 import * as React from 'react'
+import { toast } from 'sonner'
 import { useAtom, useSetAtom } from 'jotai'
 import { CheckCircle2, Circle, CheckSquare2, Square, Hand, Send, X, ArrowRight } from 'lucide-react'
 import Markdown, { defaultUrlTransform } from 'react-markdown'
@@ -225,6 +226,7 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
       })
     } catch (error) {
       console.error('[AskUserBanner] 响应失败:', error)
+      toast.error('回答未送达', { description: '该问题可能已结束，请保留答案并在会话中重新发送。' })
     } finally {
       setSubmitting(false)
     }
