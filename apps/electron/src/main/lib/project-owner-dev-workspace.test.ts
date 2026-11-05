@@ -95,6 +95,27 @@ test('Given 不安全名称 When 创建工作区 Then 拒绝且不在受管目�
   }
 })
 
+;(process.platform === 'win32' ? test.skip : test)('Given 中断仓库配置 fsmonitor When 恢复基线 Then 不执行配置的程序', () => {
+  const repo = join(getConfigDir(), 'owner-dev-repos', 'owner-existing-fsmonitor')
+  const marker = join(directory, 'fsmonitor-executed')
+  const monitor = join(directory, 'fsmonitor.sh')
+  mkdirSync(repo, { recursive: true })
+  execFileSync('git', ['-C', repo, 'init', '-q'])
+  writeFileSync(monitor, '#!/bin/sh\nprintf invoked > "$OWNER_FSMONITOR_MARKER"\n')
+  chmodSync(monitor, 0o755)
+  execFileSync('git', ['-C', repo, 'config', 'core.fsmonitor', monitor])
+  const oldMarker = process.env.OWNER_FSMONITOR_MARKER
+  process.env.OWNER_FSMONITOR_MARKER = marker
+  try {
+    const workspace = createOwnerDedicatedWorkspace('owner-existing-fsmonitor')
+    expect(isGitRepositoryWithHead(workspace.rootPath!)).toBe(true)
+    expect(existsSync(marker)).toBe(false)
+    expect(execFileSync('git', ['-C', repo, 'config', '--local', 'core.fsmonitor'], { encoding: 'utf8' }).trim()).toBe(monitor)
+  } finally {
+    if (oldMarker === undefined) delete process.env.OWNER_FSMONITOR_MARKER; else process.env.OWNER_FSMONITOR_MARKER = oldMarker
+  }
+})
+
 test('Given 工作区目录是符号链接 When 创建 Then 拒绝且不在目标目录建仓', () => {
   const target = join(directory, 'link-target')
   const parent = join(getConfigDir(), 'owner-dev-repos')

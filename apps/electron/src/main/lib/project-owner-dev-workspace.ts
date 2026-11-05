@@ -26,7 +26,7 @@ import { getConfigDir } from './config-paths'
 export function isGitRepositoryWithHead(rootPath: string): boolean {
   if (!existsSync(join(rootPath, '.git'))) return false
   try {
-    execFileSync('git', ['-C', rootPath, 'rev-parse', '--verify', 'HEAD'], { stdio: 'ignore', timeout: 5_000, env: isolatedGitEnvironment() })
+    execFileSync('git', ['-C', rootPath, '-c', 'core.fsmonitor=false', 'rev-parse', '--verify', 'HEAD'], { stdio: 'ignore', timeout: 5_000, env: isolatedGitEnvironment() })
     return true
   } catch {
     return false
@@ -39,7 +39,7 @@ function isolatedGitEnvironment(): NodeJS.ProcessEnv {
 }
 
 function git(rootPath: string, args: string[]): void {
-  execFileSync('git', ['-C', rootPath, '-c', `core.hooksPath=${devNull}`, '-c', 'init.templateDir=', ...args], {
+  execFileSync('git', ['-C', rootPath, '-c', `core.hooksPath=${devNull}`, '-c', 'init.templateDir=', '-c', 'core.fsmonitor=false', '-c', 'commit.gpgsign=false', ...args], {
     stdio: 'ignore',
     timeout: 15_000,
     env: isolatedGitEnvironment(),
