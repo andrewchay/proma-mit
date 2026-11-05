@@ -26,6 +26,7 @@ test('Given已保存的完整澄清答复 When续跑Atom执行 Then只创建一�
   store.set(ownerRuntimeApiAtom, {
     getOwnerRuntimeBinding: async () => ({ ok: true as const, value: binding }),
     ensureOwnerRuntimeBinding: async () => ({ ok: true as const, value: binding }),
+    createOwnerDedicatedWorkspace: async () => ({ ok: false as const, error: { code: 'failed', message: '测试不提供Owner专用工作区' } }),
     saveOwnerRuntimeBinding: async () => ({ ok: true as const, value: binding }),
     prepareOwnerPlanning: async request => {
       prepareCalls++

@@ -600,6 +600,7 @@ test('Given 用户在项目对话提交新目标及总预算 When Owner规划并
   state.set(runtimeAtoms.ownerRuntimeApiAtom, {
     getOwnerRuntimeBinding: async subject => ({ ok: true as const, value: ownerBinding.getOwnerRuntimeBinding(subject.projectId) }),
     ensureOwnerRuntimeBinding: async subject => ({ ok: true as const, value: ownerBinding.getOwnerRuntimeBinding(subject.projectId) }),
+    createOwnerDedicatedWorkspace: async () => ({ ok: false as const, error: { code: 'failed', message: '测试不提供Owner专用工作区' } }),
     saveOwnerRuntimeBinding: async request => ({ ok: true as const, value: ownerBinding.saveOwnerRuntimeBinding(request.projectId, request.expectedRevision, request.input) }),
     getOwnerPlanningContext: async subject => ({ ok: true as const, value: plans.getProjectOwnerPlanningContext(subject.projectId, subject.taskId) }),
     listOwnerPlanningRuns: async subject => ({ ok: true as const, value: listOwnerPlanningRuns(subject.projectId, subject.taskId) }),

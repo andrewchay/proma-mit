@@ -41,7 +41,7 @@ registerProjectOwnerRuntimeIpcHandlers({ handle: (channel, handler) => handlers.
 const { PROJECT_IPC_CHANNELS } = await import('@gravitas/shared')
 function invoke(channel: string, request: unknown) { return handlers.get(channel)!({}, request) }
 test('Given 配置/准备/只读IPC When 自动绑定、获取绑定或暂停准备 Then 无start/receipt写入入口，无执行或凭据返回', () => {
-  const f = prepared(); expect(handlers.size).toBe(5)
+  const f = prepared(); expect(handlers.size).toBe(6)
   expect(invoke(PROJECT_IPC_CHANNELS.GET_OWNER_RUNTIME_BINDING, { projectId: f.project.id })).toMatchObject({ ok: true, value: { carrierId: f.employee.id, revision: 1 } })
   expect(invoke(PROJECT_IPC_CHANNELS.ENSURE_OWNER_RUNTIME_BINDING, { projectId: f.project.id })).toMatchObject({ ok: true, value: { carrierId: f.employee.id, revision: 1 } })
   expect(invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_PLANNING_RUNS, { projectId: f.project.id })).toMatchObject({ ok: true, value: [{ link: { id: f.link.id }, executions: [], receipts: [], outcomes: [] }] }); expect(JSON.stringify(invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_PLANNING_RUNS, { projectId: f.project.id }))).not.toContain('fake-key')
@@ -58,6 +58,15 @@ test('Given 历史Run冻结提示指纹不属于已知格式 When 读取运行�
     value: [{ link: { id: f.link.id }, sourceWarning: expect.stringContaining('历史规划提示指纹'), receipts: [], outcomes: [] }],
   })
   expect(() => planningSource.resolveOwnerPlanningTask(f.link.planningTaskId)).toThrow('Owner规划来源记录无效')
+})
+test('Given Owner专用工作区请求 When 名称无效或夹带未知字段 Then 拒绝；合法名称创建带Git基线的工作区', () => {
+  expect(invoke(PROJECT_IPC_CHANNELS.CREATE_OWNER_DEDICATED_WORKSPACE, { name: '' })).toMatchObject({ ok: false })
+  expect(invoke(PROJECT_IPC_CHANNELS.CREATE_OWNER_DEDICATED_WORKSPACE, { name: `Owner-${randomUUID()}`, rootPath: '/etc' })).toMatchObject({ ok: false })
+  const name = `Owner-${randomUUID()}`
+  const result = invoke(PROJECT_IPC_CHANNELS.CREATE_OWNER_DEDICATED_WORKSPACE, { name }) as { ok: boolean; value?: { name: string; slug: string; rootPath?: string } }
+  expect(result.ok).toBe(true)
+  expect(result.value).toMatchObject({ name, slug: name.toLowerCase() })
+  expect(result.value?.rootPath).toContain('owner-dev-repos')
 })
 test('Given 客户端夹带费用/actor/Run/跨项目主体 When 配置与读取 Then 拒绝且绑定不可重写', () => {
   const f = prepared(); const other = store.createProject({ title: '其他项目', description: '' }); const task = store.createTask(other.id, { title: '其他任务', description: '', assignee: { userId: 'local-user', displayName: '用户' } })

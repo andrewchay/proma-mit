@@ -45,7 +45,11 @@ function apiFor(override: OwnerSetupApi | null): OwnerSetupApi {
     listEmployees: () => api.paa.agentEmployees.list(), listWorkspaces: () => api.listAgentWorkspaces(),
     listBindings: projectId => api.paa.projectWorkspace.listByProject(projectId),
     getBinding: input => api.paa.project.getOwnerRuntimeBinding(input), ensureBinding: input => api.paa.project.ensureOwnerRuntimeBinding(input), saveBinding: input => api.paa.project.saveOwnerRuntimeBinding(input),
-    createWorkspace: name => api.createAgentWorkspace(name), bindWorkspace: (projectId, workspaceId) => api.paa.projectWorkspace.bind(projectId, workspaceId),
+    createWorkspace: async name => {
+      const response = await api.paa.project.createOwnerDedicatedWorkspace({ name })
+      if (!response.ok) throw new Error(response.error.message)
+      return response.value
+    }, bindWorkspace: (projectId, workspaceId) => api.paa.projectWorkspace.bind(projectId, workspaceId),
     createEmployee: input => api.paa.agentEmployees.create(input),
     authorizeOwnerManagement: async input => {
       const preview = await api.paa.project.previewOwnerManagementDelegation(input)
@@ -91,8 +95,10 @@ function isDedicatedOwnerCarrier(employee: AgentEmployeeResult, projectId: strin
     && (employee.workspaceIds ?? (employee.workspaceId ? [employee.workspaceId] : [])).includes(workspaceId)
 }
 function isOwnerSetupWorkspace(workspace: AgentWorkspace, projectId: string): boolean {
-  return !workspace.rootPath && workspace.name.startsWith(`Owner-${projectId.slice(0, 8)}-`)
+  // 新建 Owner 专用工作区带 Git 基线（rootPath 指向应用受管目录）；早期版本的工作区没有 rootPath，两种都要能恢复。
+  return workspace.name.startsWith(`Owner-${projectId.slice(0, 8)}-`)
     && /^[\da-f]{6}$/i.test(workspace.name.slice(-6)) && workspace.slug === workspace.name.toLowerCase()
+    && (!workspace.rootPath || workspace.rootPath.replace(/\\/g, '/').includes('/owner-dev-repos/'))
 }
 function resolvePreferredBoundWorkspace(facts: OwnerSetupFacts): AgentWorkspace | undefined {
   const bound = facts.workspaces.filter(workspace => facts.bindings.some(binding => binding.workspaceId === workspace.id))

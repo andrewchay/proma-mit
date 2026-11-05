@@ -37,6 +37,7 @@ function fixture(overrides: Partial<OwnerSetupFacts> = {}) {
   store.set(ownerPlanApiAtom, { getOwnerPlanDraft: async () => ({ ok: true, value: null }), getOwnerPlanningContext: async () => ({ ok: true, value: context }), listOwnerPlanHistory: async () => ({ ok: true, value: [] }), saveOwnerPlanDraft: async () => { throw new Error('禁止保存计划') }, confirmOwnerPlanDraft: async () => { throw new Error('禁止确认计划') } })
   store.set(ownerRuntimeApiAtom, {
     getOwnerRuntimeBinding: api.getBinding, ensureOwnerRuntimeBinding: api.ensureBinding, saveOwnerRuntimeBinding: api.saveBinding,
+    createOwnerDedicatedWorkspace: async () => ({ ok: false as const, error: { code: 'failed', message: '测试不提供Owner专用工作区' } }),
     listEmployees: api.listEmployees, listWorkspaces: api.listWorkspaces, listWorkspaceBindings: api.listBindings,
     getOwnerPlanningContext: async () => ({ ok: true, value: context }), listOwnerPlanningRuns: async () => ({ ok: true, value: runs }),
     prepareOwnerPlanning: async input => { effects.prepares++; const link = { ...input.input, id: 'link-a', projectId: subject.projectId, planningTaskId: 'planning-task', goalRevision: 1, bindingRevision: facts.binding!.revision, planRevision: 0, contextFingerprint: 'context', goalVersion: 1, schemaVersion: 1 as const, purpose: 'owner_planning' as const, maxRequests: 1 as const, maxOutputTokens: 8192 as const, protocolVersion: '2' as const, promptHash: 'hash', carrierFingerprint: 'hash', createdAt: 1 }; runs.unshift({ link, executions: [], receipts: [], outcomes: [] }); return { ok: true, value: link } },

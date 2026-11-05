@@ -2013,6 +2013,7 @@ export interface ElectronAPI {
       confirmOwnerExecutionGrantRevoke: import('@gravitas/shared').ProjectOwnerExecutionGrantApi['confirmOwnerExecutionGrantRevoke']
       getOwnerRuntimeBinding: import('@gravitas/shared').ProjectOwnerRuntimeApi['getOwnerRuntimeBinding']
       ensureOwnerRuntimeBinding: import('@gravitas/shared').ProjectOwnerRuntimeApi['ensureOwnerRuntimeBinding']
+      createOwnerDedicatedWorkspace: import('@gravitas/shared').ProjectOwnerRuntimeApi['createOwnerDedicatedWorkspace']
       saveOwnerRuntimeBinding: import('@gravitas/shared').ProjectOwnerRuntimeApi['saveOwnerRuntimeBinding']
       prepareOwnerPlanning: import('@gravitas/shared').ProjectOwnerRuntimeApi['prepareOwnerPlanning']
       listOwnerPlanningRuns: import('@gravitas/shared').ProjectOwnerRuntimeApi['listOwnerPlanningRuns']
@@ -4840,6 +4841,7 @@ const electronAPI: ElectronAPI = {
       confirmOwnerExecutionGrantRevoke: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_EXECUTION_GRANT_REVOKE, request),
       getOwnerRuntimeBinding: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_RUNTIME_BINDING, request),
       ensureOwnerRuntimeBinding: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.ENSURE_OWNER_RUNTIME_BINDING, request),
+      createOwnerDedicatedWorkspace: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_OWNER_DEDICATED_WORKSPACE, request),
       saveOwnerRuntimeBinding: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_OWNER_RUNTIME_BINDING, request),
       prepareOwnerPlanning: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREPARE_OWNER_PLANNING, request),
       listOwnerPlanningRuns: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_PLANNING_RUNS, request),

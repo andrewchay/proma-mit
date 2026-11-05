@@ -1,6 +1,7 @@
 /** 配置/暂停准备/本地Run读取；无start/Caller/receipt写入IPC。 */
 import { PROJECT_IPC_CHANNELS, type ProjectOwnerGoalResult, type ProjectOwnerRunView } from '@gravitas/shared'
 import { getOwnerRuntimeBinding, prepareOwnerPlanning, resolveOwnerRuntimeBindingFromDefaults, saveOwnerRuntimeBinding } from './project-owner-runtime-binding'
+import { createOwnerDedicatedWorkspace } from './project-owner-dev-workspace'
 import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt } from './project-owner-planning-run-service'
 import { readOwnerPlanningSnapshot } from './project-owner-planning-source'
 import { listProjectOwnerPlanHistory } from './project-owner-plan-service'
@@ -43,6 +44,12 @@ export function listOwnerPlanningRuns(projectId: string, taskId?: string, purpos
 export function registerProjectOwnerRuntimeIpcHandlers(ipc: Registrar): void {
   ipc.handle(PROJECT_IPC_CHANNELS.GET_OWNER_RUNTIME_BINDING, (_, request) => result(() => { const value = fields(request, ['projectId']); return getOwnerRuntimeBinding(value.projectId as string) }))
   ipc.handle(PROJECT_IPC_CHANNELS.ENSURE_OWNER_RUNTIME_BINDING, (_, request) => result(() => { const value = fields(request, ['projectId']); return resolveOwnerRuntimeBindingFromDefaults(value.projectId as string) }))
+  ipc.handle(PROJECT_IPC_CHANNELS.CREATE_OWNER_DEDICATED_WORKSPACE, (_, request) => result(() => {
+    if (!request || typeof request !== 'object' || Array.isArray(request) || Object.keys(request).some(key => key !== 'name')) throw new Error('Owner工作区请求含无效或未知字段')
+    const name = (request as Record<string, unknown>).name
+    if (typeof name !== 'string' || !name.trim() || name.trim().length > 100) throw new Error('Owner工作区名称无效')
+    return createOwnerDedicatedWorkspace(name)
+  }))
   ipc.handle(PROJECT_IPC_CHANNELS.SAVE_OWNER_RUNTIME_BINDING, (_, request) => result(() => { const value = fields(request, ['projectId', 'expectedRevision', 'input']); if (typeof value.expectedRevision !== 'number') throw new Error('Owner绑定版本无效'); return saveOwnerRuntimeBinding(value.projectId as string, value.expectedRevision, value.input) }))
   ipc.handle(PROJECT_IPC_CHANNELS.PREPARE_OWNER_PLANNING, (_, request) => result(() => { const value = fields(request, ['projectId', 'input']); return prepareOwnerPlanning(value.projectId as string, value.input) }))
   ipc.handle(PROJECT_IPC_CHANNELS.LIST_OWNER_PLANNING_RUNS, (_, request) => result(() => { const value = fields(request, ['projectId', 'taskId']); return listOwnerPlanningRuns(value.projectId as string, value.taskId as string | undefined) }))

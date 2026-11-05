@@ -214,6 +214,7 @@ export const PROJECT_IPC_CHANNELS = {
   CONFIRM_OWNER_PREFLIGHT_RECONCILIATION: 'project:confirm-owner-preflight-reconciliation',
   GET_OWNER_RUNTIME_BINDING: 'project:get-owner-runtime-binding',
   ENSURE_OWNER_RUNTIME_BINDING: 'project:ensure-owner-runtime-binding',
+  CREATE_OWNER_DEDICATED_WORKSPACE: 'project:create-owner-dedicated-workspace',
   SAVE_OWNER_RUNTIME_BINDING: 'project:save-owner-runtime-binding',
   PREPARE_OWNER_PLANNING: 'project:prepare-owner-planning',
   LIST_OWNER_PLANNING_RUNS: 'project:list-owner-planning-runs',
