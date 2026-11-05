@@ -2743,11 +2743,10 @@ export async function registerIpcHandlers(): Promise<void> {
       const { requestId, answers } = response
       const sessionId = askUserService.respondToAskUser(requestId, answers)
 
-      if (sessionId) {
-        const payload = { kind: 'proma_event', event: { type: 'ask_user_resolved', requestId } } as const
-        event.sender.send(AGENT_IPC_CHANNELS.STREAM_EVENT, { sessionId, payload })
-        agentEventBus.emit(sessionId, payload)
-      }
+      if (!sessionId) throw new Error('该问题已失效，请将答案发送到会话中继续')
+      const payload = { kind: 'proma_event', event: { type: 'ask_user_resolved', requestId } } as const
+      event.sender.send(AGENT_IPC_CHANNELS.STREAM_EVENT, { sessionId, payload })
+      agentEventBus.emit(sessionId, payload)
     }
   )
 
