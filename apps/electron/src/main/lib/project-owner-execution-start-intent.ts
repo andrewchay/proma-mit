@@ -156,7 +156,7 @@ function supersedeEscalatedBatch(subject: ProjectOwnerGoalSubject, plan: Project
 
   const grant = getOwnerExecutionGrant(subject)
   if (!grant || grant.materializationId !== previous.id || grant.materializationIntegrityHash !== previous.integrityHash
-    || grant.dispatchMode !== 'autonomous') return false
+    || grant.taskId !== subject.taskId || grant.dispatchMode !== 'autonomous') return false
   const db = getProjectDb()
   const rows = db.prepare(`
     SELECT q.owner_execution_id FROM project_owner_quality_actions q
