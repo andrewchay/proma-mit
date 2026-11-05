@@ -280,6 +280,7 @@ function reserveAndQueueOwnerCommandForMode(rawSubject: unknown, rawInput: unkno
   if (database.isTransactionActive()) fail('拒绝未提交外层事务')
   let result: { commandId: string; executionId: string } | null = null
   database.transaction(() => {
+    if (expectedMode === 'autonomous') (require('./project-owner-dispatch-control') as typeof import('./project-owner-dispatch-control')).assertOwnerDispatchNotPaused(subject.projectId, input.grantId)
     const chain = resolveCommandChain(subject, input)
     if (chain.dispatchMode !== expectedMode) fail(expectedMode === 'manual' ? '自主授权命令只能由主进程调度器消费' : '命令不属于自主授权模式')
     const grantRow = database.prepare('SELECT approval_fingerprint, max_cost_micros, max_runs FROM project_owner_execution_grants WHERE id=? AND state=?').get(input.grantId, 'active') as { approval_fingerprint: string; max_cost_micros: number; max_runs: number } | undefined

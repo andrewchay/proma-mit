@@ -135,6 +135,8 @@ test('Given active grant When v2重验证preview Then boundary idle拒；撤权�
   const revokePreview = service.previewOwnerExecutionGrantRevoke(f.subject, { grantId: grant.grantId })
   const revoked = service.confirmOwnerExecutionGrantRevoke(f.subject, { grantId: grant.grantId, confirmedFingerprint: revokePreview.fingerprint })
   expect(revoked.state).toBe('paused')
+  expect(revoked.revokedAt).toBeGreaterThanOrEqual(grant.issuedAt)
+  expect(service.listOwnerExecutionGrantHistory(f.subject)[0]?.revokedAt).toBe(revoked.revokedAt)
   expect(() => revalidation.previewOwnerExecutionRevalidation(f.subject, revalInput)).not.toThrow()
 })
 test('Given 同requestId+同指纹重放confirm Then 同一行；不同输入同ID拒', () => {

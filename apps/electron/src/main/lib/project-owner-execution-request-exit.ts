@@ -249,7 +249,7 @@ async function settleOwnerFromAccountingBranch(requestId: string, accountingBody
  * 只有流式（SSE）响应需要即时透传：非流式响应本就整段返回，仍是读完即结算，
  * 保持“终态回调时用量已确认”的同步语义，避免无谓地推迟命令结算。
  */
-async function passthroughWithSettlement(commandId: string, requestId: string, response: Response): Promise<Response> {
+async function passthroughWithSettlement(commandId: string, requestId: string, response: Response, signal?: AbortSignal | null): Promise<Response> {
   if (!response.ok || !response.body) { markOwnerRequestUnknown(requestId); return response }
   const isStream = (response.headers.get('content-type') ?? '').includes('text/event-stream')
   if (!isStream) {
@@ -268,10 +268,51 @@ async function passthroughWithSettlement(commandId: string, requestId: string, r
     }
   }
   const [clientBody, accountingBody] = response.body.tee()
-  const entry = { commandId, promise: settleOwnerFromAccountingBranch(requestId, accountingBody) }
+  const clientReader = clientBody.getReader()
+  const accountingReader = accountingBody.getReader()
+  let clientController: ReadableStreamDefaultController<Uint8Array> | undefined
+  let clientDone = false, accountingDone = false, aborted = false
+  const cleanup = () => { if (clientDone && accountingDone) signal?.removeEventListener('abort', abort) }
+  const abort = () => {
+    if (aborted) return
+    aborted = true
+    // 已发送的请求即使中止也可能产生费用，不能把部分用量当成完整回执。
+    markOwnerRequestUnknown(requestId)
+    clientController?.error(signal?.reason ?? new DOMException('请求已停止', 'AbortError'))
+    void clientReader.cancel().catch(() => {})
+    void accountingReader.cancel().catch(() => {})
+  }
+  const wrap = (reader: ReadableStreamDefaultReader<Uint8Array>, client: boolean) => new ReadableStream<Uint8Array>({
+    start(controller) { if (client) clientController = controller },
+    async pull(controller) {
+      try {
+        const chunk = await reader.read()
+        if (aborted && client) return
+        if (chunk.done) {
+          if (client) clientDone = true; else accountingDone = true
+          cleanup()
+          controller.close()
+        } else controller.enqueue(chunk.value)
+      } catch (error) {
+        if (client) clientDone = true; else accountingDone = true
+        cleanup()
+        if (!(aborted && client)) controller.error(error)
+      }
+    },
+    cancel() {
+      if (client) clientDone = true; else accountingDone = true
+      cleanup()
+      return reader.cancel()
+    },
+  })
+  const clientStream = wrap(clientReader, true)
+  const accountingStream = wrap(accountingReader, false)
+  signal?.addEventListener('abort', abort, { once: true })
+  if (signal?.aborted) abort()
+  const entry = { commandId, promise: settleOwnerFromAccountingBranch(requestId, accountingStream) }
   pendingSettlements.set(requestId, entry)
   void entry.promise.finally(() => { if (pendingSettlements.get(requestId) === entry) pendingSettlements.delete(requestId) })
-  return new Response(clientBody, { status: response.status, statusText: response.statusText, headers: response.headers })
+  return new Response(clientStream, { status: response.status, statusText: response.statusText, headers: response.headers })
 }
 
 /** 等待已发出请求的结算落库；工具执行前用它把“用量已确认”恢复到同步门禁之前。 */
@@ -305,7 +346,7 @@ export function createOwnerRequestFetch(input: OwnerRequestFetchInput): typeof g
       markOwnerRequestUnknown(requestId)
       throw error
     }
-    return passthroughWithSettlement(input.commandId, requestId, response)
+    return passthroughWithSettlement(input.commandId, requestId, response, init.signal ?? (rawInput instanceof Request ? rawInput.signal : undefined))
   }
   return Object.assign(ownerFetch, { preconnect: () => {} })
 }

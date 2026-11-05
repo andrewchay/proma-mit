@@ -1,6 +1,7 @@
 import { readOwnerGrantUsage } from './project-owner-execution-settlement'
+import { createHash } from 'node:crypto'
 /** 将准确成果及逐项检查送入Owner分析；不授予验收或业务动作权限。 */
-import type { OwnerExecutionObservation, OwnerExecutionRevalidationRecord, OwnerExecutionRevalidationTask, OwnerManagementDeliveryItem, OwnerManagementDeliveryReview, ProjectOwnerPlanDraft } from '@gravitas/shared'
+import type { OwnerDeliveryValidationRecord, OwnerExecutionObservation, OwnerExecutionRevalidationRecord, OwnerExecutionRevalidationTask, OwnerManagementDeliveryItem, OwnerManagementDeliveryReview, OwnerManagementMessage, ProjectOwnerPlanDraft } from '@gravitas/shared'
 import { readOwnerTextDelivery, assertOwnerReviewerTextDelivery } from './project-owner-text-delivery'
 import { listOwnerTechnicalReviewEvidence } from './project-owner-technical-review'
 import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
@@ -11,6 +12,49 @@ import { getOwnerTaskMaterializationRecord } from './project-owner-task-material
 import { isCompletedStatus } from './task-status-logic'
 import * as store from './project-sqlite-store'
 import { appendOwnerManagementMessage, getOwnerManager } from './project-owner-management-store'
+import { isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
+import { readDevelopmentValidationEvidence } from './development-validation-service'
+
+/** 交付快照保持不变，只有能绑定原授权、步骤、成果及独立评审的验证记录才投影到界面。 */
+export function listOwnerDeliveryValidations(projectId: string, messages: readonly OwnerManagementMessage[]): OwnerDeliveryValidationRecord[] {
+  const results: OwnerDeliveryValidationRecord[] = []
+  for (const message of messages) {
+    if (message.projectId !== projectId || message.kind !== 'delivery' || !message.delivery) continue
+    const match = /^owner-delivery:([^:]+):([a-f0-9]{64})$/.exec(message.eventId)
+    if (!match || ownerExecutionHash(message.delivery) !== match[2]) continue
+    try {
+      const grant = store.getProjectDb().prepare('SELECT task_id,materialization_id,materialization_integrity_hash FROM project_owner_execution_grants WHERE project_id=? AND id=?').get(projectId, match[1]!) as { task_id: string | null; materialization_id: string; materialization_integrity_hash: string } | undefined
+      if (!grant || (grant.task_id ?? undefined) !== message.taskId) continue
+      const batch = getOwnerTaskMaterializationRecord(projectId, grant.materialization_id)
+      if (batch.integrityHash !== grant.materialization_integrity_hash) continue
+      for (const item of message.delivery.items) {
+        const links = batch.links.filter(link => link.stepKey === item.stepKey)
+        if (links.length !== 1) continue
+        const link = links[0]!
+        const reviews = listOwnerTechnicalReviewEvidence(projectId, link.taskId).filter(review => review.grantId === match[1] && review.stepLinkId === link.id && review.artifactHash === item.artifactHash && review.artifactVerified && review.validationEvidenceVerified && review.verdict === 'approved')
+        const accepted = reviews.filter(review => { const action = readOwnerQualityAction(review.reviewerCommandId); return action?.state === 'accepted' && action.artifactHash === item.artifactHash })
+        const review = accepted.length === 1 ? accepted[0] : undefined
+        if (!review?.validationEvidence?.length) continue
+        const checkedAt = Date.now()
+        const validations = review.validationEvidence.filter(value => value.attemptState === 'completed' && value.status && value.rawOutputSha256).map(value => {
+          const base = { command: value.command, status: value.status!, ...(value.finishedAt === undefined ? {} : { finishedAt: value.finishedAt }), expired: isOwnerValidationEvidenceExpired(value, checkedAt), outputSha256: value.rawOutputSha256! }
+          try {
+            const evidence = readDevelopmentValidationEvidence(link.taskId, review.executorExecutionId, value.validationId)
+            const result = evidence.result
+            if (result.snapshotContentHash !== item.artifactHash || result.command !== value.command || result.status !== value.status || result.rawOutputSha256 !== value.rawOutputSha256 || result.rawOutputByteLength !== value.rawOutputByteLength || result.finishedAt !== value.finishedAt) return { ...base, freshness: 'unknown' as const }
+            if (result.method === 'browser_assertions') {
+              const output = JSON.stringify(result.checks)
+              if (!result.checks?.length || createHash('sha256').update(output, 'utf8').digest('hex') !== result.rawOutputSha256 || Buffer.byteLength(output, 'utf8') !== result.rawOutputByteLength) return { ...base, freshness: 'unknown' as const }
+            }
+            return { ...base, freshness: evidence.freshness, method: result.method ?? 'command' as const, ...(result.method === 'browser_assertions' && result.checks ? { checks: result.checks } : {}) }
+          } catch { return { ...base, freshness: 'unknown' as const } }
+        })
+        if (validations.length) results.push({ messageId: message.id, stepKey: item.stepKey, artifactHash: item.artifactHash, checkedAt, validations })
+      }
+    } catch { /* 历史来源不可核对时不猜测或改变交付记录。 */ }
+  }
+  return results
+}
 
 export function readOwnerManagementDelivery(projectId: string, observation: OwnerExecutionObservation, recoverySnapshot?: { qualityRecovery: OwnerManagementDeliveryReview['qualityRecovery'] }): OwnerManagementDeliveryReview {
   const base = { version: 1 as const }

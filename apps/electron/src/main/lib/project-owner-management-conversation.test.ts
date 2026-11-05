@@ -181,6 +181,28 @@ test('Given已验收交付与精确版本 When用户发送修改意见 Then主�
   expect(() => sendOwnerManagementMessage({ ...f.message('伪造交付消息'), deliveryReference: { ...reference, messageId: 'e'.repeat(64) } })).toThrow('成果不存在')
 })
 
+test('Given 已交付成果 When 记录人工审阅决定并重试 Then 决定持久绑定版本且不得更改原请求', () => {
+  const f = fixture(), content = '交付正文', artifactHash = createHash('sha256').update(content).digest('hex')
+  const delivery = appendOwnerManagementMessage({ projectId: f.project.id, eventId: randomUUID(), role: 'assistant', kind: 'delivery', content: '成果已交付', delivery: { schemaVersion: 1, planVersion: 1, items: [{ stepKey: 'result', title: '成果', acceptanceCriteria: ['完整'], artifactHash, content, ownerDecision: '通过质量检查', reviewerSummary: '已检查' }] } })
+  const request = { ...f.message('我认可这个成果版本。'), deliveryReference: { messageId: delivery.id, artifactHash, stepKey: 'result' }, deliveryReviewDecision: 'accepted' as const }
+  const saved = sendOwnerManagementMessage(request)
+  expect(saved.deliveryReviewDecision).toBe('accepted')
+  expect(sendOwnerManagementMessage(request).id).toBe(saved.id)
+  expect(() => sendOwnerManagementMessage({ ...request, deliveryReviewDecision: 'changes_requested' })).toThrow('不同内容')
+  expect(() => sendOwnerManagementMessage({ ...f.message('认可'), deliveryReviewDecision: 'accepted' })).toThrow('必须关联')
+  expect(getOwnerManagementConversation(f.project.id).messages.find(message => message.id === saved.id)?.deliveryReference).toEqual(request.deliveryReference)
+})
+
+test('Given 冻结代码成果 When 对准确版本提出反馈 Then 使用文件集合摘要核验并保留完整快照', () => {
+  const f = fixture(), sha = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex')
+  const after = 'export const answer = 42\n', file = { path: 'src/answer.ts', changeType: 'add', oldSha256: null, newSha256: sha(after), newBytes: Buffer.byteLength(after) }
+  const artifactHash = sha(`${file.path}\0${file.changeType}\0\0${file.newSha256}\n`)
+  const content = JSON.stringify({ executionId: 'run', workspaceId: 'workspace', baseCommit: 'a'.repeat(40), contentHash: artifactHash, files: [{ file, oldContent: null, newContent: after }] })
+  const delivery = appendOwnerManagementMessage({ projectId: f.project.id, eventId: randomUUID(), role: 'assistant', kind: 'delivery', content: '交付代码', delivery: { schemaVersion: 1, planVersion: 1, items: [{ stepKey: 'code', title: '代码', acceptanceCriteria: ['可运行'], artifactHash, content, ownerDecision: '已检查', reviewerSummary: '独立检查通过' }] } })
+  const saved = sendOwnerManagementMessage({ ...f.message('请解释这个文件'), deliveryReference: { messageId: delivery.id, artifactHash, stepKey: 'code' } })
+  expect(withOwnerConversationContext(plans.getProjectOwnerPlanningContext(f.project.id), saved.id).conversation?.deliveryFeedback).toMatchObject({ artifactHash, content })
+})
+
 test('Given旧目标或跨项目/任务消息 When发送 Then拒绝伪造许可且事务回滚不留消息', () => {
   const f = fixture(true), input = f.message('只讨论这项任务')
   const other = fixture()

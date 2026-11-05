@@ -108,11 +108,12 @@ function rowToGrant(row: Record<string, unknown>): OwnerExecutionGrant {
     grantId: row.id as string,
     state: row.state as OwnerExecutionGrant['state'],
     issuedAt: row.issued_at as number,
+    ...(typeof row.revoked_at === 'number' ? { revokedAt: row.revoked_at } : {}),
   }
 }
 export function listOwnerExecutionGrantHistory(rawSubject: unknown): OwnerExecutionGrant[] {
   const subject = parseOwnerExecutionSubject(rawSubject)
-  return (store.getProjectDb().prepare('SELECT * FROM project_owner_execution_grants WHERE project_id=? AND task_id IS ? ORDER BY issued_at').all(subject.projectId, subject.taskId ?? null) as Array<Record<string, unknown>>).map(rowToGrant)
+  return (store.getProjectDb().prepare("SELECT g.*, (SELECT MAX(d.created_at) FROM project_owner_execution_grant_decisions d WHERE d.grant_id=g.id AND d.project_id=g.project_id AND d.action='revoke' AND d.actor='local-user') AS revoked_at FROM project_owner_execution_grants g WHERE g.project_id=? AND g.task_id IS ? ORDER BY g.issued_at").all(subject.projectId, subject.taskId ?? null) as Array<Record<string, unknown>>).map(rowToGrant)
 }
 export function getOwnerExecutionGrant(rawSubject: unknown): OwnerExecutionGrant | null {
   return listOwnerExecutionGrantHistory(rawSubject).at(-1) ?? null
@@ -273,8 +274,9 @@ export function confirmOwnerExecutionGrantRevoke(rawSubject: unknown, rawRequest
       if (blockers.length) fail(`撤权前需收敛未结命令：${blockers.join('；')}`)
       const result = database.prepare("UPDATE project_owner_execution_grants SET state='paused' WHERE id=? AND state='active'").run(grant.grantId)
       if (result.changes !== 1) fail('撤权状态变更失败，请保留证据核查')
-      database.prepare('INSERT INTO project_owner_execution_grant_decisions(grant_id,project_id,action,fingerprint,impact,actor,created_at) VALUES(?,?,?,?,?,?,?)').run(grant.grantId, subject.projectId, 'revoke', fingerprint, JSON.stringify({ commandCount: impact.commandCount, runningCount: impact.runningCount, pendingRequestCount: impact.pendingRequestCount }), 'local-user', Date.now())
-      saved = { ...grant, state: 'paused' }
+      const revokedAt = Date.now()
+      database.prepare('INSERT INTO project_owner_execution_grant_decisions(grant_id,project_id,action,fingerprint,impact,actor,created_at) VALUES(?,?,?,?,?,?,?)').run(grant.grantId, subject.projectId, 'revoke', fingerprint, JSON.stringify({ commandCount: impact.commandCount, runningCount: impact.runningCount, pendingRequestCount: impact.pendingRequestCount }), 'local-user', revokedAt)
+      saved = { ...grant, state: 'paused', revokedAt }
     })()
     if (!saved) fail('事务未保存撤权结果')
     return saved

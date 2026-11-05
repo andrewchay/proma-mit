@@ -75,6 +75,8 @@ export function scanOwnerExecutionObservations(projectId: string, now = Date.now
         if (preparation?.goal_revision !== goal.revision || !plan || plan.revision !== frozen.planRevision) break
         // 正常完成的员工交给独立Reviewer；此时Owner没有待决策事项，不额外调用模型总结进度。
         if (frozen.qualityManagementVersion === 1 && source.observation.role === 'executor' && source.observation.executionStatus === 'completed') break
+        // 已有质量决定时，授权状态等变化不能让同一评审重新生成普通观察；阻断恢复由下方专用流程核对。
+        if (frozen.qualityManagementVersion === 1 && source.observation.role === 'reviewer' && source.observation.trigger === 'terminal' && readOwnerQualityAction(source.observation.commandId)) break
         recordOwnerManagementObservation(projectId, goal.revision, source.observation, source.taskId, ownerExecutionHash(source.observation))
         break
       } catch { /* 该触发不适用或来源不可核验；不生成模型请求。 */ }

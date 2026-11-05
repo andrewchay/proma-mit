@@ -18,6 +18,7 @@ import { cancelQueuedOwnerCommand } from './project-owner-execution-stop'
 import { confirmOwnerPreflightReconciliation, previewOwnerPreflightReconciliation } from './project-owner-execution-preflight-reconciliation'
 import { assertLocalActorEnabled } from './project-owner-plan-service'
 import { getOwnerAutonomousScheduleStatus } from './project-owner-autonomous-scheduler'
+import { getOwnerDispatchControl, listOwnerDispatchControlEvents, setOwnerDispatchPaused } from './project-owner-dispatch-control'
 import { listOwnerExecutionAssignmentRuns, prepareOwnerExecutionAssignment } from './project-owner-execution-assignment-service'
 import { resumeOwnerExecutionStartIntent, saveOwnerExecutionStartIntent } from './project-owner-execution-start-intent'
 import * as store from './project-sqlite-store'
@@ -102,6 +103,16 @@ export function registerProjectOwnerExecutionIpcHandlers(ipc: Registrar): void {
   ipc.handle(PROJECT_IPC_CHANNELS.GET_OWNER_AUTONOMOUS_SCHEDULE_STATUS, (_, request) =>
     result(() => getOwnerAutonomousScheduleStatus(parseOwnerExecutionSubject(request).projectId)),
   )
+  ipc.handle(PROJECT_IPC_CHANNELS.GET_OWNER_DISPATCH_CONTROL, (_, request) => result(() => {
+    const value = ownerExecutionObject(request, ['projectId', 'grantId'])
+    if (typeof value.projectId !== 'string' || typeof value.grantId !== 'string') throw new Error('派工控制主体无效')
+    return getOwnerDispatchControl(value.projectId, value.grantId)
+  }))
+  ipc.handle(PROJECT_IPC_CHANNELS.SET_OWNER_DISPATCH_CONTROL, (_, request) => result(() => {
+    const value = ownerExecutionObject(request, ['projectId', 'grantId', 'expectedRevision', 'paused'])
+    return setOwnerDispatchPaused(value as unknown as Parameters<typeof setOwnerDispatchPaused>[0])
+  }))
+  ipc.handle(PROJECT_IPC_CHANNELS.LIST_OWNER_DISPATCH_CONTROL_EVENTS, (_, request) => result(() => listOwnerDispatchControlEvents(parseOwnerExecutionSubject(request))))
   ipc.handle(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_COMMAND_ACK, (_, request) =>
     result(() => {
       const value = ownerExecutionObject(request, ['projectId', 'taskId', 'input'])

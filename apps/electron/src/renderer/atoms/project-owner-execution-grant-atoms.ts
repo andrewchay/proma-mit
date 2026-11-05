@@ -103,7 +103,7 @@ export const loadOwnerGrantAtom = atom(null, async (get, set, s: ProjectOwnerGoa
     if (read(get, s).mutationVersion !== before.mutationVersion) return
     if (!result.ok) throw new Error(result.error.message)
     if (result.value) assertSubject(result.value, s)
-    update(get, set, s, { grant: result.value, loaded: true })
+    update(get, set, s, { grant: result.value, loaded: true, ...(before.grant?.grantId !== result.value?.grantId || before.grant?.state !== result.value?.state ? { historyLoaded: false } : {}) })
   } catch (error) {
     if (read(get, s).mutationVersion === before.mutationVersion)
       update(get, set, s, { error: message(error), loaded: false })
@@ -116,15 +116,16 @@ export const loadOwnerGrantHistoryAtom = atom(
   async (get, set, s: ProjectOwnerGoalSubject) => {
     const before = read(get, s)
     if (before.historyLoading || before.confirming || before.revoking) return
+    const sourceUnchanged = () => { const current = read(get, s); return current.mutationVersion === before.mutationVersion && current.grant?.grantId === before.grant?.grantId && current.grant?.state === before.grant?.state }
     update(get, set, s, { historyLoading: true, historyError: '' })
     try {
       const result = await get(ownerGrantApiAtom).listOwnerExecutionGrantHistory(s)
-      if (read(get, s).mutationVersion !== before.mutationVersion) return
+      if (!sourceUnchanged()) return
       if (!result.ok) throw new Error(result.error.message)
       for (const record of result.value) assertSubject(record, s)
       update(get, set, s, { history: result.value, historyLoaded: true })
     } catch (error) {
-      if (read(get, s).mutationVersion === before.mutationVersion)
+      if (sourceUnchanged())
         update(get, set, s, { historyError: message(error) })
     } finally {
       update(get, set, s, { historyLoading: false })

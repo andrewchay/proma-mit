@@ -1046,7 +1046,9 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
         recoverInterruptedOwnerRuntimeExecutions(Date.now(), executionId)
         store.updateAgentExecution(executionId, { error: `Owner启动门禁失败，尚未调用Runtime：${detail}；已保留占额等待核对` })
       } else if (current?.status === 'queued' && current.ownerCommandId === ownerExecution.commandId) {
-        store.updateAgentExecution(executionId, { error: `Owner启动预检失败：${error instanceof Error ? error.message : '来源已变化'}` })
+        const command = store.getProjectDb().prepare('SELECT grant_id FROM project_owner_execution_commands WHERE id=? AND project_id=?').get(ownerExecution.commandId, execution.projectId) as { grant_id: string } | undefined
+        const paused = command && (require('./project-owner-dispatch-control') as typeof import('./project-owner-dispatch-control')).readOwnerDispatchControl(execution.projectId, command.grant_id).paused
+        if (!paused) store.updateAgentExecution(executionId, { error: `Owner启动预检失败：${error instanceof Error ? error.message : '来源已变化'}` })
       }
       return false
     }

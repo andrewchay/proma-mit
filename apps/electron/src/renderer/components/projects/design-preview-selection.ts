@@ -12,19 +12,18 @@ export function buildSelectableDesignPreview(html: string, token: string): strin
     event.preventDefault(); event.stopPropagation();
     const target = event.target;
     if (!(target instanceof Element) || target === document.body || target === document.documentElement) return;
-    let text = (target.innerText || target.getAttribute('aria-label') || '').trim().replace(/\\s+/g, ' ').slice(0, 300);
     const visual = target.closest('img, svg, canvas');
-    if (visual) {
-      const parts = []; let node = visual;
-      while (node && node !== document.body && parts.length < 6) {
-        const name = node.localName;
-        const siblings = Array.from(node.parentElement?.children || []).filter(item => item.localName === name);
-        parts.unshift(name + ':nth-of-type(' + (siblings.indexOf(node) + 1) + ')');
-        node = node.parentElement;
-      }
-      const label = (visual.getAttribute('alt') || visual.getAttribute('aria-label') || '无文字描述').trim().replace(/\\s+/g, ' ').slice(0, 100);
-      text = ('视觉元素：' + label + '；预览位置（可能不唯一）：' + parts.join(' > ')).slice(0, 300);
+    const selected = visual || target;
+    const parts = []; let node = selected;
+    while (node && node !== document.body && parts.length < 8) {
+      const name = node.localName;
+      const siblings = Array.from(node.parentElement?.children || []).filter(item => item.localName === name);
+      parts.unshift(name + ':nth-of-type(' + (siblings.indexOf(node) + 1) + ')');
+      node = node.parentElement;
     }
+    const location = parts.join(' > ').slice(-160);
+    const label = (selected.innerText || selected.getAttribute('alt') || selected.getAttribute('aria-label') || selected.getAttribute('title') || selected.getAttribute('placeholder') || '无文字描述').trim().replace(/\\s+/g, ' ').slice(0, 100);
+    const text = (visual ? '视觉元素：' : '页面元素：') + label + '；预览位置（可能不唯一）：' + location;
     if (!text) return;
     window.parent.postMessage({ type: 'gravitas-design-selection', token: ${JSON.stringify(token)}, tag: target.tagName.toLowerCase(), text }, '*');
   }, true);`

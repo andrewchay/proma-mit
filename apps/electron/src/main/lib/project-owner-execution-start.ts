@@ -90,6 +90,12 @@ export function claimOwnerCommandStart(executionId: string, commandId: string, e
   let result: { execution: AgentExecution } | undefined
   database.transaction(() => {
     assertOwnerCommandStartRecordLocked(executionId, commandId, expectedRevalidationRevision, sessionId, now)
+    const dispatch = database.prepare('SELECT c.project_id, c.grant_id, g.dispatch_mode FROM project_owner_execution_commands c JOIN project_owner_execution_grants g ON g.id=c.grant_id AND g.project_id=c.project_id WHERE c.id=? AND c.execution_id=?').get(commandId, executionId) as { project_id: string; grant_id: string; dispatch_mode: string } | undefined
+    if (dispatch?.dispatch_mode === 'autonomous') {
+      const control = require('./project-owner-dispatch-control') as typeof import('./project-owner-dispatch-control')
+      control.assertOwnerDispatchNotPaused(dispatch.project_id, dispatch.grant_id)
+      control.assertOwnerDispatchManagementCurrent(dispatch.project_id, dispatch.grant_id)
+    }
     const claimedExecution = database.prepare("UPDATE agent_executions SET status='running', session_id=?, last_heartbeat_at=? WHERE id=? AND owner_command_id=? AND status='queued' AND session_id=''").run(sessionId, now, executionId, commandId)
     const claimedCommand = database.prepare("UPDATE project_owner_execution_commands SET state='running', updated_at=? WHERE id=? AND execution_id=? AND state='queued'").run(now, commandId, executionId)
     if (claimedExecution.changes !== 1 || claimedCommand.changes !== 1) throw new Error('Owner启动认领状态已变化')

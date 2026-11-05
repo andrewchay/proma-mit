@@ -123,7 +123,7 @@ export const loadOwnerPlanAtom = atom(null, async (get, set, subject: ProjectOwn
     if (context) assertSubject(context.goal.goal, subject)
     const current = read(get, subject)
     const changed = current.snapshot?.revision !== response.value?.revision || current.context?.fingerprint !== context?.fingerprint
-    update(get, set, subject, { snapshot: response.value, context, loaded: true, conflict: false, requiresReview: current.requiresReview || current.conflict || (current.dirty && changed), ...(current.dirty ? {} : fields(response.value)) })
+    update(get, set, subject, { snapshot: response.value, context, loaded: true, conflict: false, ...(current.snapshot?.revision !== response.value?.revision ? { historyLoaded: false } : {}), requiresReview: current.requiresReview || current.conflict || (current.dirty && changed), ...(current.dirty ? {} : fields(response.value)) })
   } catch (cause) { update(get, set, subject, { error: errorText(cause), loaded: false }) }
   finally { update(get, set, subject, { loading: false }) }
 })
@@ -132,14 +132,16 @@ export const acknowledgeOwnerPlanComparisonAtom = atom(null, (get, set, subject:
   if (e.loaded && e.requiresReview && !e.loading && !e.saving && !e.conflict) update(get, set, subject, { requiresReview: false, error: '' })
 })
 export const loadOwnerPlanHistoryAtom = atom(null, async (get, set, subject: ProjectOwnerGoalSubject) => {
-  if (read(get, subject).historyLoading) return
+  const before = read(get, subject)
+  if (before.historyLoading) return
   update(get, set, subject, { historyLoading: true, historyError: '' })
   try {
     const response = await get(ownerPlanApiAtom).listOwnerPlanHistory(subject)
+    if (read(get, subject).snapshot?.revision !== before.snapshot?.revision) return
     if (!response.ok) throw new Error(response.error.message)
     for (const entry of response.value) { assertSubject(entry, subject); assertSubject(entry.proposal, subject) }
     update(get, set, subject, { history: response.value, historyLoaded: true })
-  } catch (cause) { update(get, set, subject, { historyError: errorText(cause) }) }
+  } catch (cause) { if (read(get, subject).snapshot?.revision === before.snapshot?.revision) update(get, set, subject, { historyError: errorText(cause) }) }
   finally { update(get, set, subject, { historyLoading: false }) }
 })
 async function writePlan(get: Getter, set: Setter, subject: ProjectOwnerGoalSubject, confirm: boolean) {

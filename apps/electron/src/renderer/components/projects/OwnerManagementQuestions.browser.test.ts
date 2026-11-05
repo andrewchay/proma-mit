@@ -47,7 +47,7 @@ createRoot(document.getElementById('root')).render(<Provider store={store}><Harn
     await page.getByRole('button', { name: '打开对话', exact: true }).click()
     expect(await page.evaluate<string>('window.fixture.facts().navigation.projectId')).toBe('p')
     expect(await page.evaluate<string>('window.fixture.facts().activeView')).toBe('projects')
-    await page.getByRole('button', { name: '现有用户', exact: true }).click()
+    await page.getByRole('radio', { name: '现有用户', exact: true }).check()
     expect(await page.getByLabel('主要服务谁？', { exact: true }).inputValue()).toBe('现有用户')
     await page.getByRole('button', { name: '答复，让 Owner 继续', exact: true }).click()
     await page.getByRole('alert').filter({ hasText: '回包丢失' }).waitFor()
@@ -64,12 +64,12 @@ browserTest('Given Owner在后台产生实质进展 When 全局监听收到新�
   writeFileSync(join(directory, 'progress-entry.tsx'), `
 import React from 'react';import {createRoot} from 'react-dom/client';import {Provider,createStore} from 'jotai';import {Toaster} from 'sonner';
 import {useGlobalOwnerManagementListeners} from ${JSON.stringify(join(renderer, 'hooks/useGlobalOwnerManagementListeners.ts'))};
-import {ownerConversationNavigationAtom,ownerConversationNoticesAtom} from ${JSON.stringify(join(renderer, 'atoms/project-owner-management-atoms.ts'))};
+import {ownerConversationNavigationAtom,ownerConversationNoticesAtom,ownerAttentionAlertsAtom,loadOwnerManagementAtom} from ${JSON.stringify(join(renderer, 'atoms/project-owner-management-atoms.ts'))};
 import {activeViewAtom} from ${JSON.stringify(join(renderer, 'atoms/active-view.ts'))};
 import {notificationsEnabledAtom} from ${JSON.stringify(join(renderer, 'atoms/notifications.ts'))};
-const store=createStore();store.set(notificationsEnabledAtom,true);let listener,desktopNotifications=0,reads=0;const view={manager:{schemaVersion:1,projectId:'p',ownerId:'owner',conversationId:'conversation',revision:1,status:'active',createdAt:1,updatedAt:1},pendingEvents:0,messages:[],questions:[]};
-window.electronAPI={sendSystemNotification:async()=>{desktopNotifications++},onSystemNotificationClicked:()=>()=>{},paa:{project:{listProjects:async()=>[],getOwnerManagement:async()=>{reads++;return {ok:true,value:structuredClone(view)}},onOwnerManagementChanged:cb=>{listener=cb;return()=>{listener=null}}}}};
-window.fixture={disableNotifications:()=>store.set(notificationsEnabledAtom,false),push:message=>{if(message.id!=='not-persisted')view.messages.push(message);listener?.({projectId:'p',messageId:message.id})},pushInternal:message=>{if(message)view.messages.push(message);listener?.({projectId:'p'})},resetNavigation:()=>{store.set(activeViewAtom,'settings');store.set(ownerConversationNavigationAtom,{projectId:'other',at:Date.now()})},facts:()=>({navigation:store.get(ownerConversationNavigationAtom),activeView:store.get(activeViewAtom),notices:[...store.get(ownerConversationNoticesAtom)],desktopNotifications,reads})};
+const store=createStore();store.set(notificationsEnabledAtom,true);let listener,desktopNotifications=0,reads=0,readGate=null,releaseRead=null;const view={manager:{schemaVersion:1,projectId:'p',ownerId:'owner',conversationId:'conversation',revision:1,status:'active',createdAt:1,updatedAt:1},pendingEvents:0,messages:[],questions:[]};
+window.electronAPI={sendSystemNotification:async()=>{desktopNotifications++},onSystemNotificationClicked:()=>()=>{},paa:{project:{listProjects:async()=>[],getOwnerManagement:async()=>{reads++;const snapshot=structuredClone(view);if(readGate){const gate=readGate;readGate=null;await gate}return {ok:true,value:snapshot}},onOwnerManagementChanged:cb=>{listener=cb;return()=>{listener=null}}}}};
+window.fixture={raceAttention:message=>{view.messages.push(message);listener?.({projectId:'p',messageId:message.id});readGate=new Promise(resolve=>{releaseRead=resolve});void store.set(loadOwnerManagementAtom,'p')},releaseRead:()=>releaseRead?.(),disableNotifications:()=>store.set(notificationsEnabledAtom,false),push:message=>{if(message.id!=='not-persisted')view.messages.push(message);listener?.({projectId:'p',messageId:message.id})},pushInternal:message=>{if(message)view.messages.push(message);listener?.({projectId:'p'})},resetNavigation:()=>{store.set(activeViewAtom,'settings');store.set(ownerConversationNavigationAtom,{projectId:'other',at:Date.now()})},facts:()=>({navigation:store.get(ownerConversationNavigationAtom),activeView:store.get(activeViewAtom),notices:[...store.get(ownerConversationNoticesAtom)],alerts:[...store.get(ownerAttentionAlertsAtom)],desktopNotifications,reads})};
 function Harness(){useGlobalOwnerManagementListeners();return <Toaster/>}createRoot(document.getElementById('root')).render(<Provider store={store}><Harness/></Provider>);
 `)
   await build({ entryPoints: [join(directory, 'progress-entry.tsx')], outfile: join(directory, 'progress-entry.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.mp3': 'dataurl' }, absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
@@ -125,5 +125,9 @@ function Harness(){useGlobalOwnerManagementListeners();return <Toaster/>}createR
     // 下一次刷新完成后内部观察仍不能替换可见更新入口。
     await page.evaluate(message => (window as unknown as { fixture: { push: (value: unknown) => void } }).fixture.push(message), taskProgress)
     expect(await page.evaluate<string>('window.fixture.facts().notices[0][1].messageId')).toBe('task-progress')
+    const attention = { id: 'race-attention', projectId: 'p', conversationId: 'conversation', eventId: 'event-attention', role: 'assistant', kind: 'attention', content: '需要检查风险。', createdAt: 1 }
+    await page.evaluate(message => (window as unknown as { fixture: { raceAttention: (value: unknown) => void } }).fixture.raceAttention(message), attention)
+    await page.waitForFunction("window.fixture.facts().alerts.some(([, value]) => value.messageId === 'race-attention')")
+    await page.evaluate('window.fixture.releaseRead()')
   } finally { await browser.close(); server.stop(true) }
 }, 30000)

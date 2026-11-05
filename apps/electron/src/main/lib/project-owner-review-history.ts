@@ -30,8 +30,14 @@ export function listOwnerReviewHistory(projectId: string): OwnerReviewHistory[] 
       AND r.source_task_id=x.source_task_id AND r.source_step_link_id=x.source_step_link_id AND r.rework_ordinal=x.rework_ordinal AND r.role='reviewer'
     LEFT JOIN agent_executions re ON re.id=r.execution_id AND re.project_id=r.project_id AND re.owner_command_id=r.id
     LEFT JOIN agent_executions ee ON ee.id=x.execution_id AND ee.project_id=x.project_id AND ee.owner_command_id=x.id
-    WHERE x.project_id=? AND x.role='executor'
-    ORDER BY x.created_at DESC, x.id LIMIT 12`).all(projectId) as ReviewRound[]
+    WHERE x.project_id=? AND x.role='executor' AND (
+      x.id IN (SELECT recent.id FROM project_owner_execution_commands recent
+        WHERE recent.project_id=x.project_id AND recent.role='executor' ORDER BY recent.created_at DESC, recent.id LIMIT 12)
+      OR x.id=(SELECT latest.id FROM project_owner_execution_commands latest
+        WHERE latest.project_id=x.project_id AND latest.source_task_id=x.source_task_id AND latest.role='executor'
+        ORDER BY latest.created_at DESC, latest.id LIMIT 1)
+    )
+    ORDER BY x.created_at DESC, x.id`).all(projectId) as ReviewRound[]
   if (!rounds.length) return []
   let reviews: ReturnType<typeof listOwnerTechnicalReviewEvidence>
   try { reviews = listOwnerTechnicalReviewEvidence(projectId, undefined, rounds.flatMap(round => round.reviewer_id ? [round.reviewer_id] : [])) } catch { reviews = [] }
@@ -51,11 +57,12 @@ export function listOwnerReviewHistory(projectId: string): OwnerReviewHistory[] 
     ]
     let decision = verified ? '等待 Owner 根据本轮评审作出决定。' : '等待独立评审及成果证据通过核对。'
     let decidedAt: number | undefined
+    let qualityState: OwnerReviewHistory['qualityState']
     try {
       const action = round.reviewer_id ? readOwnerQualityAction(round.reviewer_id) : null
-      if (action) { decision = `${action.detail}\n${action.decision.reason}`; decidedAt = action.createdAt }
+      if (action) { decision = `${action.detail}\n${action.decision.reason}`; decidedAt = action.createdAt; qualityState = action.state }
     } catch { decision = 'Owner 决定记录待核对。' }
     steps.push({ label: 'Owner 决定', detail: decision, ...(decidedAt === undefined ? {} : { at: decidedAt }) })
-    return { id: round.id, ...(round.scope_id ? { taskId: round.scope_id } : {}), title: store.getTask(round.task_id)?.title ?? '项目任务', reworkOrdinal: round.ordinal, steps }
+    return { id: round.id, ...(round.scope_id ? { taskId: round.scope_id } : {}), businessTaskId: round.task_id, ...(qualityState ? { qualityState } : {}), title: store.getTask(round.task_id)?.title ?? '项目任务', reworkOrdinal: round.ordinal, steps }
   })
 }

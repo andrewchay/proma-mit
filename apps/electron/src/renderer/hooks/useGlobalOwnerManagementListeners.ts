@@ -3,7 +3,7 @@ import { useStore } from 'jotai'
 import { toast } from 'sonner'
 import { activeViewAtom } from '../atoms/active-view'
 import { notificationsEnabledAtom, sendDesktopNotification } from '../atoms/notifications'
-import { getOwnerManagementEditor, loadOwnerManagementAtom, ownerConversationNavigationAtom, ownerConversationNoticesAtom, ownerManagementEditorsAtom } from '../atoms/project-owner-management-atoms'
+import { getOwnerManagementEditor, loadOwnerManagementAtom, ownerAttentionAlertKey, ownerAttentionAlertsAtom, ownerConversationNavigationAtom, ownerConversationNoticesAtom, ownerManagementEditorsAtom } from '../atoms/project-owner-management-atoms'
 import type { OwnerManagementMessage } from '@gravitas/shared'
 
 const ownerNotices: Partial<Record<OwnerManagementMessage['kind'], { title: string; description: string }>> = {
@@ -32,6 +32,7 @@ export function useGlobalOwnerManagementListeners(): void {
     if (!api?.onOwnerManagementChanged) return
     let stopped = false
     const seen = new Set<string>()
+    const seenAttention = new Set<string>()
     const notify = (projectId: string, key: string, title: string, description: string, taskId?: string): void => {
       if (seen.has(key)) return
       seen.add(key)
@@ -46,9 +47,9 @@ export function useGlobalOwnerManagementListeners(): void {
       if (store.get(notificationsEnabledAtom)) sendDesktopNotification(title, description, true, { onNavigate: navigate })
     }
     const receive = async (projectId: string, messageId?: string, taskId?: string): Promise<void> => {
-      await store.set(loadOwnerManagementAtom, projectId)
+      const loaded = await store.set(loadOwnerManagementAtom, projectId)
       if (stopped) return
-      const view = getOwnerManagementEditor(store.get(ownerManagementEditorsAtom), projectId).view
+      const view = loaded ?? getOwnerManagementEditor(store.get(ownerManagementEditorsAtom), projectId).view
       // 恢复最近可见更新的入口，但不把历史进展重新发成系统通知。
       const latestNotice = view?.messages.filter(item => item.role === 'assistant' && ownerNotice(item)).at(-1)
       if (latestNotice) {
@@ -69,6 +70,11 @@ export function useGlobalOwnerManagementListeners(): void {
       for (const question of view?.questions ?? []) {
         if (question.state !== 'open' || (message && question.id !== message.questionId)) continue
         notify(projectId, question.id, '项目 Owner 有问题需要你确认', '问题和建议已保存在项目对话中。', question.taskId)
+      }
+      if (message?.kind === 'attention' && !seenAttention.has(message.id)) {
+        seenAttention.add(message.id)
+        if (seenAttention.size > 200) seenAttention.delete(seenAttention.values().next().value!)
+        store.set(ownerAttentionAlertsAtom, previous => { const key = ownerAttentionAlertKey(projectId, message.taskId); const current = previous.get(key); if (current && current.createdAt > message.createdAt) return previous; const next = new Map(previous); next.set(key, { messageId: message.id, createdAt: message.createdAt }); return next })
       }
       if (message && notice && !message.questionId && !seen.has(message.id)) {
         notify(projectId, message.id, notice.title, notice.description, message.taskId)

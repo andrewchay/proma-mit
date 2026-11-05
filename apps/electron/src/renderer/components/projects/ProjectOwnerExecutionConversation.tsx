@@ -15,7 +15,7 @@ import { ControlledTaskStartButton } from './ControlledTaskStartButton'
 import { PreviewFacts, ProjectOwnerExecutionPreparationPanel, SavedFacts } from './ProjectOwnerExecutionPreparationPanel'
 import { ProjectOwnerDeliveryConversation } from './ProjectOwnerDeliveryConversation'
 import { OwnerModuleStatus } from './OwnerModuleStatus'
-import { getOwnerWaitingLabel, getOwnerWaitingMessage } from './project-owner-progress-state'
+import { getOwnerWaitingLabel, getOwnerWaitingMessage, hasCompletedOwnerDelivery } from './project-owner-progress-state'
 
 const field = 'mt-2 w-full min-w-0 rounded-lg bg-background p-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
 const button = 'rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50'
@@ -103,18 +103,18 @@ export function ProjectOwnerExecutionConversation({ projectId, taskId, ownerConv
   const managedByOwner = Boolean(latestAssignmentRun && (latestAssignmentRun.link.requestId.startsWith('management-assignment:') || managementMessages.some(message => message.planningTaskId === latestAssignmentRun.link.planningTaskId && ['management_progress', 'execution_arranged'].includes(message.kind))))
   const ownerWaitingLabel = ownerConversation ? getOwnerWaitingLabel(managementMessages, taskId, ownerBudget.view?.state) : null
   const ownerWaitingMessage = ownerConversation ? getOwnerWaitingMessage(managementMessages, taskId) : null
-  const ownerConversationWaitingForUser = Boolean(ownerWaitingLabel)
+  const hasOwnerWaitingNotice = Boolean(ownerWaitingLabel)
+  const ownerAttentionOnly = ownerWaitingMessage?.kind === 'attention' && ownerBudget.view?.state !== 'stale'
   const singleConfirmation = ownerConversation && managedByOwner
   const projectBudget = ownerBudget.view?.delegation
   const projectBudgetRemainingMicros = projectBudget ? projectBudget.maxCostMicros - ownerBudget.view!.reservedCostMicros : 0
   const projectBudgetReady = Boolean(projectBudget && ['active', 'exhausted'].includes(ownerBudget.view?.state ?? '') && projectBudgetRemainingMicros > 0)
-  const ownerAutonomyManaged = Boolean(singleConfirmation && grant.grant?.dispatchMode === 'autonomous' && grant.grant.state !== 'archived')
+  const ownerAutonomyManaged = Boolean(ownerConversation && grant.grant?.dispatchMode === 'autonomous' && grant.grant.state !== 'archived')
   const ownerGrantId = grant.grant?.grantId
   const ownerCommands = ownerGrantId ? commandProgress.commands.filter(command => command.grantId === ownerGrantId) : []
   const schedule = commandProgress.schedule
   const scheduleMatchesGrant = Boolean(ownerGrantId && schedule?.grantId === ownerGrantId)
-  const currentPlanDelivery = managementMessages.some(message => message.taskId === taskId && message.kind === 'delivery' && message.delivery?.planVersion === plan?.planVersion)
-  const ownerCompleted = Boolean(ownerAutonomyManaged && currentPlanDelivery && ownerCommands.length > 0 && ownerCommands.every(command => command.state === 'settled'))
+  const ownerCompleted = Boolean(ownerConversation && grant.grant?.dispatchMode === 'autonomous' && hasCompletedOwnerDelivery(managementMessages, commandProgress.commands, taskId, plan?.planVersion, ownerGrantId))
   const ownerScheduleExpired = Boolean(ownerAutonomyManaged && commandProgress.loaded && scheduleMatchesGrant && schedule?.state === 'expired' && !ownerCompleted)
   const scheduleIdentityComplete = Boolean(scheduleMatchesGrant && schedule?.taskId && schedule.role && Number.isInteger(schedule.reworkOrdinal))
   const matchingScheduleCommands = scheduleIdentityComplete
@@ -135,7 +135,7 @@ export function ProjectOwnerExecutionConversation({ projectId, taskId, ownerConv
   const ownerAwaitingAcceptance = Boolean(ownerAutonomyManaged && commandProgress.loaded && scheduleMatchesGrant && scheduleState === 'waiting' && nextAction === 'await_business_acceptance')
   const ownerWaitingForChange = Boolean(ownerAutonomyManaged && commandProgress.loaded && scheduleMatchesGrant && scheduleState === 'waiting' && nextAction === 'none')
   const ownerHasSpecificWaitingState = ownerWaitingDecision || ownerAwaitingQuality || ownerAwaitingAcceptance || ownerWaitingForChange
-  const ready = !ownerAutonomyManaged && (ownerConversation ? reviewReady : confirmedReady)
+  const ready = !ownerAutonomyManaged && !ownerCompleted && (ownerConversation ? reviewReady : confirmedReady)
   const savedCurrent = e.view?.status === 'current' && saved?.source.planFingerprint === plan?.planFingerprint && ready && !e.dirty
   const editing = local.editing && !(savedCurrent && saved?.input.requestId === e.requestId && !local.started)
   const approvalInputReady = Boolean(singleConfirmation && projectBudgetReady && ownerExecutionInput(store.get, subject, true))
@@ -227,13 +227,13 @@ export function ProjectOwnerExecutionConversation({ projectId, taskId, ownerConv
     await load(subject)
   }
   return <section className="mt-5 min-w-0 space-y-4 rounded-xl bg-muted/30 p-4 shadow-sm [overflow-wrap:anywhere]" aria-label="执行配置对话">
-    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{ownerConversationWaitingForUser ? ownerWaitingLabel : ownerCompleted ? 'Owner 已完成本轮工作' : ownerScheduleExpired ? '执行授权已到期' : ownerAwaitingAcceptance ? '交付已完成，等待你验收' : ownerWaitingDecision ? 'Owner 等待你的决定' : ownerAwaitingQuality ? '成果等待 Owner 质量判断' : ownerWaitingForChange ? 'Owner 等待新的项目进展' : ownerStarted ? 'Owner 正在推进交付' : ownerQueued ? 'Owner 正在启动执行' : ownerNeedsAttention ? 'Owner 执行需要核对' : ownerAutonomyManaged ? 'Owner 正在核对启动状态' : singleConfirmation ? '确认成果范围并开始' : ownerConversation && ready && !hasAssignmentActivity ? 'Owner 尚未形成团队安排' : ownerConversation ? 'Owner 正在组织执行' : managedByOwner ? '确认执行边界' : '接下来，安排计划如何执行'}</h3><OwnerModuleStatus tone={ownerConversationWaitingForUser || ownerWaitingDecision || ownerNeedsAttention || e.requiresReview || latestAssignmentRun?.sourceStatus === 'stale' ? 'danger' : ownerCompleted || ownerStarted || ownerAwaitingAcceptance || savedCurrent || assignmentProposal ? 'accent' : ownerAutonomyManaged || saved || assignments.runs.length || (ownerConversation && ready && !hasAssignmentActivity) ? 'warn' : 'muted'}>{ownerConversationWaitingForUser ? '等待你处理' : ownerCompleted ? '本轮已交付' : ownerScheduleExpired ? '需要重新确认授权' : ownerAwaitingAcceptance ? '成果待你验收' : ownerWaitingDecision ? '需要你决定' : ownerAwaitingQuality ? '等待质量判断' : ownerWaitingForChange ? '当前没有待派发工作' : ownerStarted ? '员工已开始处理' : ownerQueued ? '工作已排队，等待员工启动' : ownerNeedsAttention ? '执行暂停，需核对状态' : ownerAutonomyManaged ? '授权已生效，正在核对派发' : e.requiresReview ? '来源需核对' : savedCurrent ? '已有当前准备' : assignmentProposal ? (managedByOwner ? '待确认执行边界' : '等待审核安排') : assignments.runs.length ? '安排需核对' : saved ? '准备需重新核对' : ready ? ownerConversation ? '尚无团队安排' : '待Owner提出安排' : '先确认计划'}</OwnerModuleStatus></div>
+    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{hasOwnerWaitingNotice ? ownerWaitingLabel : ownerCompleted ? 'Owner 已完成本轮工作' : ownerScheduleExpired ? '执行授权已到期' : ownerAwaitingAcceptance ? '交付已完成，等待你验收' : ownerWaitingDecision ? 'Owner 等待你的决定' : ownerAwaitingQuality ? '成果等待 Owner 质量判断' : ownerWaitingForChange ? 'Owner 等待新的项目进展' : ownerStarted ? 'Owner 正在推进交付' : ownerQueued ? 'Owner 正在启动执行' : ownerNeedsAttention ? 'Owner 执行需要核对' : ownerAutonomyManaged ? 'Owner 正在核对启动状态' : singleConfirmation ? '确认成果范围并开始' : ownerConversation && ready && !hasAssignmentActivity ? 'Owner 尚未形成团队安排' : ownerConversation ? 'Owner 正在组织执行' : managedByOwner ? '确认执行边界' : '接下来，安排计划如何执行'}</h3><OwnerModuleStatus tone={hasOwnerWaitingNotice || ownerWaitingDecision || ownerNeedsAttention || e.requiresReview || latestAssignmentRun?.sourceStatus === 'stale' ? 'danger' : ownerCompleted || ownerStarted || ownerAwaitingAcceptance || savedCurrent || assignmentProposal ? 'accent' : ownerAutonomyManaged || saved || assignments.runs.length || (ownerConversation && ready && !hasAssignmentActivity) ? 'warn' : 'muted'}>{hasOwnerWaitingNotice ? ownerAttentionOnly ? '需要关注' : '等待你处理' : ownerCompleted ? '本轮已交付' : ownerScheduleExpired ? '需要重新确认授权' : ownerAwaitingAcceptance ? '成果待你验收' : ownerWaitingDecision ? '需要你决定' : ownerAwaitingQuality ? '等待质量判断' : ownerWaitingForChange ? '当前没有待派发工作' : ownerStarted ? '员工已开始处理' : ownerQueued ? '工作已排队，等待员工启动' : ownerNeedsAttention ? '执行暂停，需核对状态' : ownerAutonomyManaged ? '授权已生效，正在核对派发' : e.requiresReview ? '来源需核对' : savedCurrent ? '已有当前准备' : assignmentProposal ? (managedByOwner ? '待确认执行边界' : '等待审核安排') : assignments.runs.length ? '安排需核对' : saved ? '准备需重新核对' : ready ? ownerConversation ? '尚无团队安排' : '待Owner提出安排' : '先确认计划'}</OwnerModuleStatus></div>
     {ownerWaitingMessage && <p role="status" className="whitespace-pre-wrap rounded-xl bg-amber-500/10 p-4 text-sm leading-6">{ownerWaitingMessage.content}</p>}
-    {ownerConversation && ready && !hasAssignmentActivity && !ownerConversationWaitingForUser && <p role="status" className="rounded-xl bg-amber-500/10 p-4 text-sm leading-6">当前还没有可核对的团队安排或员工启动记录。员工尚未开始；Owner会在项目对话中说明安排结果或阻塞原因。</p>}
+    {ownerConversation && ready && !hasAssignmentActivity && !hasOwnerWaitingNotice && <p role="status" className="rounded-xl bg-amber-500/10 p-4 text-sm leading-6">当前还没有可核对的团队安排或员工启动记录。员工尚未开始；Owner会在项目对话中说明安排结果或阻塞原因。</p>}
     {ownerStarted && <p role="status" className="rounded-xl bg-primary/10 p-4 text-sm leading-6">我已按你确认的结果和范围开始推进，正在协调执行与成果检查。出现需要你决定的事项或交付进展时，我会在这里告诉你。</p>}
     {ownerQueued && <p role="status" className="rounded-xl bg-muted/60 p-4 text-sm leading-6">工作已进入执行队列，正在等待员工启动。开始处理后，我会在这里更新进度。</p>}
     {ownerNeedsAttention && !ownerScheduleExpired && <p role="status" className="rounded-xl bg-amber-500/10 p-4 text-sm leading-6">执行状态需要核对，Owner 已暂停新的派发。下方会显示最新进度与可采取的处理方式。</p>}
-    {ownerCompleted && <p role="status" className="rounded-xl bg-primary/10 p-4 text-sm leading-6">执行、独立检查和成果交付均已完成，本轮不再有待启动工作。管理授权已到期；如需拓展或修改目标，Owner会先与你确认新的范围和授权。</p>}
+    {ownerCompleted && <p role="status" className="rounded-xl bg-primary/10 p-4 text-sm leading-6">执行、独立检查和成果交付均已完成，本轮不再有待启动工作。如需拓展或修改目标，Owner会先核对当前范围和授权。</p>}
     {ownerScheduleExpired && <p role="alert" className="rounded-xl bg-amber-500/10 p-4 text-sm leading-6">执行授权已到期，Owner已暂停新的派发。已有进度和成果会保留；如需继续，先在上方对话重新确认管理范围与预算。</p>}
     {ownerWaitingDecision && <p role="status" className="rounded-xl bg-amber-500/10 p-4 text-sm leading-6">当前工作已停在需要你决定的事项前；Owner 不会继续派发，直到收到并核对你的答复。</p>}
     {ownerAwaitingQuality && <p role="status" className="rounded-xl bg-muted/60 p-4 text-sm leading-6">独立技术评审已返回，Owner 还需完成授权内的成果判断；判断完成后会继续推进，或带着需要你决定的问题回来。</p>}

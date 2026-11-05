@@ -12,6 +12,7 @@ browserTest('Given持久Owner会话与待审方案 When讨论、回包丢失重�
   writeFileSync(join(directory, 'entry.tsx'), `
 import React from 'react';import {createRoot} from 'react-dom/client';import {Provider,createStore} from 'jotai';
 import {OwnerManagementConversation} from ${JSON.stringify(join(renderer, 'components/projects/OwnerManagementConversation.tsx'))};
+import {useGlobalOwnerManagementListeners} from ${JSON.stringify(join(renderer, 'hooks/useGlobalOwnerManagementListeners.ts'))};
 import {ProjectOwnerPlanPanel} from ${JSON.stringify(join(renderer, 'components/projects/ProjectOwnerPlanPanel.tsx'))};
 import {loadOwnerManagementAtom} from ${JSON.stringify(join(renderer, 'atoms/project-owner-management-atoms.ts'))};
 import {loadOwnerPlanAtom} from ${JSON.stringify(join(renderer, 'atoms/project-owner-plan-atoms.ts'))};
@@ -20,30 +21,55 @@ import {ownerGoalEditorsAtom,getOwnerGoalEditor} from ${JSON.stringify(join(rend
 import {ownerDelegationEditorsAtom,getOwnerDelegationEditor} from ${JSON.stringify(join(renderer, 'atoms/owner-management-delegation-atoms.ts'))};
 import {allPendingPermissionRequestsAtom} from ${JSON.stringify(join(renderer, 'atoms/agent-atoms.ts'))};
 const store=createStore(),app=createRoot(document.getElementById('root')),ok=value=>({ok:true,value});
-let approvals=[],actionRequests=[],calls=[],workspaceApprovals=[],lose=true,confirmed=0,readGate=null,releaseRead=null;const listeners=new Set();let trace=[{eventId:'a'.repeat(64),projectId:'p',phase:'assignment_run',state:'started',createdAt:1700000000000,detailCode:'provider_pending'},{eventId:'b'.repeat(64),projectId:'p',phase:'assignment_preparation',state:'completed',createdAt:1700000001000,detailCode:'team_check'}];
+let blockedReview=false,approvals=[],actionRequests=[],calls=[],workspaceApprovals=[],lose=true,confirmed=0,readGate=null,releaseRead=null;const listeners=new Set();let trace=[{eventId:'a'.repeat(64),projectId:'p',phase:'assignment_run',state:'started',createdAt:1700000000000,detailCode:'provider_pending'},{eventId:'b'.repeat(64),projectId:'p',phase:'assignment_preparation',state:'completed',createdAt:1700000001000,detailCode:'team_check'}];
 const goal=projectId=>({schemaVersion:1,revision:1,state:'draft',actor:'local-user',savedAt:1,goal:{projectId,goalVersion:1,objective:'产品定位',constraints:[],acceptanceCriteria:[]}});
 const manager=projectId=>({schemaVersion:1,projectId,ownerId:'owner-'+projectId,conversationId:'conversation-'+projectId,revision:1,status:'active',createdAt:1,updatedAt:1});
 const messages=[{id:'prior',projectId:'p',conversationId:'conversation-p',eventId:'event',role:'assistant',kind:'reply',content:'上次讨论保留一页建议。',createdAt:1}];
 const sources={project:{id:'p',title:'项目',description:''},roles:[{key:'research',name:'调研',version:'1.0.0',sourceSha256:'a'.repeat(64),rulesSha256:'b'.repeat(64)}]};
 let plan={projectId:'p',schemaVersion:1,revision:1,planVersion:1,goalRevision:1,goalVersion:1,state:'proposed',actor:'local-user',origin:'generated',sourceRun:{executionId:'raw-run-id',receiptId:'receipt',responseHash:'hash'},savedAt:1,changeReason:'建议',contextFingerprint:'ctx',planFingerprint:'plan',sources,proposal:{projectId:'p',goalVersion:1,mode:'proposal_only',summary:'先形成一页定位建议',assumptions:[],risks:['资料不足时再协商'],steps:[{key:'brief',title:'定位调研',outcome:'一页建议',acceptanceCriteria:['说明取舍'],dependencies:[],roleKey:'research'}]}};
-window.electronAPI={respondPermission:async input=>{approvals.push(input)},paa:{project:{getOwnerManagement:async({projectId})=>ok({manager:manager(projectId),messages:messages.filter(item=>item.projectId===projectId),questions:[],pendingEvents:0,actionRequests:projectId==='p'?actionRequests:[],trace:projectId==='p'?trace:[],reviewHistory:projectId==='p'?[{id:'review-round',title:'定位调研',reworkOrdinal:0,steps:[{label:'员工交付',detail:'成果版本已保存。'},{label:'独立评审',detail:'评审运行或费用待核对。'},{label:'Owner 决定',detail:'等待独立评审及成果证据通过核对。'}]}]:[]}),confirmOwnerTeamWorkspaceAccess:async input=>{workspaceApprovals.push(input);const item={id:'approval-'+workspaceApprovals.length,projectId:input.projectId,conversationId:'conversation-'+input.projectId,eventId:'approval-event-'+workspaceApprovals.length,role:'user',kind:'conversation',teamWorkspaceApproval:{sourceMessageId:input.messageId,workspaceId:input.workspaceId,scopeFingerprint:input.scopeFingerprint},content:'我确认将工作区纳入本项目。',createdAt:7};messages.push(item);listeners.forEach(cb=>cb({projectId:input.projectId,messageId:item.id}));return ok(undefined)},
+let historicalPlans=[{...plan,revision:9,planVersion:3,state:'confirmed',actor:'local-user',proposal:{...plan.proposal,summary:'历史已确认方案'}}], historicalGrants=[{projectId:'p',grantId:'old-grant',state:'archived',issuedAt:1,revokedAt:2,dispatchMode:'autonomous',budget:{maxCostMicros:1000000,expiresAt:9999999999999}}];
+window.electronAPI={respondPermission:async input=>{approvals.push(input)},paa:{project:{listOwnerDispatchControlEvents:async()=>ok([]),getOwnerManagement:async({projectId})=>ok({manager:manager(projectId),messages:messages.filter(item=>item.projectId===projectId),questions:[],pendingEvents:0,actionRequests:projectId==='p'?actionRequests:[],trace:projectId==='p'?trace:[],reviewHistory:projectId==='p'?[...(blockedReview==='resolved'?[{id:'new-review',businessTaskId:'task-1',title:'定位调研',reworkOrdinal:1,qualityState:'accepted',steps:[]}]:[]),{id:'review-round',title:'定位调研',reworkOrdinal:0,...(blockedReview?{businessTaskId:'task-1',qualityState:'blocked'}:{}),steps:[{label:'员工交付',detail:'成果版本已保存。'},{label:'独立评审',detail:'评审运行或费用待核对。'},{label:'Owner 决定',detail:'等待独立评审及成果证据通过核对。'}]}]:[]}),confirmOwnerTeamWorkspaceAccess:async input=>{workspaceApprovals.push(input);const item={id:'approval-'+workspaceApprovals.length,projectId:input.projectId,conversationId:'conversation-'+input.projectId,eventId:'approval-event-'+workspaceApprovals.length,role:'user',kind:'conversation',teamWorkspaceApproval:{sourceMessageId:input.messageId,workspaceId:input.workspaceId,scopeFingerprint:input.scopeFingerprint},content:'我确认将工作区纳入本项目。',createdAt:7};messages.push(item);listeners.forEach(cb=>cb({projectId:input.projectId,messageId:item.id}));return ok(undefined)},
 onOwnerManagementChanged:cb=>{listeners.add(cb);return()=>listeners.delete(cb)},
-sendOwnerManagementMessage:async input=>{calls.push(input);let message=messages.find(item=>item.eventId===input.requestId);if(!message){message={id:'m-'+calls.length,projectId:input.projectId,conversationId:input.conversationId,eventId:input.requestId,goalRevision:input.expectedGoalRevision,role:'user',kind:'conversation',content:input.content,...(input.deliveryReference?{deliveryReference:input.deliveryReference}:{}),createdAt:2};messages.push(message)}if(lose){lose=false;throw Error('模拟回包丢失')}return ok(message)},
-getOwnerPlanDraft:async()=>{const captured=structuredClone(plan);if(readGate){const gate=readGate;readGate=null;await gate}return ok(captured)},getOwnerPlanningContext:async()=>ok({goal:goal('p'),sources,fingerprint:'ctx'}),listOwnerPlanHistory:async()=>ok([]),saveOwnerPlanDraft:async()=>{throw Error("禁止手工修改")},
+sendOwnerManagementMessage:async input=>{calls.push(input);let message=messages.find(item=>item.eventId===input.requestId);if(!message){message={id:'m-'+calls.length,projectId:input.projectId,conversationId:input.conversationId,eventId:input.requestId,goalRevision:input.expectedGoalRevision,role:'user',kind:'conversation',content:input.content,...(input.deliveryReference?{deliveryReference:input.deliveryReference}:{}),...(input.deliveryReviewDecision?{deliveryReviewDecision:input.deliveryReviewDecision}:{}),createdAt:2};messages.push(message)}if(lose){lose=false;throw Error('模拟回包丢失')}return ok(message)},
+getOwnerPlanDraft:async()=>{const captured=structuredClone(plan);if(readGate){const gate=readGate;readGate=null;await gate}return ok(captured)},getOwnerPlanningContext:async()=>ok({goal:goal('p'),sources,fingerprint:'ctx'}),listOwnerPlanHistory:async()=>ok(historicalPlans),getOwnerExecutionGrant:async()=>ok(null),listOwnerExecutionGrantHistory:async()=>ok(historicalGrants),previewOwnerExecutionGrantIssue:async()=>ok({}),confirmOwnerExecutionGrantIssue:async()=>ok({}),previewOwnerExecutionGrantRevoke:async()=>ok({}),confirmOwnerExecutionGrantRevoke:async()=>ok({}),saveOwnerPlanDraft:async()=>{throw Error("禁止手工修改")},
 confirmOwnerPlanDraft:async()=>{confirmed++;plan={...plan,state:'confirmed',revision:plan.revision+1};return ok(plan)}
 }}};
-const render=projectId=>{const subject={projectId};const entries=new Map(store.get(ownerGoalEditorsAtom));entries.set(JSON.stringify([projectId,null]),{...getOwnerGoalEditor(new Map(),subject),loaded:true,snapshot:goal(projectId)});store.set(ownerGoalEditorsAtom,entries);app.render(<Provider store={store}><OwnerManagementConversation key={projectId} projectId={projectId}>{projectId==='p'&&<ProjectOwnerPlanPanel projectId="p" conversational/>}</OwnerManagementConversation></Provider>)};
+function GlobalListeners(){useGlobalOwnerManagementListeners();return null}
+const render=projectId=>{const subject={projectId};const entries=new Map(store.get(ownerGoalEditorsAtom));entries.set(JSON.stringify([projectId,null]),{...getOwnerGoalEditor(new Map(),subject),loaded:true,snapshot:goal(projectId)});store.set(ownerGoalEditorsAtom,entries);app.render(<Provider store={store}><GlobalListeners/><OwnerManagementConversation key={projectId} projectId={projectId}>{projectId==='p'&&<ProjectOwnerPlanPanel projectId="p" conversational/>}</OwnerManagementConversation></Provider>)};
 let retakes=0;window.electronAPI.paa.project.retakeOwnerAssignment=async()=>{retakes++;return ok({enqueued:true})};window.testStaleAssignment=()=>{store.set(ownerExecutionAssignmentEditorsAtom,new Map([[JSON.stringify(['p',null]),{runs:[{sourceStatus:'stale',executions:[]}],generation:0,loaded:true,loading:false,preparing:false,error:''}]]))};window.clearStaleAssignment=()=>store.set(ownerExecutionAssignmentEditorsAtom,new Map());window.testRetakes=()=>retakes;
-window.dialogueFixture={render,approvals:()=>approvals,setActionRequests:async()=>{actionRequests=[{requestId:'r1',sessionId:'s1',taskId:'t1'},{requestId:'r2',sessionId:'s1',taskId:'t1'}];store.set(allPendingPermissionRequestsAtom,new Map([['s1',actionRequests.map(item=>({...item,toolName:'Write',toolInput:{file_path:'package.json',content:'exact-content-'+item.requestId},description:'write',dangerLevel:'dangerous',requiresPerActionApproval:true}))],['unrelated',[{requestId:'other',sessionId:'unrelated',toolName:'Write',toolInput:{content:'other-project-secret'},dangerLevel:'dangerous',requiresPerActionApproval:true}]]]));await store.set(loadOwnerManagementAtom,'p')},setStaleGrant:()=>{const subject={projectId:'p'},entries=new Map(store.get(ownerDelegationEditorsAtom));entries.set(JSON.stringify(['p',null]),{...getOwnerDelegationEditor(entries,subject),view:{delegation:{id:'grant',projectId:'p',maxCostMicros:5000000,expiresAt:Date.now()+3600000},state:'stale',usedRequests:1,reservedCostMicros:930000,detail:'项目配置已变化'}});store.set(ownerDelegationEditorsAtom,entries)},activateGrant:()=>{const subject={projectId:'p'},entries=new Map(store.get(ownerDelegationEditorsAtom)),old=getOwnerDelegationEditor(entries,subject);entries.set(JSON.stringify(['p',null]),{...old,view:{...old.view,state:'active'}});store.set(ownerDelegationEditorsAtom,entries)},beginDelayedRead:()=>{readGate=new Promise(resolve=>{releaseRead=resolve});void store.set(loadOwnerPlanAtom,{projectId:'p'})},newPlan:()=>{plan={...plan,revision:2,proposal:{...plan.proposal,summary:'按讨论更新为精简方案'}};const item={id:'new-plan',projectId:'p',conversationId:'conversation-p',eventId:'new-plan-event',role:'assistant',kind:'plan_proposal',content:'新方案可审阅。',createdAt:4};messages.push(item);listeners.forEach(cb=>cb({projectId:'p',messageId:item.id}));releaseRead()},facts:()=>({calls,messages,confirmed,workspaceApprovals}),clearTrace:()=>{trace=[];listeners.forEach(cb=>cb({projectId:'p',messageId:'trace-refresh'}))},setAuthorizationChangedTrace:async()=>{trace=[{eventId:'c'.repeat(64),projectId:'p',phase:'owner_response',state:'blocked',createdAt:1700000002000,detailCode:'authorization_changed'}];await store.set(loadOwnerManagementAtom,'p')},setAttention:()=>{const item={id:'attention',projectId:'p',conversationId:'conversation-p',eventId:'attention-event',role:'assistant',kind:'attention',content:'没有可用员工，等待你决定。',createdAt:5};messages.push(item);listeners.forEach(cb=>cb({projectId:'p',messageId:item.id}))},setTeamWorkspaceProposal:()=>{const item={id:'team-proposal',projectId:'p',conversationId:'conversation-p',eventId:'team-proposal-event',role:'assistant',kind:'attention',content:'团队不足，建议授权工作区。',teamWorkspaceProposal:{workspaceId:'team-ws',workspaceName:'产品团队',eligibleEmployeeCount:3,scopeFingerprint:'c'.repeat(64)},createdAt:8};messages.push(item);listeners.forEach(cb=>cb({projectId:'p',messageId:item.id}))},resume:()=>{const item={id:'resume',projectId:'p',conversationId:'conversation-p',eventId:'resume-event',role:'assistant',kind:'management_progress',content:'已经恢复安排。',createdAt:6};messages.push(item);listeners.forEach(cb=>cb({projectId:'p',messageId:item.id}))},setOverflowTrace:()=>{trace=Array.from({length:35},(_,index)=>({eventId:(index+1).toString(16).padStart(64,'0'),projectId:'p',phase:'assignment_run',state:'completed',createdAt:1700000000000+index,detailCode:'result_ready'}));listeners.forEach(cb=>cb({projectId:'p',messageId:'trace-overflow'}))},setReplyStartedTrace:async()=>{trace=[{eventId:'started-response',projectId:'p',phase:'owner_response',state:'started',createdAt:2,detailCode:'provider_pending'}];await store.set(loadOwnerManagementAtom,'p')},reply:()=>{const item={id:'reply',projectId:'p',conversationId:'conversation-p',eventId:'reply-event',role:'assistant',kind:'reply',content:'建议保留现有用户作为首要受众。',createdAt:3};messages.push(item);listeners.forEach(cb=>cb({projectId:'p',messageId:item.id}))},deliverAfterStaleAssignment:()=>{trace=[{eventId:'stale-assignment',projectId:'p',phase:'assignment_run',state:'started',createdAt:1700000001000,detailCode:'provider_pending'}];const item={id:'delivery',projectId:'p',conversationId:'conversation-p',eventId:'delivery-event',role:'assistant',kind:'delivery',content:'本轮工作已完成并交付。',createdAt:1700000002000,delivery:{schemaVersion:1,planVersion:1,items:[{stepKey:'design',title:'设计稿',content:'设计成果\\n\\n'+String.fromCharCode(96).repeat(3)+'html\\n<!DOCTYPE html><html><body>页面</body></html>\\n'+String.fromCharCode(96).repeat(3),artifactHash:'d'.repeat(64),acceptanceCriteria:['清晰'],ownerDecision:'可交付',reviewerSummary:'已核对'}]}};messages.push(item);listeners.forEach(cb=>cb({projectId:'p',messageId:item.id}))}};render('p');
+window.dialogueFixture={setBlockedReview:async value=>{blockedReview=value;await store.set(loadOwnerManagementAtom,'p')},refreshHistory:()=>{historicalPlans=[...historicalPlans,{...historicalPlans[0],revision:10,planVersion:4,savedAt:3,proposal:{...plan.proposal,summary:'外部确认的新方案'}}];historicalGrants=[...historicalGrants,{...historicalGrants[0],grantId:'new-grant',issuedAt:4}];listeners.forEach(cb=>cb({projectId:'p'}))},render,approvals:()=>approvals,setActionRequests:async()=>{actionRequests=[{requestId:'r1',sessionId:'s1',taskId:'t1'},{requestId:'r2',sessionId:'s1',taskId:'t1'}];store.set(allPendingPermissionRequestsAtom,new Map([['s1',actionRequests.map(item=>({...item,toolName:'Write',toolInput:{file_path:'package.json',content:'exact-content-'+item.requestId},description:'write',dangerLevel:'dangerous',requiresPerActionApproval:true}))],['unrelated',[{requestId:'other',sessionId:'unrelated',toolName:'Write',toolInput:{content:'other-project-secret'},dangerLevel:'dangerous',requiresPerActionApproval:true}]]]));await store.set(loadOwnerManagementAtom,'p')},setStaleGrant:(state='stale')=>{const subject={projectId:'p'},entries=new Map(store.get(ownerDelegationEditorsAtom));entries.set(JSON.stringify(['p',null]),{...getOwnerDelegationEditor(entries,subject),view:{delegation:{id:'grant',projectId:'p',maxCostMicros:5000000,expiresAt:Date.now()+3600000},state,usedRequests:1,reservedCostMicros:930000,detail:'项目配置已变化'}});store.set(ownerDelegationEditorsAtom,entries)},activateGrant:()=>{const subject={projectId:'p'},entries=new Map(store.get(ownerDelegationEditorsAtom)),old=getOwnerDelegationEditor(entries,subject);entries.set(JSON.stringify(['p',null]),{...old,view:{...old.view,state:'active'}});store.set(ownerDelegationEditorsAtom,entries)},beginDelayedRead:()=>{readGate=new Promise(resolve=>{releaseRead=resolve});void store.set(loadOwnerPlanAtom,{projectId:'p'})},newPlan:()=>{plan={...plan,revision:2,proposal:{...plan.proposal,summary:'按讨论更新为精简方案'}};const item={id:'new-plan',projectId:'p',conversationId:'conversation-p',eventId:'new-plan-event',role:'assistant',kind:'plan_proposal',content:'新方案可审阅。',createdAt:4};messages.push(item);listeners.forEach(cb=>cb({projectId:'p',messageId:item.id}));releaseRead()},facts:()=>({calls,messages,confirmed,workspaceApprovals}),clearTrace:()=>{trace=[];listeners.forEach(cb=>cb({projectId:'p',messageId:'trace-refresh'}))},setAuthorizationChangedTrace:async()=>{trace=[{eventId:'c'.repeat(64),projectId:'p',phase:'owner_response',state:'blocked',createdAt:1700000002000,detailCode:'authorization_changed'}];await store.set(loadOwnerManagementAtom,'p')},repeatAttention:()=>listeners.forEach(cb=>cb({projectId:'p',messageId:'attention'})),setAttention:()=>{const item={id:'attention',projectId:'p',conversationId:'conversation-p',eventId:'attention-event',role:'assistant',kind:'attention',content:'没有可用员工，等待你决定。',createdAt:5};messages.push(item);listeners.forEach(cb=>cb({projectId:'p',messageId:item.id}))},setTeamWorkspaceProposal:()=>{const item={id:'team-proposal',projectId:'p',conversationId:'conversation-p',eventId:'team-proposal-event',role:'assistant',kind:'attention',content:'团队不足，建议授权工作区。',teamWorkspaceProposal:{workspaceId:'team-ws',workspaceName:'产品团队',eligibleEmployeeCount:3,scopeFingerprint:'c'.repeat(64)},createdAt:8};messages.push(item);listeners.forEach(cb=>cb({projectId:'p',messageId:item.id}))},resume:()=>{const item={id:'resume',projectId:'p',conversationId:'conversation-p',eventId:'resume-event',role:'assistant',kind:'management_progress',content:'已经恢复安排。',createdAt:6};messages.push(item);listeners.forEach(cb=>cb({projectId:'p',messageId:item.id}))},setOverflowTrace:()=>{trace=Array.from({length:35},(_,index)=>({eventId:(index+1).toString(16).padStart(64,'0'),projectId:'p',phase:'assignment_run',state:'completed',createdAt:1700000000000+index,detailCode:'result_ready'}));listeners.forEach(cb=>cb({projectId:'p',messageId:'trace-overflow'}))},setReplyStartedTrace:async()=>{trace=[{eventId:'started-response',projectId:'p',phase:'owner_response',state:'started',createdAt:2,detailCode:'provider_pending'}];await store.set(loadOwnerManagementAtom,'p')},reply:()=>{const item={id:'reply',projectId:'p',conversationId:'conversation-p',eventId:'reply-event',role:'assistant',kind:'reply',content:'建议保留现有用户作为首要受众。',createdAt:3};messages.push(item);listeners.forEach(cb=>cb({projectId:'p',messageId:item.id}))},deliverAfterStaleAssignment:()=>{trace=[{eventId:'stale-assignment',projectId:'p',phase:'assignment_run',state:'started',createdAt:1700000001000,detailCode:'provider_pending'}];const item={id:'delivery',projectId:'p',conversationId:'conversation-p',eventId:'delivery-event',role:'assistant',kind:'delivery',content:'本轮工作已完成并交付。',createdAt:1700000002000,delivery:{schemaVersion:1,planVersion:1,items:[{stepKey:'design',title:'设计稿',content:'设计成果\\n\\n'+String.fromCharCode(96).repeat(3)+'html\\n<!DOCTYPE html><html><body>页面</body></html>\\n'+String.fromCharCode(96).repeat(3),artifactHash:'d'.repeat(64),acceptanceCriteria:['清晰'],ownerDecision:'可交付',reviewerSummary:'已核对'}]}};messages.push(item);listeners.forEach(cb=>cb({projectId:'p',messageId:item.id}))}};render('p');
 `)
-  await build({ entryPoints: [join(directory, 'entry.tsx')], outfile: join(directory, 'entry.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent', plugins: [{ name: 'business-boundary', setup(builder) { builder.onLoad({ filter: /ProjectOwnerExecutionConversation\.tsx$/ }, () => ({ contents: 'export function ProjectOwnerExecutionConversation(){return null}', loader: 'tsx' })) } }] })
+  await build({ entryPoints: [join(directory, 'entry.tsx')], outfile: join(directory, 'entry.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.mp3': 'dataurl' }, absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent', plugins: [{ name: 'business-boundary', setup(builder) { builder.onLoad({ filter: /ProjectOwnerExecutionConversation\.tsx$/ }, () => ({ contents: 'export function ProjectOwnerExecutionConversation(){return null}', loader: 'tsx' })) } }] })
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('<div id="root"></div><script src="/entry.js"></script>', { headers: { 'Content-Type': 'text/html' } }), routes: { '/entry.js': () => new Response(Bun.file(join(directory, 'entry.js'))) } })
   const browser = await chromium.launch({ headless: true }), page = await browser.newPage({ viewport: { width: 390, height: 844 } })
   page.setDefaultTimeout(5000)
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message))
   try {
     await page.goto(`http://127.0.0.1:${server.port}`)
+    // 模拟应用样式中 flex 覆盖浏览器 hidden 规则的顺序。
+    await page.addStyleTag({ content: '[hidden]{display:none}.flex{display:flex}.\\!hidden{display:none!important}' })
+    const discussion = page.getByLabel('与项目Owner讨论')
+    expect(await discussion.isVisible()).toBe(false)
+    await page.getByRole('button', { name: '与 Owner 讨论', exact: true }).click()
+    await page.waitForFunction(() => document.activeElement?.textContent === '收起讨论')
+    await page.keyboard.press('Escape')
+    await page.waitForFunction(() => document.activeElement?.textContent === '与 Owner 讨论')
+    expect(await discussion.isVisible()).toBe(false)
+    await page.getByRole('button', { name: '与 Owner 讨论', exact: true }).click()
     await page.getByText('上次讨论保留一页建议。', { exact: true }).waitFor()
+    await page.getByLabel('Owner历史对话').getByLabel('方案确认记录').waitFor()
+    await page.getByLabel('Owner历史对话').getByLabel('执行授权记录').waitFor()
+    await page.getByLabel('Owner历史对话').getByLabel('执行撤权记录').getByText('你撤销了执行授权', { exact: true }).waitFor()
+    // 收起讨论只影响展示；重新展开仍保留已加载的历史。
+    await page.getByRole('button', { name: '收起讨论' }).click()
+    expect(await page.locator('[aria-label="项目历史与事实"]').isVisible()).toBe(false)
+    await page.getByRole('button', { name: '与 Owner 讨论', exact: true }).click()
+    expect(await page.getByText('上次讨论保留一页建议。', { exact: true }).isVisible()).toBe(true)
+    expect(await page.getByLabel('Owner历史对话').getByLabel('方案确认记录').innerText()).toContain('历史已确认方案')
+    expect(await page.getByLabel('Owner历史对话').getByLabel('执行授权记录').innerText()).toContain('当前状态请查看授权设置')
+    await page.evaluate('window.dialogueFixture.refreshHistory()')
+    await page.getByLabel('Owner历史对话').getByText('外部确认的新方案', { exact: true }).waitFor()
+    expect(await page.getByLabel('Owner历史对话').getByLabel('执行授权记录').count()).toBe(2)
     const historyDisclosure = page.getByText('查看进展与决策依据', { exact: true })
     await historyDisclosure.click()
     const history = historyDisclosure.locator('..')
@@ -66,6 +92,9 @@ window.dialogueFixture={render,approvals:()=>approvals,setActionRequests:async()
     expect(await page.evaluate<number>('window.testRetakes()')).toBe(1)
     expect(await staleAction.getByRole('button', { name: '按当前方案重新安排' }).isDisabled()).toBe(true)
     await page.evaluate('window.clearStaleAssignment()')
+    await page.evaluate('window.dialogueFixture.setStaleGrant("none")')
+    await page.getByLabel('Owner当前状态').getByText('项目管理授权需要确认', { exact: true }).waitFor()
+    await page.evaluate('window.dialogueFixture.activateGrant()')
     // 项目信息在对话之前。
     expect(await page.evaluate(() => {
       const decisions = document.querySelector('[aria-label="需要你决定"]')
@@ -87,7 +116,13 @@ window.dialogueFixture={render,approvals:()=>approvals,setActionRequests:async()
     expect(await page.getByLabel('内部处理记录').count()).toBe(0)
     await page.evaluate('window.dialogueFixture.setAttention()')
     await page.getByLabel('Owner最新处理结果').getByText('没有可用员工，等待你决定。', { exact: true }).waitFor()
-    await page.getByText('Owner 已暂停推进，详情见风险。', { exact: true }).waitFor()
+    const attentionPopup = page.getByRole('alert', { name: 'Owner 新的关注事项' })
+    await attentionPopup.getByText('没有可用员工，等待你决定。', { exact: true }).waitFor()
+    await attentionPopup.getByRole('button', { name: '收起提醒' }).click()
+    expect(await page.getByLabel('Owner最新处理结果').count()).toBe(1)
+    await page.evaluate('window.dialogueFixture.repeatAttention()')
+    expect(await page.getByRole('alert', { name: 'Owner 新的关注事项' }).count()).toBe(0)
+    await page.getByText('Owner 提出需要关注的事项，详情见风险。', { exact: true }).waitFor()
     expect(await page.getByLabel('需要你决定').getByRole('button', { name: '回复 Owner' }).count()).toBe(0)
     expect(await page.getByLabel('Owner正在处理').count()).toBe(0)
     expect(await progress.innerText()).not.toContain('已等待')
@@ -95,6 +130,14 @@ window.dialogueFixture={render,approvals:()=>approvals,setActionRequests:async()
     await page.evaluate('window.dialogueFixture.activateGrant()')
     await page.getByText('正在生成内部团队安排。', { exact: true }).waitFor()
     expect(await page.getByLabel('Owner最新处理结果').count()).toBe(0)
+    expect(await page.getByLabel('项目风险').innerText()).toContain('此前 Owner 曾提出关注事项')
+    expect(await page.getByLabel('项目风险').innerText()).not.toContain('暂无已记录的风险提示')
+    await page.evaluate('window.dialogueFixture.setBlockedReview(true)')
+    await page.getByLabel('质量阻断').getByText('定位调研 · 质量决定被阻断', { exact: true }).waitFor()
+    await page.getByLabel('Owner当前状态').getByText('成果质量决定被阻断，需要核对', { exact: true }).waitFor()
+    await page.evaluate('window.dialogueFixture.setBlockedReview("resolved")')
+    expect(await page.getByLabel('质量阻断').count()).toBe(0)
+    await page.evaluate('window.dialogueFixture.setBlockedReview(false)')
     const processingIndicator = page.getByLabel('Owner正在处理')
     await processingIndicator.waitFor({ state: 'attached' })
     expect(await processingIndicator.getAttribute('class')).toContain('sidebar-breathe-running')
@@ -119,7 +162,7 @@ window.dialogueFixture={render,approvals:()=>approvals,setActionRequests:async()
     await page.getByLabel('Owner历史对话').getByText('建议保留现有用户作为首要受众。', { exact: true }).waitFor()
     const latestRound = page.getByLabel('最新一轮对话')
     expect(await latestRound.locator('article').first().innerText()).toContain('解释一下受众取舍')
-    expect(await latestRound.locator('time[datetime]').count()).toBe(2)
+    expect(await latestRound.locator('time[datetime]').count()).toBe(4)
     const olderReply = page.getByText('上次讨论保留一页建议。', { exact: true })
     expect(await olderReply.isVisible()).toBe(false)
     await page.getByText(/展开更早的对话/).click()
@@ -132,6 +175,7 @@ window.dialogueFixture={render,approvals:()=>approvals,setActionRequests:async()
     expect(await page.getByLabel('给项目 Owner 的消息').textContent()).toBe('')
     expect(await page.getByText('建议保留现有用户作为首要受众。', { exact: true }).count()).toBe(0)
     await page.evaluate('window.dialogueFixture.render("p")')
+    await page.getByRole('button', { name: '与 Owner 讨论', exact: true }).click()
     await page.getByLabel('Owner历史对话').getByText('建议保留现有用户作为首要受众。', { exact: true }).waitFor()
     expect(await page.getByLabel('给项目 Owner 的消息').innerText()).toBe('项目P未发送草稿')
     await page.evaluate('window.dialogueFixture.clearTrace()')
@@ -141,7 +185,11 @@ window.dialogueFixture={render,approvals:()=>approvals,setActionRequests:async()
     await page.getByLabel('Owner方案摘要').getByText('按讨论更新为精简方案', { exact: true }).waitFor()
     expect(await page.getByRole('button', { name: '确认这个方案', exact: true }).count()).toBe(0)
     expect(await page.evaluate<number>('window.dialogueFixture.facts().confirmed')).toBe(0)
+    await page.getByRole('button', { name: '收起讨论' }).click()
     await page.evaluate('window.dialogueFixture.setTeamWorkspaceProposal()')
+    await page.getByRole('alert', { name: 'Owner 新的关注事项' }).getByRole('button', { name: '查看记录与上下文' }).click()
+    await page.getByRole('button', { name: '收起讨论' }).waitFor()
+    await page.waitForFunction(() => document.activeElement?.id === 'owner-message-team-proposal')
     await page.getByLabel('待查看团队工作区建议').getByRole('button', { name: '查看范围与确认选项' }).click()
     await page.getByLabel('团队工作区范围建议').waitFor()
     const teamScope = await page.getByLabel('团队工作区范围建议').innerText()
@@ -160,14 +208,25 @@ window.dialogueFixture={render,approvals:()=>approvals,setActionRequests:async()
     const versionIndex = page.getByLabel('设计成果版本')
     await versionIndex.locator('summary').click()
     await versionIndex.getByRole('button', { name: /设计稿/ }).click()
-    expect(await page.evaluate(() => document.activeElement?.id.startsWith('owner-design-'))).toBe(true)
+    await page.getByLabel('成果工作区').getByLabel('已交付：设计稿').waitFor()
     const designReply = page.getByLabel('给项目 Owner 的消息')
-    await designReply.fill('请调整标题')
+    await page.getByRole('button', { name: '与 Owner 讨论', exact: true }).click()
+    await page.waitForFunction(() => document.activeElement?.textContent === '收起讨论')
+    await designReply.fill('')
+    await page.waitForFunction(() => document.querySelector('[contenteditable="true"][aria-label="给项目 Owner 的消息"]')?.textContent === '')
+    await page.getByRole('button', { name: '收起讨论' }).click()
+    await page.getByLabel('审阅这个成果版本').getByRole('button', { name: '认可这个版本' }).click()
+    expect((await designReply.innerText()).trim()).toBe('')
+    await page.getByRole('button', { name: '收起讨论' }).click()
     await page.getByRole('button', { name: '针对这个版本提出修改' }).click()
-    await page.getByText('本条意见将关联已验收成果《设计稿》及其准确版本。', { exact: true }).waitFor()
+    expect(await page.getByRole('button', { name: '发送给 Owner' }).isDisabled()).toBe(true)
+    await designReply.fill('请调整标题')
+    await page.getByRole('button', { name: '收起讨论' }).click()
+    await page.getByRole('button', { name: '针对这个版本提出修改' }).click()
+    await page.getByText('本条意见将关联已交付成果《设计稿》及其准确版本。', { exact: true }).waitFor()
     expect(await designReply.innerText()).toBe('请调整标题')
     await page.getByRole('button', { name: '取消关联' }).click()
-    expect(await page.getByText('本条意见将关联已验收成果《设计稿》及其准确版本。').count()).toBe(0)
+    expect(await page.getByText('本条意见将关联已交付成果《设计稿》及其准确版本。').count()).toBe(0)
     expect(await designReply.innerText()).toBe('请调整标题')
     await designReply.fill('')
     expect(await page.getByText('已等待', { exact: false }).count()).toBe(0)
@@ -188,6 +247,7 @@ window.dialogueFixture={render,approvals:()=>approvals,setActionRequests:async()
     await approval.waitFor({ state: 'detached' })
     expect(await page.evaluate<Array<{ requestId: string; behavior: string; alwaysAllow: boolean }>>('window.dialogueFixture.approvals()')).toEqual([{ requestId: 'r1', behavior: 'allow', alwaysAllow: false }, { requestId: 'r2', behavior: 'deny', alwaysAllow: false }])
     await designReply.fill('请调整标题')
+    await page.getByRole('button', { name: '收起讨论' }).click()
     await page.getByLabel('已交付：设计稿').locator('pre').evaluate(element => { const range = document.createRange(); range.selectNodeContents(element); const selection = window.getSelection()!; selection.removeAllRanges(); selection.addRange(range); element.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })) })
     await page.getByRole('button', { name: '针对选中内容提出修改' }).click()
     expect(await designReply.innerText()).toContain('设计成果')
@@ -197,6 +257,13 @@ window.dialogueFixture={render,approvals:()=>approvals,setActionRequests:async()
     expect(sent.content).toContain('请调整标题')
     expect(sent.content).toContain('设计成果')
     expect(sent.deliveryReference).toEqual({ messageId: 'delivery', artifactHash: 'd'.repeat(64), stepKey: 'design' })
+    await page.getByRole('button', { name: '查看关联成果：设计稿（dddddddddddd）', exact: true }).click()
+    await page.getByLabel('成果工作区').getByLabel('已交付：设计稿').waitFor()
+    await page.getByLabel('审阅这个成果版本').getByRole('button', { name: '认可这个版本' }).click()
+    await page.getByRole('button', { name: '发送给 Owner' }).click()
+    await page.waitForFunction("window.dialogueFixture.facts().calls.some(call => call.deliveryReviewDecision === 'accepted')")
+    await page.getByText('你认可了这个成果版本 · 审阅记录 · 设计稿（dddddddddddd）', { exact: true }).waitFor()
+    expect(await page.evaluate<string>("window.dialogueFixture.facts().calls.at(-1).deliveryReference.artifactHash")).toBe('d'.repeat(64))
     const callsBeforeBrief = await page.evaluate<number>('window.dialogueFixture.facts().calls.length')
     await designReply.fill('保留已有想法')
     const brief = page.getByLabel('设计任务草稿')

@@ -31,7 +31,7 @@ function read<T>(row: PayloadRow): T {
   return value as T
 }
 /** 文本按正文哈希，代码按冻结文件集合哈希；传输JSON不是源码版本的哈希域。 */
-function deliveryContentMatchesArtifact(content: string, artifactHash: string): boolean {
+export function deliveryContentMatchesArtifact(content: string, artifactHash: string): boolean {
   const sha = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex')
   if (sha(content) === artifactHash) return true
   const record = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -61,7 +61,7 @@ function deliveryContentMatchesArtifact(content: string, artifactHash: string): 
   } catch { return false }
 }
 
-function assertDeliveryMessage(message: Pick<OwnerManagementMessage, 'role' | 'kind' | 'delivery' | 'deliveryReference' | 'teamWorkspaceProposal' | 'teamWorkspaceApproval' | 'fileChangeObservationId' | 'webChangeObservationId'>): void {
+function assertDeliveryMessage(message: Pick<OwnerManagementMessage, 'role' | 'kind' | 'delivery' | 'deliveryReference' | 'deliveryReviewDecision' | 'teamWorkspaceProposal' | 'teamWorkspaceApproval' | 'fileChangeObservationId' | 'webChangeObservationId'>): void {
   if (message.kind === 'file_change_observation' ? message.role !== 'assistant' || typeof message.fileChangeObservationId !== 'string' || !/^[a-f0-9]{64}$/.test(message.fileChangeObservationId) : message.fileChangeObservationId !== undefined) throw new Error('Owner文件变化观察身份无效')
   if (message.kind === 'web_change_observation' ? message.role !== 'assistant' || typeof message.webChangeObservationId !== 'string' || !/^[a-f0-9]{64}$/.test(message.webChangeObservationId) : message.webChangeObservationId !== undefined) throw new Error('Owner外部变化观察身份无效')
   const proposal = message.teamWorkspaceProposal
@@ -78,6 +78,7 @@ function assertDeliveryMessage(message: Pick<OwnerManagementMessage, 'role' | 'k
     || !message.deliveryReference || !/^[a-f0-9]{64}$/.test(message.deliveryReference.messageId)
     || (message.deliveryReference.stepKey !== undefined && (typeof message.deliveryReference.stepKey !== 'string' || !message.deliveryReference.stepKey.trim() || message.deliveryReference.stepKey.length > 100))
     || !/^[a-f0-9]{64}$/.test(message.deliveryReference.artifactHash))) throw new Error('Owner消息交付引用身份无效')
+  if (message.deliveryReviewDecision !== undefined && (message.role !== 'user' || message.kind !== 'conversation' || !message.deliveryReference || !['accepted', 'changes_requested'].includes(message.deliveryReviewDecision))) throw new Error('Owner成果审阅决定无效')
   if (message.kind !== 'delivery') {
     if (message.delivery !== undefined) throw new Error('非交付消息不能包含成果包')
     return
@@ -139,7 +140,7 @@ export function appendOwnerManagementMessage(input: Omit<OwnerManagementMessage,
   const existing = store.getProjectDb().prepare('SELECT payload, integrity_hash FROM project_owner_management_messages WHERE id = ?').get(id) as PayloadRow | undefined
   if (existing) {
     const old = read<OwnerManagementMessage>(existing)
-    if (old.projectId !== input.projectId || old.conversationId !== manager.conversationId || old.content !== input.content || old.planningTaskId !== input.planningTaskId || old.questionId !== input.questionId || old.taskId !== input.taskId || JSON.stringify(old.employeeInteraction) !== JSON.stringify(input.employeeInteraction) || JSON.stringify(old.runEvidence) !== JSON.stringify(input.runEvidence) || old.goalRevision !== input.goalRevision || old.fileChangeObservationId !== input.fileChangeObservationId || old.webChangeObservationId !== input.webChangeObservationId || old.changeId !== input.changeId || JSON.stringify(old.changeDecision) !== JSON.stringify(input.changeDecision) || JSON.stringify(old.executionObservation) !== JSON.stringify(input.executionObservation) || JSON.stringify(old.delivery) !== JSON.stringify(input.delivery) || JSON.stringify(old.deliveryReference) !== JSON.stringify(input.deliveryReference) || JSON.stringify(old.teamWorkspaceProposal) !== JSON.stringify(input.teamWorkspaceProposal) || JSON.stringify(old.teamWorkspaceApproval) !== JSON.stringify(input.teamWorkspaceApproval)) throw new Error('Owner管理消息与已有事件不一致')
+    if (old.projectId !== input.projectId || old.conversationId !== manager.conversationId || old.content !== input.content || old.planningTaskId !== input.planningTaskId || old.questionId !== input.questionId || old.taskId !== input.taskId || JSON.stringify(old.employeeInteraction) !== JSON.stringify(input.employeeInteraction) || JSON.stringify(old.runEvidence) !== JSON.stringify(input.runEvidence) || old.goalRevision !== input.goalRevision || old.fileChangeObservationId !== input.fileChangeObservationId || old.webChangeObservationId !== input.webChangeObservationId || old.changeId !== input.changeId || JSON.stringify(old.changeDecision) !== JSON.stringify(input.changeDecision) || JSON.stringify(old.executionObservation) !== JSON.stringify(input.executionObservation) || JSON.stringify(old.delivery) !== JSON.stringify(input.delivery) || JSON.stringify(old.deliveryReference) !== JSON.stringify(input.deliveryReference) || old.deliveryReviewDecision !== input.deliveryReviewDecision || JSON.stringify(old.teamWorkspaceProposal) !== JSON.stringify(input.teamWorkspaceProposal) || JSON.stringify(old.teamWorkspaceApproval) !== JSON.stringify(input.teamWorkspaceApproval)) throw new Error('Owner管理消息与已有事件不一致')
     return old
   }
   const message: OwnerManagementMessage = { ...input, id, conversationId: manager.conversationId, createdAt: Date.now() }

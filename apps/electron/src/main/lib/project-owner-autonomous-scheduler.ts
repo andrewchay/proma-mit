@@ -11,6 +11,7 @@ import { onOwnerAutonomousScheduleWake, requestOwnerAutonomousScheduleWake } fro
 import { isCompletedStatus } from './task-status-logic'
 import * as store from './project-sqlite-store'
 import { listOwnerTechnicalReviewEvidence } from './project-owner-technical-review'
+import { assertOwnerDispatchManagementCurrent, readOwnerDispatchControl } from './project-owner-dispatch-control'
 
 export type OwnerAutonomousScheduleState =
   | 'no_grant'
@@ -127,13 +128,14 @@ function roleContinuation(command: CommandRow | null, projectId: string, grantId
   return { status: status(projectId, 'waiting', `Owner ${role} 未以已知费用和成功终态收敛（command=${command.state}, execution=${command.execution_status ?? 'none'}）；停止自动续派`, details) }
 }
 function evaluate(projectId: string, now = Date.now()): Evaluation {
-  const grant = store.getProjectDb().prepare("SELECT * FROM project_owner_execution_grants WHERE project_id=? ORDER BY issued_at DESC LIMIT 1").get(projectId) as GrantRow | undefined
+  const grant = store.getProjectDb().prepare("SELECT * FROM project_owner_execution_grants WHERE project_id=? ORDER BY issued_at DESC, rowid DESC LIMIT 1").get(projectId) as GrantRow | undefined
   if (!grant) return { status: status(projectId, 'no_grant', '当前无Owner执行授权') }
   const usage = usageDetails(grant.id), details = { grantId: grant.id, ...usage }
   if (grant.state === 'archived') return { status: status(projectId, 'archived', '授权已过期并归档；unknown占额保留，不派发或释放', details) }
   if (grant.dispatch_mode !== 'autonomous') return { status: status(projectId, 'manual', '此授权为人工逐条确认模式；自主调度未启用', details) }
   if (grant.state === 'needs_reconcile') return { status: status(projectId, 'needs_reconcile', '授权处于needs_reconcile；不创建命令或重试', details) }
   if (grant.state !== 'active') return { status: status(projectId, 'paused', '自主授权已暂停；不派发新命令', details) }
+  if (readOwnerDispatchControl(projectId, grant.id).paused) return { status: status(projectId, 'paused', '用户已暂停后续自主派工；运行中的执行继续，排队命令保留。', details) }
   if (grant.expires_at <= now) return { status: status(projectId, 'expired', '授权期限已过；不派发新命令', details) }
   const subject: ProjectOwnerGoalSubject = { projectId, ...(grant.task_id ? { taskId: grant.task_id } : {}) }
   const view = getOwnerExecutionRevalidation(subject)
@@ -144,6 +146,8 @@ function evaluate(projectId: string, now = Date.now()): Evaluation {
     || record.source.materialization.integrityHash !== grant.materialization_integrity_hash || policy?.revision !== grant.policy_revision) {
     return { status: status(projectId, 'stale', `冻结来源或策略不再current（${view.status}）；撤权/重新验证前不续派`, details) }
   }
+  try { assertOwnerDispatchManagementCurrent(projectId, grant.id) }
+  catch { return { status: status(projectId, 'paused', '原项目管理授权已变化或失效；不派发新命令。', details) } }
   const pendingCommand = store.getProjectDb().prepare("SELECT 1 FROM project_owner_execution_commands WHERE grant_id=? AND state IN ('reserved','queued','running') LIMIT 1").get(grant.id)
   const budgetExhausted = !pendingCommand && (usage.runReservations >= record.source.budget.maxRuns || usage.committedCostMicros >= record.source.budget.maxCostMicros)
   const batch = getOwnerTaskMaterializationRecord(projectId, record.source.materialization.id)
@@ -242,6 +246,14 @@ function markDispatchUncertain(commandId: string, projectId: string): void {
     database.prepare("UPDATE project_owner_execution_grants SET state='needs_reconcile' WHERE id=? AND project_id=? AND state='active'").run(command.grant_id, projectId)
   })()
 }
+/** 仅在暂停已落库且命令尚未认领时保留排队；其他失败仍按未知启动处理。 */
+function pausedBeforeClaim(commandId: string, projectId: string): boolean {
+  const row = store.getProjectDb().prepare(`SELECT c.grant_id FROM project_owner_execution_commands c
+    JOIN agent_executions e ON e.id=c.execution_id AND e.owner_command_id=c.id
+    WHERE c.id=? AND c.project_id=? AND c.state='queued' AND e.status='queued' AND e.session_id=''
+      AND NOT EXISTS (SELECT 1 FROM project_owner_execution_start_attempts a WHERE a.execution_id=e.id)`).get(commandId, projectId) as { grant_id: string } | undefined
+  return Boolean(row && readOwnerDispatchControl(projectId, row.grant_id).paused)
+}
 export function getOwnerAutonomousScheduleStatus(projectId: string): OwnerAutonomousScheduleStatus {
   if (typeof projectId !== 'string' || !projectId.trim()) throw new Error('项目ID无效')
   return evaluate(projectId).status
@@ -260,10 +272,10 @@ export async function runOwnerAutonomousSchedule(projectId: string, driver: Owne
         const result = await driver.dispatch({ commandId: evaluation.action.commandId, ackFingerprint: evaluation.action.ackFingerprint, acknowledgeExecution: true })
         if (!result.started) {
           const execution = store.getAgentExecution(result.executionId)
-          if (execution?.status === 'queued') markDispatchUncertain(result.commandId, projectId)
+          if (execution?.status === 'queued' && !pausedBeforeClaim(result.commandId, projectId)) markDispatchUncertain(result.commandId, projectId)
         }
       } catch {
-        markDispatchUncertain(evaluation.action.commandId, projectId)
+        if (!pausedBeforeClaim(evaluation.action.commandId, projectId)) markDispatchUncertain(evaluation.action.commandId, projectId)
       }
       return evaluate(projectId).status
     }
@@ -275,9 +287,9 @@ export async function runOwnerAutonomousSchedule(projectId: string, driver: Owne
     }
     try {
       const result = await driver.dispatch({ commandId: queued.commandId, ackFingerprint: queued.ackFingerprint, acknowledgeExecution: true })
-      if (!result.started && store.getAgentExecution(result.executionId)?.status === 'queued') markDispatchUncertain(result.commandId, projectId)
+      if (!result.started && store.getAgentExecution(result.executionId)?.status === 'queued' && !pausedBeforeClaim(result.commandId, projectId)) markDispatchUncertain(result.commandId, projectId)
     } catch {
-      markDispatchUncertain(queued.commandId, projectId)
+      if (!pausedBeforeClaim(queued.commandId, projectId)) markDispatchUncertain(queued.commandId, projectId)
     }
     return evaluate(projectId).status
   })()
