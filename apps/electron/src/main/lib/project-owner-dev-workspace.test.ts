@@ -1,6 +1,6 @@
 import { afterAll, expect, mock, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildElectronMock } from './testing/electron-mock'
@@ -50,6 +50,49 @@ test('Given 不安全名称 When 创建工作区 Then 拒绝且不在受管目�
     expect(() => createOwnerDedicatedWorkspace(name)).toThrow('Owner工作区名称无效')
   }
   expect(existsSync(join(getConfigDir(), 'escaped'))).toBe(false)
+})
+
+;(process.platform === 'win32' ? test.skip : test)('Given 进程携带 Git 模板及配置 When 初始化工作区 Then 不执行模板 hook', () => {
+  const template = join(directory, 'git-template')
+  const hooks = join(template, 'hooks')
+  const marker = join(directory, 'hook-executed')
+  mkdirSync(hooks, { recursive: true })
+  const hook = join(hooks, 'pre-commit')
+  writeFileSync(hook, '#!/bin/sh\nprintf invoked > "$OWNER_HOOK_MARKER"\n')
+  chmodSync(hook, 0o755)
+  const oldTemplate = process.env.GIT_TEMPLATE_DIR
+  const oldMarker = process.env.OWNER_HOOK_MARKER
+  process.env.GIT_TEMPLATE_DIR = template
+  process.env.OWNER_HOOK_MARKER = marker
+  try {
+    const workspace = createOwnerDedicatedWorkspace('owner-git-hook-isolation')
+    expect(isGitRepositoryWithHead(workspace.rootPath!)).toBe(true)
+    expect(existsSync(marker)).toBe(false)
+    expect(existsSync(join(workspace.rootPath!, '.git', 'hooks', 'pre-commit'))).toBe(false)
+  } finally {
+    if (oldTemplate === undefined) delete process.env.GIT_TEMPLATE_DIR; else process.env.GIT_TEMPLATE_DIR = oldTemplate
+    if (oldMarker === undefined) delete process.env.OWNER_HOOK_MARKER; else process.env.OWNER_HOOK_MARKER = oldMarker
+  }
+})
+
+;(process.platform === 'win32' ? test.skip : test)('Given 中断的仓库含 hook When 恢复基线 Then 不执行 hook 且保留原文件', () => {
+  const repo = join(getConfigDir(), 'owner-dev-repos', 'owner-existing-hook')
+  const marker = join(directory, 'existing-hook-executed')
+  mkdirSync(repo, { recursive: true })
+  execFileSync('git', ['-C', repo, 'init', '-q'])
+  const hook = join(repo, '.git', 'hooks', 'pre-commit')
+  writeFileSync(hook, '#!/bin/sh\nprintf invoked > "$OWNER_EXISTING_HOOK_MARKER"\n')
+  chmodSync(hook, 0o755)
+  const previousMarker = process.env.OWNER_EXISTING_HOOK_MARKER
+  process.env.OWNER_EXISTING_HOOK_MARKER = marker
+  try {
+    const workspace = createOwnerDedicatedWorkspace('owner-existing-hook')
+    expect(isGitRepositoryWithHead(workspace.rootPath!)).toBe(true)
+    expect(existsSync(marker)).toBe(false)
+    expect(existsSync(hook)).toBe(true)
+  } finally {
+    if (previousMarker === undefined) delete process.env.OWNER_EXISTING_HOOK_MARKER; else process.env.OWNER_EXISTING_HOOK_MARKER = previousMarker
+  }
 })
 
 test('Given 工作区目录是符号链接 When 创建 Then 拒绝且不在目标目录建仓', () => {
