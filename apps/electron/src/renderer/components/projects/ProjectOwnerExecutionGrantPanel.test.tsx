@@ -160,9 +160,9 @@ test('Given active grant When SSR Then 账本行事实完整、发行禁用、�
 })
 test('Given Owner对话中的活动授权 When SSR Then 只显示业务进度和预算，不暴露内部调度字段', () => {
   const html = render({ grant: { grant, loaded: true } }, true)
-  expect(html).toContain('Owner 已开始按确认范围推进')
-  expect(html).toContain('Owner 会在本次确认的目标、资料权限和预算范围内自主组织团队')
-  expect(html).toContain('项目共享预算上限：1.000001 美元')
+  expect(html).toContain('执行授权已登记')
+  expect(html).toContain('能否继续推进还取决于当前管理授权与项目进度')
+  expect(html).toContain('本次执行预算上限：1.000001 美元')
   expect(html).not.toContain(grant.grantId)
   expect(html).not.toContain('模型')
   expect(html).not.toContain('最多 2 次运行')
@@ -171,7 +171,12 @@ test('Given Owner对话中的活动授权 When SSR Then 只显示业务进度和
   expect(html).not.toContain('workspace-1')
   expect(html).not.toContain('完整授权记录')
   expect(html).not.toContain('Owner 业务命令')
-  expect(html).not.toContain('本次执行')
+})
+test('Given 执行授权已暂停 When 展示项目进度 Then 不暗示仍在推进或等待首次确认', () => {
+  const html = render({ grant: { grant: { ...grant, state: 'paused' }, loaded: true } }, true)
+  expect(html).toContain('执行授权已暂停')
+  expect(html).not.toContain('等待最终执行确认')
+  expect(html).not.toContain('Owner 已开始按确认范围推进')
 })
 test('Given Owner对话中的有效发行预览 When继续授权 Then系统确认才是实际开始许可', () => {
   const html = render({

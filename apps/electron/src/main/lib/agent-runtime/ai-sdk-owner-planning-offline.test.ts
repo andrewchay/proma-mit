@@ -97,6 +97,33 @@ describe('Owner real AI SDK offline serialization', () => {
     await expect(promise).rejects.toThrow()
     expect(calls).toBe(1)
   })
+  test('Given 本地Provider真实流式连接 When 中止AI SDK运行 Then 连接关闭且不重试', async () => {
+    let calls = 0, markClosed!: () => void, markDelta!: () => void
+    const closed = new Promise<void>(resolve => { markClosed = resolve })
+    const delta = new Promise<void>(resolve => { markDelta = resolve })
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {
+      calls++
+      request.signal.addEventListener('abort', markClosed, { once: true })
+      const body = new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('data: ' + JSON.stringify({ id: 'local', object: 'chat.completion.chunk', created: 1, model: 'offline-model', choices: [{ index: 0, delta: { content: '进行中' }, finish_reason: null }] }) + '\n\n')) } })
+      return new Response(body, { headers: { 'content-type': 'text/event-stream' } })
+    } })
+    const turn = { ...input(globalThis.fetch), baseUrl: `http://127.0.0.1:${server.port}/v1`, onAgentEvent: (event: import('@gravitas/shared').AgentEvent) => { if (event.type === 'text_delta' && event.text.includes('进行中')) markDelta() } }
+    const result = new AISDKRuntimeCore().runAgentTurn(turn).then(() => ({ failed: false }), () => ({ failed: true }))
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([(async () => {
+        await delta
+        turn.activeSession.controller.abort()
+        expect((await result).failed).toBe(true)
+        await closed
+        expect(calls).toBe(1)
+      })(), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('流式中止验证超时')), 3000) })])
+    } finally {
+      if (timer) clearTimeout(timer)
+      turn.activeSession.controller.abort()
+      server.stop(true)
+    }
+  })
   test('given HTTP 503 then real SDK does not retry', async () => {
     let calls = 0
     const fetchFn = (async (_url, _init) => { calls++; return new Response('{"error":{"message":"offline unavailable"}}', { status: 503, headers: { 'content-type': 'application/json' } }) }) as typeof globalThis.fetch

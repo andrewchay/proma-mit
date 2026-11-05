@@ -5,7 +5,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { execFileSync, spawn } from 'node:child_process'
 import { buildSync } from 'esbuild'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import type { OwnerExecutionPreparationInput, ProjectOwnerExecutionLaunchApi, ProjectOwnerPlanDraft } from '@gravitas/shared'
 import type { OwnerQualityAction } from './project-owner-quality-actions'
 import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
@@ -34,7 +34,7 @@ const rendererPlan = await import('../../renderer/atoms/project-owner-plan-atoms
 const rendererGoal = await import('../../renderer/atoms/project-owner-goal-atoms')
 const ipcHandlers = new Map<string, (event: unknown, request: unknown) => unknown>()
 registerProjectOwnerExecutionIpcHandlers({ handle: (channel, handler) => { ipcHandlers.set(channel, handler) } })
-interface Scenario { escalate?: boolean; fencedReview?: boolean; missingReviewQuote?: 'verbatim' | 'paraphrase'; queueOnly?: boolean; extraQualityCriteria?: boolean; omitQualityKind?: boolean; invalidQualityQuote?: boolean; rework?: boolean; ownerDefect?: boolean; dependent?: boolean; hold?: boolean; maxRework?: number; legacy?: boolean; development?: boolean; validationFails?: boolean; durableStartIntent?: boolean; emptyReview?: boolean; localConfigurationError?: string; localConfigurationRuntimeResult?: boolean; localConfigurationNonZeroUsage?: boolean }
+interface Scenario { answerBlockedQuestion?: boolean; escalate?: boolean; fencedReview?: boolean; missingReviewQuote?: 'verbatim' | 'paraphrase'; queueOnly?: boolean; extraQualityCriteria?: boolean; omitQualityKind?: boolean; invalidQualityQuote?: boolean; rework?: boolean; ownerDefect?: boolean; dependent?: boolean; hold?: boolean; maxRework?: number; legacy?: boolean; development?: boolean; browserValidation?: boolean; validationFails?: boolean; durableStartIntent?: boolean; emptyReview?: boolean; localConfigurationError?: string; localConfigurationRuntimeResult?: boolean; localConfigurationNonZeroUsage?: boolean }
 interface Trace { role: string; taskId: string; round: number; prompt: string }
 const scenarios = new Map<string, Scenario>(), traces = new Map<string, Trace[]>()
 const pending = new Map<string, { finish: () => void; executionId: string }>()
@@ -59,6 +59,7 @@ beforeAll(async () => {
       const workspace = workspaces.getAgentWorkspace(store.getTask(execution.entityId)!.workspaceId!)!
       if (development && command.role === 'executor' && command.rework_ordinal > 0) expect(readFileSync(join(workspaces.getAgentWorkspaceCwd(workspace,input.sessionId),'src/solution.cjs'),'utf8')).toContain('answer: 42')
       if (development && command.role === 'executor') writeFileSync(join(workspaces.getAgentWorkspaceCwd(workspace, input.sessionId), 'src/solution.cjs'), `module.exports = { answer: ${scenario.validationFails ? 0 : 42} }\n`)
+      if (scenario.browserValidation && command.role === 'executor') writeFileSync(join(workspaces.getAgentWorkspaceCwd(workspace, input.sessionId), 'src/index.html'), '<!doctype html><html><body><h1>已交付页面</h1></body></html>')
       const transport = Object.assign(async () => new Response(JSON.stringify({ choices: [], usage: { prompt_tokens: 2, completion_tokens: 3 } }), { headers: { 'content-type': 'application/json' } }), { preconnect: () => {} }) as typeof globalThis.fetch
       const fetch = boundary.createControlledProviderFetch(input.sessionId, () => ({ runtime: 'ai-sdk', cwd: workspaces.getAgentWorkspaceCwd(workspace, input.sessionId), modelId: input.modelId!, permissionMode: 'safe' }), transport)
       await fetch('https://example.invalid/v1/chat/completions', { method: 'POST', body: JSON.stringify({ model: input.modelId, max_tokens: 100, messages: [{ role: 'user', content: input.userMessage }] }) })
@@ -115,6 +116,11 @@ beforeAll(async () => {
       callbacks.onComplete([], { runtimeResult: { type: 'result', subtype: 'success', session_id: execution.sessionId, finish_reason: 'stop', result: JSON.stringify(response), owner_planning_usage: { inputTokens: 10, outputTokens: 20, cacheReadTokens: null, cacheWriteTokens: null }, usage: { input_tokens: 10, output_tokens: 20 } } })
       return
     }
+    if (scenario.answerBlockedQuestion && !conversation.executionObservation) {
+      const response = { schemaVersion: 1, kind: 'conversation_reply', binding: { projectId: execution.projectId, goalVersion: current.context.goal.goal.goalVersion, contextFingerprint: current.context.fingerprint }, messageId: conversation.throughMessageId, message: '原质量决定仍被阻断，请先核对返工额度。' }
+      callbacks.onComplete([], { runtimeResult: { type: 'result', subtype: 'success', session_id: execution.sessionId, finish_reason: 'stop', result: JSON.stringify(response), owner_planning_usage: { inputTokens: 10, outputTokens: 20, cacheReadTokens: null, cacheWriteTokens: null }, usage: { input_tokens: 10, output_tokens: 20 } } })
+      return
+    }
     const observed = conversation.executionObservation!
     const artifactHash = delivery?.developmentArtifact?.contentHash ?? delivery?.artifact?.contentSha256
     const artifactContent = delivery?.developmentArtifact?.content ?? delivery?.artifact?.content
@@ -151,6 +157,7 @@ async function fixture(scenario: Scenario = {}) {
     mkdirSync(join(repo, 'src'), { recursive: true })
     writeFileSync(join(repo, 'src/solution.cjs'), 'module.exports = { answer: -1 }\n')
     writeFileSync(join(repo, 'src/verify.cjs'), "const { answer } = require('./solution.cjs'); if (answer !== 42) process.exit(1)\n")
+    if (scenario.browserValidation) writeFileSync(join(repo, 'src/index.html'), '<!doctype html><html><body>初始页面</body></html>')
     for (const args of [['init'], ['config', 'user.name', 'Test'], ['config', 'user.email', 'test@example.invalid'], ['add', '.'], ['commit', '-m', 'baseline']]) execFileSync('git', ['-C', repo, ...args], { stdio: 'ignore' })
   }
   const project = store.createProject({ title: '定位建议质量闭环', description: '' }), workspace = workspaces.createAgentWorkspace(`质量-${randomUUID()}`, repo)
@@ -165,7 +172,7 @@ async function fixture(scenario: Scenario = {}) {
   const criterion = scenario.development ? '代码输出固定42' : '明确目标范围与受众依据'
   const steps = [{ key: 'brief', title: scenario.development ? '修复代码' : '形成建议', outcome: scenario.development ? '代码实现' : '定位材料', acceptanceCriteria: [criterion], dependencies: [] as string[], roleKey }, ...(scenario.dependent ? [{ key: 'delivery', title: '整理最终建议', outcome: '最终版本', acceptanceCriteria: [criterion], dependencies: ['brief'], roleKey }] : [])]
   plans.saveProjectOwnerPlanDraft(project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '计划', assumptions: [], risks: [], steps, changeReason: '建立' }); const confirmedPlan = plans.confirmProjectOwnerPlanDraft(project.id, 1, 1)
-  const subject = { projectId: project.id }, input = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: steps.map(item => item.key), executionKind: scenario.development ? 'development' : 'controlled', ...(!scenario.development ? { textDeliveryVersion: 1 } : { developmentScope: { workspaceId: workspace.id, targetPaths: ['src/solution.cjs'], allowedPaths: ['src'], verificationCommands: ['node src/verify.cjs'] } }), ...(!scenario.legacy ? { qualityManagementVersion: 1 } : {}), employeeRuntimeVersion: 2, executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id, roleAssignments: [{ roleKey, employeeId: executor.id }], workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1_000_000, maxRuns: 8, maxRework: scenario.maxRework ?? 1, expiresAt: Date.now() + 3600000, changeReason: '测试质量委托' }
+  const subject = { projectId: project.id }, input = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: steps.map(item => item.key), executionKind: scenario.development ? 'development' : 'controlled', ...(!scenario.development ? { textDeliveryVersion: 1 } : { developmentScope: { workspaceId: workspace.id, targetPaths: scenario.browserValidation ? ['src/solution.cjs', 'src/index.html'] : ['src/solution.cjs'], allowedPaths: ['src'], verificationCommands: scenario.browserValidation ? ['browser:html.loads'] : ['node src/verify.cjs'] } }), ...(!scenario.legacy ? { qualityManagementVersion: 1 } : {}), employeeRuntimeVersion: 2, executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id, roleAssignments: [{ roleKey, employeeId: executor.id }], workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1_000_000, maxRuns: 8, maxRework: scenario.maxRework ?? 1, expiresAt: Date.now() + 3600000, changeReason: '测试质量委托' }
   const pv = prep.previewOwnerExecutionPreparation(subject, input), saved = prep.saveOwnerExecutionPreparation(subject, input, pv.previewFingerprint)
   const materialInput = { requestId: randomUUID(), expectedMaterializationRevision: 0, expectedPreparationId: saved.id, expectedPreparationRevision: saved.revision, expectedPreparationHash: saved.integrityHash, expectedPolicyRevision: saved.policyRevision }
   const permissionInput = { ...subject, requestId: randomUUID(), maxRequests: 12, maxCostMicros: 15_000_000, ...(scenario.escalate ? { autonomousExecution: true } : {}), expiresAt: Date.now() + 3600000 }, permissionPreview = delegation.previewOwnerManagementDelegation(permissionInput)
@@ -624,6 +631,15 @@ test('Given代码任务交付且白名单验证成功 WhenReviewer与Owner检查
     const actions = actionRows(f.project.id)
     expect(actions.map(item => item.state)).toEqual(['accepted', 'accepted'])
     expect(actions.every(item => item.decision.artifactHash === reviews.find(review => review.taskId === item.taskId)?.artifactHash)).toBe(true)
+    await until(() => Boolean(store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id=? AND json_extract(payload,'$.kind')='delivery'").get(f.project.id)), f.project.id)
+    const conversation = (await import('./project-owner-management-questions')).getOwnerManagementConversation(f.project.id)
+    const delivery = conversation.messages.find(message => message.kind === 'delivery')!
+    expect(conversation.deliveryValidations).toHaveLength(2)
+    expect(conversation.deliveryValidations!.every(record => record.messageId === delivery.id && delivery.delivery!.items.some(item => item.stepKey === record.stepKey && item.artifactHash === record.artifactHash) && record.validations[0]?.status === 'passed')).toBe(true)
+    expect(conversation.deliveryValidations!.every(record => record.validations[0]?.method === 'command' && record.validations[0]?.freshness === 'fresh')).toBe(true)
+    const projected = (await import('./project-owner-management-delivery')).listOwnerDeliveryValidations
+    expect(projected(f.project.id, [{ ...delivery, eventId: `${delivery.eventId}0` }])).toEqual([])
+    expect(projected(f.project.id, [{ ...delivery, delivery: { ...delivery.delivery!, items: delivery.delivery!.items.map(item => ({ ...item, artifactHash: 'f'.repeat(64) })) } }])).toEqual([])
     expect(traces.get(f.project.id)!.filter(item => ['executor', 'reviewer', 'owner_quality'].includes(item.role)).map(item => item.role)).toEqual([
       'executor', 'reviewer', 'owner_quality', 'executor', 'reviewer', 'owner_quality',
     ])
@@ -638,6 +654,53 @@ test('Given代码任务交付且白名单验证成功 WhenReviewer与Owner检查
     const clock = spyOn(Date, 'now').mockReturnValue(firstReceipt.capturedAt + 366 * 24 * 60 * 60 * 1000)
     try { expect(actionRows(f.project.id)).toEqual(actions) } finally { clock.mockRestore() }
   } finally { f.stop() }
+}, 120000)
+
+test.skipIf(process.platform !== 'darwin')('Given代码交付需要浏览器验证 When真实Electron执行断言并经Owner质量链交付 Then准确版本显示逐项证据', async () => {
+  const entry = join(directory, 'real-browser-runner.ts'), bundle = join(directory, 'real-browser-runner.cjs')
+  const verifierPath = join(import.meta.dir, 'owner-runtime-browser-verifier.ts')
+  writeFileSync(entry, `import { app } from 'electron'; import { dirname, basename, join } from 'node:path'; import { runOwnerRuntimeBrowserAssertions } from ${JSON.stringify(verifierPath)}; app.setPath('userData',join(dirname(process.argv[1]),'electron-user-data')); app.on('window-all-closed',()=>{}); app.whenReady().then(async()=>{const input=JSON.parse(Buffer.from(process.argv[2],'base64').toString('utf8'));const result=await runOwnerRuntimeBrowserAssertions({workspaceRoot:dirname(input.filePath),relativePath:basename(input.filePath),intents:[],templates:input.templates,timeoutMs:input.timeoutMs});process.stdout.write('RESULT:'+JSON.stringify(result)+'\\n');app.exit(0)}).catch(error=>{process.stderr.write(String(error.stack||error));app.exit(1)});`)
+  buildSync({ entryPoints: [entry], outfile: bundle, bundle: true, platform: 'node', format: 'cjs', external: ['electron'], logLevel: 'silent' })
+  const browser = await import('./owner-runtime-browser-verifier')
+  browser.setOwnerRuntimeBrowserRunner(async input => {
+    const binary = resolve(import.meta.dir, '../../../../..', 'node_modules/.bin/electron')
+    const output = execFileSync(binary, [bundle, Buffer.from(JSON.stringify(input)).toString('base64')], { encoding: 'utf8', timeout: 30000 })
+    const result = output.split('\n').find(line => line.startsWith('RESULT:'))
+    if (!result) throw new Error('真实Electron没有返回浏览器验证结果')
+    return JSON.parse(result.slice('RESULT:'.length)) as import('./owner-runtime-browser-verifier').OwnerRuntimeBrowserRunResult
+  })
+  let f: Awaited<ReturnType<typeof fixture>> | undefined
+  try {
+    f = await fixture({ development: true, browserValidation: true })
+    await until(() => f!.tasks().every(task => task.status === 'completed'), f.project.id)
+    await until(() => Boolean(store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id=? AND json_extract(payload,'$.kind')='delivery'").get(f!.project.id)), f.project.id)
+    const view = managementConversation.getOwnerManagementConversation(f.project.id)
+    const delivery = view.messages.find(message => message.kind === 'delivery')!
+    const record = view.deliveryValidations?.find(item => item.messageId === delivery.id && item.artifactHash === delivery.delivery?.items[0]?.artifactHash)
+    expect(record?.validations[0]).toMatchObject({ method: 'browser_assertions', status: 'passed', freshness: 'fresh', checks: [{ id: 'html.loads', status: 'passed' }] })
+    const { createElement } = await import('react')
+    const { renderToStaticMarkup } = await import('react-dom/server')
+    const { OwnerDeliveredArtifact } = await import('../../renderer/components/projects/OwnerDeliveredArtifact')
+    const markup = renderToStaticMarkup(createElement(OwnerDeliveredArtifact, { item: delivery.delivery!.items[0]!, validation: record }))
+    expect(markup).toContain('浏览器断言：browser:html.loads')
+    expect(markup).toContain('页面可加载且无脚本错误：通过')
+    const deliveryProjection = await import('./project-owner-management-delivery')
+    expect(deliveryProjection.listOwnerDeliveryValidations(f.project.id, [{ ...delivery, eventId: `${delivery.eventId}0` }])).toEqual([])
+    const review = (await import('./project-owner-technical-review')).listOwnerTechnicalReviewEvidence(f.project.id)[0]!
+    const execution = store.getAgentExecution(review.executorExecutionId)!
+    const workspace = workspaces.getAgentWorkspace(f.input.workspaceId!)!
+    const sessionDir = (await import('./config-paths')).getAgentSessionWorkspacePath(workspace.slug, execution.sessionId)
+    const evidencePath = join(sessionDir, `development-validation-${review.validationEvidence![0]!.validationId}.json`)
+    const original = readFileSync(evidencePath, 'utf8')
+    const altered = JSON.parse(original) as { checks: Array<{ detail: string }> }
+    altered.checks[0]!.detail = '修改后的断言说明'
+    writeFileSync(evidencePath, JSON.stringify(altered))
+    try {
+      const untrusted = managementConversation.getOwnerManagementConversation(f.project.id).deliveryValidations?.[0]?.validations[0]
+      expect(untrusted?.freshness).toBe('unknown')
+      expect(untrusted?.checks).toBeUndefined()
+    } finally { writeFileSync(evidencePath, original) }
+  } finally { if (f) await f.stop(); browser.setOwnerRuntimeBrowserRunner(null) }
 }, 120000)
 
 test('Given代码白名单验证失败且Reviewer仍声称通过 WhenOwner质量链续跑 Then拒绝保存通过评审与质量验收且不启动后继', async () => {
@@ -748,6 +811,38 @@ test('Given返工额度为零 WhenOwner发现缺陷 Then保留决定并明确阻
   } finally { f.stop() }
 }, 15000)
 
+test('Given质量决定被阻断且已有旧重复观察 When处理重复结果 Then保留原阻断并继续处理后续消息', async () => {
+  const f = await fixture({ rework: true, maxRework: 0 })
+  try {
+    await until(() => actionRows(f.project.id).length === 1)
+    const original = actionRows(f.project.id)[0]!
+    expect(original.state).toBe('blocked')
+    // 其他任务的较新轮次不能把仍阻断的任务挤出当前风险投影。
+    const db = store.getProjectDb()
+    const executor = db.prepare("SELECT id FROM project_owner_execution_commands WHERE grant_id=? AND role='executor' LIMIT 1").get(f.grant.grantId) as { id: string }
+    for (let i = 0; i < 13; i++) db.prepare(`INSERT INTO project_owner_execution_commands
+      (id,project_id,grant_id,idempotency_key,source_task_id,source_step_link_id,source_version,source_hash,employee_id,role,rework_ordinal,reserved_cost_micros,state,ack_fingerprint,created_at,updated_at)
+      SELECT ?,project_id,grant_id,?,?,source_step_link_id,source_version,source_hash,employee_id,'executor',0,reserved_cost_micros,'released',ack_fingerprint,?,?
+      FROM project_owner_execution_commands WHERE id=?`).run(`extra-${i}`, `extra-key-${i}`, `extra-task-${i}`, Date.now() + i + 1000, Date.now() + i + 1000, executor.id)
+    expect(managementConversation.getOwnerManagementConversation(f.project.id).reviewHistory?.find(round => round.businessTaskId === original.taskId)?.qualityState).toBe('blocked')
+    const row = store.getProjectDb().prepare('SELECT execution_id FROM project_owner_execution_commands WHERE id=?').get(original.reviewerCommandId) as { execution_id: string }
+    const observations = await import('./project-owner-management-execution')
+    const { recordOwnerManagementObservation, getOwnerManager } = await import('./project-owner-management-store')
+    const duplicate = observations.readOwnerExecutionObservation(f.project.id, row.execution_id, 'terminal')
+    recordOwnerManagementObservation(f.project.id, goals.getProjectOwnerGoalDraft(f.project.id)!.revision, duplicate.observation, duplicate.taskId, createHash('sha256').update(randomUUID()).digest('hex'))
+    await until(() => managementConversation.getOwnerManagementConversation(f.project.id).messages.some(message => message.content.includes('重复结果未应用，原阻断和恢复条件保留')))
+    expect(managementConversation.getOwnerManagementConversation(f.project.id).messages.find(message => message.content.includes('重复结果未应用，原阻断和恢复条件保留'))?.kind).toBe('attention')
+    expect(actionRows(f.project.id)).toEqual([original])
+    expect(store.getTask(original.taskId)?.status).toBe('paused')
+    scenarios.set(f.project.id, { answerBlockedQuestion: true })
+    const user = sendOwnerManagementMessage({ projectId: f.project.id, conversationId: getOwnerManager(f.project.id)!.conversationId, requestId: randomUUID(), expectedGoalRevision: 1, content: '请说明当前阻断。' })
+    await until(() => Boolean(store.getProjectDb().prepare("SELECT planning_task_id FROM project_owner_planning_links WHERE project_id=? AND json_extract(payload,'$.conversationMessageId')=?").get(f.project.id, user.id)))
+    await until(() => managementConversation.getOwnerManagementConversation(f.project.id).messages.some(message => message.content === '原质量决定仍被阻断，请先核对返工额度。'))
+    expect(actionRows(f.project.id)).toEqual([original])
+    expect(store.getTask(original.taskId)?.status).toBe('paused')
+  } finally { f.stop() }
+}, 15000)
+
 test('GivenOwner决定因任务状态变化被阻断 When任务恢复等待且准确授权仍有效 Then追加新观察和新决定并保留旧阻断', async () => {
   const f = await fixture({ hold: true })
   try {
@@ -772,6 +867,7 @@ test('GivenOwner决定因任务状态变化被阻断 When任务恢复等待且�
     await until(() => actionRows(f.project.id).length === 2)
     restartManagement()
     expect(actionRows(f.project.id).map(item => item.state)).toEqual(['blocked', 'accepted'])
+    expect(managementConversation.getOwnerManagementConversation(f.project.id).reviewHistory?.find(round => round.businessTaskId === task.id)?.qualityState).toBe('accepted')
     expect(actionRows(f.project.id)[1]!.ownerExecutionId).not.toBe(first.ownerExecutionId)
     expect(f.tasks()[0]!.status).toBe('completed')
     expect(traces.get(f.project.id)!.filter(item => ['executor','reviewer'].includes(item.role))).toHaveLength(2)

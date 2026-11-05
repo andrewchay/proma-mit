@@ -39,6 +39,7 @@ export interface OwnerManagementMessage {
   executionObservation?: OwnerExecutionObservation
   delivery?: OwnerManagementDelivery
   deliveryReference?: OwnerManagementDeliveryReference
+  deliveryReviewDecision?: 'accepted' | 'changes_requested'
   content: string
   taskId?: string
   goalRevision?: number
@@ -94,6 +95,15 @@ export interface OwnerManagementDeliveryItem {
   reviewerSummary: string
 }
 
+/** 从交付和独立评审账本重新核对的历史验证记录，不修改交付快照。 */
+export interface OwnerDeliveryValidationRecord {
+  messageId: string
+  stepKey: string
+  artifactHash: string
+  checkedAt: number
+  validations: Array<{ command: string; status: string; finishedAt?: number; expired: boolean; outputSha256: string; freshness: 'fresh' | 'stale' | 'legacy' | 'unknown'; method?: 'command' | 'browser_assertions'; checks?: import('./development-review').DevelopmentValidationCheck[] }>
+}
+
 export type OwnerManagementTracePhase = 'assignment_preparation' | 'assignment_run' | 'execution_start' | 'executor' | 'reviewer' | 'owner_quality' | 'owner_response'
 export type OwnerManagementTraceState = 'started' | 'queued' | 'completed' | 'failed' | 'blocked' | 'waiting' | 'stalled' | 'expired'
 export type OwnerManagementTraceDetailCode = 'team_check' | 'provider_pending' | 'result_ready' | 'start_verified' | 'no_update' | 'grant_expired' | 'decision_required' | 'authorization_changed' | 'claim_without_fact'
@@ -112,8 +122,10 @@ export interface OwnerManagementTraceEntry {
 export interface OwnerReviewHistory {
   id: string
   taskId?: string
+  businessTaskId?: string
   title: string
   reworkOrdinal: number
+  qualityState?: 'accepted' | 'rework_authorized' | 'escalated' | 'blocked'
   steps: Array<{ label: string; detail: string; at?: number }>
 }
 
@@ -130,6 +142,7 @@ export interface OwnerManagementView {
   changes?: OwnerConversationChangeView[]
   trace?: OwnerManagementTraceEntry[]
   reviewHistory?: OwnerReviewHistory[]
+  deliveryValidations?: OwnerDeliveryValidationRecord[]
 }
 
 export interface SendOwnerManagementMessageRequest {
@@ -140,6 +153,7 @@ export interface SendOwnerManagementMessageRequest {
   expectedGoalRevision: number
   content: string
   deliveryReference?: OwnerManagementDeliveryReference
+  deliveryReviewDecision?: 'accepted' | 'changes_requested'
 }
 
 export interface OwnerConversationGoalContent { objective: string; constraints: string[]; acceptanceCriteria: string[] }

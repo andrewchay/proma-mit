@@ -9,7 +9,6 @@ import { confirmOwnerDeliveryTasksAtom, continueOwnerDeliveryRevalidationAtom, g
 import { MaterializationFacts, ProjectOwnerTaskMaterializationPanel } from './ProjectOwnerTaskMaterializationPanel'
 import { ProjectOwnerRevalidationPanel } from './ProjectOwnerRevalidationPanel'
 import { ProjectOwnerExecutionGrantPanel } from './ProjectOwnerExecutionGrantPanel'
-import { ProjectOwnerConversationProgress } from './ProjectOwnerConversationProgress'
 import { OwnerModuleStatus } from './OwnerModuleStatus'
 
 const button = 'rounded-xl bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50'
@@ -18,7 +17,7 @@ export function ProjectOwnerManagedDeliverySummary({ preview }: { preview: NonNu
   const { preparation } = preview
   return <div className="space-y-3">
     <ol className="space-y-2 text-sm" aria-label="预期成果">{preview.projections.map(item => <li key={item.stepKey} className="rounded-lg bg-muted/40 p-3"><p className="font-medium">{item.title}</p><p>成果：{item.outcome}</p><p>完成标准：{item.acceptanceCriteria.join('；')}</p></li>)}</ol>
-    <p className="text-sm">项目共享预算上限：{(preparation.input.maxCostMicros / 1000000).toLocaleString()} 美元 · 有效期至 {new Date(preparation.input.expiresAt).toLocaleString()}</p>
+    <p className="text-sm">本次执行预算上限：{(preparation.input.maxCostMicros / 1000000).toLocaleString()} 美元 · 有效期至 {new Date(preparation.input.expiresAt).toLocaleString()}</p>
     <div className="space-y-1 text-xs text-muted-foreground"><p>补充资料范围：{preparation.source.knowledgeSources.map(item => item.name).join('、') || '不额外使用知识资料'}</p>{preparation.source.developmentScope && <p>代码修改限于本次确认的项目范围；需要扩大范围时会先与你商量。</p>}</div>
   </div>
 }
@@ -60,7 +59,7 @@ export function ProjectOwnerDeliveryConversation({ projectId, taskId, managed = 
   const reviewed = managed ? (tasks.preview ?? (samePreparation ? record?.preview : null)) : tasks.preview
   const launchable = managed ? Boolean(singleConfirmation && reviewed && !existingGrant && upstreamReady && preparation.loaded && !preparation.dirty && !preparation.requiresReview && !preparation.loading && !preparation.saving) : Boolean(tasks.preview && canConfirm && !existingGrant)
   return <section className="mt-5 min-w-0 space-y-4 rounded-2xl bg-muted/30 p-4 shadow-sm [overflow-wrap:anywhere]" aria-label="任务到交付对话">
-    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{managed ? '确认结果与开始' : '把计划推进到可审阅的成果'}</h3>{!managed && <OwnerModuleStatus tone={grant.grant?.state === 'active' ? 'accent' : existingGrant || current ? 'accent' : samePreparation ? 'warn' : 'muted'}>{grant.grant?.state === 'active' ? '授权已生效' : grant.grant ? `授权${grant.grant.state === 'paused' ? '已登记' : '需核对'}` : current ? '已核验待授权' : samePreparation ? '已登记待核验' : '待登记任务'}</OwnerModuleStatus>}</div>
+    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{managed ? '确认结果与开始' : '把计划推进到可审阅的成果'}</h3>{!managed && <OwnerModuleStatus tone={grant.grant?.state === 'active' ? 'accent' : existingGrant || current ? 'accent' : samePreparation ? 'warn' : 'muted'}>{grant.grant?.state === 'active' ? '执行授权已登记' : grant.grant ? `执行授权${grant.grant.state === 'paused' ? '已暂停' : '需核对'}` : current ? '已核验待授权' : samePreparation ? '已登记待核验' : '待登记任务'}</OwnerModuleStatus>}</div>
     {!managed && <ol className="flex flex-wrap gap-2 text-xs text-muted-foreground" aria-label="交付流程进度">
       <li className="rounded-lg bg-card px-3 py-2">{samePreparation ? '✓' : '1'} 登记任务</li>
       <li className="rounded-lg bg-card px-3 py-2">{current ? '✓' : '2'} 核验范围</li>
@@ -96,7 +95,6 @@ export function ProjectOwnerDeliveryConversation({ projectId, taskId, managed = 
     {!managed && current && !existingGrant && <p className="rounded-xl bg-primary/10 p-4 text-sm">真实任务、人员和依赖已核验。接下来选择执行方式并查看授权摘要；预算与期限沿用已确认范围。</p>}
     {((!managed && current) || existingGrant) && <ProjectOwnerExecutionGrantPanel projectId={projectId} taskId={taskId} conversational />}
     {managed && !reviewed && !existingGrant && !busy && <p role="status" className="text-sm">执行范围尚需核对，请重新读取摘要；已经登记的任务与记录会保留。</p>}
-    {ownerConversation && <ProjectOwnerConversationProgress subject={subject} />}
     {!ownerConversation && <div className="flex flex-wrap gap-3 text-sm"><button type="button" disabled={busy} onClick={() => void load(subject)}>重新读取流程状态</button><button type="button" className="text-muted-foreground underline" onClick={() => setAdvanced(!advanced)}>{advanced ? '收起登记与核验记录' : '登记与核验高级记录'}</button></div>}
     {advanced && !ownerConversation && <><ProjectOwnerTaskMaterializationPanel projectId={projectId} taskId={taskId} /><ProjectOwnerRevalidationPanel projectId={projectId} taskId={taskId} /></>}
   </section>

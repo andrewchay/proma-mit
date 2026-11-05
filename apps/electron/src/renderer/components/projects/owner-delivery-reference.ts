@@ -6,3 +6,12 @@ export function findReferencedDelivery(messages: readonly OwnerManagementMessage
   const matches = message?.delivery?.items.filter(item => item.artifactHash === reference.artifactHash && (!reference.stepKey || item.stepKey === reference.stepKey)) ?? []
   return matches.length === 1 ? matches[0] : undefined
 }
+
+/** 仅显示能唯一对应当前交付版本的最近人工决定。 */
+export function findLatestDeliveryReview(messages: readonly OwnerManagementMessage[], taskId: string | undefined, reference: OwnerManagementDeliveryReference): OwnerManagementMessage | undefined {
+  const selected = findReferencedDelivery(messages, taskId, reference)
+  if (!selected) return undefined
+  return messages.findLast(message => message.taskId === taskId && message.role === 'user' && Boolean(message.deliveryReviewDecision)
+    && message.deliveryReference?.messageId === reference.messageId
+    && findReferencedDelivery(messages, taskId, message.deliveryReference) === selected)
+}

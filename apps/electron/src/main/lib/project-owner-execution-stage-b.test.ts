@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, mock, spyOn, test } from 'bun:test'
 import { createHash, randomUUID } from 'node:crypto'
 import type { ProviderType } from '@gravitas/shared'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { createServer } from 'node:http'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -545,6 +545,82 @@ test('Given自主grant When读取Scheduler Then只显示当前冻结Executor资�
   const queued = command.reserveAndQueueAutonomousOwnerCommand(f.subject, input)
   await expect(dispatcher.dispatchOwnerCommandExecution({ commandId: queued.commandId, ackFingerprint: queued.ackFingerprint, acknowledgeExecution: true })).rejects.toThrow('自主命令只能由主进程Scheduler派发')
   expect(store.getAgentExecution(queued.executionId)?.status).toBe('queued')
+})
+
+test('Given自主命令已排队 When暂停派工 Then保留队列且阻止认领，恢复后重新核验并允许认领', async () => {
+  const f = fixture('glm-5.3-flash', 'autonomous')
+  const controls = await import('./project-owner-dispatch-control')
+  const input = { grantId: f.grant.grantId, taskId: f.task.id, role: 'executor' as const, reworkOrdinal: 0, expectedRevalidationRevision: f.record.revision }
+  const queued = command.reserveAndQueueAutonomousOwnerCommand(f.subject, input)
+  const paused = controls.setOwnerDispatchPaused({ projectId: f.project.id, grantId: f.grant.grantId, expectedRevision: 0, paused: true })
+  expect(paused).toMatchObject({ paused: true, revision: 1 })
+  expect(scheduler.getOwnerAutonomousScheduleStatus(f.project.id)).toMatchObject({ state: 'paused' })
+  expect(() => startModule.claimOwnerCommandStart(queued.executionId, queued.commandId, f.record.revision, randomUUID())).toThrow('暂停后续自主派工')
+  expect(store.getAgentExecution(queued.executionId)?.status).toBe('queued')
+  expect(() => controls.setOwnerDispatchPaused({ projectId: f.project.id, grantId: f.grant.grantId, expectedRevision: 0, paused: false })).toThrow('状态已变化')
+  const resumed = controls.setOwnerDispatchPaused({ projectId: f.project.id, grantId: f.grant.grantId, expectedRevision: 1, paused: false })
+  expect(resumed).toMatchObject({ paused: false, revision: 2 })
+  expect(startModule.claimOwnerCommandStart(queued.executionId, queued.commandId, f.record.revision, randomUUID()).execution.status).toBe('running')
+  const pausedAgain = controls.setOwnerDispatchPaused({ projectId: f.project.id, grantId: f.grant.grantId, expectedRevision: 2, paused: true })
+  expect(pausedAgain.paused).toBe(true)
+  expect(store.getAgentExecution(queued.executionId)?.status).toBe('running')
+  expect(store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_dispatch_control_events WHERE grant_id=?').get(f.grant.grantId)).toEqual({ count: 3 })
+  const other = fixture('glm-5.3-flash', 'autonomous')
+  controls.setOwnerDispatchPaused({ projectId: other.project.id, grantId: other.grant.grantId, expectedRevision: 0, paused: true })
+  expect(() => command.reserveAndQueueAutonomousOwnerCommand(other.subject, { grantId: other.grant.grantId, taskId: other.task.id, role: 'executor', reworkOrdinal: 0, expectedRevalidationRevision: other.record.revision })).toThrow('暂停后续自主派工')
+  expect(store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE grant_id=?').get(other.grant.grantId)).toEqual({ count: 0 })
+})
+
+test('Given调度正在准备派发 When用户在认领前暂停 Then保留排队和授权，恢复后可继续', async () => {
+  const f = fixture('glm-5.3-flash', 'autonomous')
+  const controls = await import('./project-owner-dispatch-control')
+  const input = { grantId: f.grant.grantId, taskId: f.task.id, role: 'executor' as const, reworkOrdinal: 0, expectedRevalidationRevision: f.record.revision }
+  const queued = command.reserveAndQueueAutonomousOwnerCommand(f.subject, input)
+  const status = await scheduler.runOwnerAutonomousSchedule(f.project.id, {
+    queue: command.reserveAndQueueAutonomousOwnerCommand,
+    dispatch: async () => {
+      controls.setOwnerDispatchPaused({ projectId: f.project.id, grantId: f.grant.grantId, expectedRevision: 0, paused: true })
+      expect(() => startModule.claimOwnerCommandStart(queued.executionId, queued.commandId, f.record.revision, randomUUID())).toThrow('暂停后续自主派工')
+      return { commandId: queued.commandId, executionId: queued.executionId, started: false }
+    },
+  })
+  expect(status.state).toBe('paused')
+  expect(store.getAgentExecution(queued.executionId)?.status).toBe('queued')
+  expect(store.getProjectDb().prepare('SELECT state FROM project_owner_execution_grants WHERE id=?').get(f.grant.grantId)).toEqual({ state: 'active' })
+  expect(store.getProjectDb().prepare('SELECT state FROM project_owner_execution_commands WHERE id=?').get(queued.commandId)).toEqual({ state: 'queued' })
+  controls.setOwnerDispatchPaused({ projectId: f.project.id, grantId: f.grant.grantId, expectedRevision: 1, paused: false })
+  expect(startModule.claimOwnerCommandStart(queued.executionId, queued.commandId, f.record.revision, randomUUID()).execution.status).toBe('running')
+})
+
+test('Given用户暂停派工 When同一主体重新授权 Then暂停保持且旧授权不能解除暂停', async () => {
+  const f = fixture('glm-5.3-flash', 'autonomous')
+  const controls = await import('./project-owner-dispatch-control'), db = store.getProjectDb()
+  controls.setOwnerDispatchPaused({ projectId: f.project.id, grantId: f.grant.grantId, expectedRevision: 0, paused: true })
+  db.prepare("UPDATE project_owner_execution_grants SET state='paused' WHERE id=?").run(f.grant.grantId)
+  const columns = (db.prepare('PRAGMA table_info(project_owner_execution_grants)').all() as Array<{ name: string }>).map(column => column.name)
+  const newGrantId = `test-reissued-${randomUUID()}`
+  const select = columns.map(name => name === 'id' ? '?' : name === 'request_id' ? '?' : name === 'issued_at' ? 'issued_at+1' : `"${name}"`).join(',')
+  db.prepare(`INSERT INTO project_owner_execution_grants (${columns.map(name => `"${name}"`).join(',')}) SELECT ${select} FROM project_owner_execution_grants WHERE id=?`).run(newGrantId, randomUUID(), f.grant.grantId)
+  db.prepare("UPDATE project_owner_execution_grants SET state='active' WHERE id=?").run(newGrantId)
+  expect(controls.readOwnerDispatchControl(f.project.id, newGrantId)).toMatchObject({ paused: true, revision: 1 })
+  expect(() => controls.setOwnerDispatchPaused({ projectId: f.project.id, grantId: f.grant.grantId, expectedRevision: 1, paused: false })).toThrow('执行授权已更新')
+  expect(controls.setOwnerDispatchPaused({ projectId: f.project.id, grantId: newGrantId, expectedRevision: 1, paused: false })).toMatchObject({ paused: false, revision: 2 })
+})
+
+test('Given排队命令已暂停 When原管理授权撤销 Then不得恢复或认领旧队列', async () => {
+  const f = fixture('glm-5.3-flash', 'autonomous')
+  const controls = await import('./project-owner-dispatch-control')
+  const queued = command.reserveAndQueueAutonomousOwnerCommand(f.subject, { grantId: f.grant.grantId, taskId: f.task.id, role: 'executor', reworkOrdinal: 0, expectedRevalidationRevision: f.record.revision })
+  controls.setOwnerDispatchPaused({ projectId: f.project.id, grantId: f.grant.grantId, expectedRevision: 0, paused: true })
+  const delegation = managementDelegation.getOwnerManagementDelegation(f.project.id).delegation!
+  managementDelegation.revokeOwnerManagementDelegation(f.project.id, delegation.id)
+  expect(() => controls.setOwnerDispatchPaused({ projectId: f.project.id, grantId: f.grant.grantId, expectedRevision: 1, paused: false })).toThrow('原项目管理授权已变化或失效')
+  expect(controls.readOwnerDispatchControl(f.project.id, f.grant.grantId).paused).toBe(true)
+  expect(store.getAgentExecution(queued.executionId)?.status).toBe('queued')
+  // 即使遇到旧库中的未暂停状态，最终认领仍必须核对绑定的管理授权。
+  store.getProjectDb().prepare('UPDATE project_owner_dispatch_controls SET paused=0 WHERE project_id=?').run(f.project.id)
+  expect(() => startModule.claimOwnerCommandStart(queued.executionId, queued.commandId, f.record.revision, randomUUID())).toThrow('原项目管理授权已变化或失效')
+  expect(scheduler.getOwnerAutonomousScheduleStatus(f.project.id)).toMatchObject({ state: 'paused' })
 })
 
 test('Given自主授权与fake Provider When执行/评审依次结算 Then只运行冻结角色且等待权威业务完成', async () => {
@@ -1171,6 +1247,90 @@ test('Given运行中Owner命令 When Runtime停止未证实 Then escalation持�
   expect(store.getProjectDb().prepare('SELECT state, actual_cost_micros FROM project_owner_execution_commands WHERE id=?').get(commandId)).toEqual({ state: 'needs_reconcile', actual_cost_micros: null })
 })
 
+test('Given真实子进程承载的Owner执行 When请求停止 Then等待进程退出且未知费用保留对账', async () => {
+  const f = fixture('glm-5.3-flash'), { input, ack } = ackFixture(f)
+  const commandId = randomUUID(), executionId = randomUUID()
+  command.reserveAndQueueOwnerCommand(f.subject, { commandId, grantId: input.grantId, taskId: input.taskId, role: input.role, reworkOrdinal: 0, expectedRevalidationRevision: input.expectedRevalidationRevision, idempotencyKey: randomUUID() }, ack, { executionId })
+  const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' })
+  let enterRuntime!: () => void
+  const entered = new Promise<void>(resolve => { enterRuntime = resolve })
+  const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => { child.once('error', reject); child.once('exit', (code, signal) => resolve({ code, signal })) })
+  runnerRegistry.setAgentStopper((sessionId, generation) => ({ sessionId, expectedGeneration: generation, activeGeneration: generation, requestAccepted: child.kill('SIGTERM'), stopped: false, reason: 'stop-request-accepted', processTermination: 'NOT_VERIFIED' }))
+  runnerRegistry.setHeadlessAgentRunner(async (_agentInput, callbacks) => {
+    callbacks.onRuntimeStarted?.(); enterRuntime()
+    await exited
+    callbacks.onComplete([], { stoppedByUser: true })
+  })
+  try {
+    expect((await dispatcher.dispatchOwnerCommandExecution({ commandId, ackFingerprint: ack.preview.ackFingerprint, acknowledgeExecution: true })).started).toBe(true)
+    await entered
+    expect(employees.cancelAgentExecution(executionId)).toMatchObject({ status: 'running', stopped: false, stopRequested: true, processTermination: 'NOT_VERIFIED' })
+    expect((await exited).signal).toBe('SIGTERM')
+    await waitForExecutionTerminal(executionId)
+    expect(store.getAgentExecution(executionId)?.status).toBe('cancelled')
+    expect(store.getProjectDb().prepare('SELECT state, actual_cost_micros FROM project_owner_execution_commands WHERE id=?').get(commandId)).toEqual({ state: 'needs_reconcile', actual_cost_micros: null })
+  } finally {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try { await Promise.race([exited.catch(() => undefined), new Promise<void>(resolve => { timer = setTimeout(resolve, 2000) })]) } finally { if (timer) clearTimeout(timer) }
+    runnerRegistry.setAgentStopper((sessionId, generation) => ({ sessionId, expectedGeneration: generation, requestAccepted: false, stopped: false, reason: 'not-active', processTermination: 'NOT_VERIFIED' }))
+    runnerRegistry.setHeadlessAgentRunner(async () => { throw new Error('测试运行器未配置') })
+  }
+})
+
+test('Given Owner员工正在接收本地Provider流 When请求停止 Then真实AI SDK中止请求并保留费用待核对', async () => {
+  let calls = 0, markDelta!: () => void, markClosed!: () => void
+  const delta = new Promise<void>(resolve => { markDelta = resolve }), closed = new Promise<void>(resolve => { markClosed = resolve })
+  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch(request) {
+    calls++
+    request.signal.addEventListener('abort', markClosed, { once: true })
+    return new Response(new ReadableStream({ start(controller) { controller.enqueue(new TextEncoder().encode('data: ' + JSON.stringify({ id: 'local', object: 'chat.completion.chunk', created: 1, model: 'glm-5.3-flash', choices: [{ index: 0, delta: { content: '执行中' }, finish_reason: null }] }) + '\n\n')) } }), { headers: { 'content-type': 'text/event-stream' } })
+  } })
+  const controller = new AbortController()
+  let timer: ReturnType<typeof setTimeout> | undefined, runtimeStarted = false, finishRuntime!: () => void
+  const runtimeDone = new Promise<void>(resolve => { finishRuntime = resolve })
+  try {
+    const f = fixture('glm-5.3-flash', 'manual', false, `http://127.0.0.1:${server.port}`), { input, ack } = ackFixture(f)
+    const commandId = randomUUID(), executionId = randomUUID()
+    command.reserveAndQueueOwnerCommand(f.subject, { commandId, grantId: input.grantId, taskId: input.taskId, role: input.role, reworkOrdinal: 0, expectedRevalidationRevision: input.expectedRevalidationRevision, idempotencyKey: randomUUID() }, ack, { executionId })
+    runnerRegistry.setAgentStopper((sessionId, generation) => { controller.abort(); return { sessionId, expectedGeneration: generation, activeGeneration: generation, requestAccepted: true, stopped: false, reason: 'stop-request-accepted', processTermination: 'NOT_VERIFIED' } })
+    runnerRegistry.setHeadlessAgentRunner(async (agentInput, callbacks) => {
+      runtimeStarted = true
+      try {
+        callbacks.onRuntimeStarted?.()
+        const guarded = boundary.createControlledProviderFetch(agentInput.sessionId, () => ({ runtime: 'ai-sdk', cwd: getAgentWorkspaceCwd(f.workspace, agentInput.sessionId), modelId: agentInput.modelId ?? '', permissionMode: 'safe' }), globalThis.fetch)
+        const { AISDKRuntimeCore } = await import('./agent-runtime/ai-sdk-runtime-core')
+        await new AISDKRuntimeCore().runAgentTurn({ sessionId: agentInput.sessionId, prompt: '执行已授权任务', modelId: agentInput.modelId!, provider: 'openai', protocol: 'openai-chat', apiKey: 'fake', baseUrl: resolveAgentRuntimeBaseUrl('openai', 'ai-sdk', f.channel.baseUrl), cwd: getAgentWorkspaceCwd(f.workspace, agentInput.sessionId), runtimeTools: [], activeSession: { controller, permissionMode: 'safe', planModeEntered: false }, maxTurns: 1, maxRetries: 0, fetchFn: guarded, onAgentEvent: event => { if (event.type === 'text_delta' && event.text.includes('执行中')) markDelta() } })
+        callbacks.onComplete([])
+      } catch (error) {
+        if (controller.signal.aborted) callbacks.onComplete([], { stoppedByUser: true })
+        else callbacks.onError(String(error))
+      } finally { finishRuntime() }
+    })
+    await Promise.race([(async () => {
+      expect((await dispatcher.dispatchOwnerCommandExecution({ commandId, ackFingerprint: ack.preview.ackFingerprint, acknowledgeExecution: true })).started).toBe(true)
+      await Promise.race([delta, runtimeDone.then(() => { throw new Error('Runtime未输出流即结束') })])
+      if (controller.signal.aborted) throw new Error('验证已结束')
+      expect(employees.cancelAgentExecution(executionId)).toMatchObject({ status: 'running', stopped: false, stopRequested: true, processTermination: 'NOT_VERIFIED' })
+      await closed
+      await waitForExecutionTerminal(executionId)
+      expect(calls).toBe(1)
+      expect(store.getAgentExecution(executionId)?.status).toBe('cancelled')
+      expect(store.getProjectDb().prepare('SELECT state, actual_cost_micros FROM project_owner_execution_commands WHERE id=?').get(commandId)).toEqual({ state: 'needs_reconcile', actual_cost_micros: null })
+      expect(store.getProjectDb().prepare('SELECT state, settled_cost_micros FROM project_owner_execution_request_reservations WHERE command_id=?').get(commandId)).toEqual({ state: 'needs_reconcile', settled_cost_micros: null })
+    })(), new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('Owner流式停止验证超时')), 10000) })])
+  } finally {
+    if (timer) clearTimeout(timer)
+    controller.abort(); server.stop(true)
+    if (runtimeStarted) {
+      let cleanupTimer: ReturnType<typeof setTimeout> | undefined
+      try { await Promise.race([runtimeDone, new Promise<void>(resolve => { cleanupTimer = setTimeout(resolve, 2000) })]) } finally { if (cleanupTimer) clearTimeout(cleanupTimer) }
+    }
+    runnerRegistry.setAgentStopper((sessionId, generation) => ({ sessionId, expectedGeneration: generation, requestAccepted: false, stopped: false, reason: 'not-active', processTermination: 'NOT_VERIFIED' }))
+    runnerRegistry.setHeadlessAgentRunner(async () => { throw new Error('测试运行器未配置') })
+  }
+}, 15000)
+
 test('Given已claim Owner命令 When普通registry无Owner上下文调用Then拒绝；专用上下文完成handoff后才放行', async () => {
   const f = fixture(), { input, ack } = ackFixture(f)
   const commandId = randomUUID(), executionId = randomUUID(), sessionId = randomUUID()
@@ -1603,11 +1763,43 @@ function streamingOwnerRequest(priceEvidenceId: string, createBody: (release: Pr
   const ownerFetch = requestExit.createOwnerRequestFetch({ commandId, executionId, sessionId, priceEvidenceId, baseFetch })
   return {
     f, commandId, executionId, sessionId,
-    send: () => ownerFetch('https://example.invalid/v1/chat/completions', { method: 'POST', body: JSON.stringify({ model: 'glm-5.3-flash', max_tokens: 200, stream: true, messages: [{ role: 'user', content: 'stream' }] }) }),
+    send: (signal?: AbortSignal) => ownerFetch('https://example.invalid/v1/chat/completions', { method: 'POST', signal, body: JSON.stringify({ model: 'glm-5.3-flash', max_tokens: 200, stream: true, messages: [{ role: 'user', content: 'stream' }] }) }),
     release: () => releaseBody(),
     reservationState: () => store.getProjectDb().prepare('SELECT state FROM project_owner_execution_request_reservations WHERE command_id=?').get(commandId),
   }
 }
+
+test('Given 上游忽略停止信号 When 用户停止流式执行 Then 两个流分支结束且费用保留对账', async () => {
+  let upstreamCancelled = false
+  let upstream: ReadableStreamDefaultController<Uint8Array> | undefined
+  const s = streamingOwnerRequest('owner-streaming-abort-fixture', () => new ReadableStream<Uint8Array>({
+    start(controller) { upstream = controller; controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"开始"}}]}\n\n')) },
+    cancel() { upstreamCancelled = true },
+  }))
+  const abort = new AbortController()
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      (async () => {
+        const response = await s.send(abort.signal)
+        reader = response.body!.getReader()
+        expect((await reader.read()).done).toBe(false)
+        abort.abort()
+        await Promise.allSettled([reader.read(), requestExit.awaitOwnerRequestSettlements({ commandId: s.commandId })])
+        expect(upstreamCancelled).toBe(true)
+        expect(s.reservationState()).toEqual({ state: 'needs_reconcile' })
+      })(),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error('停止后流没有结束')), 1000) }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+    abort.abort()
+    try { upstream?.close() } catch { /* 上游已经结束 */ }
+    void reader?.cancel().catch(() => {})
+    await requestExit.awaitOwnerRequestSettlements({ commandId: s.commandId })
+  }
+})
 
 test('Given Owner流式响应尚未结束 WhenRuntime读取首块 Then增量已透传且流结束后才结算为settled', async () => {
   const encoder = new TextEncoder()

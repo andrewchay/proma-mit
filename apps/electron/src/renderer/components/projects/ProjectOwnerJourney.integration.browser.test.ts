@@ -24,7 +24,11 @@ const { createProject } = await import('../../../main/lib/project-sqlite-store')
 const { getOwnerManagementConversation } = await import('../../../main/lib/project-owner-management-questions')
 const { startOwnerManagementLoop } = await import('../../../main/lib/project-owner-management-loop')
 const { getProjectOwnerPlanDraft } = await import('../../../main/lib/project-owner-plan-service')
-const { saveProjectOwnerGoalDraft } = await import('../../../main/lib/project-owner-goal-service')
+const executionGrant = await import('../../../main/lib/project-owner-execution-grant-issue')
+const executionObservation = await import('../../../main/lib/project-owner-management-execution')
+const { recordOwnerManagementObservation } = await import('../../../main/lib/project-owner-management-store')
+const { ownerExecutionHash } = await import('../../../main/lib/project-owner-execution-hash')
+const { getProjectOwnerGoalDraft, saveProjectOwnerGoalDraft } = await import('../../../main/lib/project-owner-goal-service')
 const { saveOwnerRuntimeBinding } = await import('../../../main/lib/project-owner-runtime-binding')
 const managementDelegation = await import('../../../main/lib/project-owner-management-delegation')
 const { setHeadlessAgentRunner } = await import('../../../main/lib/agent-headless-runner-registry')
@@ -121,6 +125,9 @@ beforeAll(async () => {
     } else if (source.context.conversation?.executionObservation) {
       calls.push('owner_followup')
       result = { schemaVersion: 1, kind: 'conversation_reply', projectId: source.link.projectId, goalVersion: source.context.goal.goal.goalVersion, contextFingerprint: source.context.fingerprint, messageId: source.context.conversation.throughMessageId, message: '我已记录当前进度，等独立检查完成后再核对成果。' }
+    } else if (source.context.conversation?.deliveryFeedback && source.context.conversation.messages.some(message => message.id === source.context.conversation!.throughMessageId && message.content.startsWith('我认可这个成果版本。'))) {
+      calls.push('owner_review_acknowledgement')
+      result = { schemaVersion: 1, kind: 'conversation_reply', projectId: source.link.projectId, goalVersion: source.context.goal.goal.goalVersion, contextFingerprint: source.context.fingerprint, messageId: source.context.conversation.throughMessageId, message: '已记录你对这个成果版本的认可。' }
     } else if (source.context.conversation?.deliveryFeedback) {
       calls.push('owner_feedback_planning')
       const feedback = source.context.conversation.deliveryFeedback
@@ -224,7 +231,7 @@ browserTest('Given失效管理授权与未授权团队 When用户恢复范围并
     ['getOwnerExecutionPreparation', PROJECT_IPC_CHANNELS.GET_OWNER_EXECUTION_PREPARATION], ['listOwnerExecutionPreparationHistory', PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_PREPARATION_HISTORY], ['previewOwnerExecutionPreparation', PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_PREPARATION], ['saveOwnerExecutionPreparation', PROJECT_IPC_CHANNELS.SAVE_OWNER_EXECUTION_PREPARATION],
     ['listOwnerExecutionAssignmentRuns', PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_ASSIGNMENT_RUNS], ['prepareOwnerExecutionAssignment', PROJECT_IPC_CHANNELS.PREPARE_OWNER_EXECUTION_ASSIGNMENT],
     ['previewOwnerExecutionGrantIssue', PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_GRANT_ISSUE], ['confirmOwnerExecutionGrantIssue', PROJECT_IPC_CHANNELS.CONFIRM_OWNER_EXECUTION_GRANT_ISSUE], ['previewOwnerExecutionGrantRevoke', PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_GRANT_REVOKE], ['confirmOwnerExecutionGrantRevoke', PROJECT_IPC_CHANNELS.CONFIRM_OWNER_EXECUTION_GRANT_REVOKE],
-    ['getOwnerExecutionGrant', PROJECT_IPC_CHANNELS.GET_OWNER_EXECUTION_GRANT], ['listOwnerExecutionGrantHistory', PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_GRANT_HISTORY], ['getOwnerExecutionRevalidation', PROJECT_IPC_CHANNELS.GET_OWNER_EXECUTION_REVALIDATION], ['listOwnerExecutionRevalidationHistory', PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_REVALIDATION_HISTORY], ['getOwnerTaskMaterialization', PROJECT_IPC_CHANNELS.GET_OWNER_TASK_MATERIALIZATION], ['listOwnerTaskMaterializationHistory', PROJECT_IPC_CHANNELS.LIST_OWNER_TASK_MATERIALIZATION_HISTORY], ['listOwnerExecutionCommands', PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_COMMANDS], ['getOwnerAutonomousScheduleStatus', PROJECT_IPC_CHANNELS.GET_OWNER_AUTONOMOUS_SCHEDULE_STATUS],
+    ['getOwnerExecutionGrant', PROJECT_IPC_CHANNELS.GET_OWNER_EXECUTION_GRANT], ['listOwnerExecutionGrantHistory', PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_GRANT_HISTORY], ['getOwnerExecutionRevalidation', PROJECT_IPC_CHANNELS.GET_OWNER_EXECUTION_REVALIDATION], ['listOwnerExecutionRevalidationHistory', PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_REVALIDATION_HISTORY], ['getOwnerTaskMaterialization', PROJECT_IPC_CHANNELS.GET_OWNER_TASK_MATERIALIZATION], ['listOwnerTaskMaterializationHistory', PROJECT_IPC_CHANNELS.LIST_OWNER_TASK_MATERIALIZATION_HISTORY], ['listOwnerExecutionCommands', PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_COMMANDS], ['getOwnerAutonomousScheduleStatus', PROJECT_IPC_CHANNELS.GET_OWNER_AUTONOMOUS_SCHEDULE_STATUS], ['getOwnerDispatchControl', PROJECT_IPC_CHANNELS.GET_OWNER_DISPATCH_CONTROL], ['setOwnerDispatchControl', PROJECT_IPC_CHANNELS.SET_OWNER_DISPATCH_CONTROL], ['listOwnerDispatchControlEvents', PROJECT_IPC_CHANNELS.LIST_OWNER_DISPATCH_CONTROL_EVENTS],
     ['previewOwnerExecutionRevalidation', PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_REVALIDATION], ['saveOwnerExecutionRevalidation', PROJECT_IPC_CHANNELS.SAVE_OWNER_EXECUTION_REVALIDATION], ['previewOwnerTaskMaterialization', PROJECT_IPC_CHANNELS.PREVIEW_OWNER_TASK_MATERIALIZATION], ['materializeOwnerTasks', PROJECT_IPC_CHANNELS.MATERIALIZE_OWNER_TASKS],
     ['saveOwnerExecutionStartIntent', PROJECT_IPC_CHANNELS.SAVE_OWNER_EXECUTION_START_INTENT], ['resumeOwnerExecutionStartIntent', PROJECT_IPC_CHANNELS.RESUME_OWNER_EXECUTION_START_INTENT],
   ])
@@ -300,10 +307,55 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
     expect(getProjectOwnerPlanDraft(project.id)?.state).toBe('confirmed')
     expect(await page.getByRole('button', { name: '确认方案并开始执行', exact: true }).count()).toBe(0)
     for (let attempt = 0; attempt < 200 && !getOwnerManagementConversation(project.id).messages.some(message => message.kind === 'delivery'); attempt++) await new Promise(resolve => setTimeout(resolve, 50))
-    await page.getByLabel('已验收成果').waitFor().catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
+    await page.getByLabel('已交付成果').waitFor().catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
+    expect(await page.getByLabel('Owner项目进度与成果').count()).toBe(1)
     expect(calls).toContain('owner_execution_assignment')
     expect(calls).toContain('owner_quality')
     expect(employeeCalls).toEqual(['executor', 'reviewer'])
+    await page.getByRole('button', { name: '暂停后续派工', exact: true }).click()
+    await page.getByText('后续派工已暂停', { exact: true }).waitFor()
+    await page.getByLabel('派工控制记录').getByText('你暂停了后续自主派工', { exact: true }).waitFor({ state: 'attached' })
+    await page.reload()
+    await page.getByText('后续派工已暂停', { exact: true }).waitFor()
+    await page.getByLabel('派工控制记录').getByText('你暂停了后续自主派工', { exact: true }).waitFor({ state: 'attached' })
+    await page.getByRole('button', { name: '恢复后续派工', exact: true }).click()
+    await page.getByText('后续派工未暂停', { exact: true }).waitFor()
+    await page.getByLabel('派工控制记录').getByText('你恢复了后续自主派工', { exact: true }).waitFor({ state: 'attached' })
+    // 经界面预览并确认撤权，再重建页面验证历史来自持久账本。
+    const grant = executionGrant.getOwnerExecutionGrant({ projectId: project.id })!
+    await page.getByRole('button', { name: '预览撤权影响面', exact: true }).click()
+    await page.getByRole('button', { name: '确认撤权', exact: true }).click()
+    await page.getByLabel('执行撤权记录').waitFor({ state: 'attached' })
+    expect(executionGrant.listOwnerExecutionGrantHistory({ projectId: project.id }).find(item => item.grantId === grant.grantId)?.revokedAt).toBeGreaterThanOrEqual(grant.issuedAt)
+    expect(bridgeCalls).toContain(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_EXECUTION_GRANT_REVOKE)
+    // 模拟旧版本在撤权前后已持久化的重复评审观察，验证不会阻塞后续用户消息。
+    const reviewer = database.getProjectDb().prepare("SELECT execution_id FROM project_owner_execution_commands WHERE grant_id=? AND role='reviewer' AND state='settled'").get(grant.grantId) as { execution_id: string }
+    const duplicate = executionObservation.readOwnerExecutionObservation(project.id, reviewer.execution_id, 'terminal')
+    const beforeAction = database.getProjectDb().prepare('SELECT payload FROM project_owner_quality_actions WHERE reviewer_command_id=?').get(duplicate.observation.commandId)
+    const beforeTask = database.getTask(duplicate.observation.businessTaskId)
+    const beforeCost = database.getProjectDb().prepare('SELECT actual_cost_micros FROM project_owner_execution_commands WHERE id=?').get(duplicate.observation.commandId)
+    recordOwnerManagementObservation(project.id, getProjectOwnerGoalDraft(project.id)!.revision, duplicate.observation, duplicate.taskId, ownerExecutionHash(duplicate.observation))
+    await page.getByText('此前已对该成果和独立评审作出质量决定；重复结果未应用，原记录保留。', { exact: true }).waitFor()
+    expect(database.getProjectDb().prepare('SELECT payload FROM project_owner_quality_actions WHERE reviewer_command_id=?').get(duplicate.observation.commandId)).toEqual(beforeAction)
+    expect(database.getTask(duplicate.observation.businessTaskId)?.status).toBe(beforeTask?.status)
+    expect(database.getProjectDb().prepare('SELECT actual_cost_micros FROM project_owner_execution_commands WHERE id=?').get(duplicate.observation.commandId)).toEqual(beforeCost)
+    const deliveryMessage = getOwnerManagementConversation(project.id).messages.find(message => message.kind === 'delivery' && message.delivery)!
+    const item = deliveryMessage.delivery!.items[0]!
+    await page.getByRole('button', { name: `查看成果：${item.title}`, exact: true }).click()
+    await page.getByLabel('审阅这个成果版本').getByRole('button', { name: '认可这个版本', exact: true }).click()
+    await page.getByRole('button', { name: '发送给 Owner', exact: true }).click()
+    await page.getByText(`你认可了这个成果版本 · 审阅记录 · ${item.title}（${item.artifactHash.slice(0, 12)}）`, { exact: true }).waitFor()
+    const review = getOwnerManagementConversation(project.id).messages.find(message => message.deliveryReviewDecision === 'accepted')!
+    expect(review.deliveryReference).toEqual({ messageId: deliveryMessage.id, stepKey: item.stepKey, artifactHash: item.artifactHash })
+    await page.getByText('已记录你对这个成果版本的认可。', { exact: true }).waitFor()
+    await page.reload()
+    const revokeRecord = page.getByLabel('执行撤权记录')
+    await revokeRecord.waitFor({ state: 'attached' })
+    if (!await revokeRecord.isVisible()) await page.getByText(/展开更早的对话/).click()
+    await revokeRecord.getByText('你撤销了执行授权', { exact: true }).waitFor()
+    await page.getByText(`你认可了这个成果版本 · 审阅记录 · ${item.title}（${item.artifactHash.slice(0, 12)}）`, { exact: true }).waitFor()
+    await page.getByRole('button', { name: `查看成果：${item.title}`, exact: true }).click()
+    await page.getByLabel('审阅这个成果版本').getByText('你已认可这个成果版本', { exact: false }).waitFor()
     expect(errors).toEqual([])
   } finally {
     await browser.close()

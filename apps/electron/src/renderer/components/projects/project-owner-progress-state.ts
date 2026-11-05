@@ -1,8 +1,16 @@
-import type { OwnerManagementMessage } from '@gravitas/shared'
+import type { OwnerExecutionCommandView, OwnerManagementMessage } from '@gravitas/shared'
+
+/** 只把当前授权、当前方案对应的交付视为本轮完成。 */
+export function hasCompletedOwnerDelivery(messages: readonly OwnerManagementMessage[], commands: readonly Pick<OwnerExecutionCommandView, 'grantId' | 'state'>[], taskId: string | undefined, planVersion: number | undefined, grantId: string | undefined): boolean {
+  if (!grantId || planVersion === undefined) return false
+  const scopedCommands = commands.filter(command => command.grantId === grantId)
+  return scopedCommands.length > 0 && scopedCommands.every(command => command.state === 'settled')
+    && messages.some(message => message.taskId === taskId && message.kind === 'delivery' && message.delivery?.planVersion === planVersion && message.eventId?.startsWith(`owner-delivery:${grantId}:`))
+}
 
 const ownerUpdates = new Set(['attention', 'configuration_required', 'management_progress', 'execution_arranged', 'delivery', 'clarification', 'conversation', 'reply', 'answer', 'change_proposal', 'change_decision', 'plan_proposal', 'planning_confirmation'])
 const ownerWaitLabels: Partial<Record<OwnerManagementMessage['kind'], string>> = {
-  attention: 'Owner 已暂停，需处理提示',
+  attention: 'Owner 提出需要关注的事项',
   configuration_required: '需要补齐项目配置',
   clarification: '需要补充必要信息',
   planning_confirmation: '方案待你审阅',

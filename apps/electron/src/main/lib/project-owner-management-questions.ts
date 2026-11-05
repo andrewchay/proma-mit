@@ -1,5 +1,5 @@
 import { listOwnerReviewHistory } from './project-owner-review-history'
-import { applyOwnerQualityDecision } from './project-owner-quality-actions'
+import { applyOwnerQualityDecision, readOwnerQualityAction } from './project-owner-quality-actions'
 import { readOwnerClaimFacts, stripUnsupportedClaims } from './project-owner-claim-audit'
 import { createHash } from 'node:crypto'
 import { applyOwnerClarificationAnswers, type AnswerOwnerManagementQuestionRequest, type OwnerManagementQuestion, type ProjectOwnerGoalDraft, type OwnerManagementView } from '@gravitas/shared'
@@ -58,7 +58,9 @@ export function listOwnerManagementQuestions(projectId: string): OwnerManagement
 export function getOwnerManagementConversation(projectId: string): OwnerManagementView {
   const changes = require('./project-owner-management-changes') as typeof import('./project-owner-management-changes')
   const reviewHistory = listOwnerReviewHistory(projectId)
-  return { ...getOwnerManagementView(projectId), ...(reviewHistory.length ? { reviewHistory } : {}), questions: listOwnerManagementQuestions(projectId), changes: changes.listOwnerConversationChanges(projectId) }
+  const view = getOwnerManagementView(projectId)
+  const deliveryValidations = (require('./project-owner-management-delivery') as typeof import('./project-owner-management-delivery')).listOwnerDeliveryValidations(projectId, view.messages)
+  return { ...view, ...(reviewHistory.length ? { reviewHistory } : {}), ...(deliveryValidations.length ? { deliveryValidations } : {}), questions: listOwnerManagementQuestions(projectId), changes: changes.listOwnerConversationChanges(projectId) }
 }
 
 /** 仅从真实处理结论重建问题，不接受Renderer提供问题文本或模型自述的授权。 */
@@ -83,6 +85,16 @@ export function projectOwnerManagementRunResult(projectId: string, executionId: 
     return
   }
   if (outcome.qualityDecision) {
+    const observation = snapshot.context.conversation?.executionObservation
+    const prior = observation ? readOwnerQualityAction(observation.commandId) : null
+    if (prior && prior.ownerExecutionId !== executionId
+      && !snapshot.context.conversation?.deliveryReview?.qualityRecovery
+      && observation?.role === 'reviewer' && prior.projectId === projectId && prior.grantId === observation.grantId
+      && prior.taskId === observation.businessTaskId && prior.reviewerCommandId === outcome.qualityDecision.reviewerCommandId
+      && prior.artifactHash === outcome.qualityDecision.artifactHash && Number.isSafeInteger(receipt.usage?.inputTokens) && Number.isSafeInteger(receipt.usage?.outputTokens)) {
+      appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: prior.state === 'blocked' ? 'attention' : 'reply', planningTaskId: receipt.planningTaskId, content: prior.state === 'blocked' ? '此前该成果的质量决定仍被阻断；重复结果未应用，原阻断和恢复条件保留。' : '此前已对该成果和独立评审作出质量决定；重复结果未应用，原记录保留。' })
+      return
+    }
     const action = applyOwnerQualityDecision(projectId, executionId)
     appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: 'reply', planningTaskId: receipt.planningTaskId, content: `${action.detail}\n判断依据：${action.decision.reason}` })
     return

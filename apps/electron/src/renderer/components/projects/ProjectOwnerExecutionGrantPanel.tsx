@@ -215,17 +215,17 @@ export function ProjectOwnerExecutionGrantPanel({
   return (
     <section
       className="mt-4 min-w-0 max-w-full rounded-xl bg-card p-3 shadow-sm [overflow-wrap:anywhere] sm:p-4"
-      aria-label={conversational ? 'Owner 项目进度' : 'Owner 执行授权账本'}
+      aria-label={conversational ? '本次执行授权' : 'Owner 执行授权账本'}
     >
-      <h3 className="font-semibold">{conversational ? (activeGrant ? '项目进度' : '确认本次执行范围') : '执行授权账本（发行与撤权）'}</h3>
+      <h3 className="font-semibold">{conversational ? (activeGrant ? '本次执行授权' : '确认本次执行范围') : '执行授权账本（发行与撤权）'}</h3>
       <p className="mt-2 text-xs text-muted-foreground">
-        {conversational ? '确认后，Owner 会在本次目标、资料权限和预算范围内组织团队、检查成果并继续推进；遇到超范围事项、业务取舍或状态未知时会停下与你商量。项目共享预算不是 Provider 最终账单的硬上限。' : '账本记录"允许按账本消费"的静态许可。人工模式仍逐条确认费用和启动；自主模式必须经过 Electron 主进程原生确认框，确认后在冻结任务/角色/预算范围内后台派发。授权不会自动重试或扩大范围；本地预算不是 Provider 端硬性费用上限。活动授权期间重验证被阻断属预期，退出路径是撤权。'}
+        {conversational ? '执行授权记录本次目标、资料权限和预算范围；是否继续推进还需核对当前管理授权与项目状态。本地预算不是 Provider 最终账单的硬上限。' : '账本记录"允许按账本消费"的静态许可。人工模式仍逐条确认费用和启动；自主模式必须经过 Electron 主进程原生确认框，确认后在冻结任务/角色/预算范围内后台派发。授权不会自动重试或扩大范围；本地预算不是 Provider 端硬性费用上限。活动授权期间重验证被阻断属预期，退出路径是撤权。'}
       </p>
       <p role="status" className="mt-2 text-sm">
         {e.loading
-          ? conversational ? '正在读取项目进度' : '正在读取授权账本'
+          ? conversational ? '正在读取执行授权' : '正在读取授权账本'
           : conversational
-            ? e.grant?.state === 'active' ? 'Owner 已开始按确认范围推进' : e.grant?.state === 'needs_reconcile' ? 'Owner 正在核对执行状态，确认安全后会继续' : e.grant?.state === 'archived' ? '本次执行授权已结束' : '等待最终执行确认'
+            ? e.grant?.state === 'active' ? '执行授权已登记' : e.grant?.state === 'needs_reconcile' ? '执行状态需要核对，暂不会自动重试' : e.grant?.state === 'archived' ? '本次执行授权已结束' : e.grant?.state === 'paused' ? '执行授权已暂停' : '等待最终执行确认'
             : `当前账本：${e.grant ? `${e.grant.state}（${e.grant.grantId}）` : '无授权行'}`}
       </p>
       {e.error && (
@@ -233,7 +233,7 @@ export function ProjectOwnerExecutionGrantPanel({
           {e.error}。不会自动重试，请核对后重试。
         </p>
       )}
-      {e.grant && (conversational ? <div className="mt-3 space-y-2 rounded-xl bg-primary/10 p-4 text-sm"><p>{e.grant.state === 'active' ? 'Owner 会在本次确认的目标、资料权限和预算范围内自主组织团队、检查成果并推进授权内返工。' : `执行进度：${e.grant.state === 'needs_reconcile' ? '正在核对，暂不重试' : e.grant.state === 'archived' ? '已结束' : '已暂停'}`}</p><p>项目共享预算上限：{e.grant.budget.maxCostMicros / 1000000} 美元 · 有效期至 {new Date(e.grant.budget.expiresAt).toLocaleString()}</p></div> : <div className="mt-3 min-w-0"><GrantFacts grant={e.grant} /></div>)}
+      {e.grant && (conversational ? <div className="mt-3 space-y-2 rounded-xl bg-primary/10 p-4 text-sm"><p>{e.grant.state === 'active' ? '授权记录限定了目标、资料权限、预算和返工范围；能否继续推进还取决于当前管理授权与项目进度。' : `执行授权：${e.grant.state === 'needs_reconcile' ? '需要核对，暂不重试' : e.grant.state === 'archived' ? '已结束' : '已暂停'}`}</p><p>本次执行预算上限：{e.grant.budget.maxCostMicros / 1000000} 美元 · 有效期至 {new Date(e.grant.budget.expiresAt).toLocaleString()}</p></div> : <div className="mt-3 min-w-0"><GrantFacts grant={e.grant} /></div>)}
       {!conversational && e.grant && e.grant.state !== 'active' && e.grant.state !== 'paused' && <p role="status" className="mt-2 text-sm">当前授权{e.grant.state === 'needs_reconcile' ? '需要对账' : '已归档'}；不能发行新授权，请按运行处理建议核查。</p>}
       {activeGrant && !conversational && (
         <p className="mt-2 text-xs text-muted-foreground">

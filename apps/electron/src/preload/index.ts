@@ -1994,6 +1994,9 @@ export interface ElectronAPI {
       prepareOwnerExecutionAssignment: import('@gravitas/shared').ProjectOwnerExecutionAssignmentApi['prepareOwnerExecutionAssignment']
       listOwnerExecutionAssignmentRuns: import('@gravitas/shared').ProjectOwnerExecutionAssignmentApi['listOwnerExecutionAssignmentRuns']
       getOwnerAutonomousScheduleStatus: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['getOwnerAutonomousScheduleStatus']
+      getOwnerDispatchControl: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['getOwnerDispatchControl']
+      setOwnerDispatchControl: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['setOwnerDispatchControl']
+      listOwnerDispatchControlEvents: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['listOwnerDispatchControlEvents']
       previewOwnerExecutionCommandAck: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['previewOwnerExecutionCommandAck']
       queueOwnerExecutionCommand: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['queueOwnerExecutionCommand']
       listOwnerExecutionCommands: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['listOwnerExecutionCommands']
@@ -4822,6 +4825,9 @@ const electronAPI: ElectronAPI = {
       prepareOwnerExecutionAssignment: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREPARE_OWNER_EXECUTION_ASSIGNMENT, request),
       listOwnerExecutionAssignmentRuns: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_ASSIGNMENT_RUNS, request),
       getOwnerAutonomousScheduleStatus: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_AUTONOMOUS_SCHEDULE_STATUS, request),
+      getOwnerDispatchControl: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_DISPATCH_CONTROL, request),
+      setOwnerDispatchControl: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SET_OWNER_DISPATCH_CONTROL, request),
+      listOwnerDispatchControlEvents: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_DISPATCH_CONTROL_EVENTS, request),
       previewOwnerExecutionCommandAck: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_COMMAND_ACK, request),
       queueOwnerExecutionCommand: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.QUEUE_OWNER_EXECUTION_COMMAND, request),
       listOwnerExecutionCommands: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_COMMANDS, request),

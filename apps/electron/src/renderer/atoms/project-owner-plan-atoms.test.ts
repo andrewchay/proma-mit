@@ -138,6 +138,20 @@ test('Given 历史晚到/错误主体 When 加载 Then 按主体隔离并拒绝�
   resolve({ ok: true, value: [plan()] }); await loading; expect(f.read(other).history).toEqual([]); expect(f.read(other).summary).toBe('B任务')
   const bad = setup({ listOwnerPlanHistory: async () => ({ ok: true, value: [plan(1, 'confirmed', 'wrong')] }) }); await bad.store.set(loadOwnerPlanHistoryAtom, subject); expect(bad.read().historyLoaded).toBe(false); expect(bad.read().historyError).toContain('主体')
 })
+test('Given 历史读取在途且方案由外部更新 When 旧历史返回 Then 不把旧结果标为已加载', async () => {
+  let revision = 1
+  let finish!: (value: Awaited<ReturnType<ProjectOwnerPlanApi['listOwnerPlanHistory']>>) => void
+  const f = setup({ getOwnerPlanDraft: async () => ({ ok: true, value: plan(revision) }), listOwnerPlanHistory: () => new Promise(resolve => { finish = resolve }) })
+  await f.store.set(loadOwnerPlanAtom, subject)
+  const loading = f.store.set(loadOwnerPlanHistoryAtom, subject)
+  revision = 2
+  await f.store.set(loadOwnerPlanAtom, subject)
+  finish({ ok: true, value: [plan(1, 'confirmed')] })
+  await loading
+  expect(f.read().snapshot?.revision).toBe(2)
+  expect(f.read().historyLoaded).toBe(false)
+  expect(f.read().history).toEqual([])
+})
 test('Given 修改无原因 When 保存 Then 必填修订原因，不产生新版本', async () => {
   const f = setup(); await f.store.set(loadOwnerPlanAtom, subject); f.store.set(editOwnerPlanAtom, { subject, patch: { summary: '修改但缺原因', changeReason: ' ' } }); await f.store.set(saveOwnerPlanAtom, subject); expect(f.writes()).toBe(0)
 })

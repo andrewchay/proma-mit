@@ -470,6 +470,7 @@ import {ownerPlanEditorsAtom,getOwnerPlanEditor} from ${JSON.stringify(join(rend
 import {ownerExecutionEditorsAtom,getOwnerExecutionEditor} from ${JSON.stringify(join(renderer, 'atoms/project-owner-execution-atoms.ts'))};
 import {ownerMessageComposersAtom,getOwnerMessageComposer} from ${JSON.stringify(join(renderer, 'atoms/project-owner-management-atoms.ts'))};
 import {ownerManagementEditorsAtom,getOwnerManagementEditor} from ${JSON.stringify(join(renderer, 'atoms/project-owner-management-atoms.ts'))};
+import {ProjectOwnerConversationProgress} from ${JSON.stringify(join(renderer, 'components/projects/ProjectOwnerConversationProgress.tsx'))};
 const seed=${JSON.stringify(seed)},subject=seed.subject,key=JSON.stringify([subject.projectId,null]);
 const call=async(method,payload=subject)=>(await fetch('/api',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({method,payload})})).json();
 const names=['launchOwnerPreparedExecution','getOwnerTaskMaterialization','listOwnerTaskMaterializationHistory','previewOwnerTaskMaterialization','materializeOwnerTasks','getOwnerExecutionPreparation','listOwnerExecutionPreparationHistory','previewOwnerExecutionPreparation','saveOwnerExecutionPreparation','getOwnerExecutionRevalidation','listOwnerExecutionRevalidationHistory','previewOwnerExecutionRevalidation','saveOwnerExecutionRevalidation','getOwnerExecutionGrant','listOwnerExecutionGrantHistory','previewOwnerExecutionGrantIssue','confirmOwnerExecutionGrantIssue','previewOwnerExecutionGrantRevoke','confirmOwnerExecutionGrantRevoke','listOwnerExecutionCommands','getOwnerAutonomousScheduleStatus','previewOwnerExecutionCommandAck','queueOwnerExecutionCommand','dispatchOwnerExecutionCommand','cancelQueuedOwnerExecutionCommand','previewOwnerPreflightReconciliation','confirmOwnerPreflightReconciliation','getOwnerGoalDraft','saveOwnerGoalDraft'];
@@ -477,7 +478,7 @@ window.electronAPI={listChannels:async()=>[],listAgentWorkspaces:async()=>[],paa
 const store=createStore();store.set(ownerGoalEditorsAtom,new Map([[key,{...getOwnerGoalEditor(new Map(),subject),loaded:true,snapshot:seed.goal}]]));store.set(ownerPlanEditorsAtom,new Map([[key,{...getOwnerPlanEditor(new Map(),subject),loaded:true,snapshot:seed.plan,context:seed.context}]]));store.set(ownerExecutionEditorsAtom,new Map([[key,{...getOwnerExecutionEditor(new Map(),subject),loaded:true,view:seed.preparation}]]));
 window.fixture={deliver:async()=>{await call('testDeliver');const result=await call('listOwnerExecutionCommands');const taskId=result.value[0].taskId;const delivery={schemaVersion:1,planVersion:1,items:[{stepKey:'brief',title:'Owner交付',acceptanceCriteria:['来源明确'],artifactHash:${JSON.stringify(artifactHash)},content:${JSON.stringify(artifactContent)},ownerDecision:'按标准接受',reviewerSummary:'独立评审通过'},{stepKey:'other',title:'另一项交付',acceptanceCriteria:['独立核验'],artifactHash:'e'.repeat(64),content:'其他成果正文',ownerDecision:'按标准接受',reviewerSummary:'独立评审通过'}]};const message={id:${JSON.stringify(deliveryMessageId)},projectId:subject.projectId,conversationId:'owner-conversation',eventId:'delivery',role:'assistant',kind:'delivery',content:'Owner已验收',delivery,createdAt:1};const taskMessage={...message,id:'d'.repeat(64),taskId,eventId:'task-delivery'};const owner=getOwnerManagementEditor(new Map(),subject.projectId);store.set(ownerManagementEditorsAtom,new Map([[subject.projectId,{...owner,view:{manager:{schemaVersion:1,projectId:subject.projectId,ownerId:'owner',conversationId:'owner-conversation',revision:1,status:'active',createdAt:1,updatedAt:1},messages:[message,taskMessage],questions:[],pendingEvents:0}}]]));},draft:taskId=>getOwnerGoalEditor(store.get(ownerGoalEditorsAtom),{...subject,taskId}),setMessage:text=>{const composer=getOwnerMessageComposer(store.get(ownerMessageComposersAtom),subject);store.set(ownerMessageComposersAtom,new Map([[key,{...composer,text}]]))}};
 store.sub(ownerMessageComposersAtom,()=>{const composer=getOwnerMessageComposer(store.get(ownerMessageComposersAtom),subject);document.body.dataset.ownerComposer=composer.text;document.body.dataset.ownerDeliveryReference=JSON.stringify(composer.deliveryReference||null)});
-createRoot(document.getElementById('root')).render(<Provider store={store}><ProjectOwnerDeliveryConversation projectId={subject.projectId} managed={${managed}} singleConfirmation={${managed}} ownerConversation={true}/></Provider>);
+createRoot(document.getElementById('root')).render(<Provider store={store}><ProjectOwnerDeliveryConversation projectId={subject.projectId} managed={${managed}} singleConfirmation={${managed}} ownerConversation={true}/><ProjectOwnerConversationProgress subject={subject}/></Provider>);
 `)
   await build({ entryPoints: [entry], outfile: join(directory, 'browser.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.png': 'dataurl' }, absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
   console.info(`[交付测试] ${managed ? '自主' : '手动'}：启动浏览器`)
@@ -487,7 +488,9 @@ createRoot(document.getElementById('root')).render(<Provider store={store}><Proj
   page.on('pageerror', error => errors.push(error.message))
   try {
     console.info(`[交付测试] ${managed ? '自主' : '手动'}：加载页面`)
-    await page.clock.install()
+    // 自主场景不推进虚拟时间；仅手动交付场景需要快进轮询。
+    if (!managed) await page.clock.install()
+    console.info(`[交付测试] ${managed ? '自主' : '手动'}：打开页面`)
     await page.goto(`http://127.0.0.1:${server.port}`)
     console.info(`[交付测试] ${managed ? '自主' : '手动'}：页面已加载`)
     if (managed) {
@@ -504,7 +507,7 @@ createRoot(document.getElementById('root')).render(<Provider store={store}><Proj
     expect(grants.getOwnerExecutionGrant(f.subject)).toBeNull()
     expect(db.listTasks(f.subject.projectId)).toHaveLength(0)
     await start.click()
-    await page.getByText('Owner 已开始按确认范围推进', { exact: false }).waitFor()
+    await page.getByLabel('本次执行授权').getByText('执行授权已登记', { exact: true }).waitFor()
     expect(grants.getOwnerExecutionGrant(f.subject)?.dispatchMode).toBe(managed ? 'autonomous' : 'manual')
     expect((db.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_commands').get() as { count: number }).count).toBe(0)
     await page.evaluate('window.fixture.deliver()')

@@ -33,6 +33,8 @@ export const confirmOwnerTeamWorkspaceAccessAtom = atom(null, async (get, set, i
 export const ownerManagementApiAtom = atom<(Pick<OwnerManagementApi, 'getOwnerManagement' | 'answerOwnerManagementQuestion'> & Partial<Pick<OwnerManagementApi, 'sendOwnerManagementMessage' | 'decideOwnerConversationChange' | 'retakeOwnerAssignment'>>) | null>(null)
 interface OwnerConversationNotice { messageId: string; title: string; createdAt: number; taskId?: string }
 export const ownerConversationNoticesAtom = atom(new Map<string, OwnerConversationNotice>())
+export const ownerAttentionAlertsAtom = atom(new Map<string, { messageId: string; createdAt: number }>())
+export const ownerAttentionAlertKey = (projectId: string, taskId?: string): string => JSON.stringify([projectId, taskId ?? null])
 export const ownerConversationNavigationAtom = atom<{ projectId: string; taskId?: string; at: number } | null>(null)
 export const getOwnerManagementEditor = (entries: ReadonlyMap<string, OwnerConversationEditor>, projectId: string): OwnerConversationEditor => entries.get(projectId) ?? initial
 export const editOwnerManagementAnswerAtom = atom(null, (get, set, input: { projectId: string; questionId: string; key: string; value: string }) => {
@@ -49,10 +51,10 @@ export const loadOwnerManagementAtom = atom(null, async (get, set, projectId: st
   update({ generation, loading: true })
   try {
     const result = await api.getOwnerManagement({ projectId })
-    if (getOwnerManagementEditor(get(ownerManagementEditorsAtom), projectId).generation !== generation) return
     if (!result.ok) throw new Error(result.error.message)
     if (result.value.manager && result.value.manager.projectId !== projectId) throw new Error('Owner对话项目身份不一致')
-    update({ view: result.value, error: '' })
+    if (getOwnerManagementEditor(get(ownerManagementEditorsAtom), projectId).generation === generation) update({ view: result.value, error: '' })
+    return result.value
   } catch (cause) {
     if (getOwnerManagementEditor(get(ownerManagementEditorsAtom), projectId).generation === generation) update({ error: cause instanceof Error ? cause.message : '读取Owner对话失败' })
   } finally {
@@ -80,16 +82,17 @@ export const answerOwnerManagementQuestionAtom = atom(null, async (get, set, inp
 })
 
 
-interface OwnerMessageComposer { text: string; requestId: string; sending: boolean; pending: SendOwnerManagementMessageRequest | null; error: string; deliveryReference?: OwnerManagementDeliveryReference }
+interface OwnerMessageComposer { text: string; requestId: string; sending: boolean; pending: SendOwnerManagementMessageRequest | null; error: string; deliveryReference?: OwnerManagementDeliveryReference; deliveryReviewDecision?: 'accepted' | 'changes_requested' }
 const emptyComposer: OwnerMessageComposer = { text: '', requestId: '', sending: false, pending: null, error: '' }
 const composerKey = (subject: ProjectOwnerGoalSubject) => JSON.stringify([subject.projectId, subject.taskId ?? null])
 export const ownerMessageComposersAtom = atom(new Map<string, OwnerMessageComposer>())
 export const getOwnerMessageComposer = (entries: ReadonlyMap<string, OwnerMessageComposer>, subject: ProjectOwnerGoalSubject) => entries.get(composerKey(subject)) ?? emptyComposer
-export const editOwnerMessageAtom = atom(null, (get, set, input: { subject: ProjectOwnerGoalSubject; text: string; deliveryReference?: OwnerManagementDeliveryReference | null }) => {
+export const editOwnerMessageAtom = atom(null, (get, set, input: { subject: ProjectOwnerGoalSubject; text: string; deliveryReference?: OwnerManagementDeliveryReference | null; deliveryReviewDecision?: 'accepted' | 'changes_requested' | null }) => {
   const entries = new Map(get(ownerMessageComposersAtom)), old = getOwnerMessageComposer(entries, input.subject)
   if (old.sending || old.pending) return
+  const deliveryReviewDecision = input.deliveryReviewDecision === null || input.deliveryReference === null ? undefined : input.deliveryReviewDecision ?? old.deliveryReviewDecision
   const deliveryReference = input.deliveryReference === null ? undefined : input.deliveryReference ?? old.deliveryReference
-  entries.set(composerKey(input.subject), { ...old, text: input.text, requestId: crypto.randomUUID(), error: '', ...(deliveryReference ? { deliveryReference } : { deliveryReference: undefined }) }); set(ownerMessageComposersAtom, entries)
+  entries.set(composerKey(input.subject), { ...old, text: input.text, requestId: crypto.randomUUID(), error: '', deliveryReviewDecision, ...(deliveryReference ? { deliveryReference } : { deliveryReference: undefined }) }); set(ownerMessageComposersAtom, entries)
 })
 /** 网络结果不明保留原请求；再次发送只重读/补交同一消息，不创建新的模型请求。 */
 export const sendOwnerMessageAtom = atom(null, async (get, set, subject: ProjectOwnerGoalSubject): Promise<boolean> => {
@@ -97,8 +100,11 @@ export const sendOwnerMessageAtom = atom(null, async (get, set, subject: Project
   const manager = getOwnerManagementEditor(get(ownerManagementEditorsAtom), subject.projectId).view?.manager
   const editor = getOwnerGoalEditor(get(ownerGoalEditorsAtom), subject)
   const goal = editor.loaded && !editor.loading && !editor.saving && !editor.dirty && !editor.requiresReview && !editor.conflict ? editor.snapshot : null
-  if (old.sending || !manager || !goal || !old.text.trim()) return false
-  const input = old.pending ?? { ...subject, conversationId: manager.conversationId, requestId: old.requestId || crypto.randomUUID(), expectedGoalRevision: goal.revision, content: old.text.trim(), ...(old.deliveryReference ? { deliveryReference: old.deliveryReference } : {}) }
+  if (old.sending || !manager || !goal || (!old.text.trim() && !old.deliveryReviewDecision)) return false
+  const reviewText = old.deliveryReviewDecision === 'accepted' ? '我认可这个成果版本。' : old.deliveryReviewDecision === 'changes_requested' ? '这个成果版本需要修改。' : ''
+  const content = [reviewText, old.text.trim()].filter(Boolean).join('\n\n')
+  if (content.length > 4000) return false
+  const input = old.pending ?? { ...subject, conversationId: manager.conversationId, requestId: old.requestId || crypto.randomUUID(), expectedGoalRevision: goal.revision, content, ...(old.deliveryReference ? { deliveryReference: old.deliveryReference } : {}), ...(old.deliveryReviewDecision ? { deliveryReviewDecision: old.deliveryReviewDecision } : {}) }
   const update = (patch: Partial<OwnerMessageComposer>) => { const entries = new Map(get(ownerMessageComposersAtom)); entries.set(composerKey(subject), { ...getOwnerMessageComposer(entries, subject), ...patch }); set(ownerMessageComposersAtom, entries) }
   update({ sending: true, pending: input, requestId: input.requestId, error: '' })
   try {
@@ -107,8 +113,8 @@ export const sendOwnerMessageAtom = atom(null, async (get, set, subject: Project
     const result = await api.sendOwnerManagementMessage(input)
     if (!result.ok) { update({ pending: null }); throw new Error(result.error.message) }
     const message = result.value
-    if (message.projectId !== subject.projectId || message.taskId !== subject.taskId || message.conversationId !== input.conversationId || message.goalRevision !== input.expectedGoalRevision || message.content !== input.content || JSON.stringify(message.deliveryReference) !== JSON.stringify(input.deliveryReference) || message.role !== 'user' || message.kind !== 'conversation') throw new Error('Owner消息保存回执不匹配，请核对原请求')
-    update({ text: '', requestId: '', pending: null, deliveryReference: undefined })
+    if (message.projectId !== subject.projectId || message.taskId !== subject.taskId || message.conversationId !== input.conversationId || message.goalRevision !== input.expectedGoalRevision || message.content !== input.content || JSON.stringify(message.deliveryReference) !== JSON.stringify(input.deliveryReference) || message.deliveryReviewDecision !== input.deliveryReviewDecision || message.role !== 'user' || message.kind !== 'conversation') throw new Error('Owner消息保存回执不匹配，请核对原请求')
+    update({ text: '', requestId: '', pending: null, deliveryReference: undefined, deliveryReviewDecision: undefined })
     await set(loadOwnerManagementAtom, subject.projectId)
     return true
   } catch (cause) { update({ error: cause instanceof Error ? cause.message : '消息尚未确认保存，原输入已保留' }); return false }

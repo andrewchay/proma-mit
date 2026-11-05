@@ -12,7 +12,8 @@ test('Given已交付HTML文本 When显示成果 Then正文直接可见且有原�
   expect(markup).toContain('下载原文')
   expect(markup).toContain('成果正文')
   expect(markup).not.toContain('<script>window.unsafe')
-  expect(markup.indexOf('成果正文')).toBeLessThan(markup.indexOf('<details'))
+  expect(markup.indexOf('独立评审')).toBeLessThan(markup.indexOf('成果正文'))
+  expect(markup).toContain('不能据此认定运行验证通过')
 })
 
 test('Given多份或不完整HTML代码块 When导出 Then不猜测文件、不从说明中拼接源码', () => {

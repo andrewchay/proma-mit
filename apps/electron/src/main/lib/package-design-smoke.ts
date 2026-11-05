@@ -193,6 +193,9 @@ export async function runPackageDesignSmoke(root: string): Promise<Record<string
       return true
     })()`, true)
     assert(opened, '打不开验收项目的 Owner 对话')
+    // 窄窗口下讨论面板默认收起（xl 断点以下），像真实用户一样先点开「与 Owner 讨论」，
+    // 否则面板 display:none，后续 body.innerText 可见性断言会漏掉其中的内容。
+    await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent?.trim() === '与 Owner 讨论')?.click()`, true)
     await waitRenderer(window, `document.querySelector('details[aria-label="设计任务草稿"]')`, '设计任务草稿出现')
     await window.webContents.executeJavaScript(`document.querySelector('details[aria-label="设计任务草稿"] > summary').click()`, true)
     await waitRenderer(window, `document.querySelector('details[aria-label="设计任务草稿"] select')`, '设计参考选择器出现')
@@ -222,6 +225,18 @@ export async function runPackageDesignSmoke(root: string): Promise<Record<string
     assert.equal(uiInstalledReference.design, uiBundledReference.reference.design, 'Owner 界面安装的设计说明与打包资源不一致')
     assert.equal(uiInstalledReference.tokens, uiBundledReference.reference.tokens, 'Owner 界面安装的令牌与打包资源不一致')
     await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent === '安装到 Owner 工作区').click()`, true)
+    await waitRenderer(window, `document.querySelector('details[aria-label="设计任务草稿"]')?.textContent.includes('目标存在冲突')`, '重复安装冲突结果')
+    // 安装刷新可能重建窄屏讨论面板；重新打开后仍须验证用户可见的冲突反馈。
+    await window.webContents.executeJavaScript(`(() => {
+      const panel = document.querySelector('[aria-label="与项目Owner讨论"]')
+      if (panel instanceof HTMLElement && !panel.getClientRects().length) {
+        const launcher = [...document.querySelectorAll('button')].find(item => item.textContent?.trim() === '与 Owner 讨论')
+        if (!(launcher instanceof HTMLElement)) throw new Error('讨论入口缺失')
+        launcher.click()
+      }
+      const brief = document.querySelector('details[aria-label="设计任务草稿"]')
+      if (brief instanceof HTMLDetailsElement) brief.open = true
+    })()`, true)
     await waitRenderer(window, `document.body.innerText.includes('目标存在冲突')`, '重复安装冲突提示')
     assert.equal((await window.webContents.executeJavaScript(`document.querySelectorAll('button').length && [...document.querySelectorAll('button')].some(item => item.textContent === '确认安装')`, true)), false, '存在冲突时仍提供确认安装入口')
     assert.equal(readInstalledOwnerDesignSystem(smokeOwnerWorkspace.slug)?.design, uiBundledReference.reference.design, '重复安装冲突改变了已安装内容')

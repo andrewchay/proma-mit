@@ -2,7 +2,7 @@ import { readOwnerManagementDelivery } from './project-owner-management-delivery
 /** 持续对话只产生管理资料与受控规划请求；不把自然语言当作授权或权威目标修改。 */
 import { createHash } from 'node:crypto'
 import type { OwnerManagementMessage, ProjectOwnerPlanningContext, SendOwnerManagementMessageRequest } from '@gravitas/shared'
-import { appendOwnerManagementMessage, getOwnerManagementMessage, getOwnerManager, recordOwnerConversationMessage, recordStaleOwnerManagementTrace } from './project-owner-management-store'
+import { appendOwnerManagementMessage, deliveryContentMatchesArtifact, getOwnerManagementMessage, getOwnerManager, recordOwnerConversationMessage, recordStaleOwnerManagementTrace } from './project-owner-management-store'
 import { getProjectOwnerGoalDraft } from './project-owner-goal-service'
 import { assertLocalActorEnabled, getProjectOwnerPlanDraft, getProjectOwnerPlanningContext } from './project-owner-plan-service'
 import { getOwnerRuntimeBinding, prepareOwnerPlanning } from './project-owner-runtime-binding'
@@ -14,7 +14,7 @@ const hash = (value: unknown): string => createHash('sha256').update(JSON.string
 function parse(raw: unknown): SendOwnerManagementMessageRequest {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.getPrototypeOf(raw) !== Object.prototype) throw new Error('Owner消息必须是JSON对象')
   const value = raw as Record<string, unknown>
-  if (Object.keys(value).some(key => !['projectId', 'taskId', 'conversationId', 'requestId', 'expectedGoalRevision', 'content', 'deliveryReference'].includes(key))
+  if (Object.keys(value).some(key => !['projectId', 'taskId', 'conversationId', 'requestId', 'expectedGoalRevision', 'content', 'deliveryReference', 'deliveryReviewDecision'].includes(key))
     || ['projectId', 'conversationId', 'requestId', ...(value.taskId === undefined ? [] : ['taskId'])].some(key => typeof value[key] !== 'string' || !value[key].trim() || value[key] !== value[key].trim() || value[key].length > 128)
     || !Number.isSafeInteger(value.expectedGoalRevision) || Number(value.expectedGoalRevision) < 1
     || typeof value.content !== 'string' || !value.content.trim() || value.content.length > 4000) throw new Error('Owner消息身份、目标版本或内容无效')
@@ -26,6 +26,7 @@ function parse(raw: unknown): SendOwnerManagementMessageRequest {
       || typeof reference.artifactHash !== 'string' || !/^[a-f0-9]{64}$/.test(reference.artifactHash)
       || (reference.stepKey !== undefined && (typeof reference.stepKey !== 'string' || !reference.stepKey.trim() || reference.stepKey.length > 100))) throw new Error('Owner交付引用无效')
   }
+  if (value.deliveryReviewDecision !== undefined && (!value.deliveryReference || typeof value.deliveryReviewDecision !== 'string' || !['accepted', 'changes_requested'].includes(value.deliveryReviewDecision))) throw new Error('业务审阅决定必须关联准确成果版本')
   return { ...value, content: value.content.trim() } as unknown as SendOwnerManagementMessageRequest
 }
 export function sendOwnerManagementMessage(raw: unknown): OwnerManagementMessage {
@@ -37,13 +38,13 @@ export function sendOwnerManagementMessage(raw: unknown): OwnerManagementMessage
     if (!manager || manager.conversationId !== input.conversationId) throw new Error('Owner会话已变化，请读取当前项目对话')
     const old = getOwnerManagementMessage(input.projectId, hash({ eventId, role: 'user', kind: 'conversation' }))
     if (old) {
-      if (old.content !== input.content || old.taskId !== input.taskId || old.goalRevision !== input.expectedGoalRevision || JSON.stringify(old.deliveryReference) !== JSON.stringify(input.deliveryReference)) throw new Error('消息请求ID已用于不同内容、交付或目标')
+      if (old.content !== input.content || old.taskId !== input.taskId || old.goalRevision !== input.expectedGoalRevision || JSON.stringify(old.deliveryReference) !== JSON.stringify(input.deliveryReference) || old.deliveryReviewDecision !== input.deliveryReviewDecision) throw new Error('消息请求ID已用于不同内容、交付或目标')
       saved = old; return
     }
     const goal = getProjectOwnerGoalDraft(input.projectId, input.taskId)
     if (!goal || goal.revision !== input.expectedGoalRevision) throw new Error('目标已更新，请读取当前对话后再发送；输入已保留')
     if (input.deliveryReference) readOwnerManagementDeliveryFeedback(input.projectId, manager.conversationId, input.taskId, input.deliveryReference)
-    saved = recordOwnerConversationMessage({ projectId: input.projectId, eventId, role: 'user', kind: 'conversation', ...(input.taskId ? { taskId: input.taskId } : {}), ...(input.deliveryReference ? { deliveryReference: input.deliveryReference } : {}), goalRevision: goal.revision, content: input.content })
+    saved = recordOwnerConversationMessage({ projectId: input.projectId, eventId, role: 'user', kind: 'conversation', ...(input.taskId ? { taskId: input.taskId } : {}), ...(input.deliveryReference ? { deliveryReference: input.deliveryReference } : {}), ...(input.deliveryReviewDecision ? { deliveryReviewDecision: input.deliveryReviewDecision } : {}), goalRevision: goal.revision, content: input.content })
   })()
   if (!saved) throw new Error('Owner消息未确认保存')
   return saved
@@ -56,7 +57,7 @@ function readOwnerManagementDeliveryFeedback(projectId: string, conversationId: 
   const matches = source.delivery.items.filter(item => item.artifactHash === reference.artifactHash && (!reference.stepKey || item.stepKey === reference.stepKey))
   if (matches.length !== 1) throw new Error('反馈所指向的成果版本不存在或不唯一')
   const item = matches[0]!
-  if (createHash('sha256').update(item.content, 'utf8').digest('hex') !== reference.artifactHash) throw new Error('反馈所指向的成果正文完整性校验失败')
+  if (!deliveryContentMatchesArtifact(item.content, reference.artifactHash)) throw new Error('反馈所指向的成果正文完整性校验失败')
   return { version: 1, messageId: source.id, artifactHash: item.artifactHash, ...(reference.stepKey ? { stepKey: item.stepKey } : {}), title: item.title,
     acceptanceCriteria: [...item.acceptanceCriteria], content: item.content, ownerDecision: item.ownerDecision, reviewerSummary: item.reviewerSummary }
 }

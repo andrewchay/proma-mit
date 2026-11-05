@@ -1190,6 +1190,15 @@ function migrate(database: SqliteCompat): void {
     project_id TEXT NOT NULL, grant_id TEXT NOT NULL, task_id TEXT NOT NULL,
     payload TEXT NOT NULL, integrity_hash TEXT NOT NULL, created_at INTEGER NOT NULL
   )`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_dispatch_controls (
+    project_id TEXT NOT NULL, subject_key TEXT NOT NULL, paused INTEGER NOT NULL CHECK (paused IN (0,1)),
+    revision INTEGER NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (project_id, subject_key)
+  )`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_dispatch_control_events (
+    project_id TEXT NOT NULL, subject_key TEXT NOT NULL, grant_id TEXT NOT NULL, revision INTEGER NOT NULL,
+    paused INTEGER NOT NULL CHECK (paused IN (0,1)), actor TEXT NOT NULL, created_at INTEGER NOT NULL,
+    PRIMARY KEY (project_id, subject_key, revision)
+  )`)
   database.exec('CREATE INDEX IF NOT EXISTS owner_quality_actions_reviewer ON project_owner_quality_actions(reviewer_command_id,created_at)')
   database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS owner_quality_actions_effective
     ON project_owner_quality_actions(reviewer_command_id)

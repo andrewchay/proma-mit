@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { atom, useAtom } from 'jotai'
-import type { OwnerManagementDelivery } from '@gravitas/shared'
+import type { OwnerDeliveryValidationRecord, OwnerManagementDelivery } from '@gravitas/shared'
 import { buildSelectableDesignPreview, parseDesignPreviewSelection } from './design-preview-selection'
 
 /** 只导出唯一、完整的HTML代码块；不执行正文，也不根据文件名猜测代码。 */
@@ -21,7 +21,17 @@ function downloadArtifact(title: string, content: string, extension: 'md' | 'htm
   setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
-export function OwnerDeliveredArtifact({ item, onRequestChanges, feedbackDisabled = false, feedbackCapacity = 4000 }: { item: OwnerManagementDelivery['items'][number]; onRequestChanges?: (excerpt?: string) => void; feedbackDisabled?: boolean; feedbackCapacity?: number }): React.ReactElement {
+function ValidationRecords({ validation }: { validation: OwnerDeliveryValidationRecord }): React.ReactElement {
+  const freshnessLabels = { fresh: '来源当前一致', stale: '来源已变化', legacy: '旧记录缺少来源绑定', unknown: '来源无法核对' }
+  return <div aria-label="版本验证记录"><p className="font-medium">版本验证记录</p><ul className="mt-1 space-y-2">{validation.validations.map(record => <li key={`${record.command}-${record.outputSha256}`} className="break-words text-xs">
+    <p>{record.method === 'browser_assertions' ? '浏览器断言' : record.method === 'command' ? '命令验证' : '验证方式未核对'}：{record.command}</p>
+    <p>记录结果：{record.status === 'passed' ? '通过' : record.status} · {record.expired ? '核对时证据已过期' : record.finishedAt === undefined ? '证据时效未知' : '核对时证据未过期'} · {freshnessLabels[record.freshness]}{record.finishedAt === undefined ? '' : ` · ${new Date(record.finishedAt).toLocaleString('zh-CN')}`}</p>
+    {record.checks && <ul className="mt-1 list-disc pl-5">{record.checks.map(check => <li key={check.id}>{check.title}：{check.status === 'passed' ? '通过' : check.status === 'failed' ? '失败' : '未执行'} · {check.detail}</li>)}</ul>}
+    <p className="break-all font-mono text-muted-foreground">输出摘要：{record.outputSha256}</p>
+  </li>)}</ul><p className="mt-2 text-xs text-muted-foreground">以上为绑定该版本的历史验证记录，上次核对：{new Date(validation.checkedAt).toLocaleString('zh-CN')}。</p></div>
+}
+
+export function OwnerDeliveredArtifact({ item, validation, onRequestChanges, feedbackDisabled = false, feedbackCapacity = 4000 }: { item: OwnerManagementDelivery['items'][number]; validation?: OwnerDeliveryValidationRecord; onRequestChanges?: (excerpt?: string, intent?: 'question' | 'change') => void; feedbackDisabled?: boolean; feedbackCapacity?: number }): React.ReactElement {
   const html = extractDeliveredHtml(item.content)
   const previewAtom = useMemo(() => atom<{ hash: string; visible: boolean; viewport: 'adaptive' | 'mobile' }>({ hash: '', visible: false, viewport: 'adaptive' }), [])
   const [preview, setPreview] = useAtom(previewAtom)
@@ -58,8 +68,15 @@ export function OwnerDeliveredArtifact({ item, onRequestChanges, feedbackDisable
         {html && <button type="button" className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground" onClick={() => downloadArtifact(item.title, html, 'html')}>下载 HTML</button>}
       </div>
     </div>
-    {html && <p className="text-sm text-muted-foreground">源码已保存在本对话中。下载 HTML 后可用浏览器打开；运行验证情况以本次验收记录为准。</p>}
-    <div><p className="mb-2 text-xs font-medium text-muted-foreground">成果正文</p><pre ref={contentRef} onMouseUp={captureSelection} onKeyUp={captureSelection} className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/50 p-3 font-sans text-sm">{item.content}</pre>{selection.hash === item.artifactHash && selection.tooLong && <p className="mt-2 text-xs text-destructive">选中片段超过 300 字，请缩小选区。</p>}{onRequestChanges && selection.hash === item.artifactHash && selection.text && <div className="mt-2 space-y-2 rounded-lg bg-primary/5 p-3"><p className="text-xs text-muted-foreground">已选中内容，可连同本成果版本提交修改意见。</p><p className="break-words text-sm">{selection.text}</p><button type="button" disabled={feedbackDisabled || selection.text.length + 20 > feedbackCapacity} className="rounded-lg bg-primary/10 px-3 py-1.5 text-sm text-primary disabled:opacity-50" onClick={() => onRequestChanges(selection.text)}>针对选中内容提出修改</button>{selection.text.length + 20 > feedbackCapacity && <p className="text-xs text-destructive">当前草稿空间不足，请精简后再引用。</p>}</div>}</div>
+    <section className="space-y-2 rounded-lg bg-muted/40 p-3 text-sm" aria-label="当前成果版本与审阅依据">
+      <p className="break-all text-xs text-muted-foreground">成果版本：<span className="font-mono">{item.artifactHash}</span></p>
+      <div><p className="font-medium">完成标准</p>{item.acceptanceCriteria.length ? <ul className="mt-1 list-disc pl-5">{item.acceptanceCriteria.map((criterion, index) => <li key={`${index}-${criterion}`}>{criterion}</li>)}</ul> : <p className="mt-1 text-muted-foreground">此版本未附带完成标准。</p>}</div>
+      <p><span className="font-medium">独立评审：</span>{item.reviewerSummary || '未附带评审摘要'}</p>
+      <p><span className="font-medium">Owner 内部审阅：</span>{item.ownerDecision || '未附带审阅摘要'}</p>
+      {validation?.validations.length ? <ValidationRecords validation={validation} /> : <p className="text-xs text-muted-foreground">本卡片未展示独立的运行或浏览器验证记录；不能据此认定运行验证通过。</p>}
+    </section>
+    {html && <p className="text-sm text-muted-foreground">源码已保存在本对话中。下载 HTML 后可用浏览器打开；运行验证情况以当前版本的验证记录为准。</p>}
+    <div><p className="mb-2 text-xs font-medium text-muted-foreground">成果正文</p><pre ref={contentRef} onMouseUp={captureSelection} onKeyUp={captureSelection} className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/50 p-3 font-sans text-sm">{item.content}</pre>{selection.hash === item.artifactHash && selection.tooLong && <p className="mt-2 text-xs text-destructive">选中片段超过 300 字，请缩小选区。</p>}{onRequestChanges && selection.hash === item.artifactHash && selection.text && <div className="mt-2 space-y-2 rounded-lg bg-primary/5 p-3"><p className="text-xs text-muted-foreground">已选中内容，可连同本成果版本提问或提交修改意见。</p><p className="break-words text-sm">{selection.text}</p><button type="button" disabled={feedbackDisabled || selection.text.length + 20 > feedbackCapacity} className="rounded-lg bg-primary/10 px-3 py-1.5 text-sm text-primary disabled:opacity-50" onClick={() => onRequestChanges(selection.text)}>针对选中内容提出修改</button><button type="button" disabled={feedbackDisabled || selection.text.length + 20 > feedbackCapacity} className="ml-2 rounded-lg bg-muted px-3 py-1.5 text-sm disabled:opacity-50" onClick={() => onRequestChanges(selection.text, 'question')}>针对选中内容提问</button>{selection.text.length + 20 > feedbackCapacity && <p className="text-xs text-destructive">当前草稿空间不足，请精简后再引用。</p>}</div>}</div>
     {showPreview && previewHtml && <div className="overflow-hidden rounded-xl bg-muted/40 p-2">
       <p className="px-1 pb-2 text-xs text-muted-foreground">静态预览不运行成果脚本或加载外部资源；点击画面文字可选择反馈片段。交互效果请在可信环境中验证。</p>
       <p className="break-all px-1 pb-2 font-mono text-xs text-muted-foreground" title="用于核对当前预览对应的交付内容">成果标识：{item.artifactHash}</p>
@@ -69,12 +86,5 @@ export function OwnerDeliveredArtifact({ item, onRequestChanges, feedbackDisable
       </div>
       <iframe ref={frameRef} title={`${item.title} 静态预览`} sandbox="allow-scripts" srcDoc={previewHtml} style={{ width: preview.viewport === 'mobile' ? 'min(100%, 390px)' : '100%', display: 'block', margin: '0 auto', border: 0 }} className="h-[420px] rounded-lg bg-white shadow-sm" />
     </div>}
-    <details><summary className="cursor-pointer text-sm text-muted-foreground">验收标准与评审记录</summary>
-      <div className="mt-3 space-y-3">
-        <ul className="list-disc pl-5">{item.acceptanceCriteria.map((criterion, index) => <li key={`${index}-${criterion}`}>{criterion}</li>)}</ul>
-        <p><span className="font-medium">Owner验收：</span>{item.ownerDecision}</p>
-        <p><span className="font-medium">独立评审：</span>{item.reviewerSummary}</p>
-      </div>
-    </details>
   </section>
 }

@@ -26,7 +26,7 @@ store.set(ownerGoalEditorsAtom,new Map([[JSON.stringify(['p',null]),{...getOwner
 `)
   await build({ entryPoints: [join(directory, 'entry.tsx')], outfile: join(directory, 'entry.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('<div id="root"></div><script src="/entry.js"></script>', { headers: { 'Content-Type': 'text/html' } }), routes: { '/entry.js': () => new Response(Bun.file(join(directory, 'entry.js'))) } })
-  const browser = await chromium.launch({ headless: true }), page = await browser.newPage({ viewport: { width: 390, height: 844 } })
+  const browser = await chromium.launch({ headless: true }), page = await browser.newPage({ viewport: { width: 1280, height: 900 } })
   page.setDefaultTimeout(5000)
   const errors: string[] = []; page.on('pageerror', error => errors.push(error.message))
   try {
@@ -34,7 +34,7 @@ store.set(ownerGoalEditorsAtom,new Map([[JSON.stringify(['p',null]),{...getOwner
     await page.getByText('选择一个选项或填写你的想法，确认后 Owner 才会继续。', { exact: true }).waitFor()
     expect(await page.locator('[contenteditable="true"][aria-label="给项目 Owner 的消息"]:visible').count()).toBe(1)
     expect(await page.getByRole('button', { name: '答复，让 Owner 继续', exact: true }).isVisible()).toBe(true)
-    await page.getByRole('button', { name: '现有用户', exact: true }).click()
+    await page.getByRole('radio', { name: '现有用户', exact: true }).check()
     expect(await page.getByLabel('主要服务谁？').inputValue()).toBe('现有用户')
     await page.getByLabel('给项目 Owner 的消息').fill('保留已有约束\n主要服务谁？：现有用户')
     await page.getByRole('button', { name: '发送给 Owner', exact: true }).click()
