@@ -31,7 +31,7 @@ function ValidationRecords({ validation }: { validation: OwnerDeliveryValidation
   </li>)}</ul><p className="mt-2 text-xs text-muted-foreground">以上为绑定该版本的历史验证记录，上次核对：{new Date(validation.checkedAt).toLocaleString('zh-CN')}。</p></div>
 }
 
-export function OwnerDeliveredArtifact({ item, validation, onRequestChanges, feedbackDisabled = false, feedbackCapacity = 4000 }: { item: OwnerManagementDelivery['items'][number]; validation?: OwnerDeliveryValidationRecord; onRequestChanges?: (excerpt?: string, intent?: 'question' | 'change') => void; feedbackDisabled?: boolean; feedbackCapacity?: number }): React.ReactElement {
+export function OwnerDeliveredArtifact({ item, validation, onRequestChanges, feedbackDisabled = false, feedbackCapacity = 4000, source = 'conversation' }: { item: OwnerManagementDelivery['items'][number]; validation?: OwnerDeliveryValidationRecord; onRequestChanges?: (excerpt?: string, intent?: 'question' | 'change') => void; feedbackDisabled?: boolean; feedbackCapacity?: number; source?: 'conversation' | 'chain' }): React.ReactElement {
   const html = extractDeliveredHtml(item.content)
   const previewAtom = useMemo(() => atom<{ hash: string; visible: boolean; viewport: 'adaptive' | 'mobile' }>({ hash: '', visible: false, viewport: 'adaptive' }), [])
   const [preview, setPreview] = useAtom(previewAtom)
@@ -64,7 +64,7 @@ export function OwnerDeliveredArtifact({ item, validation, onRequestChanges, fee
       <div className="flex gap-2">
         <button type="button" className="rounded-lg bg-primary/10 px-3 py-1.5 text-sm text-primary" onClick={() => downloadArtifact(item.title, item.content, 'md')}>下载原文</button>
         {html && <button type="button" className="rounded-lg bg-muted px-3 py-1.5 text-sm" onClick={() => setPreview({ hash: item.artifactHash, visible: !showPreview, viewport: preview.hash === item.artifactHash ? preview.viewport : 'adaptive' })}>{showPreview ? '关闭预览' : '静态预览'}</button>}
-        {onRequestChanges && <button type="button" disabled={feedbackDisabled} className="rounded-lg bg-primary/10 px-3 py-1.5 text-sm text-primary disabled:opacity-50" onClick={() => onRequestChanges()}>针对这个版本提出修改</button>}
+        {onRequestChanges && source === 'conversation' && <button type="button" disabled={feedbackDisabled} className="rounded-lg bg-primary/10 px-3 py-1.5 text-sm text-primary disabled:opacity-50" onClick={() => onRequestChanges()}>针对这个版本提出修改</button>}
         {html && <button type="button" className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground" onClick={() => downloadArtifact(item.title, html, 'html')}>下载 HTML</button>}
       </div>
     </div>
@@ -73,9 +73,9 @@ export function OwnerDeliveredArtifact({ item, validation, onRequestChanges, fee
       <div><p className="font-medium">完成标准</p>{item.acceptanceCriteria.length ? <ul className="mt-1 list-disc pl-5">{item.acceptanceCriteria.map((criterion, index) => <li key={`${index}-${criterion}`}>{criterion}</li>)}</ul> : <p className="mt-1 text-muted-foreground">此版本未附带完成标准。</p>}</div>
       <p><span className="font-medium">独立评审：</span>{item.reviewerSummary || '未附带评审摘要'}</p>
       <p><span className="font-medium">Owner 内部审阅：</span>{item.ownerDecision || '未附带审阅摘要'}</p>
-      {validation?.validations.length ? <ValidationRecords validation={validation} /> : <p className="text-xs text-muted-foreground">本卡片未展示独立的运行或浏览器验证记录；不能据此认定运行验证通过。</p>}
+      {validation?.unavailable ? <p role="alert" className="text-xs text-destructive">当前研发成果的验证来源无法核对，不能据此认可通过。</p> : validation?.validations.length ? <ValidationRecords validation={validation} /> : <p className="text-xs text-muted-foreground">本卡片未展示独立的运行或浏览器验证记录；不能据此认定运行验证通过。</p>}
     </section>
-    {html && <p className="text-sm text-muted-foreground">源码已保存在本对话中。下载 HTML 后可用浏览器打开；运行验证情况以当前版本的验证记录为准。</p>}
+    {html && <p className="text-sm text-muted-foreground">源码已保存在{source === 'chain' ? '项目交付记录' : '本对话'}中。下载 HTML 后可用浏览器打开；运行验证情况以当前版本的验证记录为准。</p>}
     <div><p className="mb-2 text-xs font-medium text-muted-foreground">成果正文</p><pre ref={contentRef} onMouseUp={captureSelection} onKeyUp={captureSelection} className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/50 p-3 font-sans text-sm">{item.content}</pre>{selection.hash === item.artifactHash && selection.tooLong && <p className="mt-2 text-xs text-destructive">选中片段超过 300 字，请缩小选区。</p>}{onRequestChanges && selection.hash === item.artifactHash && selection.text && <div className="mt-2 space-y-2 rounded-lg bg-primary/5 p-3"><p className="text-xs text-muted-foreground">已选中内容，可连同本成果版本提问或提交修改意见。</p><p className="break-words text-sm">{selection.text}</p><button type="button" disabled={feedbackDisabled || selection.text.length + 20 > feedbackCapacity} className="rounded-lg bg-primary/10 px-3 py-1.5 text-sm text-primary disabled:opacity-50" onClick={() => onRequestChanges(selection.text)}>针对选中内容提出修改</button><button type="button" disabled={feedbackDisabled || selection.text.length + 20 > feedbackCapacity} className="ml-2 rounded-lg bg-muted px-3 py-1.5 text-sm disabled:opacity-50" onClick={() => onRequestChanges(selection.text, 'question')}>针对选中内容提问</button>{selection.text.length + 20 > feedbackCapacity && <p className="text-xs text-destructive">当前草稿空间不足，请精简后再引用。</p>}</div>}</div>
     {showPreview && previewHtml && <div className="overflow-hidden rounded-xl bg-muted/40 p-2">
       <p className="px-1 pb-2 text-xs text-muted-foreground">静态预览不运行成果脚本或加载外部资源；点击画面文字可选择反馈片段。交互效果请在可信环境中验证。</p>

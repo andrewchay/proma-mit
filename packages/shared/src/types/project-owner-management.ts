@@ -39,7 +39,8 @@ export interface OwnerManagementMessage {
   executionObservation?: OwnerExecutionObservation
   delivery?: OwnerManagementDelivery
   deliveryReference?: OwnerManagementDeliveryReference
-  deliveryReviewDecision?: 'accepted' | 'changes_requested'
+  deliveryReviewDecision?: 'accepted' | 'changes_requested' | 'deferred'
+  chainReview?: { requestHash: string; draftId: string; version: number; choice: 'accept' | 'reject' | 'later' }
   content: string
   taskId?: string
   goalRevision?: number
@@ -101,7 +102,19 @@ export interface OwnerDeliveryValidationRecord {
   stepKey: string
   artifactHash: string
   checkedAt: number
+  /** 已识别研发交付，但无法重建完整验证来源。 */
+  unavailable?: boolean
   validations: Array<{ command: string; status: string; finishedAt?: number; expired: boolean; outputSha256: string; freshness: 'fresh' | 'stale' | 'legacy' | 'unknown'; method?: 'command' | 'browser_assertions'; checks?: import('./development-review').DevelopmentValidationCheck[] }>
+}
+
+/** 已记录的验证证据无法支持当前版本时，不得把它展示为可直接通过。 */
+export function ownerDeliveryValidationBlocker(record?: OwnerDeliveryValidationRecord): string | null {
+  if (record?.unavailable) return '当前成果的验证证据无法核对，需先检查交付来源。'
+  if (!record?.validations.length) return null
+  if (record.validations.some(validation => validation.status !== 'passed')) return '已记录的验证未通过，需先核对结果。'
+  if (record.validations.some(validation => validation.expired)) return '当前成果的验证证据已过期，需先重新核对。'
+  if (record.validations.some(validation => validation.freshness !== 'fresh')) return '验证证据与当前成果的来源无法确认，需先核对。'
+  return null
 }
 
 export type OwnerManagementTracePhase = 'assignment_preparation' | 'assignment_run' | 'execution_start' | 'executor' | 'reviewer' | 'owner_quality' | 'owner_response'
@@ -153,7 +166,7 @@ export interface SendOwnerManagementMessageRequest {
   expectedGoalRevision: number
   content: string
   deliveryReference?: OwnerManagementDeliveryReference
-  deliveryReviewDecision?: 'accepted' | 'changes_requested'
+  deliveryReviewDecision?: 'accepted' | 'changes_requested' | 'deferred'
 }
 
 export interface OwnerConversationGoalContent { objective: string; constraints: string[]; acceptanceCriteria: string[] }

@@ -15,7 +15,7 @@ import { ProjectOwnerConversationProgress } from './ProjectOwnerConversationProg
 
 const actionClass = 'rounded-xl bg-primary px-4 py-2.5 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50'
 /** 对话由已保存的目标/配置/Run重建；未保存输入沿用按主体隔离的Jotai草案。 */
-export function ProjectOwnerConversation({ projectId, taskId }: { projectId: string; taskId?: string }): React.ReactElement {
+export function ProjectOwnerConversation({ projectId, taskId, showProjectDetails, projectDetailsKind, onProjectDetailsHost, onShowOwner }: { projectId: string; taskId?: string; showProjectDetails?: boolean; projectDetailsKind?: 'tasks' | 'chain' | 'knowledge' | 'pilot'; onProjectDetailsHost?: React.RefCallback<HTMLDivElement>; onShowOwner?: () => void }): React.ReactElement {
   const subject = useMemo(() => ({ projectId, ...(taskId ? { taskId } : {}) }), [projectId, taskId])
   const view = useMemo(() => atom(get => ({ goal: getOwnerGoalEditor(get(ownerGoalEditorsAtom), subject), setup: getOwnerSetupState(get(ownerSetupStatesAtom), subject), plan: getOwnerPlanEditor(get(ownerPlanEditorsAtom), subject), delegation: getOwnerDelegationEditor(get(ownerDelegationEditorsAtom), subject) })), [subject])
   const { goal, setup, plan, delegation } = useAtomValue(view)
@@ -55,11 +55,11 @@ export function ProjectOwnerConversation({ projectId, taskId }: { projectId: str
   }, [autoPrepareKey, busy, canAutoPrepare, confirm, subject])
   const change = (patch: Parameters<typeof editSetup>[0]['patch']) => editSetup({ subject, patch })
   const submitGoal = () => saveGoal(subject)
-  return <section className="min-w-0 space-y-5 rounded-2xl bg-card p-5 shadow-sm sm:p-6" aria-label="Owner对话式配置">
-    <div className="flex items-center gap-3">
+  return <section className="min-w-0 space-y-5 p-4 sm:p-6" aria-label="Owner对话式配置">
+    {!goalReady && <div className="flex items-center gap-3">
       <span className="flex size-10 items-center justify-center rounded-2xl bg-primary/10 text-primary"><MessageCircle className="size-5" aria-hidden="true" /></span>
       <div><h2 className="text-lg font-semibold">项目 Owner</h2><p className="text-xs text-muted-foreground">告诉我目标和约束，我会与你讨论方案并组织推进。</p></div>
-    </div>
+    </div>}
     <div className="space-y-5">
       {!goal.snapshot && <div className="rounded-2xl rounded-tl-sm bg-muted/60 px-4 py-3 text-sm leading-6">
         {taskId ? '这项任务完成后，你希望得到什么结果？' : '你希望这个项目达成什么结果？'}已有的限制和完成标准也可以一起告诉我。
@@ -83,7 +83,7 @@ export function ProjectOwnerConversation({ projectId, taskId }: { projectId: str
         {(goal.conflict || goal.requiresReview) && <ProjectOwnerGoalPanel projectId={projectId} taskId={taskId} includePlanningPanels={false} />}
         <div className="flex flex-wrap items-center gap-3"><button className={actionClass} type="submit" disabled={!canSubmitGoal}>{goal.snapshot ? '保存目标修改' : '提交目标'}</button><span className="text-xs text-muted-foreground">这里修改的是项目正式目标，会影响后续方案和执行范围；保存后，当前目标与方案会更新，必要时会请你重新确认。</span></div>
       </form>}
-      {goalReady && currentGoal && <OwnerManagementConversation projectId={projectId} taskId={taskId}
+      {goalReady && currentGoal && <OwnerManagementConversation projectId={projectId} taskId={taskId} showProjectDetails={showProjectDetails} projectDetailsKind={projectDetailsKind} onProjectDetailsHost={onProjectDetailsHost} onShowOwner={onShowOwner}
         workspaceName={workspace?.name}
         currentFocus={<>
           <section className="min-w-0 rounded-xl bg-primary/5 p-4 [overflow-wrap:anywhere]" aria-label="当前项目目标">
