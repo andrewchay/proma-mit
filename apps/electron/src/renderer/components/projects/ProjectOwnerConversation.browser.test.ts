@@ -48,6 +48,7 @@ const rootNode=createRoot(document.getElementById('root'));rootNode.render(<Prov
     expect(await page.getByText('费用与持续管理设置（需要时再确认）', { exact: true }).count()).toBe(0)
     expect(await page.getByRole('checkbox', { name: /持续推进本项目/ }).count()).toBe(0)
     await page.getByRole('button', { name: '提交目标', exact: true }).click()
+    await page.getByText('目标与方案', { exact: true }).click()
     await page.getByRole('button', { name: '调整目标' }).waitFor()
     expect(await page.getByLabel('希望达成的目标').count()).toBe(0)
     expect(await page.getByLabel('Owner当前工作台').innerText()).toContain('项目目标')
@@ -63,6 +64,7 @@ const rootNode=createRoot(document.getElementById('root'));rootNode.render(<Prov
     await page.goto(`http://127.0.0.1:${server.port}/?expired`)
     await page.getByLabel('希望达成的目标').fill('续接已有项目与委托')
     await page.getByRole('button', { name: '提交目标', exact: true }).click()
+    await page.getByText('目标与方案', { exact: true }).click()
     await page.getByRole('button', { name: '调整目标' }).waitFor()
     expect(await page.getByLabel('Owner管理委托').count()).toBe(1)
     // 模型设置可展开更换；添加渠道不等于切换 Owner。

@@ -197,7 +197,11 @@ export async function runPackageDesignSmoke(root: string): Promise<Record<string
     // 否则面板 display:none，后续 body.innerText 可见性断言会漏掉其中的内容。
     await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent?.trim() === '与 Owner 讨论')?.click()`, true)
     await waitRenderer(window, `document.querySelector('details[aria-label="设计任务草稿"]')`, '设计任务草稿出现')
-    await window.webContents.executeJavaScript(`document.querySelector('details[aria-label="设计任务草稿"] > summary').click()`, true)
+    await window.webContents.executeJavaScript(`(() => {
+      const brief = document.querySelector('details[aria-label="设计任务草稿"]')
+      for (let parent = brief?.parentElement; parent; parent = parent.parentElement) if (parent instanceof HTMLDetailsElement) parent.open = true
+      if (brief instanceof HTMLDetailsElement) brief.open = true
+    })()`, true)
     await waitRenderer(window, `document.querySelector('details[aria-label="设计任务草稿"] select')`, '设计参考选择器出现')
     await window.webContents.executeJavaScript(`(() => {
       const labels = [...document.querySelectorAll('label')]
@@ -216,6 +220,7 @@ export async function runPackageDesignSmoke(root: string): Promise<Record<string
     const hasInstallPreview = await window.webContents.executeJavaScript(`document.querySelector('[aria-label="确认 OpenDesign 安装"]') instanceof HTMLElement`, true)
     const installPreviewStatus = await window.webContents.executeJavaScript(`document.querySelector('details[aria-label="设计任务草稿"] [role="status"]')?.textContent?.trim() ?? ''`, true)
     assert(hasInstallPreview, `Owner 安装预览失败：${installPreviewStatus || '没有返回预览结果'}`)
+    await window.webContents.executeJavaScript(`(() => { for (let parent = document.querySelector('[aria-label="确认 OpenDesign 安装"]')?.parentElement; parent; parent = parent.parentElement) if (parent instanceof HTMLDetailsElement) parent.open = true })()`, true)
     assert((await window.webContents.executeJavaScript(`document.querySelector('[aria-label="确认 OpenDesign 安装"]').innerText`, true)).includes(smokeOwnerWorkspace.name), '确认卡片未显示实际绑定的 Owner 工作区')
     await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent === '确认安装').click()`, true)
     await waitRenderer(window, `document.querySelector('details[aria-label="设计任务草稿"] [role="status"]')?.textContent.includes('已安装到 Owner 工作区')`, 'Owner 安装成功状态')
@@ -235,6 +240,8 @@ export async function runPackageDesignSmoke(root: string): Promise<Record<string
         launcher.click()
       }
       const brief = document.querySelector('details[aria-label="设计任务草稿"]')
+      const history = brief?.closest('details:not([aria-label])')
+      if (history instanceof HTMLDetailsElement) history.open = true
       if (brief instanceof HTMLDetailsElement) brief.open = true
     })()`, true)
     await waitRenderer(window, `document.body.innerText.includes('目标存在冲突')`, '重复安装冲突提示')
