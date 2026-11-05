@@ -12,6 +12,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, lstatSync, mkdirSync } from 'node:fs'
+import { devNull } from 'node:os'
 import { join } from 'node:path'
 import type { AgentWorkspace } from '@gravitas/shared'
 import { createAgentWorkspace } from './agent-workspace-manager'
@@ -25,18 +26,23 @@ import { getConfigDir } from './config-paths'
 export function isGitRepositoryWithHead(rootPath: string): boolean {
   if (!existsSync(join(rootPath, '.git'))) return false
   try {
-    execFileSync('git', ['-C', rootPath, 'rev-parse', '--verify', 'HEAD'], { stdio: 'ignore', timeout: 5_000 })
+    execFileSync('git', ['-C', rootPath, 'rev-parse', '--verify', 'HEAD'], { stdio: 'ignore', timeout: 5_000, env: isolatedGitEnvironment() })
     return true
   } catch {
     return false
   }
 }
 
+function isolatedGitEnvironment(): NodeJS.ProcessEnv {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GIT_')))
+  return { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: devNull, GIT_TERMINAL_PROMPT: '0' }
+}
+
 function git(rootPath: string, args: string[]): void {
-  execFileSync('git', ['-C', rootPath, ...args], {
+  execFileSync('git', ['-C', rootPath, '-c', `core.hooksPath=${devNull}`, '-c', 'init.templateDir=', ...args], {
     stdio: 'ignore',
     timeout: 15_000,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    env: isolatedGitEnvironment(),
   })
 }
 
