@@ -74,3 +74,5 @@ apps/electron/resources/dynamic-island/macos/island.node
 # 且可能含凭据。只保留摘要与结论到受版本控制的文档，原始证据留在本地。
 .context/glm-real-acceptance/
 .context/package-smoke-evidence/
+# esbuild 构建产物
+tools/match3-assertion-check/driver.cjs

@@ -1,0 +1,16 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><title>坏棋盘</title>
+<style>#board{display:grid;grid-template-columns:repeat(8,32px);gap:2px}.cell{width:32px;height:32px;background:#f4f4f4}</style>
+</head><body>
+<p>分数 <span id="score">0</span></p>
+<div id="board"></div>
+<script>
+// 复现历史缺陷形态：64 格但没有任何棋子
+const board = document.getElementById('board')
+for (let index = 0; index < 64; index += 1) {
+  const cell = document.createElement('div')
+  cell.className = 'cell'
+  board.appendChild(cell)
+}
+</script>
+</body></html>
