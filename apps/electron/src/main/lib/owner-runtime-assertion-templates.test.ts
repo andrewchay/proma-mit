@@ -33,6 +33,16 @@ describe('内置运行验证断言模板', () => {
     expect(selectOwnerRuntimeAssertionTemplates(['随便看看这个作品']).map(template => template.id)).toEqual(['html.loads', 'dom.board', 'dom.initial-tiles'])
   })
 
+  test('Given 三消意图 When 选择模板 Then 命中三消断言且不混入16格棋盘', () => {
+    // 注意：意图里的“棋盘”一词仍会命中 2048 的 dom.board；真实安排路径由模型显式选择断言标识，不经意图匹配。
+    const ids = selectOwnerRuntimeAssertionTemplates(['三消棋子可以交换并消除']).map(template => template.id)
+    expect(ids).toContain('match3.board')
+    expect(ids).toContain('match3.swap')
+    expect(ids).toContain('match3.score')
+    expect(ids).not.toContain('dom.board')
+    expect(ids).not.toContain('behavior.merge')
+  })
+
   test('Given 全部模板 When 检查脚本 Then 不发起网络请求也不写文件', () => {
     for (const template of OWNER_RUNTIME_ASSERTION_TEMPLATES) {
       expect(template.script).not.toMatch(/fetch\s*\(|XMLHttpRequest|WebSocket|node:fs|require\s*\(/)
