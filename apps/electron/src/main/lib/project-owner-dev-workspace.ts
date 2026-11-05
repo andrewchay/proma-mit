@@ -11,7 +11,7 @@
  * - 只做空初始提交，不预置任何业务文件，也不自动提交后续改动。
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { AgentWorkspace } from '@gravitas/shared'
 import { createAgentWorkspace } from './agent-workspace-manager'
@@ -43,9 +43,23 @@ function git(rootPath: string, args: string[]): void {
 /** 为 Owner 专用工作区建立带 Git 基线的本地仓库目录；基线不可用时回退为托管工作区。 */
 export function createOwnerDedicatedWorkspace(name: string): AgentWorkspace {
   const trimmed = name.trim()
-  if (!trimmed || trimmed.length > 100) throw new Error('Owner工作区名称无效')
   const slug = trimmed.toLowerCase()
-  const repoRoot = join(getConfigDir(), 'owner-dev-repos', slug)
+  if (trimmed.length > 100 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) throw new Error('Owner工作区名称无效')
+  const reposDir = join(getConfigDir(), 'owner-dev-repos')
+  const repoRoot = join(reposDir, slug)
+  // 不让预先放置的符号链接将建仓操作导向受管目录之外。
+  for (const path of [reposDir, repoRoot]) {
+    try {
+      if (!lstatSync(path).isDirectory()) throw new Error('Owner工作区目录不安全')
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') throw cause
+    }
+  }
+  try {
+    if (!lstatSync(join(repoRoot, '.git')).isDirectory()) throw new Error('Owner工作区目录不安全')
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') throw cause
+  }
   try {
     ensureGitBaseline(repoRoot)
   } catch (cause) {

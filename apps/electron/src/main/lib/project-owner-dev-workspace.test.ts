@@ -1,6 +1,6 @@
 import { afterAll, expect, mock, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildElectronMock } from './testing/electron-mock'
@@ -43,6 +43,23 @@ test('Given 上次中断留下半成品仓库 When 再次创建 Then 补齐基�
 test('Given 名称空白或超长 When 创建Owner专用工作区 Then 拒绝且不产生目录', () => {
   expect(() => createOwnerDedicatedWorkspace('   ')).toThrow('Owner工作区名称无效')
   expect(() => createOwnerDedicatedWorkspace(`Owner-${'x'.repeat(101)}`)).toThrow('Owner工作区名称无效')
+})
+
+test('Given 不安全名称 When 创建工作区 Then 拒绝且不在受管目录外建仓', () => {
+  for (const name of ['../escaped', '../../escaped', 'a/b', 'a\\b', '.', '..']) {
+    expect(() => createOwnerDedicatedWorkspace(name)).toThrow('Owner工作区名称无效')
+  }
+  expect(existsSync(join(getConfigDir(), 'escaped'))).toBe(false)
+})
+
+test('Given 工作区目录是符号链接 When 创建 Then 拒绝且不在目标目录建仓', () => {
+  const target = join(directory, 'link-target')
+  const parent = join(getConfigDir(), 'owner-dev-repos')
+  mkdirSync(target, { recursive: true })
+  mkdirSync(parent, { recursive: true })
+  symlinkSync(target, join(parent, 'owner-link'))
+  expect(() => createOwnerDedicatedWorkspace('owner-link')).toThrow('Owner工作区目录不安全')
+  expect(existsSync(join(target, '.git'))).toBe(false)
 })
 
 test('Given 同名工作区已存在 When 再次创建 Then 重名错误原样抛出而不是静默降级', () => {
