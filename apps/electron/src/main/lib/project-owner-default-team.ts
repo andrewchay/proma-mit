@@ -2,6 +2,8 @@ import templates from '../../../resources/employee-role-templates.json'
 import { listProjectWorkspaceBindings } from './project-workspace-bindings'
 import * as store from './project-sqlite-store'
 import { getOwnerRuntimeCarrierIds } from './project-owner-runtime-binding'
+import { getAgentWorkspace } from './agent-workspace-manager'
+import { isGitRepositoryWithHead } from './project-owner-dev-workspace'
 
 const REVIEWER_ROLE = 'delivery-verifier'
 
@@ -19,6 +21,10 @@ export function ensureOwnerDefaultTeam(projectId: string, binding: { carrierId: 
   // 老项目已有业务团队时尊重其配置；新建的 Owner 专用工作区才按方案自动落位默认岗位。
   if (existing.some((employee) => employee.id !== binding.carrierId && !ownerIds.has(employee.id)
     && (employee.workspaceIds ?? (employee.workspaceId ? [employee.workspaceId] : [])).includes(binding.workspaceId))) return false
+  // 工作区具备 Git 基线时提供研发员工，安排阶段才能选择 development 执行方式产出真实文件与运行证据；
+  // 研发员工经冻结来源核验后可被收紧为受控文本调用，两种执行方式都可用。
+  const rootPath = getAgentWorkspace(binding.workspaceId)?.rootPath
+  const developmentReady = Boolean(rootPath && isGitRepositoryWithHead(rootPath))
   for (const { roleKey, reviewer } of wanted) {
     const template = definitions.get(roleKey)!
     store.createAgentEmployee({
@@ -31,7 +37,7 @@ export function ensureOwnerDefaultTeam(projectId: string, binding: { carrierId: 
       channelId: binding.channelId,
       modelId: binding.modelId,
       workspaceIds: [binding.workspaceId],
-      executionProfile: 'controlled',
+      executionProfile: developmentReady ? 'development' : 'controlled',
       permissionMode: 'safe',
     })
     created = true
