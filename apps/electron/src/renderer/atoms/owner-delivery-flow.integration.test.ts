@@ -410,6 +410,7 @@ const browserTest = existsSync(chromium.executablePath()) ? test : test.skip
 for (const managed of [false, true]) {
 browserTest(`Given真实任务服务与${managed ? 'Owner自主' : '旧手动'}模式 When最终确认与合成交付反馈 Then同页推进且反馈不扩权`, async () => {
   const f = fixture(), renderer = resolve(import.meta.dir, '..'), root = resolve(import.meta.dir, '../../../../..')
+  console.info(`[交付测试] ${managed ? '自主' : '手动'}：准备浏览器资源`)
   if (managed) authorizeProjectBudget(f)
   const goal = getOwnerGoalEditor(f.store.get(ownerGoalEditorsAtom), f.subject).snapshot
   const plan = getOwnerPlanEditor(f.store.get(ownerPlanEditorsAtom), f.subject)
@@ -480,13 +481,16 @@ store.sub(ownerMessageComposersAtom,()=>{const composer=getOwnerMessageComposer(
 createRoot(document.getElementById('root')).render(<Provider store={store}><ProjectOwnerDeliveryConversation projectId={subject.projectId} managed={${managed}} singleConfirmation={${managed}} ownerConversation={true}/><ProjectOwnerConversationProgress subject={subject}/></Provider>);
 `)
   await build({ entryPoints: [entry], outfile: join(directory, 'browser.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.png': 'dataurl' }, absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
+  console.info(`[交付测试] ${managed ? '自主' : '手动'}：启动浏览器`)
   const browser = await chromium.launch({ headless: true }), page = await browser.newPage({ viewport: { width: 390, height: 800 } })
   page.setDefaultTimeout(5000)
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
   try {
+    console.info(`[交付测试] ${managed ? '自主' : '手动'}：加载页面`)
     await page.clock.install()
     await page.goto(`http://127.0.0.1:${server.port}`)
+    console.info(`[交付测试] ${managed ? '自主' : '手动'}：页面已加载`)
     if (managed) {
       expect(await page.getByRole('button', { name: '确认方案并开始执行', exact: true }).count()).toBe(0)
       await page.getByText('完成标准：来源明确', { exact: true }).waitFor()
