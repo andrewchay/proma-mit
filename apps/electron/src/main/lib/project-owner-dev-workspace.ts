@@ -11,7 +11,8 @@
  * - 只做空初始提交，不预置任何业务文件，也不自动提交后续改动。
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync } from 'node:fs'
+import { devNull } from 'node:os'
 import { join } from 'node:path'
 import type { AgentWorkspace } from '@gravitas/shared'
 import { createAgentWorkspace } from './agent-workspace-manager'
@@ -25,27 +26,46 @@ import { getConfigDir } from './config-paths'
 export function isGitRepositoryWithHead(rootPath: string): boolean {
   if (!existsSync(join(rootPath, '.git'))) return false
   try {
-    execFileSync('git', ['-C', rootPath, 'rev-parse', '--verify', 'HEAD'], { stdio: 'ignore', timeout: 5_000 })
+    execFileSync('git', ['-C', rootPath, '-c', 'core.fsmonitor=false', 'rev-parse', '--verify', 'HEAD'], { stdio: 'ignore', timeout: 5_000, env: isolatedGitEnvironment() })
     return true
   } catch {
     return false
   }
 }
 
+function isolatedGitEnvironment(): NodeJS.ProcessEnv {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GIT_')))
+  return { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: devNull, GIT_TERMINAL_PROMPT: '0' }
+}
+
 function git(rootPath: string, args: string[]): void {
-  execFileSync('git', ['-C', rootPath, ...args], {
+  execFileSync('git', ['-C', rootPath, '-c', `core.hooksPath=${devNull}`, '-c', 'init.templateDir=', '-c', 'core.fsmonitor=false', '-c', 'commit.gpgsign=false', ...args], {
     stdio: 'ignore',
     timeout: 15_000,
-    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    env: isolatedGitEnvironment(),
   })
 }
 
 /** 为 Owner 专用工作区建立带 Git 基线的本地仓库目录；基线不可用时回退为托管工作区。 */
 export function createOwnerDedicatedWorkspace(name: string): AgentWorkspace {
   const trimmed = name.trim()
-  if (!trimmed || trimmed.length > 100) throw new Error('Owner工作区名称无效')
   const slug = trimmed.toLowerCase()
-  const repoRoot = join(getConfigDir(), 'owner-dev-repos', slug)
+  if (trimmed.length > 100 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) throw new Error('Owner工作区名称无效')
+  const reposDir = join(getConfigDir(), 'owner-dev-repos')
+  const repoRoot = join(reposDir, slug)
+  // 不让预先放置的符号链接将建仓操作导向受管目录之外。
+  for (const path of [reposDir, repoRoot]) {
+    try {
+      if (!lstatSync(path).isDirectory()) throw new Error('Owner工作区目录不安全')
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') throw cause
+    }
+  }
+  try {
+    if (!lstatSync(join(repoRoot, '.git')).isDirectory()) throw new Error('Owner工作区目录不安全')
+  } catch (cause) {
+    if ((cause as NodeJS.ErrnoException).code !== 'ENOENT') throw cause
+  }
   try {
     ensureGitBaseline(repoRoot)
   } catch (cause) {
