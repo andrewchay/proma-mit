@@ -869,6 +869,8 @@ export interface OwnerExecutionGrant extends OwnerExecutionGrantIssuePreview {
   grantId: string
   state: 'active' | 'paused' | 'needs_reconcile' | 'archived'
   issuedAt: number
+  /** 仅记录用户明确撤权的时间；其他暂停原因不填。 */
+  revokedAt?: number
 }
 export interface OwnerExecutionGrantRevokePreview {
   grantId: string
@@ -1087,8 +1089,14 @@ export interface OwnerExecutionAutonomousScheduleStatus {
   reviewFindings?: string[]
   nextAction?: OwnerExecutionNextAction
 }
+export interface OwnerDispatchControl { projectId: string; grantId: string; paused: boolean; revision: number; updatedAt: number | null }
+export interface OwnerDispatchControlEvent { projectId: string; grantId: string; paused: boolean; revision: number; createdAt: number }
+export interface SetOwnerDispatchControlRequest { projectId: string; grantId: string; paused: boolean; expectedRevision: number }
 export interface ProjectOwnerExecutionCommandApi {
   getOwnerAutonomousScheduleStatus: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerExecutionAutonomousScheduleStatus>>
+  getOwnerDispatchControl: (request: { projectId: string; grantId: string }) => Promise<ProjectOwnerGoalResult<OwnerDispatchControl>>
+  setOwnerDispatchControl: (request: SetOwnerDispatchControlRequest) => Promise<ProjectOwnerGoalResult<OwnerDispatchControl>>
+  listOwnerDispatchControlEvents: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerDispatchControlEvent[]>>
   previewOwnerExecutionCommandAck: (request: PreviewOwnerExecutionCommandAckRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionCommandAckPreview>>
   queueOwnerExecutionCommand: (request: QueueOwnerExecutionCommandRequest) => Promise<ProjectOwnerGoalResult<{ commandId: string; executionId: string }>>
   listOwnerExecutionCommands: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerExecutionCommandView[]>>

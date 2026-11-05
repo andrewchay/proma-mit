@@ -266,7 +266,7 @@
     },
     "packages/shared": {
       "name": "@gravitas/shared",
-      "version": "0.2.157",
+      "version": "0.2.158",
       "devDependencies": {
         "typescript": "^5.0.0",
       },
