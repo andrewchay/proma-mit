@@ -491,7 +491,8 @@ createRoot(document.getElementById('root')).render(<Provider store={store}><Proj
     // 自主场景不推进虚拟时间；仅手动交付场景需要快进轮询。
     if (!managed) await page.clock.install()
     console.info(`[交付测试] ${managed ? '自主' : '手动'}：打开页面`)
-    await page.goto(`http://127.0.0.1:${server.port}`)
+    // 只等待导航提交；后续界面断言会等待 React 渲染，避免页面持续请求阻塞 load 事件。
+    await page.goto(`http://127.0.0.1:${server.port}`, { waitUntil: 'commit', timeout: 15000 })
     console.info(`[交付测试] ${managed ? '自主' : '手动'}：页面已加载`)
     if (managed) {
       expect(await page.getByRole('button', { name: '确认方案并开始执行', exact: true }).count()).toBe(0)
