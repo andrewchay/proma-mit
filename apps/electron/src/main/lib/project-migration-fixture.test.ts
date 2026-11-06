@@ -73,10 +73,10 @@ afterAll(() => {
 })
 
 describe('旧库 fixture 迁移', () => {
-  test('Given 旧格式库 When 打开 Then 状态种子补齐预置五态', async () => {
+  test('Given 旧格式库 When 打开 Then 状态种子补齐预置六态', async () => {
     await initProjectDb()
     const statuses = listTaskStatuses('p-fix')
-    expect(statuses.map((s) => s.id)).toEqual(['draft', 'pending', 'in_progress', 'paused', 'completed'])
+    expect(statuses.map((s) => s.id)).toEqual(['draft', 'pending', 'in_progress', 'paused', 'completed', 'cancelled'])
     expect(statuses.every((s) => s.isBuiltin)).toBe(true)
   })
 
@@ -95,9 +95,9 @@ describe('旧库 fixture 迁移', () => {
     expect(task!.sortOrder).toBe(-CREATED_AT)
   })
 
-  test('Given 迁移完成 When 读看板 Then 返回五列且任务在 in_progress 列', () => {
+  test('Given 迁移完成 When 读看板 Then 返回六列且任务在 in_progress 列', () => {
     const board = getKanbanBoard('p-fix')
-    expect(board.columns.length).toBe(5)
+    expect(board.columns.length).toBe(6)
     const inProgress = board.columns.find((col) => col.status.id === 'in_progress')
     expect(inProgress?.tasks.map((t) => t.id)).toEqual(['task-old'])
   })

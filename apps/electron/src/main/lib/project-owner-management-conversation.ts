@@ -265,7 +265,10 @@ export function preparePendingOwnerConversation(projectId: string, taskId?: stri
       && source.planRevision === (plan?.revision ?? 0) && source.contextFingerprint === context.fingerprint) return true
   }
   const link = prepareOwnerPlanning(projectId, { requestId: `conversation:${message.id}${previousLink ? `:recovered:${binding.revision}:${goal.revision}:${plan?.revision ?? 0}` : ''}`, ...(taskId ? { taskId } : {}), conversationMessageId: message.id, expectedBindingRevision: binding.revision, expectedGoalRevision: goal.revision, expectedPlanRevision: plan?.revision ?? 0, expectedContextFingerprint: context.fingerprint })
-  appendOwnerManagementMessage({ projectId, eventId: `conversation-ready:${message.id}:${link.planningTaskId}`, role: 'assistant', kind: message.executionObservation || message.kind === 'file_change_observation' ? 'management_progress' : 'planning_confirmation', ...(taskId ? { taskId } : {}), planningTaskId: link.planningTaskId, content: message.kind === 'file_change_observation' ? '文件变化观察已记录。我会在已确认的管理范围内分析可能影响；许可不可用时保留观察并停等。' : message.kind === 'web_change_observation' ? '外部变化观察已记录。我会在已确认的管理范围内分析可能影响；许可不可用时保留观察并停等。' : message.executionObservation ? '员工的最新情况已记录。我会在已确认的管理范围内分析进展与问题；许可不可用时保留结果并停等。' : '消息已保存。我正在结合当前目标、方案和项目状态回应；若授权或费用状态阻止继续，我会在这里说明具体原因。聊天本身不修改目标、方案或执行许可。' })
+  // 普通用户消息不再落“已保存/处理中”占位回复：处理状态由运行 trace 与界面指示呈现，对话里只保留真实结果。
+  if (message.kind !== 'conversation') {
+    appendOwnerManagementMessage({ projectId, eventId: `conversation-ready:${message.id}:${link.planningTaskId}`, role: 'assistant', kind: message.executionObservation || message.kind === 'file_change_observation' ? 'management_progress' : 'planning_confirmation', ...(taskId ? { taskId } : {}), planningTaskId: link.planningTaskId, content: message.kind === 'file_change_observation' ? '文件变化观察已记录。我会在已确认的管理范围内分析可能影响；许可不可用时保留观察并停等。' : message.kind === 'web_change_observation' ? '外部变化观察已记录。我会在已确认的管理范围内分析可能影响；许可不可用时保留观察并停等。' : '员工的最新情况已记录。我会在已确认的管理范围内分析进展与问题；许可不可用时保留结果并停等。' })
+  }
   return true
 }
 

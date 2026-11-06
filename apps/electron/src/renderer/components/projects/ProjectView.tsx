@@ -656,7 +656,7 @@ function _MyWorkPanel({ memberId, fallbackUserId }: { memberId?: string; fallbac
           </div>
         </div>
         <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} className="rounded border bg-background px-2 py-1 text-sm">
-          <option value="all">全部状态</option><option value="pending">待处理</option><option value="in_progress">进行中</option><option value="paused">已暂停</option><option value="completed">已完成</option>
+          <option value="all">全部状态</option><option value="pending">待处理</option><option value="in_progress">进行中</option><option value="paused">已暂停</option><option value="completed">已完成</option><option value="cancelled">已取消</option>
         </select>
       </div>
       {mode === 'received' && !memberId && (
@@ -977,12 +977,12 @@ function ProjectDetail({
   const [detailTab, setDetailTab] = useState<'pilot' | 'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain' | 'knowledge' | 'workspaces' | 'aicost' | 'web-watch'>('pilot')
   const visitedDetailTabs = React.useRef(new Set<string>())
   visitedDetailTabs.current.add(detailTab)
-  const [advancedDetailsOpen, setAdvancedDetailsOpen] = useState(false)
   const primaryTabAtom = useMemo(() => atom<'owner' | 'tasks' | 'chain' | 'knowledge' | 'pilot'>('owner'), [project.id])
   const [primaryTab, setPrimaryTab] = useAtom(primaryTabAtom)
+  // 详情区随一级页签直接展示；首次打开后保持挂载，避免看板与表单状态丢失。
+  const detailsActive = primaryTab !== 'owner'
   const [detailsHost, setDetailsHost] = useState<HTMLDivElement | null>(null)
   const [detailsWasOpened, setDetailsWasOpened] = useState(false)
-  const ownerTabRef = React.useRef<HTMLButtonElement>(null)
   const showOwner = useCallback(() => { setPrimaryTab('owner') }, [setPrimaryTab])
   const ownerNavigation = useAtomValue(ownerConversationNavigationAtom)
   useEffect(() => { if (ownerNavigation?.projectId === project.id) setDetailTab(ownerNavigation.taskId ? 'tasks' : 'pilot') }, [ownerNavigation, project.id])
@@ -1050,12 +1050,12 @@ function ProjectDetail({
 
   const ownerTasksRefreshed = useAtomValue(ownerTaskListRefreshSignalAtom)
   React.useEffect(() => {
-    if (advancedDetailsOpen && ownerTasksRefreshed?.projectId === project.id) void loadData()
-  }, [advancedDetailsOpen, ownerTasksRefreshed, project.id, loadData])
+    if (detailsActive && ownerTasksRefreshed?.projectId === project.id) void loadData()
+  }, [detailsActive, ownerTasksRefreshed, project.id, loadData])
 
   // PH2-③：AI 员工执行/活动变化时自动刷新项目数据（修复“已完成但显示进行中”)
   React.useEffect(() => {
-    if (!advancedDetailsOpen) return
+    if (!detailsActive) return
     const off = window.electronAPI?.paa?.project?.onProjectActivityChanged?.((payload) => {
       if (!payload?.projectId || payload.projectId === project.id) {
         void loadData()
@@ -1069,18 +1069,18 @@ function ProjectDetail({
       off?.()
       window.clearInterval(timer)
     }
-  }, [advancedDetailsOpen, loadData, project.id])
+  }, [detailsActive, loadData, project.id])
 
   // 外部轮询状态变化 → 刷新（变化由全局 ProjectPollListenersInitializer 写入 atom，此处只消费本项目）
   const pollChanged = useAtomValue(pollStatusChangedAtom)
   const lastPollAtRef = React.useRef(0)
   React.useEffect(() => {
-    if (!advancedDetailsOpen || !pollChanged || pollChanged.at === lastPollAtRef.current) return
+    if (!detailsActive || !pollChanged || pollChanged.at === lastPollAtRef.current) return
     lastPollAtRef.current = pollChanged.at
     if (pollChanged.projectId === project.id) {
       void loadData()
     }
-  }, [advancedDetailsOpen, pollChanged, project.id, loadData])
+  }, [detailsActive, pollChanged, project.id, loadData])
 
   const handleSaveProject = async () => {
     if (!editTitle.trim()) return
@@ -1149,8 +1149,8 @@ function ProjectDetail({
   }
 
   useEffect(() => {
-    if (advancedDetailsOpen) void loadData()
-  }, [advancedDetailsOpen, loadData])
+    if (detailsActive) void loadData()
+  }, [detailsActive, loadData])
 
   const handleStartPolling = async (platform: 'feishu' | 'dingtalk') => {
     const key = `${platform}`
@@ -1191,6 +1191,7 @@ function ProjectDetail({
       }>('generateRiskReport', project.id)
       setRiskReport(report)
       setDetailTab('risk')
+      setPrimaryTab('pilot')
     } catch (err) {
       console.error('生成风险报告失败:', err)
       alert('生成风险报告失败: ' + (err instanceof Error ? err.message : String(err)))
@@ -1279,14 +1280,12 @@ function ProjectDetail({
           <div className="mb-6 space-y-4">
             <div><h2 className="text-xl font-semibold">{project.title}</h2>{project.description && <p className="mt-1 text-sm text-muted-foreground">{project.description}</p>}</div>
             <nav role="tablist" aria-label="项目导航" className="flex gap-6 border-b border-border/50 text-sm">
-              <button ref={ownerTabRef} role="tab" aria-selected={primaryTab === 'owner'} type="button" className={primaryTab === 'owner' ? 'border-b-2 border-primary pb-3 font-medium' : 'border-b-2 border-transparent pb-3 text-muted-foreground hover:text-foreground'} onClick={showOwner}>Owner</button>
-              {([{ key: 'tasks', label: '任务' }, { key: 'chain', label: '成果' }, { key: 'knowledge', label: '资料' }, { key: 'pilot', label: '更多' }] as const).map(item => <button role="tab" aria-selected={primaryTab === item.key} key={item.key} type="button" className={primaryTab === item.key ? 'border-b-2 border-primary pb-3 font-medium' : 'border-b-2 border-transparent pb-3 text-muted-foreground hover:text-foreground'} onClick={() => { setDetailTab(item.key); setDetailsWasOpened(true); setAdvancedDetailsOpen(true); setPrimaryTab(item.key) }}>{item.label}</button>)}
+              <button role="tab" aria-selected={primaryTab === 'owner'} type="button" className={primaryTab === 'owner' ? 'border-b-2 border-primary pb-3 font-medium' : 'border-b-2 border-transparent pb-3 text-muted-foreground hover:text-foreground'} onClick={showOwner}>Owner</button>
+              {([{ key: 'tasks', label: '任务' }, { key: 'chain', label: '成果' }, { key: 'knowledge', label: '资料' }, { key: 'pilot', label: blockers.length > 0 ? `更多 · ${blockers.length} 项阻塞` : '更多' }] as const).map(item => <button role="tab" aria-selected={primaryTab === item.key} key={item.key} type="button" className={primaryTab === item.key ? 'border-b-2 border-primary pb-3 font-medium' : 'border-b-2 border-transparent pb-3 text-muted-foreground hover:text-foreground'} onClick={() => { setDetailTab(item.key); setDetailsWasOpened(true); setPrimaryTab(item.key) }}>{item.label}</button>)}
             </nav>
           </div>
           <ProjectOwnerHome projectId={project.id} showProjectDetails={primaryTab !== 'owner'} projectDetailsKind={primaryTab === 'owner' ? undefined : primaryTab} onProjectDetailsHost={setDetailsHost} onShowOwner={showOwner} />
-          <ProjectDetailsPlacement key={project.id} target={detailsHost} visible={primaryTab !== 'owner'}><details open={advancedDetailsOpen} className="mt-6 rounded-xl bg-card p-4 shadow-sm" onToggle={event => { const open = event.currentTarget.open; setAdvancedDetailsOpen(open); if (open) setDetailsWasOpened(true); if (!open && primaryTab !== 'owner') { setPrimaryTab('owner'); requestAnimationFrame(() => ownerTabRef.current?.focus()) } }}>
-            <summary className="cursor-pointer text-sm font-medium text-muted-foreground">任务与项目详情</summary>
-            {detailsWasOpened && <div hidden={!advancedDetailsOpen} className="mt-4">
+          <ProjectDetailsPlacement key={project.id} target={detailsHost} visible={detailsActive}>{detailsWasOpened && <div hidden={!detailsActive} className="mt-6 rounded-xl bg-card p-4 shadow-sm">
       {/* 项目操作栏 */}
       <div className="flex flex-wrap items-start justify-between gap-3 px-3 py-3">
         <div className="flex-1">
@@ -1402,14 +1401,11 @@ function ProjectDetail({
         </details>
       </div>
 
-      {/* 详情标签 */}
-      <details className="mx-3 rounded-lg bg-muted/30 px-3 py-2"><summary className="cursor-pointer text-xs font-medium text-muted-foreground">更多视图：看板、风险、成本等{blockers.length > 0 ? ` · ${blockers.length} 项阻塞` : ''}</summary><div className="flex flex-wrap gap-1 pt-2" aria-label="项目详情分类">
+      {/* 更多视图的二级页签：只在「更多」下展示；任务/成果/资料已由一级导航承载 */}
+      {primaryTab === 'pilot' && <div className="flex flex-wrap gap-1 px-3 pt-2 border-b" aria-label="项目详情分类">
         {([
           { key: 'pilot', label: '概览' },
           { key: 'web-watch', label: '外网扫描' },
-          { key: 'tasks', label: '任务' },
-          { key: 'chain', label: '交付详情' },
-          { key: 'knowledge', label: '知识' },
           { key: 'workspaces', label: '工作空间' },
           { key: 'notes', label: '会议纪要' },
           { key: 'board', label: '看板' },
@@ -1421,7 +1417,7 @@ function ProjectDetail({
         ] as const).map((tab) => (
           <button
             key={tab.key}
-            onClick={() => { setDetailTab(tab.key); setPrimaryTab(tab.key === 'tasks' || tab.key === 'chain' || tab.key === 'knowledge' ? tab.key : 'pilot') }}
+            onClick={() => setDetailTab(tab.key)}
             className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
               detailTab === tab.key
                 ? 'border-primary text-primary'
@@ -1438,7 +1434,7 @@ function ProjectDetail({
             )}
           </button>
         ))}
-      </div></details>
+      </div>}
 
       {todoRetries.length > 0 && (
         <div className="mx-6 mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
@@ -1489,8 +1485,10 @@ function ProjectDetail({
               subTaskId: task?.parentTaskId === task?.rootTaskId ? intent.sourceId : undefined,
             })
             setDetailTab('tasks')
+            setPrimaryTab('tasks')
           } else {
             setDetailTab('chain')
+            setPrimaryTab('chain')
           }
         }} />}
         {detailTab === 'web-watch' && <ProjectWebWatchPanel projectId={project.id} projectTitle={project.title} projectDescription={project.description} />}
@@ -1601,8 +1599,7 @@ function ProjectDetail({
           </div>
         )}
       </div>
-            </div>}
-          </details></ProjectDetailsPlacement>
+            </div>}</ProjectDetailsPlacement>
         </div>
       </main>
     </div>

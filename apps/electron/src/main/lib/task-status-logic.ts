@@ -3,7 +3,7 @@
  *
  * 状态语义组（借鉴 Plane StateGroup）：完成判断、WIP、燃尽等跨状态逻辑只认组，
  * 不认具体状态 id；具体状态是每项目的数据行（task_statuses 表，可自定义）。
- * 预置五态沿用旧字符串作 id，保证 tasks.status 历史数据零迁移。
+ * 预置六态沿用旧字符串作 id，保证 tasks.status 历史数据零迁移。
  */
 
 import type { TaskStateGroup, TaskStatusDef } from './project-types'
@@ -12,9 +12,9 @@ import type { TaskStateGroup, TaskStatusDef } from './project-types'
 export const TASK_STATE_GROUPS = ['backlog', 'unstarted', 'started', 'completed', 'cancelled', 'triage'] as const
 
 /** 预置状态 id（历史版本字面量，永远存在且不可删除） */
-export type BuiltinTaskStatusId = 'draft' | 'pending' | 'in_progress' | 'paused' | 'completed'
+export type BuiltinTaskStatusId = 'draft' | 'pending' | 'in_progress' | 'paused' | 'completed' | 'cancelled'
 
-export const BUILTIN_TASK_STATUS_IDS: BuiltinTaskStatusId[] = ['draft', 'pending', 'in_progress', 'paused', 'completed']
+export const BUILTIN_TASK_STATUS_IDS: BuiltinTaskStatusId[] = ['draft', 'pending', 'in_progress', 'paused', 'completed', 'cancelled']
 
 /** 预置状态的组归属（建库种子与未知状态兜底共用） */
 export const BUILTIN_STATUS_GROUPS: Record<BuiltinTaskStatusId, TaskStateGroup> = {
@@ -23,6 +23,7 @@ export const BUILTIN_STATUS_GROUPS: Record<BuiltinTaskStatusId, TaskStateGroup> 
   in_progress: 'started',
   paused: 'started',
   completed: 'completed',
+  cancelled: 'cancelled',
 }
 
 /** 草稿是流程外的待确认态（文档提取/AI 生成产物），始终按字面 id 识别 */
@@ -70,5 +71,6 @@ export function builtinTaskStatusSeed(): BuiltinStatusSeed[] {
     { id: 'in_progress', name: '进行中', stateGroup: 'started', position: 2, isDefault: false },
     { id: 'paused', name: '已暂停', stateGroup: 'started', position: 3, isDefault: false },
     { id: 'completed', name: '已完成', stateGroup: 'completed', position: 4, isDefault: false },
+    { id: 'cancelled', name: '已取消', stateGroup: 'cancelled', position: 5, isDefault: false },
   ]
 }

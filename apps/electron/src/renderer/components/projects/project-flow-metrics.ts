@@ -6,7 +6,7 @@ export interface FlowMetricTask {
   completedAt?: number
 }
 
-/** 状态语义组（与 task_statuses 定义对齐；缺省时按预置五态推断） */
+/** 状态语义组（与 task_statuses 定义对齐；缺省时按预置六态推断） */
 export type FlowStateGroup = 'backlog' | 'unstarted' | 'started' | 'completed' | 'cancelled' | 'triage'
 
 export interface FlowStatusDef {
@@ -26,7 +26,7 @@ export interface ProjectFlowMetrics {
 const DAY = 86_400_000
 const days = (duration: number): number => Math.round((duration / DAY) * 10) / 10
 
-/** 预置五态的组归属（未传状态定义时的兜底，与主进程 task-status-logic 一致；cancelled 为遗留字符串状态 id） */
+/** 预置六态的组归属（未传状态定义时的兜底，与主进程 task-status-logic 一致） */
 const BUILTIN_GROUPS: Record<string, FlowStateGroup> = {
   draft: 'backlog',
   pending: 'unstarted',

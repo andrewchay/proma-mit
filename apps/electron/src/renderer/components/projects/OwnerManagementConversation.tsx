@@ -241,6 +241,17 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const acceptanceHistory = (acceptanceChain?.events ?? []).filter(event => (event.action === 'accept' || event.action === 'reject') && !messages.some(message => message.chainReview?.draftId === event.entityId && message.chainReview.version === event.version && message.chainReview.choice === event.action) && [...(acceptanceChain?.draftHistory ?? []), ...(acceptanceChain?.drafts ?? [])].some(draft => draft.id === event.entityId && draft.version === event.version && (!taskId || draft.taskId === taskId) && usage.commands.some(command => command.taskId === draft.taskId && command.executionId === draft.executionId)))
   const ownerProcessing = (composer.sending || hasActiveTrace) && !waitingForUser
     && editor.view?.manager?.status !== 'paused' && delegation.view?.state !== 'stale' && delegation.view?.state !== 'attention'
+  // 普通对话不再落占位回复；当最新消息仍在等待 Owner 回应或回应运行在进行中时，像普通聊天一样显示正在处理。
+  const lastTimelineEntry = timeline.at(-1)
+  const lastTimelineMessage = lastTimelineEntry?.kind === 'message' ? lastTimelineEntry.message : undefined
+  const ownerResponseTrace = latestTraceByPhase.get('owner_response')
+  const ownerReplyRunning = Boolean(ownerResponseTrace && ['queued', 'started'].includes(ownerResponseTrace.state)
+    && !messages.some(message => message.role === 'assistant'
+      && ['reply', 'conversation', 'clarification', 'answer', 'plan_proposal', 'change_proposal', 'change_decision', 'delivery'].includes(message.kind)
+      && message.createdAt >= ownerResponseTrace.createdAt))
+  const showOwnerWorking = Boolean(editor.view?.manager && editor.view.manager.status === 'active'
+    && (composer.sending || ownerReplyRunning
+      || (lastTimelineMessage?.role === 'user' && lastTimelineMessage.deliveryReviewDecision !== 'deferred' && !lastTimelineMessage.teamWorkspaceApproval)))
   const revealDiscussionTarget = (target: string): void => {
     setDiscussionOpen(true)
     requestAnimationFrame(() => revealOwnerHistoryTarget(target))
@@ -460,6 +471,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
         </details>}
         <div className="space-y-3" aria-label="最新一轮对话">{latestEntries.map(renderTimelineEntry)}</div>
       </div>}
+      {showOwnerWorking && <p role="status" aria-label="Owner正在回复" className="mr-6 flex max-w-3xl items-center gap-2 rounded-2xl rounded-tl-sm bg-muted/60 px-4 py-3 text-sm text-muted-foreground shadow-sm"><span className="sidebar-breathe-dot sidebar-breathe-running size-2 flex-shrink-0 bg-current text-blue-500" />Owner 正在处理你的消息…</p>}
       {(editor.view?.manager || messages.some(message => message.kind === 'delivery' && message.delivery)) && <details className="rounded-xl bg-background/70 p-3"><summary className="cursor-pointer text-xs font-medium text-muted-foreground">设计任务草稿与交付记录</summary><div className="mt-3 space-y-3">{editor.view?.manager && <OwnerDesignBrief key={JSON.stringify([projectId, taskId ?? null])} projectId={projectId} disabled={composer.sending || Boolean(composer.pending)} onAdd={text => {
         const next = composer.text.trim() ? `${composer.text}\n\n${text}` : text
         if (next.length > 4000) return false

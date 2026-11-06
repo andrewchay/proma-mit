@@ -1681,7 +1681,7 @@ function migrate(database: SqliteCompat): void {
   }
   database.exec(`CREATE INDEX IF NOT EXISTS idx_tasks_assignee_member ON tasks(assignee_member_id)`)
 
-  // State 分组状态模型（借鉴 Plane）：每项目一组可自定义状态，预置五态沿用旧字符串 id
+  // State 分组状态模型（借鉴 Plane）：每项目一组可自定义状态，预置六态沿用旧字符串 id
   database.exec(`
     CREATE TABLE IF NOT EXISTS task_statuses (
       project_id TEXT NOT NULL,
@@ -1747,7 +1747,7 @@ function migrate(database: SqliteCompat): void {
     );
     CREATE INDEX IF NOT EXISTS idx_web_observation_feedback ON project_web_observation_feedback(project_id, created_at);
   `)
-  // 存量项目补种预置五态（幂等）
+  // 存量项目补种预置六态（幂等）
   const projectRows = database.prepare('SELECT id FROM projects').all() as Array<{ id: string }>
   for (const row of projectRows) {
     seedTaskStatusesForProject(database, row.id)
