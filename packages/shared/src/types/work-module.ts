@@ -447,7 +447,7 @@ export interface TaskUpdateInput {
   description?: string
   assignee?: { userId: string; displayName: string }
   priority?: 'low' | 'medium' | 'high' | 'critical'
-  /** 任务状态 id：预置五态（draft/pending/in_progress/paused/completed）或项目自定义状态 id */
+  /** 任务状态 id：预置六态（draft/pending/in_progress/paused/completed/cancelled）或项目自定义状态 id */
   status?: string
   dueDate?: number
   subTasks?: SubTaskInput[]
@@ -515,7 +515,7 @@ export interface UserMappingInput {
 /** 状态语义组（与主进程 project-types.TaskStateGroup 对齐） */
 export type ProjectTaskStateGroup = 'backlog' | 'unstarted' | 'started' | 'completed' | 'cancelled' | 'triage'
 
-/** 项目任务状态定义（每项目独立可自定义；预置五态 id 固定为 draft/pending/in_progress/paused/completed） */
+/** 项目任务状态定义（每项目独立可自定义；预置六态 id 固定为 draft/pending/in_progress/paused/completed/cancelled） */
 export interface ProjectTaskStatus {
   id: string
   projectId: string

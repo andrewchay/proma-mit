@@ -1,7 +1,7 @@
 /**
  * 看板列设置 — Kanban Column Settings
  *
- * 状态 CRUD 弹层：新建/改名/颜色/WIP 上限/组归属/删除（预置五态不可删）。
+ * 状态 CRUD 弹层：新建/改名/颜色/WIP 上限/组归属/删除（预置六态不可删）。
  * 删除自定义状态时任务迁移到指定状态。
  */
 import * as React from 'react'
@@ -239,7 +239,7 @@ export function KanbanColumnSettings({ projectId, statuses, onChanged, onClose }
         )}
 
         {customStatuses.length === 0 && !creating && (
-          <p className="text-xs text-muted-foreground">预置五态（草稿/待处理/进行中/已暂停/已完成）不可删除，可改名换色。</p>
+          <p className="text-xs text-muted-foreground">预置六态（草稿/待处理/进行中/已暂停/已完成/已取消）不可删除，可改名换色。</p>
         )}
       </div>
     </div>

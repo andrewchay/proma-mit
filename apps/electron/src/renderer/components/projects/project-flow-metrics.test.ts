@@ -53,7 +53,7 @@ test('Given 项目自定义状态 When 按语义组计算 Then WIP/完成跟随�
 describe('甘特时间条状态组着色', () => {
   const now = 100 * 86_400_000
 
-  test('Given 预置五态 When 着色 Then 跟随语义组而非字面 completed 判断', () => {
+  test('Given 预置六态 When 着色 Then 跟随语义组而非字面 completed 判断', () => {
     expect(ganttBarColor({ status: 'completed' }, { blocked: false, now })).toBe('bg-emerald-500')
     expect(ganttBarColor({ status: 'in_progress' }, { blocked: false, now })).toBe('bg-blue-500')
     expect(ganttBarColor({ status: 'paused' }, { blocked: false, now })).toBe('bg-blue-500')

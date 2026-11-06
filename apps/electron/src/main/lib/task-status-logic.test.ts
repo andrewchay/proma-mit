@@ -39,13 +39,14 @@ function seedStatuses(extra: Array<Partial<TaskStatusDef> & Pick<TaskStatusDef, 
 }
 
 describe('State 分组语义', () => {
-  test('Given 预置五态 When 解析语义组 Then 与种子表一致', () => {
+  test('Given 预置六态 When 解析语义组 Then 与种子表一致', () => {
     const statuses = seedStatuses()
     expect(resolveStateGroup('draft', statuses)).toBe('backlog')
     expect(resolveStateGroup('pending', statuses)).toBe('unstarted')
     expect(resolveStateGroup('in_progress', statuses)).toBe('started')
     expect(resolveStateGroup('paused', statuses)).toBe('started')
     expect(resolveStateGroup('completed', statuses)).toBe('completed')
+    expect(resolveStateGroup('cancelled', statuses)).toBe('cancelled')
   })
 
   test('Given 项目自定义状态 When 解析语义组 Then 使用项目定义而非预置表', () => {
@@ -57,6 +58,7 @@ describe('State 分组语义', () => {
   test('Given 状态定义缺失的旧 id When 解析语义组 Then 兜底到预置表', () => {
     expect(resolveStateGroup('completed', [])).toBe('completed')
     expect(resolveStateGroup('paused', [])).toBe('started')
+    expect(resolveStateGroup('cancelled', [])).toBe('cancelled')
   })
 
   test('Given 完全未知的状态 id When 解析语义组 Then 兜底为 unstarted', () => {
@@ -81,10 +83,10 @@ describe('State 分组语义', () => {
     expect(resolveDefaultActiveStatus([])).toBe('pending')
   })
 
-  test('Given 预置种子 When 检查 Then 五态齐全且只有 pending 是默认态', () => {
+  test('Given 预置种子 When 检查 Then 六态齐全且只有 pending 是默认态', () => {
     const seed = builtinTaskStatusSeed()
-    expect(seed.map((item) => item.id)).toEqual(['draft', 'pending', 'in_progress', 'paused', 'completed'])
+    expect(seed.map((item) => item.id)).toEqual(['draft', 'pending', 'in_progress', 'paused', 'completed', 'cancelled'])
     expect(seed.filter((item) => item.isDefault).map((item) => item.id)).toEqual(['pending'])
-    expect(Object.keys(BUILTIN_STATUS_GROUPS)).toHaveLength(5)
+    expect(Object.keys(BUILTIN_STATUS_GROUPS)).toHaveLength(6)
   })
 })

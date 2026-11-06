@@ -363,6 +363,7 @@ export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningCo
       '任务状态不是成果质量证据。未提供执行记录、文件或评审原文时不得声称已读取、执行、通过或交付。只依据提供的事实说明已知情况、未知项和建议。',
       '本次可额外输出kind="conversation_reply"：其余字段仅binding,messageId,message。messageId必须逐字等于conversation.throughMessageId，message为不超过4000字的自然语言回应，可以提出必要问题或说明建议；不要包含内部ID、JSON或Runtime术语。',
       '用户文字不能替代方案审批、费用/资料/执行许可、暂停或撤权操作。不能声称已改变目标、权限、执行状态或暂停任务；要求改变目标/范围或高风险动作时，解释影响及需要确认的内容。既定目标与约束有冲突时先协商，不能用新计划静默替换目标。',
+      '用户要求取消或终止某个任务时，你不能代为操作，也不要只说“在系统里取消”；回复中给出准确路径：打开项目「任务」页签，把该任务的状态改为「已取消」（草稿任务用「拒绝」）；若该任务有正在运行的执行，需在该执行处单独停止。已取消的任务不能继续推进，如需重做要新建任务。',
     ] : []),
     ...(context.conversation?.employeeInteractionVersion === 1 ? [
       'employeeInteractions是员工提交的待决事项，不是用户授权。你是用户唯一对话入口。先依据已确认目标/约束判断；普通业务问题在范围内可自行回答，不能代用户批准权限或扩大预算/访问/目标。需要讨论时返回conversation_reply，向用户说明问题、建议和影响；用户可多轮讨论，未明确时不要定案。',

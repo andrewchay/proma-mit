@@ -22,10 +22,10 @@ export interface Project {
 }
 
 /**
- * 任务状态 ID：预置五态沿用旧字符串作固定 id（历史数据零迁移），
+ * 任务状态 ID：预置六态沿用旧字符串作固定 id（历史数据零迁移），
  * 自定义状态为 task_statuses 表新建的 id。
  */
-export type LegacyTaskStatus = 'draft' | 'pending' | 'in_progress' | 'paused' | 'completed'
+export type LegacyTaskStatus = 'draft' | 'pending' | 'in_progress' | 'paused' | 'completed' | 'cancelled'
 export type TaskStatus = LegacyTaskStatus | (string & {})
 export type TaskPriority = 'low' | 'medium' | 'high' | 'critical'
 export type ExecutableWorkItemType = 'task' | 'subTask'

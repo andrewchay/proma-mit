@@ -656,7 +656,7 @@ function _MyWorkPanel({ memberId, fallbackUserId }: { memberId?: string; fallbac
           </div>
         </div>
         <select value={status} onChange={(event) => setStatus(event.target.value as typeof status)} className="rounded border bg-background px-2 py-1 text-sm">
-          <option value="all">全部状态</option><option value="pending">待处理</option><option value="in_progress">进行中</option><option value="paused">已暂停</option><option value="completed">已完成</option>
+          <option value="all">全部状态</option><option value="pending">待处理</option><option value="in_progress">进行中</option><option value="paused">已暂停</option><option value="completed">已完成</option><option value="cancelled">已取消</option>
         </select>
       </div>
       {mode === 'received' && !memberId && (
