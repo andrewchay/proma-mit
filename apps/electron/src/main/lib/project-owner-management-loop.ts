@@ -466,7 +466,10 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
           if (!['queued', 'running', 'completed'].includes(started.status)) throw new Error('管理运行尚未成功启动，请核对已有记录')
           const responseRun = Boolean(subject.conversationMessageId)
           appendOwnerManagementTrace({ eventId: `owner-run:${link.planning_task_id}:${started.status}`, projectId, ...(subject.targetTaskId ? { taskId: subject.targetTaskId } : {}), phase: responseRun ? 'owner_response' : 'assignment_run', state: started.status === 'queued' ? 'queued' : started.status === 'completed' ? 'completed' : 'started', createdAt: Date.now(), detailCode: started.status === 'completed' ? 'result_ready' : 'provider_pending' })
-          appendOwnerManagementMessage({ projectId, eventId: `delegation-start:${view.delegation!.id}:${link.planning_task_id}`, role: 'assistant', kind: 'management_progress', ...(subject.targetTaskId ? { taskId: subject.targetTaskId } : {}), planningTaskId: link.planning_task_id, content: started.status === 'queued' ? '已在你确认的管理额度内排队，等待可用运行位置。' : started.status === 'completed' ? '本次管理请求已完成，正在整理方案或需要与你商量的问题。' : responseRun ? '我正在处理你的补充或最新项目进展；完成后会在这里回应。' : '已在你确认的管理额度内启动规划。我会继续整理方案，有需要决定的问题会在这里与你商量。' })
+          // 对话回应的启动不再回写占位消息，排队与进行状态由 owner_response trace 和界面指示呈现。
+          if (!responseRun) {
+            appendOwnerManagementMessage({ projectId, eventId: `delegation-start:${view.delegation!.id}:${link.planning_task_id}`, role: 'assistant', kind: 'management_progress', ...(subject.targetTaskId ? { taskId: subject.targetTaskId } : {}), planningTaskId: link.planning_task_id, content: started.status === 'queued' ? '已在你确认的管理额度内排队，等待可用运行位置。' : started.status === 'completed' ? '本次管理请求已完成，正在整理方案或需要与你商量的问题。' : '已在你确认的管理额度内启动规划。我会继续整理方案，有需要决定的问题会在这里与你商量。' })
+          }
         } catch (cause) {
           console.warn('[Owner管理] 委托调用需要核对', cause)
           appendOwnerManagementMessage({ projectId, eventId: `delegation:${view.delegation!.id}:${link.planning_task_id}`, role: 'assistant', kind: 'attention', content: '管理调用尚未继续，当前来源、额度或运行需要核对。原目标与记录已保留，不会自动重试已发送请求。' })

@@ -110,8 +110,10 @@ test('Given管理配置变化使委托失效 When用户继续发消息 Then先�
 test('Given旧版遗留同源对话Link且没有执行记录 When Owner后台恢复 Then从原Link启动一次并回应原消息', async () => {
   const f = fixture(), saved = sendOwnerManagementMessage(f.message('如何了？')), grant = f.issue()
   expect(preparePendingOwnerConversation(f.project.id)).toBe(true)
-  const original = getOwnerManagementConversation(f.project.id).messages.find(item => item.eventId.startsWith(`conversation-ready:${saved.id}:`))!
-  const planningTaskId = original.planningTaskId!
+  // 普通对话不再产生“已保存/处理中”占位消息；规划链接仍可核对。
+  expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.eventId.startsWith(`conversation-ready:${saved.id}:`))).toBe(false)
+  const original = store.getProjectDb().prepare("SELECT planning_task_id FROM project_owner_planning_links WHERE project_id = ? AND json_extract(payload, '$.conversationMessageId') = ?").get(f.project.id, saved.id) as { planning_task_id: string } | undefined
+  const planningTaskId = original!.planning_task_id
   expect(resolveOwnerPlanningTask(planningTaskId)!.link.conversationMessageId).toBe(saved.id)
   expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(0)
   const stop = startOwnerManagementLoop()
@@ -134,7 +136,7 @@ test('Given旧版遗留同源对话Link且没有执行记录 When Owner后台恢
 test('Given旧授权失效且旧版已有未执行对话Link When后台对账并重新授权 Then先说明暂停且只续接原消息一次', async () => {
   const f = fixture(), previousGrant = f.issue(), saved = sendOwnerManagementMessage(f.message('如何了？'))
   expect(preparePendingOwnerConversation(f.project.id)).toBe(true)
-  expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.eventId.startsWith(`conversation-ready:${saved.id}:`))).toBe(true)
+  expect(store.getProjectDb().prepare("SELECT COUNT(*) AS c FROM project_owner_planning_links WHERE project_id = ? AND json_extract(payload, '$.conversationMessageId') = ?").get(f.project.id, saved.id)).toEqual({ c: 1 })
   expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(0)
 
   const binding = (await import('./project-owner-runtime-binding')).getOwnerRuntimeBinding(f.project.id)!
@@ -210,8 +212,7 @@ test('Given 已交付成果 When 用户选择稍后决定 Then 记录准确版�
   sendOwnerManagementMessage({ ...request, requestId: randomUUID() })
   expect(hasUnstartedOwnerConversation(f.project.id)).toBe(true)
   expect(preparePendingOwnerConversation(f.project.id)).toBe(true)
-  const ready = getOwnerManagementConversation(f.project.id).messages.find(item => item.eventId.startsWith(`conversation-ready:${ordinary.id}:`))
-  expect(ready).toBeDefined()
+  expect(store.getProjectDb().prepare("SELECT COUNT(*) AS c FROM project_owner_planning_links WHERE project_id = ? AND json_extract(payload, '$.conversationMessageId') = ?").get(f.project.id, ordinary.id)).toEqual({ c: 1 })
   delegation.revokeOwnerManagementDelegation(f.project.id, grant.id)
 })
 
@@ -273,7 +274,8 @@ test('Given有效持续对话委托 When离页后台回应并在途收到两条�
     expect(next.context.conversation!.messages.some(item => item.content === '目前仍在方案讨论阶段，尚无真实成果证据。')).toBe(true)
     const responseTrace = getOwnerManagementView(f.project.id).trace?.find(entry => entry.phase === 'owner_response' && entry.taskId === f.taskId)
     expect(responseTrace?.state).toBe('started')
-    expect(getOwnerManagementView(f.project.id).messages.some(item => item.content === '我正在处理你的补充或最新项目进展；完成后会在这里回应。')).toBe(true)
+    // 对话回应不再回写“正在处理”占位消息；进行状态由 owner_response trace 呈现。
+    expect(getOwnerManagementView(f.project.id).messages.some(item => item.content === '我正在处理你的补充或最新项目进展；完成后会在这里回应。')).toBe(false)
     finish(f)
     await until(() => getOwnerManagementConversation(f.project.id).messages.filter(item => item.kind === 'reply').length === 2)
     reconcileOwnerManagement(f.project.id)
@@ -342,11 +344,12 @@ test('Given历史管理委托未包含持续对话 When新消息到达及内部�
   legacy.previewHash = digest(body)
   store.getProjectDb().prepare('UPDATE project_owner_management_delegations SET payload=?,integrity_hash=? WHERE id=?').run(JSON.stringify(legacy), digest(legacy), grant.id)
   expect(delegation.getOwnerManagementDelegation(f.project.id).state).toBe('active')
-  sendOwnerManagementMessage(f.message('请回应这个问题'))
+  const savedMessage = sendOwnerManagementMessage(f.message('请回应这个问题'))
   const stop = startOwnerManagementLoop()
   try {
-    const taskId = getOwnerManagementConversation(f.project.id).messages.findLast(item => item.planningTaskId)?.planningTaskId!
-    expect(resolveOwnerPlanningTask(taskId)!.link.conversationMessageId).toBeTruthy()
+    const link = store.getProjectDb().prepare("SELECT planning_task_id FROM project_owner_planning_links WHERE project_id = ? AND json_extract(payload, '$.conversationMessageId') = ?").get(f.project.id, savedMessage.id) as { planning_task_id: string } | undefined
+    const taskId = link!.planning_task_id
+    expect(resolveOwnerPlanningTask(taskId)!.link.conversationMessageId).toBe(savedMessage.id)
     await expect(startDelegatedOwnerPlanningTask(taskId)).rejects.toThrow('旧管理委托')
     expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(0)
     expect(delegation.getOwnerManagementDelegation(f.project.id).usedRequests).toBe(0)
