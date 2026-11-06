@@ -34,18 +34,18 @@ Bun workspace monorepo：
 ```
 gravitas/
 ├── packages/
-│   ├── shared/         # 共享类型、IPC 常量、配置、工具函数 (v0.2.29)
+│   ├── shared/         # 共享类型、IPC 常量、配置、工具函数 (v0.2.160)
 │   ├── core/           # Provider 适配器、SSE、代码高亮 (v0.2.24)
 │   ├── ui/             # 共享 React UI 组件 (v0.1.4)
 │   └── context-store/  # 本地上下文图存储：实体-边-事实 + 全文检索 (v0.1.3)
 └── apps/
-    ├── electron/              # Electron 桌面应用（主形态）(v0.12.113)
+    ├── electron/              # Electron 桌面应用（主形态）(v0.13.562)
     │   └── src/
     │       ├── main/          # 主进程 + 服务层 (main/lib/)
     │       ├── preload/       # IPC 上下文桥接
     │       └── renderer/      # React UI (Vite + Tailwind + Radix UI)
-    ├── server/                # Web Agent 运行时（多租户）(v0.1.15)
-    ├── web/                   # Web 前端 (v0.1.2)
+    ├── server/                # Web Agent 运行时（多租户）(v0.1.41)
+    ├── web/                   # Web 前端 (v0.1.8)
     ├── executor/              # 隔离执行 worker（高危命令边界）(v0.1.2)
     └── subscription-service/  # 订阅与权益服务 (v0.1.0)
 ```
@@ -56,7 +56,7 @@ gravitas/
 
 ### 包职责详解
 
-#### @gravitas/shared (v0.2.29)
+#### @gravitas/shared (v0.2.160)
 - **导出模块**：`./types`、`./config`、`./utils`、`./constants/permission-rules`
 - **关键类型**：`AgentMessage`、`ChatMessage`、`Channel`、`PermissionRequest`、`PluginManifest`（types/ 下按域拆分：agent.ts 2000+ 行、plugin.ts、settings 等）
 - **依赖**：无运行时依赖（仅 TypeScript）
@@ -75,7 +75,7 @@ gravitas/
 #### @gravitas/context-store (v0.1.3)
 - **职责**：本地上下文图存储（实体-边-事实 + CJK bigram 检索），详见下文「context-store 设计规范」
 
-#### @gravitas/electron (v0.12.113)
+#### @gravitas/electron (v0.13.562)
 - **职责**：Electron 桌面应用主体（主形态），集成所有包
 - **关键依赖**：
   - `@larksuiteoapi/node-sdk` - 飞书集成
@@ -589,7 +589,7 @@ React UI 更新
 - ✅ **Chat 工具**：内置工具系统 + 动态加载
 - ✅ **Goal 状态层（借鉴 LoopX）**：长生命周期目标跨会话追踪，含 todos（所有权/声明）、用户门控（gate）、证据、配额；Goal 可绑定会话，会话完成自动沉淀证据
 - ✅ **Token 统计**：按会话/轮次/工具/Skill/MCP/模型维度统计 token 消耗（`~/.gravitas/token-usage/`）
-- ✅ **项目状态分组与拖拽看板（借鉴 Plane）**：每项目独立 task_statuses 表（预置五态沿用旧字符串 id，历史数据零迁移），跨状态逻辑只认六个语义组；@dnd-kit 拖拽一次落库改状态+顺序（中点法+重编号兜底），失败回滚提示；飞书/钉钉按语义组双向映射，回声抑制+排序不推外部
+- ✅ **项目状态分组与拖拽看板（借鉴 Plane）**：每项目独立 task_statuses 表（预置六态沿用旧字符串 id，历史数据零迁移，存量项目打开时幂等补种），跨状态逻辑只认六个语义组；@dnd-kit 拖拽一次落库改状态+顺序（中点法+重编号兜底），失败回滚提示；飞书/钉钉按语义组双向映射，回声抑制+排序不推外部
 - ✅ **Turn 决策层**：Agent 每轮前置路由判断（ready/wait/blocked/quota/goal_terminated/replan/repair），自动化不可推进时硬阻断
 - ✅ **SubAgent 交接预算**：SubAgent 交接文本限 16 行/1800 字符，超限自动压缩
 - ✅ **运行记录**：Agent/Workflow/Automation 统一运行记录（Run Center，支持按成员归属过滤与导出）
@@ -690,7 +690,7 @@ React UI 更新
 
 ### 项目状态分组与拖拽排序关键约定（第一批改造）
 
-- **task_statuses 表**：每项目一组状态定义（预置五态沿用旧字符串 id：draft/pending/in_progress/paused/completed，历史数据零迁移）；跨状态逻辑（完成判断/WIP/燃尽/外部同步）只认语义组，抽在 `task-status-logic.ts` 纯函数，同步层经 `task-status-store-bridge.ts` 取用。
+- **task_statuses 表**：每项目一组状态定义（预置六态沿用旧字符串 id：draft/pending/in_progress/paused/completed/cancelled，历史数据零迁移）；跨状态逻辑（完成判断/WIP/燃尽/外部同步）只认语义组，抽在 `task-status-logic.ts` 纯函数，同步层经 `task-status-store-bridge.ts` 取用。
 - **tasks.sort_order**：REAL 列，回填 -created_at（保持"最新在前"）；拖拽用 `reorderTask(taskId, { afterTaskId?, beforeTaskId?, newStatusId? })`，中点法一次只写一行，间隙耗尽整列重编号（`task-reorder-logic.ts`）。跨列移动内部走 updateTask，DoD/完成语义自动生效。
 - **sql.js 循环写入陷阱**：bun test 分支 SqlJsStmt 每次 run 后 free 语句，循环内必须逐次 prepare，否则抛 "Statement closed"（生产 better-sqlite3 无此问题）。见 skill `sqljs-statement-closed`。
 - **外部同步语义**：推方向 provider 只收 `isCompleted: boolean`（组语义二值）；`onTaskChange` 第三参携带 `{ changedFields, source }`——source=external-sync 不回推（回声抑制）、仅 sortOrder/externalSync.* 变化不推外部（拖拽降噪）；拉方向外部"未完成"仅在本地已处完成组时回退默认状态，绝不覆盖 in_progress/paused。轮询变化经 `POLL_STATUS_CHANGED` 推前端（main.tsx 全局监听写入 `pollStatusChangedAtom`，ProjectDetail 按 projectId 消费刷新）。
