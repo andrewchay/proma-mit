@@ -116,6 +116,12 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const artifactWorkspaceRef = useRef<HTMLElement>(null)
   const discussionLauncherRef = useRef<HTMLButtonElement>(null)
   const discussionCloseRef = useRef<HTMLButtonElement>(null)
+  const pendingDiscussionFocus = useRef<'open' | 'close' | null>(null)
+  useEffect(() => {
+    if (pendingDiscussionFocus.current === 'open' && discussionOpen) discussionCloseRef.current?.focus()
+    if (pendingDiscussionFocus.current === 'close' && !discussionOpen) discussionLauncherRef.current?.focus()
+    pendingDiscussionFocus.current = null
+  }, [discussionOpen])
   const [selectedDelivery, setSelectedDelivery] = useState<{ messageId: string; stepKey: string; artifactHash: string } | null>(null)
   useEffect(() => setSelectedDelivery(null), [projectId, taskId])
   useEffect(() => { if (selectedDelivery && artifactWorkspaceRef.current) { artifactWorkspaceRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' }); artifactWorkspaceRef.current.focus({ preventScroll: true }) } }, [selectedDelivery])
@@ -240,12 +246,12 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     requestAnimationFrame(() => revealOwnerHistoryTarget(target))
   }
   const closeDiscussion = (): void => {
+    if (!wideScreen) pendingDiscussionFocus.current = 'close'
     setDiscussionOpen(false)
-    if (!wideScreen) requestAnimationFrame(() => discussionLauncherRef.current?.focus())
   }
   const openDiscussion = (): void => {
+    pendingDiscussionFocus.current = 'open'
     setDiscussionOpen(true)
-    requestAnimationFrame(() => discussionCloseRef.current?.focus())
   }
   const currentStatus = editor.loading && !editor.view ? '正在读取项目状态'
     : editor.error ? '项目状态读取失败，需要重新读取'
