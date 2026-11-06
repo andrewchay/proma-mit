@@ -1,6 +1,6 @@
 
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test"
-import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { createAgentWorkspace, getAllWorkspaceSkills, toggleSkillSet, toggleWorkspaceSkill, upgradeDefaultSkillsInWorkspaces } from "./agent-workspace-manager"
 import { getDefaultSkillsDir, getInactiveSkillsDir, getWorkspaceSkillsDir } from "./config-paths"
@@ -31,6 +31,18 @@ describe("Skills 集市与 Skill Set", () => {
   beforeAll(() => { process.env.PROMA_TEST_CONFIG_DIR = TEST_DIR })
   beforeEach(() => { rmSync(TEST_DIR, { recursive: true, force: true }); mkdirSync(TEST_DIR, { recursive: true }) })
   afterAll(() => { rmSync(TEST_DIR, { recursive: true, force: true }); delete process.env.PROMA_TEST_CONFIG_DIR })
+
+  test("Given 内置 Agent Reach When 从集市安装 Then 元数据和参考文件均可用", () => {
+    const source = join(import.meta.dir, "../../../default-skills/agent-reach")
+    cpSync(source, join(getDefaultSkillsDir(), "agent-reach"), { recursive: true })
+    const workspace = createAgentWorkspace("Agent Reach")
+    expect(getSkillMarketplace(workspace.slug).find((item) => item.slug === "agent-reach" && item.source === "builtin")?.version).toBe("1.0.0")
+    installMarketplaceSkill(workspace.slug, { source: "builtin" }, "agent-reach")
+    const installed = join(getWorkspaceSkillsDir(workspace.slug), "agent-reach")
+    for (const file of ["SKILL.md", "references/capabilities.md", "references/maintenance.md", "references/sessions.md"]) {
+      expect(existsSync(join(installed, file))).toBe(true)
+    }
+  })
 
   test("Given 明确的 Skill Set 成员 When 批量停用再启用 Then 仅移动对应 Skills", () => {
     const workspace = createAgentWorkspace("批量切换")
