@@ -2041,7 +2041,7 @@ export interface ElectronAPI {
       confirmOwnerTeamWorkspaceAccess: import('@gravitas/shared').OwnerManagementApi['confirmOwnerTeamWorkspaceAccess']
       setOwnerManagementStatus: import('@gravitas/shared').OwnerManagementApi['setOwnerManagementStatus']
       getWebWatch: (projectId: string) => Promise<unknown>
-      saveWebWatch: (input: { projectId: string; enabled: boolean; topics: string[]; localTime: string }) => Promise<unknown>
+      saveWebWatch: (input: { projectId: string; enabled: boolean; topics: string[]; localTime: string; sources?: import('@gravitas/shared').WebWatchSource[] }) => Promise<unknown>
       runWebWatch: (projectId: string) => Promise<unknown>
       listWebWatchRuns: (projectId: string) => Promise<unknown>
       getWebChangeObservation: (projectId: string, id: string) => Promise<unknown>

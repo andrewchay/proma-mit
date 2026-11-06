@@ -4,7 +4,14 @@ import { randomUUID } from 'node:crypto'
 import { readJsonFileSafe, writeJsonFileAtomic } from './safe-file'
 import { getProject, listTasks } from './project-service'
 import { decryptApiKey, listChannels } from './channel-manager'
-import { searchWebResults, type WebSearchResultItem } from './agent-runtime/tool-impls/web-search-tool'
+import { searchWebResults } from './agent-runtime/tool-impls/web-search-tool'
+import {
+  collectAgentReachSources,
+  validateAgentReachSource,
+  type AgentReachSourceError,
+  type AgentReachWatchSource,
+  type WatchSourceItem,
+} from './project-web-watch-agent-reach'
 import { getSettings } from './settings-service'
 import { sendSystemNotification } from './system-notification-service'
 import { getAdapter } from '@gravitas/core'
@@ -26,6 +33,8 @@ export interface ProjectWebWatchConfig {
   projectId: string
   enabled: boolean
   topics: string[]
+  /** 结构化监控源（agent-reach 渠道）；旧配置无此字段视为空数组。 */
+  sources?: AgentReachWatchSource[]
   localTime: string
   lastAttemptAt?: number
   lastSuccessAt?: number
@@ -53,8 +62,10 @@ export interface ProjectWebWatchRun {
   status: ProjectWebWatchRunStatus
   skipReason?: ProjectWebWatchSkipReason
   queries: string[]
-  sources: WebSearchResultItem[]
-  newSources: WebSearchResultItem[]
+  sources: WatchSourceItem[]
+  newSources: WatchSourceItem[]
+  /** 单源失败明细；空或缺省 = 全部采集路径成功或本轮无监控源。 */
+  sourceErrors?: AgentReachSourceError[]
   /** 兼容字段：本次判断的一句话摘要，不再是模型自由文本。 */
   analysis?: string
   /** 本次判断落下的观察记录 id 与最终判定。 */
@@ -65,6 +76,8 @@ export interface ProjectWebWatchRun {
 
 const POLL_INTERVAL_MS = 60_000
 const MAX_TOPICS = 8
+/** 结构化监控源上限；单项目一轮最坏耗时 = 源数 × 单源超时，保持有界。 */
+const MAX_WATCH_SOURCES = 10
 const MAX_SOURCES = 30
 const DAY_MS = 24 * 60 * 60 * 1000
 let timer: ReturnType<typeof setInterval> | undefined
@@ -80,7 +93,7 @@ export function getProjectWebWatchConfig(projectId: string): ProjectWebWatchConf
   }
 }
 
-export async function saveProjectWebWatchConfig(input: Pick<ProjectWebWatchConfig, 'projectId' | 'enabled' | 'topics' | 'localTime'>): Promise<ProjectWebWatchConfig> {
+export async function saveProjectWebWatchConfig(input: Pick<ProjectWebWatchConfig, 'projectId' | 'enabled' | 'topics' | 'localTime'> & { sources?: AgentReachWatchSource[] }): Promise<ProjectWebWatchConfig> {
   if (!await getProject(input.projectId)) throw new Error('项目不存在')
   const parts = input.localTime.split(':').map((part) => Number(part ?? ''))
   const hour = parts[0] ?? Number.NaN
@@ -89,9 +102,18 @@ export async function saveProjectWebWatchConfig(input: Pick<ProjectWebWatchConfi
   const topics = [...new Set(input.topics.map((topic) => topic.trim()).filter(Boolean))]
   if (topics.length > MAX_TOPICS) throw new Error(`最多配置 ${MAX_TOPICS} 个扫描主题`)
   if (topics.some((topic) => topic.length > 200)) throw new Error('单个扫描主题不能超过 200 个字符')
-  if (input.enabled && topics.length === 0) throw new Error('启用外网扫描前，请至少填写一个主题')
   const current = getProjectWebWatchConfig(input.projectId)
-  const next = { ...current, ...input, topics, updatedAt: Date.now() }
+  // sources 缺省时保留现有监控源：旧调用方（不含 sources 的保存请求）不能静默清空。
+  const sources = input.sources ?? current.sources ?? []
+  if (sources.length > MAX_WATCH_SOURCES) throw new Error(`最多配置 ${MAX_WATCH_SOURCES} 个监控源`)
+  for (const source of sources) {
+    if (!source || typeof source.id !== 'string') throw new Error('监控源数据无效')
+    const invalid = validateAgentReachSource(source)
+    if (invalid) throw new Error(`监控源「${source.label || source.id}」配置无效：${invalid}`)
+    if (typeof source.label !== 'string' || source.label.length > 100) throw new Error('监控源名称过长')
+  }
+  if (input.enabled && topics.length === 0 && !sources.some((source) => source.enabled)) throw new Error('启用外网扫描前，请至少填写一个主题或启用一个监控源')
+  const next = { ...current, ...input, topics, sources, updatedAt: Date.now() }
   writeJsonFileAtomic(configPath(input.projectId), next)
   return next
 }
@@ -139,7 +161,8 @@ async function executeProjectWebWatch(projectId: string, options: { notify?: boo
   const project = await getProject(projectId)
   if (!project) throw new Error('项目不存在')
   const config = getProjectWebWatchConfig(projectId)
-  if (!config.topics.length) throw new Error('请先配置扫描主题')
+  const enabledSources = (config.sources ?? []).filter((source) => source.enabled)
+  if (config.topics.length === 0 && enabledSources.length === 0) throw new Error('请先配置扫描主题或启用一个监控源')
   const startedAt = Date.now()
   const previous = listProjectWebWatchRuns(projectId).find((run) => run.status === 'success')
   const coverageFrom = config.lastSuccessAt ?? previous?.endedAt ?? startedAt - DAY_MS
@@ -159,9 +182,38 @@ async function executeProjectWebWatch(projectId: string, options: { notify?: boo
 
   const topics = config.topics.slice(0, MAX_TOPICS)
   const queries = topics.map((topic) => `${topic} ${new Date(coverageFrom).toISOString().slice(0, 10)} 以来`)
-  const sources: WebSearchResultItem[] = []
-  for (const query of queries) sources.push(...await searchWebResults(query))
-  const uniqueSources = [...new Map(sources.filter((source) => source.url).map((source) => [source.url, source])).values()].slice(0, MAX_SOURCES)
+  const sourceErrors: AgentReachSourceError[] = []
+  const collected: WatchSourceItem[] = []
+  let topicsOk = 0
+  for (const query of queries) {
+    try {
+      collected.push(...(await searchWebResults(query)).map((item) => ({ ...item, origin: { type: 'websearch' } as const })))
+      topicsOk += 1
+    } catch (error) {
+      // 单个主题搜索失败不再掀翻整轮，只留错误明细（设计稿 §5 部分失败容忍）。
+      sourceErrors.push({ sourceId: `topic:${query}`, channel: 'web', code: 'UPSTREAM_BROKEN', message: error instanceof Error ? error.message : String(error) })
+    }
+  }
+  let agentReachErrors = 0
+  if (enabledSources.length > 0) {
+    const agentReach = await collectAgentReachSources(enabledSources)
+    collected.push(...agentReach.items)
+    sourceErrors.push(...agentReach.errors)
+    agentReachErrors = agentReach.errors.length
+  }
+  // 全部采集路径失败才判整轮失败；agent-reach 采集本身不抛异常，错误数即失败源数。
+  const okCollectors = topicsOk + (enabledSources.length - agentReachErrors)
+  if (okCollectors === 0) {
+    throw new Error(`全部采集路径失败：${sourceErrors.map((item) => `${item.channel}(${item.code})`).join('；')}`)
+  }
+  // URL 去重；同一 URL 保留 agent-reach 版本（结构化更干净，设计稿 §7）。
+  const byUrl = new Map<string, WatchSourceItem>()
+  for (const item of collected) {
+    if (!item.url) continue
+    const existing = byUrl.get(item.url)
+    if (!existing || existing.origin?.type !== 'agent-reach') byUrl.set(item.url, item)
+  }
+  const uniqueSources = [...byUrl.values()].slice(0, MAX_SOURCES)
   const knownVersions = new Map(listProjectWebWatchRuns(projectId).filter((run) => run.status === 'success').flatMap((run) => run.sources.map((source) => [source.url, source.snippet] as const)))
   const newSources = uniqueSources.filter((source) => knownVersions.get(source.url) !== source.snippet)
 
@@ -229,6 +281,7 @@ async function executeProjectWebWatch(projectId: string, options: { notify?: boo
   const run = finishRun(projectId, config, {
     id: runId, projectId, startedAt, endedAt, coverageFrom, coverageTo: endedAt,
     status: 'success', queries, sources: uniqueSources, newSources,
+    ...(sourceErrors.length > 0 ? { sourceErrors } : {}),
     ...(judged.observation ? { observationId: judged.observation.id } : {}),
     judgment: judged.judgment,
     analysis: summaryOf(judged.judgment, judged.observation?.impact ?? null, judged.failureReason),
