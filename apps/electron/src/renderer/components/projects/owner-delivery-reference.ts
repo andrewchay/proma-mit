@@ -11,7 +11,7 @@ export function findReferencedDelivery(messages: readonly OwnerManagementMessage
 export function findLatestDeliveryReview(messages: readonly OwnerManagementMessage[], taskId: string | undefined, reference: OwnerManagementDeliveryReference): OwnerManagementMessage | undefined {
   const selected = findReferencedDelivery(messages, taskId, reference)
   if (!selected) return undefined
-  return messages.findLast(message => message.taskId === taskId && message.role === 'user' && Boolean(message.deliveryReviewDecision)
+  return messages.findLast(message => message.taskId === taskId && message.role === 'user' && (message.deliveryReviewDecision === 'accepted' || message.deliveryReviewDecision === 'changes_requested')
     && message.deliveryReference?.messageId === reference.messageId
     && findReferencedDelivery(messages, taskId, message.deliveryReference) === selected)
 }

@@ -11,7 +11,7 @@ import { getOwnerExecutionRevalidation, listOwnerExecutionRevalidationHistory } 
 import { getOwnerTaskMaterializationRecord } from './project-owner-task-materialization'
 import { isCompletedStatus } from './task-status-logic'
 import * as store from './project-sqlite-store'
-import { appendOwnerManagementMessage, getOwnerManager } from './project-owner-management-store'
+import { appendOwnerManagementMessage, deliveryContentMatchesArtifact, getOwnerManager } from './project-owner-management-store'
 import { isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
 import { readDevelopmentValidationEvidence } from './development-validation-service'
 
@@ -20,8 +20,17 @@ export function listOwnerDeliveryValidations(projectId: string, messages: readon
   const results: OwnerDeliveryValidationRecord[] = []
   for (const message of messages) {
     if (message.projectId !== projectId || message.kind !== 'delivery' || !message.delivery) continue
+    const developmentItems = message.delivery.items.filter(item => {
+      try {
+        const value: unknown = JSON.parse(item.content)
+        return Boolean(value && typeof value === 'object' && !Array.isArray(value) && 'contentHash' in value && value.contentHash === item.artifactHash && 'files' in value && Array.isArray(value.files) && deliveryContentMatchesArtifact(item.content, item.artifactHash))
+      } catch { return false }
+    })
+    const markUnavailable = () => {
+      for (const item of developmentItems) if (!results.some(record => record.messageId === message.id && record.stepKey === item.stepKey && record.artifactHash === item.artifactHash)) results.push({ messageId: message.id, stepKey: item.stepKey, artifactHash: item.artifactHash, checkedAt: Date.now(), unavailable: true, validations: [] })
+    }
     const match = /^owner-delivery:([^:]+):([a-f0-9]{64})$/.exec(message.eventId)
-    if (!match || ownerExecutionHash(message.delivery) !== match[2]) continue
+    if (!match || ownerExecutionHash(message.delivery) !== match[2]) { markUnavailable(); continue }
     try {
       const grant = store.getProjectDb().prepare('SELECT task_id,materialization_id,materialization_integrity_hash FROM project_owner_execution_grants WHERE project_id=? AND id=?').get(projectId, match[1]!) as { task_id: string | null; materialization_id: string; materialization_integrity_hash: string } | undefined
       if (!grant || (grant.task_id ?? undefined) !== message.taskId) continue
@@ -49,9 +58,9 @@ export function listOwnerDeliveryValidations(projectId: string, messages: readon
             return { ...base, freshness: evidence.freshness, method: result.method ?? 'command' as const, ...(result.method === 'browser_assertions' && result.checks ? { checks: result.checks } : {}) }
           } catch { return { ...base, freshness: 'unknown' as const } }
         })
-        if (validations.length) results.push({ messageId: message.id, stepKey: item.stepKey, artifactHash: item.artifactHash, checkedAt, validations })
+        if (validations.length === review.validationEvidence.length && validations.length) results.push({ messageId: message.id, stepKey: item.stepKey, artifactHash: item.artifactHash, checkedAt, validations })
       }
-    } catch { /* 历史来源不可核对时不猜测或改变交付记录。 */ }
+    } catch { /* 历史来源不可核对时不猜测或改变交付记录。 */ } finally { markUnavailable() }
   }
   return results
 }

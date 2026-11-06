@@ -18,6 +18,8 @@ test('Given 旧审阅引用没有步骤 When 成果唯一或有歧义 Then 只�
   const delivery: OwnerManagementMessage = { id: 'delivery', projectId: 'project', conversationId: 'c', eventId: 'delivery-event', taskId: 'task', role: 'assistant', kind: 'delivery', content: '', createdAt: 1, delivery: { schemaVersion: 1, planVersion: 1, items: [item] } }
   const review: OwnerManagementMessage = { id: 'review', projectId: 'project', conversationId: 'c', eventId: 'review-event', taskId: 'task', role: 'user', kind: 'conversation', content: '认可', createdAt: 2, deliveryReference: { messageId: 'delivery', artifactHash: 'hash' }, deliveryReviewDecision: 'accepted' }
   const selected = { messageId: 'delivery', artifactHash: 'hash', stepKey: 'a' }
+  const deferred: OwnerManagementMessage = { ...review, id: 'deferred', deliveryReviewDecision: 'deferred' }
+  expect(findLatestDeliveryReview([delivery, deferred], 'task', selected)).toBeUndefined()
   expect(findLatestDeliveryReview([delivery, review], 'task', selected)).toBe(review)
   delivery.delivery!.items.push({ ...item, stepKey: 'b' })
   expect(findLatestDeliveryReview([delivery, review], 'task', selected)).toBeUndefined()

@@ -1978,6 +1978,7 @@ export interface ElectronAPI {
     project: {
       getChain: (projectId: string) => Promise<import('@gravitas/shared').ProjectChain>
       updateChain: (projectId: string, revision: number, command: import('@gravitas/shared').ProjectChainCommand) => Promise<import('@gravitas/shared').ProjectChain>
+      decideOwnerChainDelivery: (request: import('@gravitas/shared').OwnerChainDecisionRequest) => Promise<import('@gravitas/shared').ProjectOwnerGoalResult<import('@gravitas/shared').ProjectChain>>
       listProjects: (includeArchived?: boolean) => Promise<unknown[]>
       getProject: (id: string) => Promise<unknown | null>
       getOwnerTaskMaterialization: import('@gravitas/shared').ProjectOwnerTaskMaterializationApi['getOwnerTaskMaterialization']
@@ -4810,6 +4811,7 @@ const electronAPI: ElectronAPI = {
       listProjects: (includeArchived) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_PROJECTS, includeArchived),
       getChain: (projectId) => ipcRenderer.invoke(PROJECT_CHAIN_IPC.GET, projectId),
       updateChain: (projectId, revision, command) => ipcRenderer.invoke(PROJECT_CHAIN_IPC.APPLY, projectId, revision, command),
+      decideOwnerChainDelivery: (request) => ipcRenderer.invoke(PROJECT_CHAIN_IPC.OWNER_DECIDE, request),
       getProject: (id) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_PROJECT, id),
       getOwnerTaskMaterialization: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_TASK_MATERIALIZATION, request),
       listOwnerTaskMaterializationHistory: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_TASK_MATERIALIZATION_HISTORY, request),

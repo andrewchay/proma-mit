@@ -21,7 +21,7 @@ const { startDelegatedOwnerPlanningTask } = await import('./controlled-project-t
 const delegation = await import('./project-owner-management-delegation')
 const { getOwnerManagementConversation } = await import('./project-owner-management-questions')
 const { appendOwnerManagementMessage, getOwnerManagementView, getOwnerManager, setOwnerManagerStatus } = await import('./project-owner-management-store')
-const { preparePendingOwnerConversation, sendOwnerManagementMessage, withOwnerConversationContext } = await import('./project-owner-management-conversation')
+const { preparePendingOwnerConversation, hasUnstartedOwnerConversation, sendOwnerManagementMessage, withOwnerConversationContext } = await import('./project-owner-management-conversation')
 const { reconcileOwnerManagement, startOwnerManagementLoop } = await import('./project-owner-management-loop')
 const { setHeadlessAgentRunner } = await import('./agent-headless-runner-registry')
 const { parseProjectOwnerPlanningResponse } = await import('./project-owner-planning-protocol')
@@ -191,6 +191,28 @@ test('Given 已交付成果 When 记录人工审阅决定并重试 Then 决定�
   expect(() => sendOwnerManagementMessage({ ...request, deliveryReviewDecision: 'changes_requested' })).toThrow('不同内容')
   expect(() => sendOwnerManagementMessage({ ...f.message('认可'), deliveryReviewDecision: 'accepted' })).toThrow('必须关联')
   expect(getOwnerManagementConversation(f.project.id).messages.find(message => message.id === saved.id)?.deliveryReference).toEqual(request.deliveryReference)
+})
+
+test('Given 已交付成果 When 用户选择稍后决定 Then 记录准确版本且不排入新的 Owner 管理事件', () => {
+  const f = fixture(), content = '交付正文', artifactHash = createHash('sha256').update(content).digest('hex')
+  const delivery = appendOwnerManagementMessage({ projectId: f.project.id, eventId: randomUUID(), role: 'assistant', kind: 'delivery', content: '成果已交付', delivery: { schemaVersion: 1, planVersion: 1, items: [{ stepKey: 'result', title: '成果', acceptanceCriteria: ['完整'], artifactHash, content, ownerDecision: '通过质量检查', reviewerSummary: '已检查' }] } })
+  const count = () => (store.getProjectDb().prepare('SELECT COUNT(*) AS n FROM project_owner_management_events WHERE project_id=?').get(f.project.id) as { n: number }).n
+  const before = count()
+  const request = { ...f.message('我稍后决定，暂时保持这个成果版本待审阅。'), deliveryReference: { messageId: delivery.id, artifactHash, stepKey: 'result' }, deliveryReviewDecision: 'deferred' as const }
+  const saved = sendOwnerManagementMessage(request)
+  expect(sendOwnerManagementMessage(request).id).toBe(saved.id)
+  expect(count()).toBe(before)
+  expect(getOwnerManagementConversation(f.project.id).messages.find(message => message.id === saved.id)?.deliveryReviewDecision).toBe('deferred')
+  expect(hasUnstartedOwnerConversation(f.project.id)).toBe(false)
+  expect(preparePendingOwnerConversation(f.project.id)).toBe(false)
+  const grant = f.issue()
+  const ordinary = sendOwnerManagementMessage(f.message('请说明当前进展'))
+  sendOwnerManagementMessage({ ...request, requestId: randomUUID() })
+  expect(hasUnstartedOwnerConversation(f.project.id)).toBe(true)
+  expect(preparePendingOwnerConversation(f.project.id)).toBe(true)
+  const ready = getOwnerManagementConversation(f.project.id).messages.find(item => item.eventId.startsWith(`conversation-ready:${ordinary.id}:`))
+  expect(ready).toBeDefined()
+  delegation.revokeOwnerManagementDelegation(f.project.id, grant.id)
 })
 
 test('Given 冻结代码成果 When 对准确版本提出反馈 Then 使用文件集合摘要核验并保留完整快照', () => {

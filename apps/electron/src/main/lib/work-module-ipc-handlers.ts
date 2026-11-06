@@ -450,6 +450,10 @@ export function registerWorkModuleIpcHandlers(): void {
   // 项目 CRUD
   ipcMain.handle(PROJECT_CHAIN_IPC.GET, (_, projectId: string) => getProjectChain(projectId))
   ipcMain.handle(PROJECT_CHAIN_IPC.APPLY, (_, projectId: string, revision: number, command: import('@gravitas/shared').ProjectChainCommand) => updateProjectChain(projectId, revision, command))
+  ipcMain.handle(PROJECT_CHAIN_IPC.OWNER_DECIDE, (_, request: import('@gravitas/shared').OwnerChainDecisionRequest): import('@gravitas/shared').ProjectOwnerGoalResult<import('@gravitas/shared').ProjectChain> => {
+    try { return { ok: true, value: (require('./project-owner-chain-decision') as typeof import('./project-owner-chain-decision')).decideOwnerChainDelivery(request) } }
+    catch (error) { return { ok: false, error: { code: 'failed', message: error instanceof Error ? error.message : '验收保存失败' } } }
+  })
   ipcMain.handle(PROJECT_IPC_CHANNELS.LIST_PROJECTS, async (_, includeArchived?: boolean) => {
     return listProjects(includeArchived === true)
   })

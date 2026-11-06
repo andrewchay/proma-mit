@@ -43,7 +43,7 @@ createRoot(document.getElementById('root')).render(<Provider store={store}><Harn
     const openButton = page.getByRole('button', { name: '打开对话', exact: true })
     expect(await openButton.getAttribute('class')).toContain('titlebar-no-drag')
     await openButton.click()
-    await page.getByRole('heading', { name: '准确目标项目' }).waitFor()
+    await page.getByRole('heading', { name: '准确目标项目', level: 1 }).waitFor()
     await page.getByLabel('Owner 项目对话').waitFor()
     expect(await page.evaluate(() => (window as unknown as { fixture: { facts: () => { activeView: string; title?: string; owner?: string } } }).fixture.facts())).toMatchObject({ activeView: 'projects', title: '准确目标项目', owner: 'project-a' })
     expect(errors).toEqual([])

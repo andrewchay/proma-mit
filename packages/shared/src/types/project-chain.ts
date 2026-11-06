@@ -228,4 +228,20 @@ export type ProjectChainCommand =
 export const PROJECT_CHAIN_IPC = {
   GET: 'project-chain:get',
   APPLY: 'project-chain:apply',
+  OWNER_DECIDE: 'project-chain:owner-decide',
 } as const
+
+export interface OwnerChainDecisionRequest {
+  projectId: string
+  requestId: string
+  grantId: string
+  taskId: string
+  reworkOrdinal: number
+  revision: number
+  draftId: string
+  version: number
+  choice: 'accept' | 'reject' | 'later'
+  comment: string
+  completedCriteria: string[]
+  reasonCode?: ProjectJudgmentReasonCode
+}

@@ -26,6 +26,7 @@ import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 import { ProjectChainPanel } from './ProjectChainPanel'
 import { ProjectPilotOverview } from './ProjectPilotOverview'
 import { ProjectOwnerHome } from './ProjectOwnerHome'
+import { ProjectDetailsPlacement } from './ProjectDetailsPlacement'
 import { OwnerTodoScanPanel } from './OwnerTodoScanPanel'
 import { CreateProjectTaskDialog } from './CreateProjectTaskDialog'
 import { ControlledTaskStartButton } from './ControlledTaskStartButton'
@@ -974,7 +975,15 @@ function ProjectDetail({
   onRefresh: () => void
 }): React.ReactElement {
   const [detailTab, setDetailTab] = useState<'pilot' | 'tasks' | 'notes' | 'board' | 'gantt' | 'dependencies' | 'activity' | 'risk' | 'brief' | 'chain' | 'knowledge' | 'workspaces' | 'aicost' | 'web-watch'>('pilot')
+  const visitedDetailTabs = React.useRef(new Set<string>())
+  visitedDetailTabs.current.add(detailTab)
   const [advancedDetailsOpen, setAdvancedDetailsOpen] = useState(false)
+  const primaryTabAtom = useMemo(() => atom<'owner' | 'tasks' | 'chain' | 'knowledge' | 'pilot'>('owner'), [project.id])
+  const [primaryTab, setPrimaryTab] = useAtom(primaryTabAtom)
+  const [detailsHost, setDetailsHost] = useState<HTMLDivElement | null>(null)
+  const [detailsWasOpened, setDetailsWasOpened] = useState(false)
+  const ownerTabRef = React.useRef<HTMLButtonElement>(null)
+  const showOwner = useCallback(() => { setPrimaryTab('owner') }, [setPrimaryTab])
   const ownerNavigation = useAtomValue(ownerConversationNavigationAtom)
   useEffect(() => { if (ownerNavigation?.projectId === project.id) setDetailTab(ownerNavigation.taskId ? 'tasks' : 'pilot') }, [ownerNavigation, project.id])
   const [pilotTaskFocus, setPilotTaskFocus] = useState<{ taskId: string; subTaskId?: string } | null>(null)
@@ -1267,10 +1276,17 @@ function ProjectDetail({
       </header>
       <main className="flex-1 overflow-auto p-6">
         <div className="mx-auto w-full max-w-7xl">
-          <ProjectOwnerHome projectId={project.id} />
-          <details open={advancedDetailsOpen} className="mt-6 rounded-xl bg-card p-4 shadow-sm" onToggle={event => setAdvancedDetailsOpen(event.currentTarget.open)}>
+          <div className="mb-6 space-y-4">
+            <div><h2 className="text-xl font-semibold">{project.title}</h2>{project.description && <p className="mt-1 text-sm text-muted-foreground">{project.description}</p>}</div>
+            <nav role="tablist" aria-label="项目导航" className="flex gap-6 border-b border-border/50 text-sm">
+              <button ref={ownerTabRef} role="tab" aria-selected={primaryTab === 'owner'} type="button" className={primaryTab === 'owner' ? 'border-b-2 border-primary pb-3 font-medium' : 'border-b-2 border-transparent pb-3 text-muted-foreground hover:text-foreground'} onClick={showOwner}>Owner</button>
+              {([{ key: 'tasks', label: '任务' }, { key: 'chain', label: '成果' }, { key: 'knowledge', label: '资料' }, { key: 'pilot', label: '更多' }] as const).map(item => <button role="tab" aria-selected={primaryTab === item.key} key={item.key} type="button" className={primaryTab === item.key ? 'border-b-2 border-primary pb-3 font-medium' : 'border-b-2 border-transparent pb-3 text-muted-foreground hover:text-foreground'} onClick={() => { setDetailTab(item.key); setDetailsWasOpened(true); setAdvancedDetailsOpen(true); setPrimaryTab(item.key) }}>{item.label}</button>)}
+            </nav>
+          </div>
+          <ProjectOwnerHome projectId={project.id} showProjectDetails={primaryTab !== 'owner'} projectDetailsKind={primaryTab === 'owner' ? undefined : primaryTab} onProjectDetailsHost={setDetailsHost} onShowOwner={showOwner} />
+          <ProjectDetailsPlacement key={project.id} target={detailsHost} visible={primaryTab !== 'owner'}><details open={advancedDetailsOpen} className="mt-6 rounded-xl bg-card p-4 shadow-sm" onToggle={event => { const open = event.currentTarget.open; setAdvancedDetailsOpen(open); if (open) setDetailsWasOpened(true); if (!open && primaryTab !== 'owner') { setPrimaryTab('owner'); requestAnimationFrame(() => ownerTabRef.current?.focus()) } }}>
             <summary className="cursor-pointer text-sm font-medium text-muted-foreground">任务与项目详情</summary>
-            {advancedDetailsOpen && <div className="mt-4">
+            {detailsWasOpened && <div hidden={!advancedDetailsOpen} className="mt-4">
       {/* 项目操作栏 */}
       <div className="flex flex-wrap items-start justify-between gap-3 px-3 py-3">
         <div className="flex-1">
@@ -1387,7 +1403,7 @@ function ProjectDetail({
       </div>
 
       {/* 详情标签 */}
-      <div className="flex flex-wrap gap-1 px-3 pt-2 border-b" aria-label="项目详情分类">
+      <details className="mx-3 rounded-lg bg-muted/30 px-3 py-2"><summary className="cursor-pointer text-xs font-medium text-muted-foreground">更多视图：看板、风险、成本等{blockers.length > 0 ? ` · ${blockers.length} 项阻塞` : ''}</summary><div className="flex flex-wrap gap-1 pt-2" aria-label="项目详情分类">
         {([
           { key: 'pilot', label: '概览' },
           { key: 'web-watch', label: '外网扫描' },
@@ -1405,7 +1421,7 @@ function ProjectDetail({
         ] as const).map((tab) => (
           <button
             key={tab.key}
-            onClick={() => setDetailTab(tab.key)}
+            onClick={() => { setDetailTab(tab.key); setPrimaryTab(tab.key === 'tasks' || tab.key === 'chain' || tab.key === 'knowledge' ? tab.key : 'pilot') }}
             className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
               detailTab === tab.key
                 ? 'border-primary text-primary'
@@ -1422,7 +1438,7 @@ function ProjectDetail({
             )}
           </button>
         ))}
-      </div>
+      </div></details>
 
       {todoRetries.length > 0 && (
         <div className="mx-6 mt-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900">
@@ -1478,7 +1494,7 @@ function ProjectDetail({
           }
         }} />}
         {detailTab === 'web-watch' && <ProjectWebWatchPanel projectId={project.id} projectTitle={project.title} projectDescription={project.description} />}
-        {detailTab === 'chain' && <ProjectChainPanel key={project.id} projectId={project.id} tasks={dependencyTasks} dependencies={dependencies} blockers={blockers} refreshTasks={loadData} />}
+        {visitedDetailTabs.current.has('chain') && <div hidden={detailTab !== 'chain'}><ProjectChainPanel key={project.id} projectId={project.id} tasks={dependencyTasks} dependencies={dependencies} blockers={blockers} refreshTasks={loadData} /></div>}
         <CreateProjectTaskDialog
           open={showOverviewCreate}
           onClose={() => setShowOverviewCreate(false)}
@@ -1487,7 +1503,7 @@ function ProjectDetail({
         />
         {detailTab === 'knowledge' && <ProjectKnowledgePanel key={project.id} projectId={project.id} />}
         {detailTab === 'workspaces' && <ProjectWorkspacesPanel key={project.id} projectId={project.id} />}
-        {detailTab === 'tasks' && (
+        {visitedDetailTabs.current.has('tasks') && <div hidden={detailTab !== 'tasks'}>
           <TaskList
             projectId={project.id}
             tasks={tasks}
@@ -1497,7 +1513,7 @@ function ProjectDetail({
             focusTaskId={pilotTaskFocus?.taskId}
             focusSubTaskId={pilotTaskFocus?.subTaskId}
           />
-        )}
+        </div>}
         {detailTab === 'notes' && (
           <MeetingNotesPanel
             projectId={project.id}
@@ -1586,7 +1602,7 @@ function ProjectDetail({
         )}
       </div>
             </div>}
-          </details>
+          </details></ProjectDetailsPlacement>
         </div>
       </main>
     </div>
@@ -2840,7 +2856,7 @@ function TaskItem({
   return (
     <>
       <div
-        className={`p-3 rounded-lg border flex items-center justify-between ${
+        className={`p-3 rounded-lg border flex flex-col items-stretch gap-3 ${
           task.status === 'completed' ? 'bg-muted/50' : 'bg-card'
         }`}
       >
@@ -2920,7 +2936,7 @@ function TaskItem({
             <p className="text-xs text-amber-600 mt-1">⚠️ 高风险任务，请填写完成纪要</p>
           )}
         </div>
-        <div className="flex items-center gap-2 ml-2 shrink-0">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           {isAgentTask && agentSessionId && (
             <button
               onClick={() => void handleOpenAgentSession()}

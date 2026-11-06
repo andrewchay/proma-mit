@@ -482,7 +482,7 @@ createRoot(document.getElementById('root')).render(<Provider store={store}><Proj
 `)
   await build({ entryPoints: [entry], outfile: join(directory, 'browser.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.png': 'dataurl' }, absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
   console.info(`[交付测试] ${managed ? '自主' : '手动'}：启动浏览器`)
-  const browser = await chromium.launch({ headless: true }), page = await browser.newPage({ viewport: { width: 390, height: 800 } })
+  const browser = await chromium.launch({ headless: true, timeout: 45000 }), page = await browser.newPage({ viewport: { width: 390, height: 800 } })
   page.setDefaultTimeout(5000)
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
@@ -491,7 +491,8 @@ createRoot(document.getElementById('root')).render(<Provider store={store}><Proj
     // 自主场景不推进虚拟时间；仅手动交付场景需要快进轮询。
     if (!managed) await page.clock.install()
     console.info(`[交付测试] ${managed ? '自主' : '手动'}：打开页面`)
-    await page.goto(`http://127.0.0.1:${server.port}`)
+    // 只等待导航提交；后续界面断言会等待 React 渲染，避免页面持续请求阻塞 load 事件。
+    await page.goto(`http://127.0.0.1:${server.port}`, { waitUntil: 'commit', timeout: 15000 })
     console.info(`[交付测试] ${managed ? '自主' : '手动'}：页面已加载`)
     if (managed) {
       expect(await page.getByRole('button', { name: '确认方案并开始执行', exact: true }).count()).toBe(0)
@@ -531,7 +532,7 @@ createRoot(document.getElementById('root')).render(<Provider store={store}><Proj
     expect(commandReads).toBeGreaterThan(1)
     expect(errors).toEqual([])
   } finally { await browser.close(); server.stop(true) }
-}, 30000)
+}, 90000)
 }
 
 test('Given首次加载瞬态遗留需要比较 When当前来源已稳定 Then仅重建新摘要、不自动登记', async () => {

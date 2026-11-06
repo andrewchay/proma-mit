@@ -19,6 +19,7 @@ import { MainArea } from '@/components/tabs/MainArea'
 import { AppShellProvider, type AppShellContextType } from '@/contexts/AppShellContext'
 import { appModeAtom } from '@/atoms/app-mode'
 import { agentSidePanelWidthAtom, currentAgentSessionIdAtom, currentSessionSidePanelOpenAtom } from '@/atoms/agent-atoms'
+import { activeViewAtom } from '@/atoms/active-view'
 import { sidebarCollapsedAtom } from '@/atoms/tab-atoms'
 import { sidebarWidthAtom } from '@/atoms/sidebar-atoms'
 import { WindowControls } from '@/components/WindowControls'
@@ -46,9 +47,10 @@ export interface AppShellProps {
 
 export function AppShell({ contextValue }: AppShellProps): React.ReactElement {
   const appMode = useAtomValue(appModeAtom)
+  const activeView = useAtomValue(activeViewAtom)
   const currentSessionId = useAtomValue(currentAgentSessionIdAtom)
   const isPanelOpen = useAtomValue(currentSessionSidePanelOpenAtom)
-  const showRightPanel = appMode === 'agent' && !!currentSessionId
+  const showRightPanel = appMode === 'agent' && !!currentSessionId && activeView !== 'projects'
   const isWindows = React.useMemo(() => detectIsWindows(), [])
   const sidebarCollapsed = useAtomValue(sidebarCollapsedAtom)
 

@@ -638,7 +638,7 @@ test('Given代码任务交付且白名单验证成功 WhenReviewer与Owner检查
     expect(conversation.deliveryValidations!.every(record => record.messageId === delivery.id && delivery.delivery!.items.some(item => item.stepKey === record.stepKey && item.artifactHash === record.artifactHash) && record.validations[0]?.status === 'passed')).toBe(true)
     expect(conversation.deliveryValidations!.every(record => record.validations[0]?.method === 'command' && record.validations[0]?.freshness === 'fresh')).toBe(true)
     const projected = (await import('./project-owner-management-delivery')).listOwnerDeliveryValidations
-    expect(projected(f.project.id, [{ ...delivery, eventId: `${delivery.eventId}0` }])).toEqual([])
+    expect(projected(f.project.id, [{ ...delivery, eventId: `${delivery.eventId}0` }])).toMatchObject([{ unavailable: true }, { unavailable: true }])
     expect(projected(f.project.id, [{ ...delivery, delivery: { ...delivery.delivery!, items: delivery.delivery!.items.map(item => ({ ...item, artifactHash: 'f'.repeat(64) })) } }])).toEqual([])
     expect(traces.get(f.project.id)!.filter(item => ['executor', 'reviewer', 'owner_quality'].includes(item.role)).map(item => item.role)).toEqual([
       'executor', 'reviewer', 'owner_quality', 'executor', 'reviewer', 'owner_quality',
@@ -651,8 +651,24 @@ test('Given代码任务交付且白名单验证成功 WhenReviewer与Owner检查
     expect(downstreamPrompt).toContain('module.exports = { answer: 42 }')
     expect(scheduler.getOwnerAutonomousScheduleStatus(f.project.id).nextAction).toBe('none')
     const firstReceipt = runs.getOwnerPlanningRunReceipt(actions[0]!.ownerReceiptId)!
+    const item = delivery.delivery!.items[0]!
+    const request = { projectId: f.project.id, conversationId: conversation.manager!.conversationId, requestId: randomUUID(), expectedGoalRevision: goals.getProjectOwnerGoalDraft(f.project.id)!.revision, content: '认可这个成果版本', deliveryReference: { messageId: delivery.id, stepKey: item.stepKey, artifactHash: item.artifactHash }, deliveryReviewDecision: 'accepted' as const }
+    const conversationService = await import('./project-owner-management-conversation')
+    const db = store.getProjectDb()
+    const grant = db.prepare('SELECT materialization_integrity_hash FROM project_owner_execution_grants WHERE id=?').get(f.grant.grantId) as { materialization_integrity_hash: string }
+    db.prepare('UPDATE project_owner_execution_grants SET materialization_integrity_hash=? WHERE id=?').run('0'.repeat(64), f.grant.grantId)
+    try {
+      expect(projected(f.project.id, [delivery]).find(record => record.stepKey === item.stepKey)).toMatchObject({ unavailable: true })
+      expect(() => conversationService.sendOwnerManagementMessage(request)).toThrow('验证证据无法核对')
+    } finally {
+      db.prepare('UPDATE project_owner_execution_grants SET materialization_integrity_hash=? WHERE id=?').run(grant.materialization_integrity_hash, f.grant.grantId)
+    }
     const clock = spyOn(Date, 'now').mockReturnValue(firstReceipt.capturedAt + 366 * 24 * 60 * 60 * 1000)
-    try { expect(actionRows(f.project.id)).toEqual(actions) } finally { clock.mockRestore() }
+    try {
+      expect(actionRows(f.project.id)).toEqual(actions)
+      expect(() => conversationService.sendOwnerManagementMessage(request)).toThrow('验证证据已过期')
+      expect(conversationService.sendOwnerManagementMessage({ ...request, requestId: randomUUID(), deliveryReviewDecision: 'deferred' }).deliveryReviewDecision).toBe('deferred')
+    } finally { clock.mockRestore() }
   } finally { f.stop() }
 }, 120000)
 
@@ -685,7 +701,7 @@ test.skipIf(process.platform !== 'darwin')('Given代码交付需要浏览器验�
     expect(markup).toContain('浏览器断言：browser:html.loads')
     expect(markup).toContain('页面可加载且无脚本错误：通过')
     const deliveryProjection = await import('./project-owner-management-delivery')
-    expect(deliveryProjection.listOwnerDeliveryValidations(f.project.id, [{ ...delivery, eventId: `${delivery.eventId}0` }])).toEqual([])
+    expect(deliveryProjection.listOwnerDeliveryValidations(f.project.id, [{ ...delivery, eventId: `${delivery.eventId}0` }])).toMatchObject([{ unavailable: true, validations: [] }])
     const review = (await import('./project-owner-technical-review')).listOwnerTechnicalReviewEvidence(f.project.id)[0]!
     const execution = store.getAgentExecution(review.executorExecutionId)!
     const workspace = workspaces.getAgentWorkspace(f.input.workspaceId!)!
@@ -902,6 +918,44 @@ test('Given仅完整文本的旧业务许可 When独立评审通过 Then不自�
     expect(f.tasks()[0]!.status).toBe('paused')
   } finally { f.stop() }
 }, 15000)
+
+test('Given 旧业务许可的准确交付 When 暂缓或正式验收 Then 对话与交付链原子保存并支持同请求重试', async () => {
+  const f = await fixture({ legacy: true, development: true })
+  try {
+    await until(() => scheduler.getOwnerAutonomousScheduleStatus(f.project.id).nextAction === 'await_business_acceptance')
+    await f.stop()
+    const commands = (await import('./project-owner-execution-command')).listOwnerExecutionCommands({ projectId: f.project.id })
+    const executor = commands.find(command => command.role === 'executor')!
+    const chainService = await import('./project-chain-service')
+    const base = chainService.updateProjectChain(f.project.id, 0, { kind: 'decision', title: '修复方向', rationale: '完成修复', evidence: '测试依据' })
+    const task = f.tasks()[0]!, owner = task.assignee!.userId
+    const draft = chainService.updateProjectChainAsActor(f.project.id, base.revision, { kind: 'draft', taskId: task.id, title: '代码交付', content: '已修复', criteria: '验证通过', recipient: 'local-user', decisionIds: [base.decisions[0]!.id], executionId: executor.executionId!, responsibilities: { ownerId: owner, reviewerId: 'local-user', recipientId: 'local-user' } }, owner)
+    const submitted = chainService.updateProjectChainAsActor(f.project.id, draft.revision, { kind: 'submit', draftId: draft.drafts[0]!.id }, owner)
+    const target = submitted.drafts[0]!, status = scheduler.getOwnerAutonomousScheduleStatus(f.project.id)
+    const service = await import('./project-owner-chain-decision')
+    const request = { projectId: f.project.id, requestId: randomUUID(), grantId: f.grant.grantId, taskId: task.id, reworkOrdinal: status.reworkOrdinal!, revision: submitted.revision, draftId: target.id, version: target.version, choice: 'later' as const, comment: '', completedCriteria: [] }
+    expect(service.decideOwnerChainDelivery(request).revision).toBe(submitted.revision)
+    expect(service.decideOwnerChainDelivery(request).revision).toBe(submitted.revision)
+    const laterMessages = managementConversation.getOwnerManagementConversation(f.project.id).messages.filter(message => message.chainReview?.requestHash && message.chainReview.choice === 'later')
+    expect(laterMessages).toHaveLength(1)
+    const pendingConversation = await import('./project-owner-management-conversation')
+    pendingConversation.hasUnstartedOwnerConversation(f.project.id)
+    pendingConversation.preparePendingOwnerConversation(f.project.id)
+    expect(store.getProjectDb().prepare("SELECT COUNT(*) AS n FROM project_owner_planning_links WHERE project_id=? AND json_extract(payload, '$.conversationMessageId')=?").get(f.project.id, laterMessages[0]!.id)).toEqual({ n: 0 })
+    expect(() => service.decideOwnerChainDelivery({ ...request, choice: 'accept', comment: '核对通过' })).toThrow('不同决定')
+    const acceptance = { ...request, requestId: randomUUID(), choice: 'accept' as const, comment: '逐项核对通过', completedCriteria: target.definitionOfDone }
+    expect(() => service.decideOwnerChainDelivery({ ...acceptance, version: target.version + 1 })).toThrow('交付版本')
+    store.getProjectDb().prepare("CREATE TRIGGER owner_test_record_failure BEFORE INSERT ON project_owner_management_messages WHEN json_extract(NEW.payload, '$.chainReview.choice') = 'accept' BEGIN SELECT RAISE(ABORT, '模拟对话写入失败'); END").run()
+    expect(() => service.decideOwnerChainDelivery(acceptance)).toThrow('模拟对话写入失败')
+    store.getProjectDb().prepare('DROP TRIGGER owner_test_record_failure').run()
+    expect(chainService.getProjectChain(f.project.id).revision).toBe(submitted.revision)
+    expect(chainService.getProjectChain(f.project.id).drafts[0]!.status).toBe('submitted')
+    const accepted = service.decideOwnerChainDelivery(acceptance)
+    expect(accepted.drafts[0]!.status).toBe('accepted')
+    expect(service.decideOwnerChainDelivery(acceptance).revision).toBe(accepted.revision)
+    expect(managementConversation.getOwnerManagementConversation(f.project.id).messages.filter(message => message.chainReview?.choice === 'accept')).toHaveLength(1)
+  } finally { await f.stop() }
+}, 30000)
 
 test('Given准确Reviewer成果 WhenOwner判定协议或内部返工入口被篡改 Then拒绝错版本、虚构依据与无决定续派', async () => {
   const f = await fixture({ hold: true })

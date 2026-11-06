@@ -341,9 +341,9 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
     expect(database.getProjectDb().prepare('SELECT actual_cost_micros FROM project_owner_execution_commands WHERE id=?').get(duplicate.observation.commandId)).toEqual(beforeCost)
     const deliveryMessage = getOwnerManagementConversation(project.id).messages.find(message => message.kind === 'delivery' && message.delivery)!
     const item = deliveryMessage.delivery!.items[0]!
-    await page.getByRole('button', { name: `查看成果：${item.title}`, exact: true }).click()
-    await page.getByLabel('审阅这个成果版本').getByRole('button', { name: '认可这个版本', exact: true }).click()
-    await page.getByRole('button', { name: '发送给 Owner', exact: true }).click()
+    const reviewCard = page.getByLabel('成果版本审阅决定')
+    await reviewCard.getByText('通过这一版', { exact: true }).click()
+    await reviewCard.getByRole('button', { name: '提交决定', exact: true }).click()
     await page.getByText(`你认可了这个成果版本 · 审阅记录 · ${item.title}（${item.artifactHash.slice(0, 12)}）`, { exact: true }).waitFor()
     const review = getOwnerManagementConversation(project.id).messages.find(message => message.deliveryReviewDecision === 'accepted')!
     expect(review.deliveryReference).toEqual({ messageId: deliveryMessage.id, stepKey: item.stepKey, artifactHash: item.artifactHash })

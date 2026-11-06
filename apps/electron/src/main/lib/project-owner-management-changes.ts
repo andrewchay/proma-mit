@@ -38,7 +38,7 @@ function isCurrent(view: OwnerConversationChangeView): boolean {
   try {
     const original = source(view.projectId, view.id)
     resolveOwnerPlanningTask(original.frozen.link.planningTaskId, true)
-    const latest = store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id=? AND json_extract(payload, '$.kind')='conversation' AND json_extract(payload, '$.role')='user' AND json_extract(payload, '$.taskId') IS ? ORDER BY rowid DESC LIMIT 1").get(view.projectId, view.taskId ?? null) as { id: string } | undefined
+    const latest = store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id=? AND json_extract(payload, '$.kind')='conversation' AND json_extract(payload, '$.role')='user' AND COALESCE(json_extract(payload, '$.deliveryReviewDecision'), '') <> 'deferred' AND COALESCE(json_extract(payload, '$.chainReview.choice'), '') <> 'later' AND json_extract(payload, '$.taskId') IS ? ORDER BY rowid DESC LIMIT 1").get(view.projectId, view.taskId ?? null) as { id: string } | undefined
     if (latest?.id !== view.messageId) return false
     if (view.change.kind === 'clarification_answers') {
       const questionId = view.change.questionId
