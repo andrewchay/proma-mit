@@ -97,7 +97,9 @@ function parseOwnerResponseJson(input: string): unknown {
   try { return JSON.parse(candidates[0]!) as unknown } catch { throw new Error('Owner规划响应不是有效JSON') }
 }
 function text(input: unknown, label: string, max = 2000): string {
-  if (typeof input !== 'string' || !input.trim() || input.length > max) throw new Error(`Owner规划${label}无效或长度超限`)
+  if (typeof input !== 'string') throw new Error(`Owner规划${label}必须是字符串`)
+  if (!input.trim()) throw new Error(`Owner规划${label}不能为空`)
+  if (input.length > max) throw new Error(`Owner规划${label}超过长度上限（最多 ${max} 字符，当前 ${input.length} 字符）`)
   return input.trim()
 }
 function clarificationSources(context: ProjectOwnerPlanningContext): Map<string, string> {
@@ -355,7 +357,7 @@ export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningCo
       'commands必须逐命令覆盖来源中的commandId；changes须逐字按原顺序覆盖该命令全部冻结验收标准。disposition只能为addressed、still_open或not_applicable；authorizationImpact只能为unchanged、additional_confirmation、new_grant_required或cannot_determine。proposedChange是建议，不得表述成已实施。',
     ] : []),
     '二选一：kind="plan_proposal"，其余字段仅binding与proposal{summary,assumptions:[],risks:[],steps:[{key,title,outcome,acceptanceCriteria:[],dependencies:[],roleKey,sourceReferences?:[{path,line,sha256}]}]}；',
-    '或kind="needs_clarification"，其余字段仅binding与reason、questions:[{key,reasonType:"missing_information"|"source_conflict",question,why,options:[],recommended?,sourceReferences?:[{sourceId,quote}]}]。不夹带proposal，options可空或2–4项，recommended有选项时必须来自选项；source_conflict必须引用2–4个不同来源且原文精确匹配，missing_information不得附sourceReferences。',
+    '或kind="needs_clarification"，其余字段仅binding与reason、questions:[{key,reasonType:"missing_information"|"source_conflict",question,why,options:[],recommended?,sourceReferences?:[{sourceId,quote}]}]。不夹带proposal，options是可空或2–4项的字符串数组（每项为一个可选答案的完整短句，不得使用对象），recommended有选项时必须逐字来自options；source_conflict必须引用2–4个不同来源且原文精确匹配，missing_information不得附sourceReferences。',
     '不输出actor、grant、权限、费用已授权、执行状态或完成状态。计划与澄清均不是授权。',
     ...(context.conversation ? [
       '本次是持续项目对话。conversation是同一项目截至throughMessageId的冻结消息、当前方案和任务状态，不是新授权；历史包含模型建议与可能过时内容，优先用当前goal/sources/currentPlan/task事实核对。截断历史不得猜测补全。',
