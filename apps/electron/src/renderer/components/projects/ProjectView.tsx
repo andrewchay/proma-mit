@@ -4,6 +4,7 @@ import { ownerConversationNavigationAtom } from '../../atoms/project-owner-manag
 import { ownerTaskListRefreshSignalAtom } from '../../atoms/project-owner-task-atoms'
 import { selectTaskExecution, executionStopMessage } from './project-task-execution-state'
 import type { UserMappingInput } from '@gravitas/shared'
+import { AGENT_REACH_PARAM_LABELS, AGENT_REACH_WATCH_TEMPLATES, type WebWatchSource } from '@gravitas/shared'
 /**
  * ProjectView - 项目管理模块主视图（P1.1 版本）
  *
@@ -1610,6 +1611,7 @@ interface ProjectWebWatchConfigView {
   projectId: string
   enabled: boolean
   topics: string[]
+  sources?: WebWatchSource[]
   localTime: string
   lastSuccessAt?: number
 }
@@ -1626,9 +1628,73 @@ interface WebObservationQualityView {
   feedback: { helpful: number; irrelevant: number; snooze: number }
 }
 
+/** 渲染进程侧监控源上限；主进程保存校验为准，这里只做按钮禁用与提示。 */
+const MAX_WATCH_SOURCES = 10
+
+/** 监控源编辑器：模板下拉 + 动态参数表单 + 源列表（启停 / 删除）。 */
+function WebWatchSourcesEditor({ sources, onChange }: { sources: WebWatchSource[]; onChange: (next: WebWatchSource[]) => void }): React.ReactElement {
+  const [templateKey, setTemplateKey] = useState('github/search')
+  const [paramText, setParamText] = useState<Record<string, string>>({})
+  const template = AGENT_REACH_WATCH_TEMPLATES.find((item) => `${item.channel}/${item.action}` === templateKey) ?? AGENT_REACH_WATCH_TEMPLATES[0]
+  if (!template) return <p className="text-sm text-muted-foreground">暂无可用的监控源模板。</p>
+
+  const addSource = () => {
+    const params: Record<string, string | number> = {}
+    for (const name of template.requiredParams) {
+      const value = (paramText[name] ?? '').trim()
+      if (!value) return
+      params[name] = value
+    }
+    const limitText = (paramText.limit ?? '').trim()
+    if (limitText) {
+      const limit = Number(limitText)
+      if (Number.isInteger(limit) && limit > 0) params.limit = limit
+    }
+    const firstValue = template.requiredParams.map((name) => (paramText[name] ?? '').trim()).filter(Boolean)[0]
+    onChange([...sources, {
+      id: crypto.randomUUID(),
+      channel: template.channel,
+      action: template.action,
+      params,
+      label: firstValue ? `${template.label}：${firstValue}` : template.label,
+      enabled: true,
+      addedAt: Date.now(),
+    }])
+    setParamText({})
+  }
+
+  return (
+    <div className="grid gap-2">
+      <span className="text-sm">监控源（agent-reach 渠道，最多 {MAX_WATCH_SOURCES} 个）</span>
+      {sources.map((source) => (
+        <div key={source.id} className="flex items-center gap-2 rounded-md border bg-background px-3 py-2 text-sm">
+          <input type="checkbox" checked={source.enabled} onChange={(event) => onChange(sources.map((item) => item.id === source.id ? { ...item, enabled: event.target.checked } : item))} />
+          <span className="min-w-0 flex-1 truncate">{source.label}</span>
+          <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{source.channel}</span>
+          <button type="button" onClick={() => onChange(sources.filter((item) => item.id !== source.id))} className="text-xs text-muted-foreground hover:text-foreground">删除</button>
+        </div>
+      ))}
+      <div className="flex flex-wrap items-center gap-2">
+        <select value={templateKey} onChange={(event) => { setTemplateKey(event.target.value); setParamText({}) }} className="rounded-md border bg-background px-2 py-2 text-sm">
+          {AGENT_REACH_WATCH_TEMPLATES.map((item) => <option key={`${item.channel}/${item.action}`} value={`${item.channel}/${item.action}`}>{item.label}</option>)}
+        </select>
+        {template.requiredParams.map((name) => (
+          <input key={name} value={paramText[name] ?? ''} onChange={(event) => setParamText({ ...paramText, [name]: event.target.value })} placeholder={AGENT_REACH_PARAM_LABELS[name] ?? name} className="w-44 rounded-md border bg-background px-2 py-2 text-sm" />
+        ))}
+        {template.optionalParams.map((name) => (
+          <input key={name} type="number" min={1} max={50} value={paramText[name] ?? ''} onChange={(event) => setParamText({ ...paramText, [name]: event.target.value })} placeholder={`${AGENT_REACH_PARAM_LABELS[name] ?? name}（可选）`} className="w-28 rounded-md border bg-background px-2 py-2 text-sm" />
+        ))}
+        <button type="button" onClick={addSource} disabled={sources.length >= MAX_WATCH_SOURCES || template.requiredParams.some((name) => !(paramText[name] ?? '').trim())} className="rounded-md border px-3 py-2 text-sm disabled:opacity-50">添加</button>
+      </div>
+      <p className="text-xs text-muted-foreground">需要本机已安装 agent-reach CLI；B站 / V2EX / GitHub 渠道免登录。监控源采集不消耗 AI 额度。</p>
+    </div>
+  )
+}
+
 function ProjectWebWatchPanel({ projectId, projectTitle, projectDescription }: { projectId: string; projectTitle: string; projectDescription: string }): React.ReactElement {
-  const [config, setConfig] = useState<ProjectWebWatchConfigView>({ projectId, enabled: false, topics: [], localTime: '09:00' })
+  const [config, setConfig] = useState<ProjectWebWatchConfigView>({ projectId, enabled: false, topics: [], sources: [], localTime: '09:00' })
   const [topicsText, setTopicsText] = useState('')
+  const [sources, setSources] = useState<WebWatchSource[]>([])
   const [runs, setRuns] = useState<ProjectWebWatchRunView[]>([])
   const [quality, setQuality] = useState<WebObservationQualityView | null>(null)
   const [busy, setBusy] = useState(false)
@@ -1641,6 +1707,7 @@ function ProjectWebWatchPanel({ projectId, projectTitle, projectDescription }: {
     ])
     setConfig(saved)
     setTopicsText(saved.topics.join('\n'))
+    setSources(saved.sources ?? [])
     setRuns(history)
     setQuality(summary)
   }, [projectId])
@@ -1651,9 +1718,10 @@ function ProjectWebWatchPanel({ projectId, projectTitle, projectDescription }: {
     setMessage('')
     try {
       const next = await callProjectAPI<ProjectWebWatchConfigView>('saveWebWatch', {
-        projectId, enabled, topics: topicsText.split('\n').map((item) => item.trim()).filter(Boolean), localTime: config.localTime,
+        projectId, enabled, topics: topicsText.split('\n').map((item) => item.trim()).filter(Boolean), localTime: config.localTime, sources,
       })
       setConfig(next)
+      setSources(next.sources ?? [])
       setMessage('设置已保存')
     } catch (error) { setMessage(error instanceof Error ? error.message : String(error)) }
     finally { setBusy(false) }
@@ -1676,7 +1744,8 @@ function ProjectWebWatchPanel({ projectId, projectTitle, projectDescription }: {
       <div className="mt-4 grid gap-4">
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={config.enabled} onChange={(event) => setConfig({ ...config, enabled: event.target.checked })} />每天自动扫描</label>
         <label className="grid gap-1 text-sm">扫描时间（本地时间）<input type="time" className="w-40 rounded-md border bg-background px-3 py-2" value={config.localTime} onChange={(event) => setConfig({ ...config, localTime: event.target.value })} /></label>
-        <label className="grid gap-1 text-sm">扫描主题（每行一个，最多 8 个）<textarea className="min-h-24 rounded-md border bg-background px-3 py-2" placeholder={`${projectTitle}\n${projectDescription}`} value={topicsText} onChange={(event) => setTopicsText(event.target.value)} /></label>
+        <label className="grid gap-1 text-sm">扫描主题（每行一个，最多 8 个；配置监控源后可为空）<textarea className="min-h-24 rounded-md border bg-background px-3 py-2" placeholder={`${projectTitle}\n${projectDescription}`} value={topicsText} onChange={(event) => setTopicsText(event.target.value)} /></label>
+        <WebWatchSourcesEditor sources={sources} onChange={setSources} />
       </div>
       <div className="mt-4 flex items-center gap-2">
         <button onClick={() => void save()} disabled={busy} className="rounded-md bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50">保存设置</button>
@@ -1684,7 +1753,7 @@ function ProjectWebWatchPanel({ projectId, projectTitle, projectDescription }: {
         <button onClick={() => void runNow()} disabled={busy} className="rounded-md border px-3 py-2 text-sm disabled:opacity-50">立即扫描</button>
         {message && <span role="status" className="text-sm text-muted-foreground">{message}</span>}
       </div>
-      <p className="mt-3 text-xs text-muted-foreground">需要先配置 WebSearch（Tavily 或秘塔）和一个已启用的 AI 渠道。应用离线错过计划后，启动时补扫一次，覆盖上次成功扫描至今。</p>
+      <p className="mt-3 text-xs text-muted-foreground">主题搜索需要 WebSearch（Tavily 或秘塔）凭据和一个已启用的 AI 渠道；监控源需要本机已安装 agent-reach CLI。应用离线错过计划后，启动时补扫一次，覆盖上次成功扫描至今。</p>
       {config.lastSuccessAt && <p className="mt-2 text-xs text-muted-foreground">上次成功：{new Date(config.lastSuccessAt).toLocaleString()}</p>}
     </div>
     <ProjectWebWatchHistory runs={runs} />

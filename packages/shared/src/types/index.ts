@@ -93,6 +93,9 @@ export * from './workflow'
 // 工作模块（项目管理 / 日程管家 / 日历同步）IPC 通道与类型
 export * from './work-module'
 
+// 项目外网扫描监控源类型与 Agent-Reach 渠道模板
+export * from './web-watch'
+
 // 营销 Campaign / KOL 类型（ma-tools 迁移用）
 export * from './campaign-types'
 

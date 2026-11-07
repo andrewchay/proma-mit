@@ -9,7 +9,16 @@ export interface ProjectWebWatchRunView {
   status: 'success' | 'failed' | 'skipped'
   judgment?: string
   skipReason?: 'budget_exhausted'
-  newSources: Array<{ title: string; url: string; snippet: string; publishedAt?: string }>
+  newSources: Array<{
+    title: string
+    url: string
+    snippet: string
+    publishedAt?: string
+    /** 采集来源；缺省为通用网页搜索。 */
+    origin?: { type: 'websearch' } | { type: 'agent-reach'; channel: string; action: string; backend?: string }
+  }>
+  /** 单源失败明细；存在时展示可折叠的失败列表。 */
+  sourceErrors?: Array<{ sourceId: string; channel: string; code: string; message: string }>
   analysis?: string
   error?: string
 }
@@ -81,12 +90,27 @@ export function ProjectWebWatchHistory({ runs }: { runs: ProjectWebWatchRunView[
                   <ul className="mt-1 space-y-2">
                     {run.newSources.map((source) => (
                       <li key={source.url} className="break-words">
-                        <a className="text-primary underline underline-offset-2" href={source.url} target="_blank" rel="noreferrer">{source.title}</a>
+                        <span className="flex flex-wrap items-center gap-2">
+                          <a className="text-primary underline underline-offset-2" href={source.url} target="_blank" rel="noreferrer">{source.title}</a>
+                          {source.origin?.type === 'agent-reach' && (
+                            <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">{source.origin.channel}</span>
+                          )}
+                        </span>
                         <p className="mt-0.5 text-xs text-muted-foreground">{source.publishedAt ? `${source.publishedAt} · ` : ''}{source.snippet}</p>
                       </li>
                     ))}
                   </ul>
                 </div>
+              )}
+              {(run.sourceErrors?.length ?? 0) > 0 && (
+                <details className="rounded-md border border-dashed px-3 py-2">
+                  <summary className="cursor-pointer text-sm text-muted-foreground">本次 {run.sourceErrors!.length} 个采集源未成功（不影响其余来源）</summary>
+                  <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+                    {run.sourceErrors!.map((error, index) => (
+                      <li key={`${error.sourceId}-${index}`} className="break-words">{error.channel} · {error.code}：{error.message}</li>
+                    ))}
+                  </ul>
+                </details>
               )}
               <p className="text-xs text-muted-foreground">
                 扫描范围：{new Date(run.coverageFrom).toLocaleString()} 至 {new Date(run.coverageTo).toLocaleString()}
