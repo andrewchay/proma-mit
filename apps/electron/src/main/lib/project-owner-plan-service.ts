@@ -33,7 +33,9 @@ function record(input: unknown, fields: readonly string[]): Record<string, unkno
   return input as Record<string, unknown>
 }
 function text(input: unknown, label: string, max = 2000, allowEmpty = false): string {
-  if (typeof input !== 'string' || (!allowEmpty && !input.trim()) || input.length > max) throw new Error(`Owner ${label}格式无效或长度超限`)
+  if (typeof input !== 'string') throw new Error(`Owner ${label}必须是字符串`)
+  if (!allowEmpty && !input.trim()) throw new Error(`Owner ${label}不能为空`)
+  if (input.length > max) throw new Error(`Owner ${label}超过长度上限（最多 ${max} 字符，当前 ${input.length} 字符）`)
   return input
 }
 function positive(input: unknown): number {

@@ -287,6 +287,21 @@ test('澄清数量/重复问题/无原因/未知授权字段/不属于选项的�
   }
 })
 
+test('澄清选项非字符串/空白/超长分别给出可读的失败原因', async () => {
+  const protocol = await import('./project-owner-planning-protocol')
+  const c = context()
+  const q = { key: 'scope', reasonType: 'missing_information', question: '优先成果？', why: '决定范围', options: ['A', 'B'] }
+  const base = { schemaVersion: 1, kind: 'needs_clarification', projectId: 'p', goalVersion: 1, contextFingerprint: c.fingerprint, reason: '范围未定', questions: [q] }
+  // 模型可能把选项写成 {key,label,description} 对象；失败原因须明确指出是类型问题，而不是笼统的“无效或长度超限”。
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...base, questions: [{ ...q, options: [{ key: 'a', label: 'A', description: '说明' }, 'B'] }] }, c)).toThrow('Owner规划澄清选项必须是字符串')
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...base, questions: [{ ...q, options: ['  ', 'B'] }] }, c)).toThrow('Owner规划澄清选项不能为空')
+  const tooLong = 'A'.repeat(2001)
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...base, questions: [{ ...q, options: [tooLong, 'B'] }] }, c)).toThrow('Owner规划澄清选项超过长度上限')
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...base, questions: [{ ...q, options: [tooLong, 'B'] }] }, c)).toThrow('当前 2001 字符')
+  // 提示词须明确 options 为字符串数组，降低模型输出 {key,label,description} 对象格式的概率。
+  expect(protocol.buildProjectOwnerPlanningRequest(c).systemPrompt).toContain('options是可空或2–4项的字符串数组')
+})
+
 test('依赖环/未提供岗位/执行字段仍走同一DAG与白名单，不由kind放行', async () => {
   const protocol = await import('./project-owner-planning-protocol')
   const c = context(); const valid = proposal(c); const step = valid.proposal.steps[0]!
