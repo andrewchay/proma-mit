@@ -389,9 +389,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
               && <a href={`#${planDetailsId}`} className="text-primary underline underline-offset-4">查看方案与确认项</a>}
             {waitingMessage?.kind === 'configuration_required' && children && <a href={`#${settingsId}`} className="text-primary underline underline-offset-4">查看项目配置</a>}
           </div>}
-          {authorizationDecision && children && <div className="space-y-2"><p className="text-sm font-medium">{delegation.view?.state === 'none' ? '确认项目预算与管理范围' : '项目管理授权需要核对'}</p><a href={`#${settingsId}`} className="inline-block text-sm text-primary underline underline-offset-4">
-            {delegation.view?.state === 'none' ? '确认项目预算与授权范围' : '核对项目预算与授权范围'}
-          </a></div>}
+          {authorizationDecision && children && <div className="space-y-2"><p className="text-sm font-medium">{delegation.view?.state === 'none' ? '确认项目预算与管理范围' : '项目管理授权需要核对'}</p>{children}</div>}
           {pendingAction && <section aria-label="员工动作需要你逐次审批" className="space-y-3 rounded-xl bg-amber-500/10 p-3">
             <p className="text-sm leading-6">员工执行已暂停，等待你核对下面的准确操作。Owner不能代签；在对话中讨论不等于批准。一次确认仅适用于本次参数，不扩大预算或范围。</p>
             <PermissionBanner key={pendingAction.requestId} sessionId={pendingAction.sessionId} keyboardShortcuts={false} />
@@ -504,6 +502,6 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
       <button type="button" className="mt-3 text-sm text-primary underline" onClick={() => { dismissAttention(); revealDiscussionTarget(`owner-message-${alertMessage.id}`) }}>查看记录与上下文</button>
     </aside>}
     <div hidden={showProjectDetails}>{planDetails}
-    {children && <div id={settingsId} tabIndex={-1} className="space-y-3">{children}</div>}</div>
+    {children && !authorizationDecision && <div id={settingsId} tabIndex={-1} className="space-y-3">{children}</div>}</div>
   </div>
 }

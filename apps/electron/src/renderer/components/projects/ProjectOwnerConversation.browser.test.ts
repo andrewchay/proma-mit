@@ -54,6 +54,9 @@ const rootNode=createRoot(document.getElementById('root'));rootNode.render(<Prov
     expect(await page.getByLabel('Owner当前工作台').innerText()).toContain('项目目标')
     expect(await page.getByLabel('Owner当前工作台').count()).toBe(1)
     await page.getByText('Owner尚未开始规划：当前没有已确认的项目总模型费用额度。请在授权设置中确认预算与有效期；确认后，Owner会在额度内自动整理方案并回到这里回应。', { exact: true }).waitFor()
+    // 授权确认属于用户要做的决定：授权提示内联出现在顶部「需要你决定」区块，不在页面底部单独占位。
+    await page.getByLabel('需要你决定').getByText('确认项目预算与管理范围', { exact: true }).waitFor()
+    await page.getByLabel('需要你决定').getByText(/Owner提示需要恢复项目管理授权/).waitFor()
     expect(await page.getByRole('button', { name: '查看本次规划请求', exact: true }).count()).toBe(0)
     expect(await page.getByRole('checkbox', { name: '确认本次模型执行及费用' }).count()).toBe(0)
     expect(await page.getByText(/token|协议|发送资料|本次模型执行及费用/i).count()).toBe(0)
@@ -67,6 +70,9 @@ const rootNode=createRoot(document.getElementById('root'));rootNode.render(<Prov
     await page.getByText('目标与方案', { exact: true }).click()
     await page.getByRole('button', { name: '调整目标' }).waitFor()
     expect(await page.getByLabel('Owner管理委托').count()).toBe(1)
+    // 到期授权同样属于顶部决定事项：卡内联在「需要你决定」内，并提供核对提示而非底部跳转链接。
+    await page.getByLabel('需要你决定').getByText('项目管理授权需要核对', { exact: true }).waitFor()
+    expect(await page.getByRole('link', { name: '核对项目预算与授权范围' }).count()).toBe(0)
     // 模型设置可展开更换；添加渠道不等于切换 Owner。
     expect(await page.getByLabel('Owner规划模型').count()).toBe(0)
     await page.getByText('Owner 模型设置', { exact: true }).click()
