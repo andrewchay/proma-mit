@@ -242,7 +242,7 @@ function recoverLegacyOwnerConversationReplies(projectId: string): void {
       if (!recovered || recovered.state !== 'replied') continue
       const receipt = getOwnerPlanningRunReceipt(recovered.receiptId)
       if (!receipt) continue
-      const snapshot = readOwnerPlanningSnapshot(receipt.planningTaskId)
+      const snapshot = readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true })
       if (!snapshot || snapshot.link.projectId !== projectId || !snapshot.link.conversationMessageId) continue
       projectOwnerManagementRunResult(projectId, executionId, `legacy-response-recovered:${executionId}`)
       if (recovered.qualityDecision) continue
@@ -430,15 +430,15 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
         subjects.add(subjectKey)
         // 已有调用时等待完成回调；先入队再失败回滚会产生新唤醒，造成忙重试。
         if (view.state !== 'active' || !view.delegation || hasActiveOwnerManagementRequest(view.delegation.id)) continue
-        if (readOwnerPlanningSnapshot(link.planning_task_id)?.context.conversation?.executionObservation && view.delegation?.executionFollowupEnabled !== true) {
+        if (readOwnerPlanningSnapshot(link.planning_task_id, { allowUnknownPromptForHistory: true })?.context.conversation?.executionObservation && view.delegation?.executionFollowupEnabled !== true) {
           appendOwnerManagementMessage({ projectId, eventId: `followup-scope:${link.planning_task_id}`, role: 'assistant', kind: 'attention', ...(subject.targetTaskId ? { taskId: subject.targetTaskId } : {}), content: '执行结果已保留。此前管理委托未包含主动跟进分析；重新确认管理范围后，我才能在额度内分析，不会自动消耗旧许可。' })
           continue
         }
-        if (readOwnerPlanningSnapshot(link.planning_task_id)?.context.conversation?.deliveryReview && view.delegation?.fullDeliveryReviewEnabled !== true) {
+        if (readOwnerPlanningSnapshot(link.planning_task_id, { allowUnknownPromptForHistory: true })?.context.conversation?.deliveryReview && view.delegation?.fullDeliveryReviewEnabled !== true) {
           appendOwnerManagementMessage({ projectId, eventId: `delivery-scope:${link.planning_task_id}`, role: 'assistant', kind: 'attention', ...(subject.targetTaskId ? { taskId: subject.targetTaskId } : {}), content: '成果已保留。此前管理委托未包含完整成果读取；请在原对话确认新增范围，不会自动消耗旧许可。' })
           continue
         }
-        if (readOwnerPlanningSnapshot(link.planning_task_id)?.context.conversation?.deliveryReview?.qualityDecisionVersion === 1 && view.delegation?.qualityDecisionEnabled !== true) {
+        if (readOwnerPlanningSnapshot(link.planning_task_id, { allowUnknownPromptForHistory: true })?.context.conversation?.deliveryReview?.qualityDecisionVersion === 1 && view.delegation?.qualityDecisionEnabled !== true) {
           appendOwnerManagementMessage({ projectId, eventId: `quality-scope:${link.planning_task_id}`, role: 'assistant', kind: 'attention', ...(subject.targetTaskId ? { taskId: subject.targetTaskId } : {}), content: '完整成果和独立检查已保留，旧管理委托不含质量决定；确认管理范围后再继续，不消耗旧额度。' })
           continue
         }

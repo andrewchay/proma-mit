@@ -69,10 +69,8 @@ export function projectOwnerManagementRunResult(projectId: string, executionId: 
   const receipt = outcome ? getOwnerPlanningRunReceipt(outcome.receiptId) : null
   const manager = getOwnerManager(projectId)
   if (!outcome || !receipt || !manager || receipt.projectId !== projectId || receipt.executionId !== executionId || receipt.purpose !== 'owner_planning') throw new Error('Owner管理运行结论身份不一致')
-  // 旧提示版本仅用于展示失败回执；成功决定和新请求仍需通过严格来源检查。
-  const snapshot = outcome.state === 'failed' && !outcome.employeeDecision && !outcome.qualityDecision
-    ? readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true })
-    : readOwnerPlanningSnapshot(receipt.planningTaskId)
+  // 这里只按冻结关联/资料回落消息，不授予新发送；新请求仍由严格来源解析把关。
+  const snapshot = readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true })
   if (!snapshot || snapshot.link.projectId !== projectId) throw new Error('Owner问题缺少冻结来源')
   if (outcome.employeeDecision) {
     if (!snapshot.link.conversationMessageId || getProjectOwnerGoalDraft(projectId, snapshot.link.targetTaskId)?.revision !== snapshot.link.goalRevision) return
