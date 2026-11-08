@@ -94,6 +94,8 @@ interface RichTextInputProps {
   disabled?: boolean
   /** 编辑器的辅助技术名称 */
   ariaLabel?: string
+  /** 是否在编辑器可用时自动聚焦 */
+  autoFocus?: boolean
   /** 自动聚焦触发器（当此值变化时自动聚焦，通常传入对话 ID） */
   autoFocusTrigger?: string | null
   /** 是否支持手动折叠（内容较长时显示折叠按钮） */
@@ -151,6 +153,7 @@ export function RichTextInput({
   className,
   disabled = false,
   ariaLabel,
+  autoFocus = true,
   autoFocusTrigger,
   collapsible = false,
   enableMentions,
@@ -681,13 +684,13 @@ export function RichTextInput({
 
   // 自动聚焦：组件挂载时 + autoFocusTrigger 变化时
   useEffect(() => {
-    if (editor && !disabled) {
+    if (editor && !disabled && autoFocus) {
       const timer = setTimeout(() => {
         editor.commands.focus()
       }, 100)
       return () => clearTimeout(timer)
     }
-  }, [editor, disabled])
+  }, [editor, disabled, autoFocus])
 
   // 语音输入回填：优先插入到当前编辑器的光标位置。
   useEffect(() => {
