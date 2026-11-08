@@ -24,6 +24,7 @@ import { invalidateWorkspaceFileChangePolicies } from './project-file-change-pol
 const DEBOUNCE_MS = 300
 const PROJECT_SCAN_DEBOUNCE_MS = 2000
 const PROJECT_SCAN_RETRY_MS = 30000
+const PROJECT_SCAN_MAX_RETRY_MS = 15 * 60_000
 
 /** watcher 'error' 事件后的自愈重启延迟（ms），避免对持续故障状态紧密重试 */
 const WATCHER_RESTART_DELAY_MS = 5000
@@ -44,8 +45,14 @@ let projectRootRetryTimer: ReturnType<typeof setInterval> | null = null
 const projectScanTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const projectScans = new Map<string, Promise<void>>()
 const projectScanDirty = new Map<string, string>()
+const projectScanFailures = new Map<string, { root: string; attempts: number; retryAt: number }>()
 
 function scheduleProjectScan(workspaceId: string, root: string, delay = PROJECT_SCAN_DEBOUNCE_MS): void {
+  let failure = projectScanFailures.get(workspaceId)
+  if (failure && failure.root !== root) {
+    projectScanFailures.delete(workspaceId)
+    failure = undefined
+  }
   const timer = projectScanTimers.get(workspaceId)
   if (timer) clearTimeout(timer)
   projectScanTimers.set(workspaceId, setTimeout(() => {
@@ -59,9 +66,15 @@ function scheduleProjectScan(workspaceId: string, root: string, delay = PROJECT_
       await scanProjectFileChanges(workspaceId, root)
       const { reconcileProjectFileChangeObservations } = await import('./project-file-change-observations')
       await reconcileProjectFileChangeObservations(workspaceId, root)
+      projectScanFailures.delete(workspaceId)
     })().catch(error => {
-      console.error('[项目变化扫描] 失败，将稍后重试:', error)
-      if (mainWin) scheduleProjectScan(workspaceId, root, PROJECT_SCAN_RETRY_MS)
+      if (!mainWin || !listAgentWorkspaces().some(item => item.id === workspaceId && item.rootPath === root)) return
+      const previous = projectScanFailures.get(workspaceId)
+      const attempts = previous?.root === root ? previous.attempts + 1 : 1
+      const retryDelay = Math.min(PROJECT_SCAN_MAX_RETRY_MS, PROJECT_SCAN_RETRY_MS * 2 ** Math.min(attempts - 1, 5))
+      projectScanFailures.set(workspaceId, { root, attempts, retryAt: Date.now() + retryDelay })
+      console.error(`[项目变化扫描] 失败，将在 ${retryDelay / 1000} 秒后重试:`, error)
+      scheduleProjectScan(workspaceId, root, retryDelay)
     })
     projectScans.set(workspaceId, next)
     void next.finally(() => {
@@ -70,7 +83,7 @@ function scheduleProjectScan(workspaceId: string, root: string, delay = PROJECT_
       projectScanDirty.delete(workspaceId)
       if (dirtyRoot && mainWin) scheduleProjectScan(workspaceId, dirtyRoot)
     })
-  }, delay))
+  }, Math.max(delay, (failure?.retryAt ?? 0) - Date.now())))
 }
 
 /** 同步本地项目根目录监听，独立于会话附加目录的生命周期。 */
@@ -95,6 +108,7 @@ export function syncProjectRootWatchers(): void {
           if (!filename || filename.replace(/\\/g, '/') === '.gravitasignore') {
             try { invalidateWorkspaceFileChangePolicies(workspace.id) }
             catch (error) { console.error('[项目变化授权] 撤销失败:', error) }
+            if (filename) projectScanFailures.delete(workspace.id)
           }
           scheduleProjectScan(workspace.id, path)
         }
@@ -235,6 +249,7 @@ export function stopWorkspaceWatcher(): void {
   for (const timer of projectScanTimers.values()) clearTimeout(timer)
   projectScanTimers.clear()
   projectScanDirty.clear()
+  projectScanFailures.clear()
   if (projectRootRetryTimer) clearInterval(projectRootRetryTimer)
   projectRootRetryTimer = null
   for (const rootWatcher of projectRootWatchers.values()) rootWatcher.close()

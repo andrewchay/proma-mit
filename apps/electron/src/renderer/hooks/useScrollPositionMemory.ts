@@ -19,6 +19,11 @@ import { useStickToBottomContext } from 'use-stick-to-bottom'
 /** 模块级缓存：对话/会话 ID → 距底部像素距离 */
 const scrollPositionCache = new Map<string, number>()
 
+/** 有历史阅读位置时，需要完整布局才能按距底部距离准确恢复。 */
+export function hasSavedScrollPosition(id: string): boolean {
+  return (scrollPositionCache.get(id) ?? 0) > 5
+}
+
 /**
  * ScrollPositionManager — 放在 Conversation（StickToBottom）内部
  */
@@ -31,7 +36,7 @@ export function ScrollPositionManager({ id, ready }: { id: string; ready: boolea
   // 关键：仅在恢复完成后才注册监听，防止初始化/恢复前的自动滚动污染缓存
   useEffect(() => {
     const el = scrollRef.current
-    if (!el || !restoredRef.current) return
+    if (!el || !ready || !restoredRef.current) return
 
     const savePosition = (): void => {
       const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
@@ -40,7 +45,7 @@ export function ScrollPositionManager({ id, ready }: { id: string; ready: boolea
 
     el.addEventListener('scroll', savePosition, { passive: true })
     return () => el.removeEventListener('scroll', savePosition)
-  }, [scrollRef, id])  // ready 作为依赖：确保 ready->true 后重新运行
+  }, [scrollRef, id, ready])
 
   // id 变化时重置恢复标记
   useEffect(() => {

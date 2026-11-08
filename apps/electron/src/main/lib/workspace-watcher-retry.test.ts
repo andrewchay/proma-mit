@@ -1,5 +1,5 @@
 import { afterAll, expect, mock, test } from 'bun:test'
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -20,6 +20,10 @@ afterAll(() => { stopWorkspaceWatcher(); rmSync(temp, { recursive: true, force: 
 
 test('Given 项目扫描暂时失败 When 等待重试 Then 无需新的文件事件也会再次扫描', async () => {
   startWorkspaceWatcher(window as never)
-  await new Promise(resolve => setTimeout(resolve, 33500))
+  await new Promise(resolve => setTimeout(resolve, 2500))
+  writeFileSync(join(root, 'change.txt'), '变化')
+  await new Promise(resolve => setTimeout(resolve, 2500))
+  expect(calls).toBe(1)
+  await new Promise(resolve => setTimeout(resolve, 28500))
   expect(calls).toBe(2)
 }, 40000)
