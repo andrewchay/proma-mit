@@ -733,7 +733,7 @@ export interface OwnerExecutionRevalidationInput {
   expectedMaterializationRevision: number
   expectedMaterializationHash: string
   expectedPolicyRevision: number
-  /** 显式烟测续期：追加继任再验证，不改写原准备；普通产品路径拒绝该字段。 */
+  /** 显式续期：追加继任再验证，不改写原准备；仅授权续期服务可在门禁内使用该字段。 */
   renewalExpiresAt?: number
   changeReason: string
 }
@@ -888,6 +888,25 @@ export interface ConfirmOwnerExecutionGrantIssueRequest extends PreviewOwnerExec
 }
 export interface PreviewOwnerExecutionGrantRevokeRequest extends ProjectOwnerGoalSubject { grantId: string }
 export interface ConfirmOwnerExecutionGrantRevokeRequest extends PreviewOwnerExecutionGrantRevokeRequest { confirmedFingerprint: string }
+/** 执行授权续期：仅顺延授权期限，不改费用/次数/返工上限，不改写原任务、命令与结算证据。 */
+export interface OwnerExecutionGrantRenewalPreview extends ProjectOwnerGoalSubject {
+  grantId: string
+  grantState: 'active'
+  previousExpiresAt: number
+  expiresAt: number
+  budget: OwnerExecutionGrantBudget
+  /** 续期前账本用量：续期不清零、不重置累计费用与运行次数。 */
+  usage: { committedCostMicros: number; reservedCostMicros: number; runReservations: number }
+  ownerManagementDelegationId?: string
+  renewalFingerprint: string
+}
+export interface PreviewOwnerExecutionGrantRenewalRequest extends ProjectOwnerGoalSubject {
+  input: { requestId: string; expiresAt: number }
+}
+export interface ConfirmOwnerExecutionGrantRenewalRequest extends PreviewOwnerExecutionGrantRenewalRequest {
+  preview: OwnerExecutionGrantRenewalPreview
+  confirmedFingerprint: string
+}
 export interface ProjectOwnerExecutionGrantApi {
   getOwnerExecutionGrant: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerExecutionGrant | null>>
   listOwnerExecutionGrantHistory: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerExecutionGrant[]>>
@@ -895,6 +914,8 @@ export interface ProjectOwnerExecutionGrantApi {
   confirmOwnerExecutionGrantIssue: (request: ConfirmOwnerExecutionGrantIssueRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionGrant>>
   previewOwnerExecutionGrantRevoke: (request: PreviewOwnerExecutionGrantRevokeRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionGrantRevokePreview>>
   confirmOwnerExecutionGrantRevoke: (request: ConfirmOwnerExecutionGrantRevokeRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionGrant>>
+  previewOwnerExecutionGrantRenewal: (request: PreviewOwnerExecutionGrantRenewalRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionGrantRenewalPreview>>
+  confirmOwnerExecutionGrantRenewal: (request: ConfirmOwnerExecutionGrantRenewalRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionGrant>>
 }
 
 

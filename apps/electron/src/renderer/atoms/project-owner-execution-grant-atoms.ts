@@ -82,6 +82,13 @@ function api(): ProjectOwnerExecutionGrantApi {
     throw new Error('当前应用缺少授权账本接口，请更新后重试')
   return value
 }
+/** 续期接口为后加能力：旧壳缺失时给出明确提示，不影响既有授权账本读写。 */
+function renewalApi(): Pick<ProjectOwnerExecutionGrantApi, 'previewOwnerExecutionGrantRenewal' | 'confirmOwnerExecutionGrantRenewal'> {
+  const value = api()
+  if (typeof value.previewOwnerExecutionGrantRenewal !== 'function' || typeof value.confirmOwnerExecutionGrantRenewal !== 'function')
+    throw new Error('当前应用缺少执行授权续期接口，请更新后重试')
+  return value
+}
 export const ownerGrantApiAtom = atom<ProjectOwnerExecutionGrantApi>({
   getOwnerExecutionGrant: (s) => api().getOwnerExecutionGrant(s),
   listOwnerExecutionGrantHistory: (s) => api().listOwnerExecutionGrantHistory(s),
@@ -89,6 +96,8 @@ export const ownerGrantApiAtom = atom<ProjectOwnerExecutionGrantApi>({
   confirmOwnerExecutionGrantIssue: (r) => api().confirmOwnerExecutionGrantIssue(r),
   previewOwnerExecutionGrantRevoke: (r) => api().previewOwnerExecutionGrantRevoke(r),
   confirmOwnerExecutionGrantRevoke: (r) => api().confirmOwnerExecutionGrantRevoke(r),
+  previewOwnerExecutionGrantRenewal: (r) => renewalApi().previewOwnerExecutionGrantRenewal(r),
+  confirmOwnerExecutionGrantRenewal: (r) => renewalApi().confirmOwnerExecutionGrantRenewal(r),
 })
 const message = (error: unknown) => (error instanceof Error ? error.message : '授权账本操作失败')
 function assertSubject(value: { projectId: string; taskId?: string }, s: ProjectOwnerGoalSubject) {

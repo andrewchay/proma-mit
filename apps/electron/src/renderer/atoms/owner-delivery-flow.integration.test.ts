@@ -84,6 +84,7 @@ function fixture(options?: { grant?: boolean }) {
     previewOwnerExecutionGrantIssue: r => options?.grant ? response(() => grants.previewOwnerExecutionGrantIssue(subjectOf(r), r.input)) : (async () => { throw Error('不应自动请求授权') })(),
     confirmOwnerExecutionGrantIssue: r => options?.grant ? (() => { grantIssues++; return response(() => grants.confirmOwnerExecutionGrantIssue(subjectOf(r), { input: r.input, preview: r.preview, confirmedFingerprint: r.confirmedFingerprint })) })() : (async () => { throw Error('不应自动发行授权') })(),
     previewOwnerExecutionGrantRevoke: async () => { throw Error('不应撤权') }, confirmOwnerExecutionGrantRevoke: async () => { throw Error('不应撤权') },
+    previewOwnerExecutionGrantRenewal: async () => { throw Error('不应续期') }, confirmOwnerExecutionGrantRenewal: async () => { throw Error('不应续期') },
   })
   return { store, subject, preparation, effects, grantIssues: () => grantIssues, failValidation: () => { failValidation = true }, loseReply: () => { loseReply = true } }
 }
