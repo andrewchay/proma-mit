@@ -1,5 +1,9 @@
 import { expect, mock, test } from 'bun:test'
 import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
+import { buildElectronMock } from './testing/electron-mock'
+
+mock.module('electron', () => buildElectronMock())
+mock.module('./agent-service', () => ({ isAgentSessionActive: () => false }))
 
 const preview = { approvalFingerprint: 'approved-fingerprint', blockers: [] }
 const revalidation = { status: 'current', revalidation: { id: 'revalidation-1' } }
@@ -20,9 +24,14 @@ mock.module('./project-owner-execution-grant-issue', () => ({
 }))
 mock.module('./project-owner-execution-source', () => ({
   OwnerExecutionPreparationConflictError: class extends Error {},
+  buildOwnerExecutionSource: () => { throw new Error('本测试不构建执行来源') },
   ownerExecutionObject: (input: unknown) => input as Record<string, unknown>,
   ownerExecutionHash: () => 'same-hash',
   parseOwnerExecutionSubject: (input: unknown) => input,
+}))
+mock.module('./project-owner-execution-grant-renewal', () => ({
+  previewOwnerExecutionGrantRenewal: () => { throw new Error('本测试不续期') },
+  confirmOwnerExecutionGrantRenewal: () => { throw new Error('本测试不续期') },
 }))
 mock.module('./project-owner-autonomous-approval', () => ({
   requestOwnerAutonomousGrantApproval: async (_subject: unknown, _preview: unknown, _dependencies: unknown, value: unknown) => { approvalSummary = value },
