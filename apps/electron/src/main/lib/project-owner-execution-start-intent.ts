@@ -148,8 +148,9 @@ function supersedeEscalatedBatch(subject: ProjectOwnerGoalSubject, plan: Project
   const source = previous.preview.preparation.source
   if (plan.origin !== 'generated' || !plan.sourceRun || plan.goalRevision !== source.goalRevision) return false
   const receipt = getOwnerPlanningRunReceipt(plan.sourceRun.receiptId)
-  const planning = receipt && readOwnerPlanningSnapshot(receipt.planningTaskId)
-  if (!planning?.link.conversationMessageId || planning.link.planRevision !== source.planRevision) return false
+  const planning = receipt && readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true })
+  // 未识别的历史提示只供查看；不能据此认定旧批次可被替换。
+  if (!planning || planning.sourceWarning || !planning.link.conversationMessageId || planning.link.planRevision !== source.planRevision) return false
   const message = getOwnerManagementMessage(subject.projectId, planning.link.conversationMessageId)
   if (!message || message.role !== 'user' || message.kind !== 'conversation'
     || message.taskId !== subject.taskId || message.goalRevision !== plan.goalRevision) return false
@@ -339,7 +340,7 @@ export function resumeOwnerExecutionStartIntent(intentId: string, expectedSubjec
     if (preparation) {
       if (preparation.input.requestId !== input.requestId || ownerExecutionHash(preparation.input) !== ownerExecutionHash(input)) {
         if (getOwnerTaskMaterialization(subject).materialization && !replacingPreviousBatch)
-          throw new Error('已有任务登记绑定其他执行准备；启动意图不能覆盖，请核对后处理')
+          throw new Error('这个方案已有一批任务，系统暂时无法继续原批次，也不能创建重复任务。原任务和执行记录已保留。')
         const preview = previewOwnerExecutionPreparation(subject, input)
         preparation = saveOwnerExecutionPreparation(subject, input, preview.previewFingerprint)
       }
