@@ -19,7 +19,7 @@ const { bindWorkspaceToProject } = await import('./project-workspace-bindings')
 const { saveProjectOwnerGoalDraft } = await import('./project-owner-goal-service')
 const plans = await import('./project-owner-plan-service')
 const { saveOwnerRuntimeBinding } = await import('./project-owner-runtime-binding')
-const { resolveOwnerPlanningSession } = await import('./project-owner-planning-source')
+const { resolveOwnerPlanningSession, readOwnerPlanningSnapshot } = await import('./project-owner-planning-source')
 const { claimOwnerPlanningProviderRequest } = await import('./project-owner-planning-provider')
 const { startDelegatedOwnerPlanningTask, assertControlledPreparedExecution } = await import('./controlled-project-task-service')
 const service = await import('./project-owner-management-delegation')
@@ -355,6 +355,36 @@ test('Given 模型正常终止且用量完整但规划JSON未通过协议校验 
   expect(service.getOwnerManagementDelegation(f.project.id)).toMatchObject({state:'active',reservedCostMicros:grant.perRequestCeilingMicros})
   service.revokeOwnerManagementDelegation(f.project.id, grant.id)
   expect(service.getOwnerManagementDelegation(f.project.id)).toMatchObject({state:'revoked',reservedCostMicros:grant.perRequestCeilingMicros})
+})
+
+test('Given历史冻结提示指纹因提示文案升级不属于当前格式 When重验既有Run结论与委托 Then容忍读取恢复对账且仍禁止据此新发送', async () => {
+  const f = fixture(), grant = issue(f)
+  await startDelegatedOwnerPlanningTask(f.taskId)
+  const execution = store.listAgentExecutionsByEntity('task', f.taskId)[0]!
+  const source = resolveOwnerPlanningSession(execution.sessionId!)!
+  const proposal = { schemaVersion: 1, kind: 'plan_proposal', projectId: f.project.id, goalVersion: source.context.goal.goal.goalVersion, contextFingerprint: source.context.fingerprint, proposal: { summary: '可审阅定位建议', assumptions: [], risks: [], steps: [{ key: 'brief', title: '形成建议', outcome: '可审阅建议', acceptanceCriteria: ['说明依据'], dependencies: [], roleKey: source.context.sources.roles[0]!.key }] } }
+  callbacks.get(execution.sessionId!)!.onComplete([], { runtimeResult: {
+    type: 'result', subtype: 'success', session_id: execution.sessionId!, finish_reason: 'stop',
+    result: JSON.stringify(proposal),
+    usage: { input_tokens: 10, output_tokens: 20 },
+    owner_planning_usage: { inputTokens: 10, outputTokens: 20, cacheReadTokens: null, cacheWriteTokens: null },
+  } })
+  const runs = await import('./project-owner-planning-run-service')
+  expect(runs.getOwnerPlanningRunOutcome(execution.id)).toMatchObject({ state: 'proposed' })
+  // 模拟提示文案升级：历史冻结快照的 promptHash 不再属于当前已知格式。
+  const db = store.getProjectDb()
+  const row = db.prepare('SELECT payload FROM project_owner_planning_links WHERE planning_task_id = ?').get(f.taskId) as { payload: string }
+  const legacy = { ...JSON.parse(row.payload), promptHash: createHash('sha256').update('owner-prompt-v-next').digest('hex') }
+  db.prepare('UPDATE project_owner_planning_links SET payload = ? WHERE planning_task_id = ?').run(JSON.stringify(legacy), f.taskId)
+  // 严格读取仍拒绝；历史格式失配不能给旧快照授予新发送许可。
+  expect(() => resolveOwnerPlanningSession(execution.sessionId!)).toThrow('Owner规划来源记录无效')
+  // 历史重验路径容忍降级：结论、委托视图与对账都不再因格式升级死循环。
+  expect(readOwnerPlanningSnapshot(f.taskId, { allowUnknownPromptForHistory: true })?.link.id).toBe(source.link.id)
+  expect(runs.getOwnerPlanningRunOutcome(execution.id)).toMatchObject({ state: 'proposed' })
+  expect(() => service.getOwnerManagementDelegation(f.project.id)).not.toThrow()
+  expect(() => reconcileOwnerManagement(f.project.id)).not.toThrow()
+  expect(service.getOwnerManagementDelegation(f.project.id)).toMatchObject({ delegation: { id: grant.id } })
+  service.revokeOwnerManagementDelegation(f.project.id, grant.id)
 })
 
 test('Given模型输出达到请求上限且委托资料已变化 When读取管理状态 Then显示截断原因与费用核对而不自动续跑', async () => {
