@@ -9,6 +9,10 @@ import {
   previewOwnerExecutionGrantRevoke,
 } from './project-owner-execution-grant-issue'
 import {
+  confirmOwnerExecutionGrantRenewal,
+  previewOwnerExecutionGrantRenewal,
+} from './project-owner-execution-grant-renewal'
+import {
   OwnerExecutionPreparationConflictError,
   ownerExecutionObject,
   ownerExecutionHash,
@@ -115,6 +119,26 @@ export function registerProjectOwnerExecutionGrantIpcHandlers(ipc: Registrar): v
         grantId: value.grantId,
         confirmedFingerprint: value.confirmedFingerprint,
       })
+    }),
+  )
+  ipc.handle(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_GRANT_RENEWAL, (_, request) =>
+    result(() => {
+      const value = ownerExecutionObject(request, ['projectId', 'taskId', 'input'])
+      if (typeof value.input !== 'object' || value.input === null || Array.isArray(value.input)) throw new Error('Owner续期输入无效')
+      return previewOwnerExecutionGrantRenewal(subjectOf(value), value.input)
+    }),
+  )
+  ipc.handle(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_EXECUTION_GRANT_RENEWAL, (_, request) =>
+    result(async () => {
+      const value = ownerExecutionObject(request, ['projectId', 'taskId', 'input', 'preview', 'confirmedFingerprint'])
+      if (typeof value.input !== 'object' || value.input === null || Array.isArray(value.input)) throw new Error('Owner续期输入无效')
+      const grant = confirmOwnerExecutionGrantRenewal(subjectOf(value), {
+        input: value.input,
+        preview: value.preview,
+        confirmedFingerprint: value.confirmedFingerprint,
+      })
+      if (grant.dispatchMode === 'autonomous') await runOwnerAutonomousSchedule(subjectOf(value).projectId)
+      return grant
     }),
   )
 }

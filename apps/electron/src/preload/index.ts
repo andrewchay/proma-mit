@@ -2015,6 +2015,8 @@ export interface ElectronAPI {
       confirmOwnerExecutionGrantIssue: import('@gravitas/shared').ProjectOwnerExecutionGrantApi['confirmOwnerExecutionGrantIssue']
       previewOwnerExecutionGrantRevoke: import('@gravitas/shared').ProjectOwnerExecutionGrantApi['previewOwnerExecutionGrantRevoke']
       confirmOwnerExecutionGrantRevoke: import('@gravitas/shared').ProjectOwnerExecutionGrantApi['confirmOwnerExecutionGrantRevoke']
+      previewOwnerExecutionGrantRenewal: import('@gravitas/shared').ProjectOwnerExecutionGrantApi['previewOwnerExecutionGrantRenewal']
+      confirmOwnerExecutionGrantRenewal: import('@gravitas/shared').ProjectOwnerExecutionGrantApi['confirmOwnerExecutionGrantRenewal']
       getOwnerRuntimeBinding: import('@gravitas/shared').ProjectOwnerRuntimeApi['getOwnerRuntimeBinding']
       ensureOwnerRuntimeBinding: import('@gravitas/shared').ProjectOwnerRuntimeApi['ensureOwnerRuntimeBinding']
       createOwnerDedicatedWorkspace: import('@gravitas/shared').ProjectOwnerRuntimeApi['createOwnerDedicatedWorkspace']
@@ -4847,6 +4849,8 @@ const electronAPI: ElectronAPI = {
       confirmOwnerExecutionGrantIssue: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_EXECUTION_GRANT_ISSUE, request),
       previewOwnerExecutionGrantRevoke: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_GRANT_REVOKE, request),
       confirmOwnerExecutionGrantRevoke: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_EXECUTION_GRANT_REVOKE, request),
+      previewOwnerExecutionGrantRenewal: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_GRANT_RENEWAL, request),
+      confirmOwnerExecutionGrantRenewal: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_EXECUTION_GRANT_RENEWAL, request),
       getOwnerRuntimeBinding: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_RUNTIME_BINDING, request),
       ensureOwnerRuntimeBinding: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.ENSURE_OWNER_RUNTIME_BINDING, request),
       createOwnerDedicatedWorkspace: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CREATE_OWNER_DEDICATED_WORKSPACE, request),

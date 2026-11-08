@@ -12,6 +12,7 @@ import { ownerDollarsToMicros, ownerExecutionAssignmentEdit, ownerExecutionArran
 import { getOwnerExecutionAssignmentEditor, loadOwnerExecutionAssignmentRunsAtom, ownerExecutionAssignmentEditorsAtom, prepareOwnerExecutionAssignmentAtom } from '../../atoms/project-owner-execution-assignment-atoms'
 import { getOwnerDelegationEditor, ownerDelegationEditorsAtom } from '../../atoms/owner-management-delegation-atoms'
 import { ControlledTaskStartButton } from './ControlledTaskStartButton'
+import { OwnerExecutionGrantRenewalCard } from './OwnerExecutionGrantRenewalCard'
 import { PreviewFacts, ProjectOwnerExecutionPreparationPanel, SavedFacts } from './ProjectOwnerExecutionPreparationPanel'
 import { ProjectOwnerDeliveryConversation } from './ProjectOwnerDeliveryConversation'
 import { OwnerModuleStatus } from './OwnerModuleStatus'
@@ -72,12 +73,13 @@ export function ProjectOwnerExecutionConversation({ projectId, taskId, ownerConv
   const compare = useSetAtom(compareOwnerExecutionAtom)
   const store = useStore()
   const id = useId()
+  const refresh = () => { void load(subject); void loadAssignments(subject); void loadGrant(subject); void loadCommandProgress(subject) }
   useEffect(() => {
-    const refresh = () => { void load(subject); void loadAssignments(subject); void loadGrant(subject); void loadCommandProgress(subject) }
     refresh()
     window.addEventListener('focus', refresh)
     const off = window.electronAPI?.paa?.project?.onOwnerManagementChanged?.(change => { if (change.projectId === projectId) refresh() })
     return () => { window.removeEventListener('focus', refresh); off?.() }
+    // biome-ignore lint/correctness/useExhaustiveDependencies: refresh 由各 load setter 组合，仅随主体变化重建。
   }, [load, loadAssignments, loadGrant, loadCommandProgress, subject, projectId])
   const busy = e.loading || e.previewing || e.saving || assignments.loading || assignments.preparing || delivery.loading || delivery.saving || Boolean(delivery.stage)
   const patch = (value: OwnerExecutionEdit) => edit({ subject, patch: value })
@@ -234,7 +236,8 @@ export function ProjectOwnerExecutionConversation({ projectId, taskId, ownerConv
     {ownerQueued && <p role="status" className="rounded-xl bg-muted/60 p-4 text-sm leading-6">工作已进入执行队列，正在等待员工启动。开始处理后，我会在这里更新进度。</p>}
     {ownerNeedsAttention && !ownerScheduleExpired && <p role="status" className="rounded-xl bg-amber-500/10 p-4 text-sm leading-6">执行状态需要核对，Owner 已暂停新的派发。下方会显示最新进度与可采取的处理方式。</p>}
     {ownerCompleted && <p role="status" className="rounded-xl bg-primary/10 p-4 text-sm leading-6">执行、独立检查和成果交付均已完成，本轮不再有待启动工作。如需拓展或修改目标，Owner会先核对当前范围和授权。</p>}
-    {ownerScheduleExpired && <p role="alert" className="rounded-xl bg-amber-500/10 p-4 text-sm leading-6">执行授权已到期，Owner已暂停新的派发。已有进度和成果会保留；如需继续，先在上方对话重新确认管理范围与预算。</p>}
+    {ownerScheduleExpired && <p role="alert" className="rounded-xl bg-amber-500/10 p-4 text-sm leading-6">执行授权已到期，Owner已暂停新的派发，已有进度和成果都会保留。项目管理授权与执行授权分别核对，重新确认管理预算不会自动续期执行授权；如需继续，请在下方续期执行授权。</p>}
+    {ownerScheduleExpired && grant.grant?.state === 'active' && <OwnerExecutionGrantRenewalCard projectId={projectId} taskId={taskId} grant={grant.grant} onRenewed={refresh} />}
     {ownerWaitingDecision && <p role="status" className="rounded-xl bg-amber-500/10 p-4 text-sm leading-6">当前工作已停在需要你决定的事项前；Owner 不会继续派发，直到收到并核对你的答复。</p>}
     {ownerAwaitingQuality && <p role="status" className="rounded-xl bg-muted/60 p-4 text-sm leading-6">独立技术评审已返回，Owner 还需完成授权内的成果判断；判断完成后会继续推进，或带着需要你决定的问题回来。</p>}
     {ownerAwaitingAcceptance && <p role="status" className="rounded-xl bg-primary/10 p-4 text-sm leading-6">授权内执行和技术评审已完成，成果现在等待你验收。技术评审不代替你的业务验收。</p>}

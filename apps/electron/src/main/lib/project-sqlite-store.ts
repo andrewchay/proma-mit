@@ -1299,25 +1299,27 @@ function migrate(database: SqliteCompat): void {
   if (!readColumnNames(database, 'agent_executions').includes('owner_command_id')) {
     database.exec('ALTER TABLE agent_executions ADD COLUMN owner_command_id TEXT')
   }
-  // grant_decisions表：老库CHECK仅'revoke'需重建扩展（RB-4，数据保留）；新库直接建扩展CHECK。
-  const ownerDecisionsExists = Boolean(database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='project_owner_execution_grant_decisions'").get())
-  if (ownerDecisionsExists) {
-    database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_grant_decisions_v2 (
-      grant_id TEXT NOT NULL, project_id TEXT NOT NULL,
-      action TEXT NOT NULL CHECK (action IN ('revoke', 'reconcile')), fingerprint TEXT NOT NULL,
-      impact TEXT NOT NULL, actor TEXT NOT NULL, created_at INTEGER NOT NULL,
-      PRIMARY KEY (grant_id, created_at, action)
-    )`)
-    database.exec(`INSERT INTO project_owner_execution_grant_decisions_v2 SELECT grant_id, project_id, action, fingerprint, impact, actor, created_at FROM project_owner_execution_grant_decisions`)
-    database.exec(`DROP TABLE project_owner_execution_grant_decisions`)
-    database.exec(`ALTER TABLE project_owner_execution_grant_decisions_v2 RENAME TO project_owner_execution_grant_decisions`)
-  } else {
+  // grant_decisions表：逐步重建扩展CHECK（revoke → +reconcile → +renew），数据保留；新库直接建最新CHECK。
+  const ownerDecisionsSql = database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='project_owner_execution_grant_decisions'").get() as { sql: string } | undefined
+  const createOwnerDecisions = (name: string) => `CREATE TABLE ${name} (
+    grant_id TEXT NOT NULL, project_id TEXT NOT NULL,
+    action TEXT NOT NULL CHECK (action IN ('revoke', 'reconcile', 'renew')), fingerprint TEXT NOT NULL,
+    impact TEXT NOT NULL, actor TEXT NOT NULL, created_at INTEGER NOT NULL,
+    PRIMARY KEY (grant_id, created_at, action)
+  )`
+  if (!ownerDecisionsSql) {
     database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_grant_decisions (
       grant_id TEXT NOT NULL, project_id TEXT NOT NULL,
-      action TEXT NOT NULL CHECK (action IN ('revoke', 'reconcile')), fingerprint TEXT NOT NULL,
+      action TEXT NOT NULL CHECK (action IN ('revoke', 'reconcile', 'renew')), fingerprint TEXT NOT NULL,
       impact TEXT NOT NULL, actor TEXT NOT NULL, created_at INTEGER NOT NULL,
       PRIMARY KEY (grant_id, created_at, action)
     )`)
+  } else if (!ownerDecisionsSql.sql.includes(`'renew'`)) {
+    // 老库CHECK不含renew：复制重建（保留全部既有revoke/reconcile决定）。
+    database.exec(createOwnerDecisions('project_owner_execution_grant_decisions_next'))
+    database.exec(`INSERT INTO project_owner_execution_grant_decisions_next SELECT grant_id, project_id, action, fingerprint, impact, actor, created_at FROM project_owner_execution_grant_decisions`)
+    database.exec(`DROP TABLE project_owner_execution_grant_decisions`)
+    database.exec(`ALTER TABLE project_owner_execution_grant_decisions_next RENAME TO project_owner_execution_grant_decisions`)
   }
   // 可重建的Owner项目状态投影：只保存状态向量的摘要，用于判断是否出现需要Owner判断的变化。
   database.exec(`CREATE TABLE IF NOT EXISTS project_owner_state_projections (

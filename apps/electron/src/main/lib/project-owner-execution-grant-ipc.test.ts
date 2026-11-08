@@ -28,7 +28,7 @@ afterAll(() => {
   else process.env.PROMA_TEST_CONFIG_DIR = previous
   rmSync(directory, { recursive: true, force: true })
 })
-test('六个授权账本API注册，不注册任何active派工/命令/占额/停止类通道', () => {
+test('八个授权账本API注册，不注册任何active派工/命令/占额/停止类通道', () => {
   expect([...handlers.keys()].sort()).toEqual(
     [
       PROJECT_IPC_CHANNELS.GET_OWNER_EXECUTION_GRANT,
@@ -37,6 +37,8 @@ test('六个授权账本API注册，不注册任何active派工/命令/占额/�
       PROJECT_IPC_CHANNELS.CONFIRM_OWNER_EXECUTION_GRANT_ISSUE,
       PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_GRANT_REVOKE,
       PROJECT_IPC_CHANNELS.CONFIRM_OWNER_EXECUTION_GRANT_REVOKE,
+      PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_GRANT_RENEWAL,
+      PROJECT_IPC_CHANNELS.CONFIRM_OWNER_EXECUTION_GRANT_RENEWAL,
     ].sort(),
   )
   // 显式对照：既有的派工/占额/停止通道一律不得出现在本注册器

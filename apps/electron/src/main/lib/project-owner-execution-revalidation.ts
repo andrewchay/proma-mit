@@ -32,6 +32,16 @@ function fail(message: string): never {
   if (/已更新|已变化|已过期|请求ID|版本|悬空|损坏/.test(message)) throw new OwnerExecutionPreparationConflictError(`Owner重验证：${message}`)
   throw new Error(`Owner重验证：${message}`)
 }
+/** 仅执行授权续期服务可进入的门禁：普通 IPC 路径与烟测以外调用仍拒绝续期期限字段。 */
+let renewalScopeActive = false
+export function withOwnerExecutionRenewalScope<T>(operation: () => T): T {
+  renewalScopeActive = true
+  try { return operation() }
+  finally { renewalScopeActive = false }
+}
+function renewalPathAllowed(): boolean {
+  return renewalScopeActive || (process.env.GRAVITAS_PACKAGE_SMOKE === '1' && Boolean(process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID))
+}
 export function parseOwnerExecutionRevalidationInput(raw: unknown): OwnerExecutionRevalidationInput {
   const value = ownerExecutionObject(raw, ['requestId', 'expectedRevalidationRevision', 'expectedMaterializationId', 'expectedMaterializationRevision', 'expectedMaterializationHash', 'expectedPolicyRevision', 'renewalExpiresAt', 'changeReason'])
   for (const key of ['requestId', 'expectedMaterializationId'] as const) if (typeof value[key] !== 'string' || !value[key].trim() || (value[key] as string).length > 200) fail('请求或材料化ID无效')
@@ -159,7 +169,7 @@ function currentPreview(subject: ProjectOwnerGoalSubject, input: OwnerExecutionR
   if (!preparation || preparation.id !== materialization.preview.preparation.id || ownerExecutionHash(preparation) !== ownerExecutionHash(materialization.preview.preparation)) fail('v1准备来源不可用，请先核查')
   if (!policy || policy.state !== 'paused' || policy.revision !== input.expectedPolicyRevision || policy.ownerExecutionPreparation?.id !== preparation.id || policy.ownerExecutionPreparation.revision !== preparation.revision || policy.ownerExecutionPreparation.integrityHash !== preparation.integrityHash) fail('策略引用已更新，请重新预览')
   if (input.renewalExpiresAt !== undefined) {
-    if (process.env.GRAVITAS_PACKAGE_SMOKE !== '1' || !process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID) fail('普通产品路径不允许顺延过期准备')
+    if (!renewalPathAllowed()) fail('普通产品路径不允许顺延过期准备')
     if (input.renewalExpiresAt <= Date.now() || input.renewalExpiresAt <= preparation.input.expiresAt || input.renewalExpiresAt > Date.now() + 7 * 86400000) fail('续期期限须晚于原期限且在未来七天内')
   } else if (preparation.input.expiresAt <= Date.now()) fail('v1执行准备期限已过期，不能顺延重验证')
   if (input.renewalExpiresAt === undefined) assertOwnerExecutionBoundaryIdle(subject.projectId)

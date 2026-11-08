@@ -661,6 +661,7 @@ test('Given 用户在项目对话提交新目标及总预算 When Owner规划并
     const taskService = await import('./project-owner-task-materialization')
     const revalidationService = await import('./project-owner-execution-revalidation')
     const grantService = await import('./project-owner-execution-grant-issue')
+    const renewalService = await import('./project-owner-execution-grant-renewal')
     const setup = await import('../../renderer/atoms/owner-execution-setup')
     state.set(assignmentAtoms.ownerExecutionAssignmentApiAtom, {
       prepareOwnerExecutionAssignment: async request => ({ ok: true as const, value: (await import('./project-owner-execution-assignment-service')).prepareOwnerExecutionAssignment(request, request.input) }),
@@ -692,6 +693,8 @@ test('Given 用户在项目对话提交新目标及总预算 When Owner规划并
       confirmOwnerExecutionGrantIssue: async request => ({ ok: true as const, value: grantService.confirmOwnerExecutionGrantIssue(request, { input: request.input, preview: request.preview, confirmedFingerprint: request.confirmedFingerprint }) }),
       previewOwnerExecutionGrantRevoke: async request => ({ ok: true as const, value: grantService.previewOwnerExecutionGrantRevoke(request, { grantId: request.grantId }) }),
       confirmOwnerExecutionGrantRevoke: async request => ({ ok: true as const, value: grantService.confirmOwnerExecutionGrantRevoke(request, { grantId: request.grantId, confirmedFingerprint: request.confirmedFingerprint }) }),
+      previewOwnerExecutionGrantRenewal: async request => ({ ok: true as const, value: renewalService.previewOwnerExecutionGrantRenewal(request, request.input) }),
+      confirmOwnerExecutionGrantRenewal: async request => ({ ok: true as const, value: renewalService.confirmOwnerExecutionGrantRenewal(request, { input: request.input, preview: request.preview, confirmedFingerprint: request.confirmedFingerprint }) }),
     })
     state.set(deliveryAtoms.ownerExecutionLaunchApiAtom, {
       saveOwnerExecutionStartIntent: async request => await ipcHandlers.get(PROJECT_IPC_CHANNELS.SAVE_OWNER_EXECUTION_START_INTENT)!(undefined, request) as Awaited<ReturnType<ProjectOwnerExecutionLaunchApi['saveOwnerExecutionStartIntent']>>,

@@ -187,6 +187,8 @@ export const PROJECT_IPC_CHANNELS = {
   CONFIRM_OWNER_EXECUTION_GRANT_ISSUE: 'project:confirm-owner-execution-grant-issue',
   PREVIEW_OWNER_EXECUTION_GRANT_REVOKE: 'project:preview-owner-execution-grant-revoke',
   CONFIRM_OWNER_EXECUTION_GRANT_REVOKE: 'project:confirm-owner-execution-grant-revoke',
+  PREVIEW_OWNER_EXECUTION_GRANT_RENEWAL: 'project:preview-owner-execution-grant-renewal',
+  CONFIRM_OWNER_EXECUTION_GRANT_RENEWAL: 'project:confirm-owner-execution-grant-renewal',
   GET_OWNER_EXECUTION_REVALIDATION: 'project:get-owner-execution-revalidation',
   LIST_OWNER_EXECUTION_REVALIDATION_HISTORY: 'project:list-owner-execution-revalidation-history',
   PREVIEW_OWNER_EXECUTION_REVALIDATION: 'project:preview-owner-execution-revalidation',

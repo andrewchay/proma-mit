@@ -3,6 +3,7 @@ import { createStore } from 'jotai'
 import type {
   OwnerExecutionGrant,
   OwnerExecutionGrantIssuePreview,
+  OwnerExecutionGrantRenewalPreview,
   OwnerExecutionGrantRevokePreview,
   ProjectOwnerExecutionGrantApi,
 } from '@gravitas/shared'
@@ -59,6 +60,16 @@ const revokePreview: OwnerExecutionGrantRevokePreview = {
   blockers: [],
 }
 const input = { requestId: 'req-1', expectedRevalidationRevision: 1, expectedPolicyRevision: 2 }
+const renewalPreview: OwnerExecutionGrantRenewalPreview = {
+  ...subject,
+  grantId: grant.grantId,
+  grantState: 'active',
+  previousExpiresAt: budget.expiresAt - 3600_000,
+  expiresAt: budget.expiresAt,
+  budget,
+  usage: { committedCostMicros: 0, reservedCostMicros: 0, runReservations: 0 },
+  renewalFingerprint: 'r'.repeat(64),
+}
 function setup(overrides?: Partial<ProjectOwnerExecutionGrantApi>) {
   const store = createStore()
   const api: ProjectOwnerExecutionGrantApi = {
@@ -68,6 +79,8 @@ function setup(overrides?: Partial<ProjectOwnerExecutionGrantApi>) {
     confirmOwnerExecutionGrantIssue: async () => ({ ok: true, value: grant }),
     previewOwnerExecutionGrantRevoke: async () => ({ ok: true, value: revokePreview }),
     confirmOwnerExecutionGrantRevoke: async () => ({ ok: true, value: pausedGrant }),
+    previewOwnerExecutionGrantRenewal: async () => ({ ok: true, value: renewalPreview }),
+    confirmOwnerExecutionGrantRenewal: async () => ({ ok: true, value: grant }),
     ...overrides,
   }
   store.set(ownerGrantApiAtom, api)
