@@ -688,7 +688,7 @@ function _MyWorkPanel({ memberId, fallbackUserId }: { memberId?: string; fallbac
 
 // ===== 项目列表 =====
 
-function ProjectList({
+export function ProjectList({
   projects,
   isLoading,
   onSelectProject,
@@ -702,6 +702,10 @@ function ProjectList({
   const [showCreate, setShowCreate] = useState(false)
   const [newTitle, setNewTitle] = useState('')
   const [newDesc, setNewDesc] = useState('')
+  /** 新项目的工作空间来源：默认创建 Owner 专用工作区，也可绑定已有工作区 */
+  const [workspaceMode, setWorkspaceMode] = useState<'new' | 'existing'>('new')
+  const [existingWorkspaceId, setExistingWorkspaceId] = useState('')
+  const [workspaceOptions, setWorkspaceOptions] = useState<Array<{ id: string; name: string; rootPath?: string | null }>>([])
   const [projectFilter, setProjectFilter] = useState<'active' | 'archived' | 'all'>('active')
   const visibleProjects = projects.filter((project) => projectFilter === 'all' || (projectFilter === 'archived' ? Boolean(project.archivedAt) : !project.archivedAt))
 
@@ -731,20 +735,51 @@ function ProjectList({
 
   const handleCreate = async () => {
     if (!newTitle.trim()) return
+    if (workspaceMode === 'existing' && !existingWorkspaceId) {
+      alert('请选择要绑定的现有工作区，或改选「创建新的 Owner 专用工作区」。')
+      return
+    }
+    let project: Project
     try {
-      const project = await callProjectAPI<Project>('createProject', {
+      project = await callProjectAPI<Project>('createProject', {
         title: newTitle,
         description: newDesc,
       })
-      onProjectsChange([...projects, project])
-      setNewTitle('')
-      setNewDesc('')
-      setShowCreate(false)
     } catch (err) {
       console.error('创建项目失败:', err)
       alert('创建项目失败: ' + (err instanceof Error ? err.message : String(err)))
+      return
     }
+    // 每个项目需要一个工作空间：新建默认创建 Owner 专用工作区（带本地 Git 目录），
+    // 绑定失败不 rollback 项目，明确提示去「工作区」页签手动补绑。
+    try {
+      let workspaceId = existingWorkspaceId
+      if (workspaceMode === 'new') {
+        const response = await window.electronAPI.paa.project.createOwnerDedicatedWorkspace({ name: `Owner-${project.id.slice(0, 8)}-${crypto.randomUUID().slice(0, 6)}` })
+        if (!response.ok) throw new Error(response.error.message)
+        workspaceId = response.value.id
+      }
+      await window.electronAPI.paa.projectWorkspace.bind(project.id, workspaceId)
+    } catch (err) {
+      alert(`项目已创建，但工作空间绑定未成功：${err instanceof Error ? err.message : String(err)}\n\n请打开项目「工作区」页签手动绑定或创建；绑定前 Owner 无法写入项目文件。`)
+    }
+    onProjectsChange([...projects, project])
+    setNewTitle('')
+    setNewDesc('')
+    setExistingWorkspaceId('')
+    setWorkspaceMode('new')
+    setShowCreate(false)
   }
+
+  // 打开创建面板时加载现有工作区目录，供「使用现有工作区」选择
+  useEffect(() => {
+    if (!showCreate) return
+    let cancelled = false
+    window.electronAPI.listAgentWorkspaces()
+      .then((list) => { if (!cancelled) setWorkspaceOptions(list) })
+      .catch(() => { if (!cancelled) setWorkspaceOptions([]) })
+    return () => { cancelled = true }
+  }, [showCreate])
 
   const handleDelete = async (id: string) => {
     if (!confirm('确定删除此项目？项目内所有任务将被一并删除。')) return
@@ -797,10 +832,39 @@ function ProjectList({
             onChange={(e) => setNewDesc(e.target.value)}
             className="w-full px-3 py-2 text-sm border rounded-md bg-background resize-none h-20"
           />
+          <fieldset className="space-y-2 rounded-md border p-3">
+            <legend className="px-1 text-sm font-medium">项目工作空间</legend>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="radio" name="project-workspace-mode" className="mt-1" checked={workspaceMode === 'new'} onChange={() => setWorkspaceMode('new')} />
+              <span><span className="font-medium">创建新的 Owner 专用工作区</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">带本地 Git 目录，支持 Owner 写入代码与运行核验；创建项目后自动绑定。</span></span>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <input type="radio" name="project-workspace-mode" className="mt-1" checked={workspaceMode === 'existing'} onChange={() => setWorkspaceMode('existing')} />
+              <span><span className="font-medium">使用现有工作区</span>
+                <span className="mt-0.5 block text-xs text-muted-foreground">绑定一个已创建的工作区；本地项目目录支持代码写入，纯托管工作区只能做文本交付。</span></span>
+            </label>
+            {workspaceMode === 'existing' && (
+              <select
+                value={existingWorkspaceId}
+                onChange={(e) => setExistingWorkspaceId(e.target.value)}
+                className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+              >
+                <option value="">选择工作区…</option>
+                {workspaceOptions.map((workspace) => (
+                  <option key={workspace.id} value={workspace.id}>
+                    {workspace.name}{workspace.rootPath ? '（本地项目）' : '（托管）'}
+                  </option>
+                ))}
+              </select>
+            )}
+            <p className="text-xs text-muted-foreground">每个项目需要一个工作空间作为执行与资料环境；创建后可在项目「工作区」页签调整绑定。</p>
+          </fieldset>
           <div className="flex gap-2">
             <button
               onClick={handleCreate}
-              className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md"
+              disabled={workspaceMode === 'existing' && !existingWorkspaceId}
+              className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded-md disabled:opacity-50"
             >
               创建
             </button>
