@@ -1,11 +1,17 @@
 /** 本地项目文件快照；有限读取文本计算摘要，不保存正文。 */
 import { createHash, randomUUID } from 'node:crypto'
-import { lstat, mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
+import * as fsPromises from 'node:fs/promises'
 import { join, relative } from 'node:path'
 import { constants } from 'node:fs'
 import { getProjectsDir } from './config-paths'
 import { startPerformanceDiagnostic } from './performance-diagnostics'
 import type { ProjectWorkspaceFileChangesView } from '@gravitas/shared'
+
+// Electron 会把 .asar 当作虚拟目录；快照必须读取磁盘上的真实文件。
+const fileSystem: typeof import('node:fs/promises') = process.versions.electron
+  ? (require('original-fs') as typeof import('node:fs')).promises
+  : fsPromises
+const { lstat, mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } = fileSystem
 type ProjectFileScanView = Omit<ProjectWorkspaceFileChangesView, 'watching'>
 
 const ignored = new Set(['.git', 'node_modules', '.next', '.nuxt', 'dist', 'build', '.cache', '__pycache__', '.turbo', '.parcel-cache', '.svelte-kit'])

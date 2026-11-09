@@ -25,12 +25,13 @@ import { ScrollMinimap } from '@/components/ai-elements/scroll-minimap'
 import type { MinimapItem } from '@/components/ai-elements/scroll-minimap'
 import { StickyUserMessage } from '@/components/ai-elements/sticky-user-message'
 import { useSmoothStream } from '@gravitas/ui'
+import { useStickToBottomContext } from 'use-stick-to-bottom'
 import { formatMessageTime } from '@/components/chat/ChatMessageItem'
 import { getModelLogo, resolveModelDisplayName } from '@/lib/model-logo'
 import { userProfileAtom } from '@/atoms/user-profile'
 import { tabMinimapCacheAtom } from '@/atoms/tab-atoms'
 import { channelsAtom } from '@/atoms/chat-atoms'
-import { ScrollPositionManager } from '@/hooks/useScrollPositionMemory'
+import { hasSavedScrollPosition, ScrollPositionManager } from '@/hooks/useScrollPositionMemory'
 import { cn } from '@/lib/utils'
 import { formatAgentRuntimeDisplayLabel } from '@/lib/agent-runtime-display'
 import { Spinner } from '@/components/ui/spinner'
@@ -39,6 +40,40 @@ import { groupIntoTurns, MessageGroupRenderer, getGroupId, getGroupPreview, extr
 import type { AgentEventUsage, RetryAttempt, SDKMessage } from '@gravitas/shared'
 import type { AgentStreamState } from '@/atoms/agent-atoms'
 import { createMessageGroupRenderCache, groupMessagesForRendering } from './message-group-rendering'
+
+const MESSAGE_RENDER_BATCH_SIZE = 20
+
+/** 补入更早的消息时，保持用户正在阅读的位置。 */
+function PreserveHistoryScroll({ start }: { start: number }): null {
+  const { scrollRef, stopScroll, scrollToBottom } = useStickToBottomContext()
+  const previous = React.useRef<{ start: number; height: number; top: number; atBottom: boolean } | null>(null)
+  React.useEffect(() => {
+    const el = scrollRef.current
+    if (!el || start === 0) return
+    const stop = (): void => { stopScroll() }
+    el.addEventListener('wheel', stop, { passive: true })
+    el.addEventListener('touchstart', stop, { passive: true })
+    el.addEventListener('pointerdown', stop, { passive: true })
+    return () => { el.removeEventListener('wheel', stop); el.removeEventListener('touchstart', stop); el.removeEventListener('pointerdown', stop) }
+  }, [start, scrollRef, stopScroll])
+  React.useLayoutEffect(() => {
+    const el = scrollRef.current
+    const saved = previous.current
+    if (el && saved && start < saved.start) {
+      if (saved.atBottom) {
+        scrollToBottom('instant')
+      } else {
+        stopScroll()
+        el.scrollTop = saved.top + el.scrollHeight - saved.height
+      }
+    }
+    return () => {
+      const current = scrollRef.current
+      if (current) previous.current = { start, height: current.scrollHeight, top: current.scrollTop, atBottom: current.scrollHeight - current.clientHeight - current.scrollTop <= 5 }
+    }
+  }, [start, scrollRef, stopScroll, scrollToBottom])
+  return null
+}
 
 function stableStringify(value: unknown): string {
   if (value == null || typeof value !== 'object') return JSON.stringify(value) ?? String(value)
@@ -437,7 +472,7 @@ function AgentRunningIndicator({ startedAt }: { startedAt?: number }): React.Rea
   )
 }
 
-export function AgentMessages({ readOnly = false, sessionId, sessionModelId, messagesLoaded, persistedSDKMessages, streaming, streamState, liveMessages, sessionPath, attachedDirs, stoppedByUser, onRetry, onRetryInNewSession, onFork, onRewind, onCompact }: AgentMessagesProps): React.ReactElement {
+export const AgentMessages = React.memo(function AgentMessages({ readOnly = false, sessionId, sessionModelId, messagesLoaded, persistedSDKMessages, streaming, streamState, liveMessages, sessionPath, attachedDirs, stoppedByUser, onRetry, onRetryInNewSession, onFork, onRewind, onCompact }: AgentMessagesProps): React.ReactElement {
   const userProfile = useAtomValue(userProfileAtom)
   const setMinimapCache = useSetAtom(tabMinimapCacheAtom)
   const channels = useAtomValue(channelsAtom)
@@ -618,6 +653,32 @@ export function AgentMessages({ readOnly = false, sessionId, sessionModelId, mes
     return result.groups
   }, [allSDKMessages, sessionModelId, streaming])
 
+  // 切换会话时先挂载最近的消息，再逐帧补齐更早的消息。
+  // 恢复历史阅读位置需要完整高度，因此该场景直接渲染完整列表。
+  const [renderBatch, setRenderBatch] = React.useState({ sessionId, count: MESSAGE_RENDER_BATCH_SIZE })
+  const visibleCount = renderBatch.sessionId === sessionId ? renderBatch.count : MESSAGE_RENDER_BATCH_SIZE
+  const historyPositionRef = React.useRef({ sessionId, restore: hasSavedScrollPosition(sessionId) })
+  if (historyPositionRef.current.sessionId !== sessionId) {
+    historyPositionRef.current = { sessionId, restore: hasSavedScrollPosition(sessionId) }
+  }
+  const visibleGroups = historyPositionRef.current.restore ? allGroups : allGroups.slice(-visibleCount)
+  const isRenderingHistory = visibleGroups.length < allGroups.length
+
+  React.useEffect(() => {
+    setRenderBatch({ sessionId, count: MESSAGE_RENDER_BATCH_SIZE })
+  }, [sessionId])
+
+  React.useEffect(() => {
+    if (!isRenderingHistory || messagesLoaded === false) return
+    const frame = requestAnimationFrame(() => {
+      setRenderBatch((current) => ({
+        sessionId,
+        count: (current.sessionId === sessionId ? current.count : MESSAGE_RENDER_BATCH_SIZE) + MESSAGE_RENDER_BATCH_SIZE,
+      }))
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [sessionId, isRenderingHistory, messagesLoaded, visibleCount])
+
   // 跨 turn 历史 TaskCreate id → subject 映射：顶层算一次，避免每个 AssistantTurnRenderer
   // 都对全量 allMessages 做 O(M) 扫描（流式期间 useMemo 因 allMessages 引用变化失效，
   // 长会话会触发 O(T × M) 雪崩）。
@@ -689,8 +750,9 @@ export function AgentMessages({ readOnly = false, sessionId, sessionModelId, mes
 
   return (
     <BasePathsProvider basePaths={attachedDirs}>
-    <Conversation resize={ready && !transitioning ? 'smooth' : 'instant'} className={ready ? (skipFadeIn ? 'opacity-100' : 'opacity-100 transition-opacity duration-200') : 'opacity-0'}>
+    <Conversation resize={ready && !transitioning && !isRenderingHistory ? 'smooth' : 'instant'} className={ready ? (skipFadeIn ? 'opacity-100' : 'opacity-100 transition-opacity duration-200') : 'opacity-0'}>
       <ScrollPositionManager id={sessionId} ready={ready} />
+      <PreserveHistoryScroll key={sessionId} start={allGroups.length - visibleGroups.length} />
       <ConversationContent>
         {!hasContent && !streaming ? (
           <EmptyState />
@@ -701,7 +763,7 @@ export function AgentMessages({ readOnly = false, sessionId, sessionModelId, mes
               <TurnDecisionNotice decision={streamState.turnDecision} />
             )}
             {/* 统一消息渲染（持久化 + 实时合并为一个列表，确保 system 消息位置正确） */}
-            {allGroups.map((group, idx) => {
+            {visibleGroups.map((group, idx) => {
               const isLive = liveGroupSet.has(group)
               const isErrorGroup = group.type === 'assistant-turn'
                 && group.assistantMessages.some((m) => !!m.error)
@@ -709,7 +771,7 @@ export function AgentMessages({ readOnly = false, sessionId, sessionModelId, mes
               // 仅在最后一个 assistant-turn 上显示"已被用户中断" badge
               const isLastAssistantTurn = !streaming && stoppedByUser
                 && group.type === 'assistant-turn'
-                && idx === allGroups.findLastIndex((g) => g.type === 'assistant-turn')
+                && idx === visibleGroups.findLastIndex((g) => g.type === 'assistant-turn')
               return (
                 <MessageGroupRenderer
                   key={getGroupId(group)}
@@ -779,4 +841,4 @@ export function AgentMessages({ readOnly = false, sessionId, sessionModelId, mes
     </Conversation>
     </BasePathsProvider>
   )
-}
+})

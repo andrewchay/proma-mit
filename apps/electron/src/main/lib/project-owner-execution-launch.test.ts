@@ -573,32 +573,46 @@ test('Given项目资料已索引但应用重开句柄为空 When自主启动员�
   const registry = await import('./agent-headless-runner-registry')
   const gates = await import('./project-owner-execution-gates')
   let invoked = 0
-  registry.setHeadlessAgentRunner(async (input, callbacks) => {
-    invoked++
-    expect(index.getStoreHandle()).not.toBeNull()
-    expect(getAgentSessionMeta(input.sessionId)).toMatchObject({ knowledgeScopeMode: 'explicit', explicitKnowledgeBaseIds: expect.arrayContaining([expect.any(String)]) })
-    expect(gates.resolveOwnerExecutionGateSession(input.sessionId).kind).toBe('owner_business')
-    expect(() => gates.assertToolAllowedForSessionPurpose(input.sessionId, 'SearchKnowledge', { query: '原文证据' })).not.toThrow()
-    const knowledge = await import('./agent-runtime/tool-impls/knowledge-tool')
-    const search = await knowledge.executeSearchKnowledgeTool({ query: '原文证据' }, { cwd: directory, sessionId: input.sessionId })
-    expect(search.isError).toBeFalsy()
-    expect(search.content).toContain('冻结项目资料')
-    expect(search.content).not.toContain('未冻结资料')
-    const countReads = () => (store.getProjectDb().prepare('SELECT COUNT(*) AS n FROM project_owner_execution_knowledge_reads WHERE session_id = ?').get(input.sessionId) as { n: number }).n
-    const beforeReads = countReads()
-    const allowedId = /documentId: (\S+)/.exec(search.content)![1]!
-    const allowedRead = await knowledge.executeReadKnowledgeSourceTool({ documentId: allowedId }, { cwd: directory, sessionId: input.sessionId })
-    expect(allowedRead.content).toContain('冻结项目资料')
-    expect(countReads()).toBe(beforeReads + 1)
-    const extraDocument = index.getStoreHandle()!.knowledge.listDocumentsBySource(f.extraKnowledgeSourceId!)[0]!
-    const denied = await knowledge.executeReadKnowledgeSourceTool({ documentId: extraDocument.id }, { cwd: directory, sessionId: input.sessionId })
-    expect(denied.isError).toBe(true)
-    expect(denied.content).not.toContain('未冻结资料')
-    expect(countReads()).toBe(beforeReads + 1)
-    callbacks.onError('隔离Runtime替身结束；未发送Provider请求')
+  let runnerFinished: Promise<void> | undefined
+  registry.setHeadlessAgentRunner((input, callbacks) => {
+    runnerFinished = (async () => {
+      invoked++
+      expect(index.getStoreHandle()).not.toBeNull()
+      expect(getAgentSessionMeta(input.sessionId)).toMatchObject({ knowledgeScopeMode: 'explicit', explicitKnowledgeBaseIds: expect.arrayContaining([expect.any(String)]) })
+      expect(gates.resolveOwnerExecutionGateSession(input.sessionId).kind).toBe('owner_business')
+      expect(() => gates.assertToolAllowedForSessionPurpose(input.sessionId, 'SearchKnowledge', { query: '原文证据' })).not.toThrow()
+      const knowledge = await import('./agent-runtime/tool-impls/knowledge-tool')
+      const unbound = await knowledge.executeSearchKnowledgeTool({ query: '原文证据' }, { cwd: directory, sessionId: input.sessionId })
+      expect(unbound).toMatchObject({ isError: true, content: expect.stringContaining('缺少已绑定的会话身份') })
+      const { bindRuntimeSessionIdentity, revokeRuntimeSessionIdentity } = await import('./agent-runtime/runtime-session-identity')
+      const boundSession = {}
+      bindRuntimeSessionIdentity(boundSession, { sessionId: input.sessionId, cwd: directory, runtime: 'ai-sdk' })
+      try {
+        const toolContext = { cwd: directory, sessionId: input.sessionId, boundSession, runtime: 'ai-sdk' as const }
+        const search = await knowledge.executeSearchKnowledgeTool({ query: '原文证据' }, toolContext)
+        expect(search.isError).toBeFalsy()
+        expect(search.content).toContain('冻结项目资料')
+        expect(search.content).not.toContain('未冻结资料')
+        const countReads = () => (store.getProjectDb().prepare('SELECT COUNT(*) AS n FROM project_owner_execution_knowledge_reads WHERE session_id = ?').get(input.sessionId) as { n: number }).n
+        const beforeReads = countReads()
+        const allowedId = /documentId: (\S+)/.exec(search.content)![1]!
+        const allowedRead = await knowledge.executeReadKnowledgeSourceTool({ documentId: allowedId }, toolContext)
+        expect(allowedRead.content).toContain('冻结项目资料')
+        expect(countReads()).toBe(beforeReads + 1)
+        const extraDocument = index.getStoreHandle()!.knowledge.listDocumentsBySource(f.extraKnowledgeSourceId!)[0]!
+        const denied = await knowledge.executeReadKnowledgeSourceTool({ documentId: extraDocument.id }, toolContext)
+        expect(denied.isError).toBe(true)
+        expect(denied.content).not.toContain('未冻结资料')
+        expect(countReads()).toBe(beforeReads + 1)
+      } finally { revokeRuntimeSessionIdentity(boundSession) }
+      callbacks.onError('隔离Runtime替身结束；未发送Provider请求')
+    })()
+    return runnerFinished
   })
   await scheduler.runOwnerAutonomousSchedule(f.project.id)
   expect(invoked).toBe(1)
+  expect(runnerFinished).toBeDefined()
+  await runnerFinished
   await index.closeKnowledgeIndexStore()
 })
 
