@@ -116,6 +116,7 @@ import { formatAgentRuntimeDisplayLabel } from '@/lib/agent-runtime-display'
 
 /** 稳定的空 SDKMessage 数组引用，避免 ?? [] 每次创建新引用 */
 const EMPTY_SDK_MESSAGES: SDKMessage[] = []
+const EMPTY_PATHS: string[] = []
 const LONG_TEXT_ATTACHMENT_THRESHOLD = 2000
 
 function userMessageText(message: SDKMessage): string | undefined {
@@ -646,15 +647,15 @@ function InteractiveAgentView({ sessionId }: { sessionId: string }): React.React
   const { openSession } = useOpenSession()
   const setAttachedDirsMap = useSetAtom(agentAttachedDirectoriesMapAtom)
   const attachedDirsMap = useAtomValue(agentAttachedDirectoriesMapAtom)
-  const attachedDirs = attachedDirsMap.get(sessionId) ?? []
+  const attachedDirs = attachedDirsMap.get(sessionId) ?? EMPTY_PATHS
   const setAttachedFilesMap = useSetAtom(agentAttachedFilesMapAtom)
   const attachedFilesMap = useAtomValue(agentAttachedFilesMapAtom)
-  const attachedFiles = attachedFilesMap.get(sessionId) ?? []
+  const attachedFiles = attachedFilesMap.get(sessionId) ?? EMPTY_PATHS
   const wsAttachedDirsMap = useAtomValue(workspaceAttachedDirectoriesMapAtom)
-  const wsAttachedDirs = currentWorkspaceId ? (wsAttachedDirsMap.get(currentWorkspaceId) ?? []) : []
+  const wsAttachedDirs = currentWorkspaceId ? (wsAttachedDirsMap.get(currentWorkspaceId) ?? EMPTY_PATHS) : EMPTY_PATHS
   const setWsAttachedFilesMap = useSetAtom(workspaceAttachedFilesMapAtom)
   const wsAttachedFilesMap = useAtomValue(workspaceAttachedFilesMapAtom)
-  const wsAttachedFiles = currentWorkspaceId ? (wsAttachedFilesMap.get(currentWorkspaceId) ?? []) : []
+  const wsAttachedFiles = currentWorkspaceId ? (wsAttachedFilesMap.get(currentWorkspaceId) ?? EMPTY_PATHS) : EMPTY_PATHS
 
   // 按 sessionId 切片订阅 drafts/draftHtml：仅本 session 草稿变化才让 AgentView 重渲染。
   // 输入框每次按键都会写整 Map atom，若直接订阅整 Map，AgentView 跟着每键重渲染。
