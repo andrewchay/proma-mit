@@ -1040,3 +1040,28 @@ test('Given 结构不合规的失败 When 判断可恢复 Then 允许在原预�
   expect(isRecoverableOwnerAssignmentRejection('Owner人员安排提案格式无效或夹带未授权字段')).toBe(true)
   expect(isRecoverableOwnerAssignmentRejection('Owner人员安排缺少工作区')).toBe(false)
 })
+
+test('Given 已有批次的方案来自无法重建提示词的历史规划 When 再次启动同一方案 Then 保留原批次并说明重复任务阻断', async () => {
+  const f = fixture('complete', false, false)
+  const issued = authorize(f, true)
+  const stop = startOwnerManagementLoop()
+  try {
+    await until(() => Boolean(store.getProjectDb().prepare("SELECT 1 FROM project_owner_execution_start_intents WHERE project_id=? AND state='completed'").get(f.project.id)))
+    await stop()
+    const db = store.getProjectDb()
+    const plan = plans.getProjectOwnerPlanDraft(f.project.id)!
+    const { getOwnerExecutionPreparation } = await import('./project-owner-execution-preparation')
+    const prep = getOwnerExecutionPreparation(f.subject).preparation!
+    const link = db.prepare('SELECT id,payload FROM project_owner_planning_links WHERE planning_task_id=(SELECT json_extract(payload,\'$.planningTaskId\') FROM project_owner_planning_run_receipts WHERE id=?)').get(plan.sourceRun!.receiptId) as { id: string; payload: string }
+    const value = JSON.parse(link.payload) as { promptHash: string }
+    value.promptHash = 'f'.repeat(64)
+    db.prepare('UPDATE project_owner_planning_links SET payload=? WHERE id=?').run(JSON.stringify(value), link.id)
+    const { saveOwnerExecutionStartIntent, resumeOwnerExecutionStartIntent } = await import('./project-owner-execution-start-intent')
+    const id = randomUUID()
+    const intent = saveOwnerExecutionStartIntent({ ...f.subject, intentId: id, expectedGoalRevision: plan.goalRevision, expectedPlanRevision: plan.revision,
+      planFingerprint: plan.planFingerprint, contextFingerprint: plan.contextFingerprint, input: { ...prep.input, requestId: id } })
+    const count = (db.prepare('SELECT COUNT(*) AS count FROM project_owner_task_materializations WHERE project_id=?').get(f.project.id) as { count: number }).count
+    await expect(resumeOwnerExecutionStartIntent(intent.intentId, undefined, { launch: async () => { throw new Error('不应派发') } })).rejects.toThrow('这个方案已有一批任务')
+    expect((db.prepare('SELECT COUNT(*) AS count FROM project_owner_task_materializations WHERE project_id=?').get(f.project.id) as { count: number }).count).toBe(count)
+  } finally { await stop(); delegation.revokeOwnerManagementDelegation(f.project.id, issued.id) }
+}, 15000)
