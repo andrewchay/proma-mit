@@ -1114,10 +1114,16 @@ function ProjectDetail({
     }
   }, [project.id])
 
+  const taskRefreshSequence = React.useRef(0)
+  React.useEffect(() => () => { taskRefreshSequence.current++ }, [project.id])
   const applyTasksChange = useCallback((next: Task[]) => {
     setTasks(next)
     setDependencyTasks((current) => mergeTaskSnapshot(current, next, (task) => Boolean(task.parentId) || task.status === 'draft'))
-  }, [])
+    const sequence = ++taskRefreshSequence.current
+    void callProjectAPI<Task[]>('listTasks', project.id, { includeSubTasks: true, includeDrafts: true })
+      .then((all) => { if (sequence === taskRefreshSequence.current) setDependencyTasks(all) })
+      .catch((error) => console.error('刷新项目派生任务失败:', error))
+  }, [project.id])
 
   const ownerTasksRefreshed = useAtomValue(ownerTaskListRefreshSignalAtom)
   React.useEffect(() => {
