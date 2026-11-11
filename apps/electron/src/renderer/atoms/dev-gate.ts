@@ -13,17 +13,21 @@ export type DevGateModuleId =
 	| 'knowledge'
 	| 'marketing'
 	| 'outbound-sourcing'
+	| 'research'
 	| 'proactive'
+	| 'workflow'
 
 /** 模块 id → 主内容区视图 id（一个模块可能对应多个视图） */
 const MODULE_VIEWS: Record<DevGateModuleId, ActiveView[]> = {
 	knowledge: ['knowledge'],
 	marketing: ['influencer', 'paid-media', 'capabilities'],
 	'outbound-sourcing': ['outbound-sourcing'],
+	research: ['research'],
 	proactive: ['proactive'],
+	workflow: ['workflow'],
 }
 
-/** knowledge / marketing / outbound-sourcing / proactive 四个模块默认全部关闭，未放开前保持隐藏。 */
+/** 读取主进程清单前默认不展示受门禁管理的模块。 */
 export const FALLBACK_DEV_MODULES: DevGateModuleId[] = []
 
 /** 主进程下发的生效模块开关（打包环境恒为空数组）。 */
@@ -66,7 +70,9 @@ const KNOWN_MODULE_IDS: readonly DevGateModuleId[] = [
 	'knowledge',
 	'marketing',
 	'outbound-sourcing',
+	'research',
 	'proactive',
+	'workflow',
 ]
 
 /**

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse } from 'yaml'
+import { validateDevGateModuleManifest } from '../src/main/lib/dev-feature-manifest'
 
 type BuilderConfig = {
   appId?: string
@@ -46,10 +47,18 @@ export function checkReleaseWorkflow(workflow: string): void {
   assert(jobs.some((job) => job.steps?.some((step) => step.run?.includes('electron-builder --win') && step.run.includes('--publish always'))), 'Windows 发布必须使用正式 Builder 配置并上传')
 }
 
+export function checkDevFeatureManifest(): void {
+  const errors = validateDevGateModuleManifest()
+  if (errors.length > 0) {
+    throw new Error(`Dev / Stable 功能清单无效：${errors.join('；')}`)
+  }
+}
+
 if (import.meta.main) {
   const root = join(import.meta.dir, '..')
   const parseYaml = (file: string) => parse(readFileSync(join(root, file), 'utf8')) as BuilderConfig
   checkChannelConfigs(parseYaml('electron-builder.yml'), parseYaml('electron-builder.dev.yml'))
   checkReleaseWorkflow(readFileSync(join(root, '../../.github/workflows/release.yml'), 'utf8'))
-  console.log('[发布门禁] Dev / Stable 渠道配置与发布工作流检查通过')
+  checkDevFeatureManifest()
+  console.log('[发布门禁] Dev / Stable 渠道配置、功能清单与发布工作流检查通过')
 }
