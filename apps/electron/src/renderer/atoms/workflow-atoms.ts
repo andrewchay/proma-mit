@@ -13,4 +13,4 @@ export const workflowPatchProposalAtom = atom<WorkflowPatchProposal | null>(null
 export const workflowLatestRunAtom = atom<WorkflowRun | null>(null)
 export const workflowRunsAtom = atom<WorkflowRun[]>([])
 export const selectedWorkflowRunIdAtom = atom<string | null>(null)
-export const workflowRunEventsAtom = atom<WorkflowRunEvent[]>([])
+export const workflowRunEventsAtom = atom<{ runId: string | null; events: WorkflowRunEvent[] }>({ runId: null, events: [] })

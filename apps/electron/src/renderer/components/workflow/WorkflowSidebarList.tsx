@@ -97,38 +97,40 @@ export function WorkflowSidebarList(): React.ReactElement {
   const latestRunUpdatedAt = latestRun?.updatedAt
   // biome-ignore lint/correctness/useExhaustiveDependencies: Run ID 和版本是运行、停止及审批后的刷新信号，不依赖每次写回的新对象。
   React.useEffect(() => {
-    if (!draftId) { setRuns([]); setRunEvents([]); return }
+    if (!draftId) { setRuns([]); setRunEvents({ runId: null, events: [] }); return }
     let cancelled = false
     const loadRunHistory = async (): Promise<void> => {
       try {
         const list = await window.electronAPI.listWorkflowRuns(draftId)
         if (cancelled) return
         setRuns(list)
-        const selected = store.get(selectedWorkflowRunIdAtom)
+        const selected = selectedRunId
         const targetId = list.find((run) => run.id === selected)?.id ?? list[0]?.id
         setSelectedRunId(targetId ?? null)
-        if (!targetId) { setRunEvents([]); return }
+        if (!targetId) { setRunEvents({ runId: null, events: [] }); return }
         const events = await window.electronAPI.listWorkflowRunEvents(draftId, targetId)
-        if (!cancelled) setRunEvents(events)
+        if (!cancelled) setRunEvents({ runId: targetId, events })
       } catch (error) {
         if (!cancelled) toast.error(error instanceof Error ? error.message : '读取 Run 历史失败')
       }
     }
     void loadRunHistory()
     return () => { cancelled = true }
-  }, [draftId, latestRunId, latestRunUpdatedAt, store, setRuns, setRunEvents, setSelectedRunId])
+  }, [draftId, latestRunId, latestRunUpdatedAt, selectedRunId, setRuns, setRunEvents, setSelectedRunId])
 
   const selectRun = async (runId: string): Promise<void> => {
     if (!draft) return
+    setSelectedRunId(runId)
     try {
       const [run, events] = await Promise.all([
         window.electronAPI.getWorkflowRun(draft.id, runId),
         window.electronAPI.listWorkflowRunEvents(draft.id, runId),
       ])
+      if (store.get(selectedWorkflowRunIdAtom) !== runId || store.get(workflowDraftAtom)?.id !== draft.id) return
       if (!run) throw new Error('Run 不存在')
       setLatestRun(run)
       setSelectedRunId(runId)
-      setRunEvents(events)
+      setRunEvents({ runId, events })
     } catch (error) {
       toast.error(error instanceof Error ? error.message : '读取 Run 失败')
     }
@@ -279,10 +281,10 @@ export function WorkflowSidebarList(): React.ReactElement {
       {selectedRunId && (
         <div className="flex-shrink-0 rounded-md border border-border/60 p-2 text-[11px]">
           <div className="mb-1 font-medium">Run 审计事件</div>
-          {runEvents.length === 0
+          {runEvents.runId !== selectedRunId || runEvents.events.length === 0
             ? <span className="text-muted-foreground">暂无事件</span>
             : <div className="max-h-24 space-y-1 overflow-y-auto text-muted-foreground">
-                {runEvents.map((event) => (
+                {runEvents.events.map((event) => (
                   <div key={event.id}>{new Date(event.occurredAt).toLocaleTimeString()} · {event.type}{event.nodeId ? ` · ${event.nodeId}` : ''}</div>
                 ))}
               </div>}

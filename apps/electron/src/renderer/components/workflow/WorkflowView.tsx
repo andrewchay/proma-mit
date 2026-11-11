@@ -6,7 +6,7 @@
  */
 
 import * as React from 'react'
-import { useAtom, useAtomValue, useSetAtom } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { toast } from 'sonner'
 import {
   Bot, CheckCircle2, CirclePlay, Download, GitBranch, Hand, LayoutTemplate, RefreshCcw, RotateCcw, Save, Send, Sparkles, Square, Wrench, X,
@@ -101,6 +101,7 @@ function RunInspector({ run, events }: { run: WorkflowRun; events: WorkflowRunEv
 export function WorkflowView(): React.ReactElement {
   const [draft, setDraft] = useAtom(workflowDraftAtom)
   const [proposal, setProposal] = useAtom(workflowPatchProposalAtom)
+  const store = useStore()
   const [latestRun, setLatestRun] = useAtom(workflowLatestRunAtom)
   const runs = useAtomValue(workflowRunsAtom)
   const [selectedRunId, setSelectedRunId] = useAtom(selectedWorkflowRunIdAtom)
@@ -128,17 +129,16 @@ export function WorkflowView(): React.ReactElement {
           window.electronAPI.getWorkflowRun(draftId, latestRunId),
           window.electronAPI.listWorkflowRunEvents(draftId, latestRunId),
         ])
-        if (cancelled || !run) return
+        if (cancelled || !run || store.get(selectedWorkflowRunIdAtom) !== latestRunId) return
         setLatestRun(run)
-        setSelectedRunId(latestRunId)
-        setRunEvents(events)
+        setRunEvents({ runId: latestRunId, events })
       } catch (error) {
         if (!cancelled) toast.error(error instanceof Error ? error.message : '读取 Run 审计失败')
       }
     }
     void refreshRunInspection()
     return () => { cancelled = true }
-  }, [draftId, latestRunId, latestRunUpdatedAt, setLatestRun, setRunEvents, setSelectedRunId])
+  }, [draftId, latestRunId, latestRunUpdatedAt, setLatestRun, setRunEvents, store])
 
   const addNode = React.useCallback((kind: PaletteKind, position: { x: number; y: number }) => {
     if (!draft) return
@@ -278,6 +278,7 @@ export function WorkflowView(): React.ReactElement {
     try {
       const run = await window.electronAPI.createWorkflowRun(draft.id, {})
       const progressed = await window.electronAPI.executeWorkflowRun({ workflowId: draft.id, runId: run.id, channelId: agentChannelId, ...(agentModelId ? { modelId: agentModelId } : {}) })
+      setSelectedRunId(progressed.id)
       setLatestRun(progressed)
       toast.success(progressed.status === 'waiting_approval' ? 'Run 已暂停，等待审批' : `Run 状态：${progressed.status}`)
     } catch (error) {
@@ -339,7 +340,7 @@ export function WorkflowView(): React.ReactElement {
               <WorkflowCanvas draft={draft} selectedNodeId={selectedNodeId} onSelect={setSelectedNodeId} onRemoveNode={removeNode} onMove={(nodeId, position) => setDraft({ ...draft, layout: { ...draft.layout, nodes: { ...draft.layout.nodes, [nodeId]: position } }, updatedAt: Date.now() })} onDropNode={addNode} />
             </div>
             <div className="border-t border-border/60 bg-background/70 p-3"><div className="flex gap-2"><Textarea value={intent} onChange={(event) => setIntent(event.target.value)} placeholder="用自然语言补充步骤，例如：添加人工审批，确认预算后再继续" className="min-h-9 h-9 resize-none py-2" onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void proposeIntent() } }} /><Button onClick={() => void proposeIntent()} title="生成受校验的 Workflow patch"><Send />建议</Button></div>{proposal ? <div className="mt-2 rounded-md bg-primary/8 p-2 text-xs"><p className="leading-5">{proposal.reply}</p><div className="mt-2 rounded border border-primary/20 bg-background/60 p-2"><div className="mb-1 font-medium">建议差异（尚未写入）</div>{proposal.patches.map((patch, index) => <div key={index} className="font-mono text-[11px] leading-5">{JSON.stringify(patch)}</div>)}</div><div className="mt-2 flex items-center gap-2"><Button size="sm" onClick={applyProposal}>确认并应用 {proposal.patches.length} 个建议</Button><Button size="sm" variant="ghost" onClick={() => setProposal(null)}>忽略</Button></div></div> : <p className="mt-1 text-[11px] text-muted-foreground">设计器只返回受限 patch；你预览并确认后才会修改 Draft，更不会直接写入文件。</p>}{latestRun?.status === 'waiting_approval' && <div className="mt-2 flex items-center justify-between rounded-md bg-amber-500/10 px-3 py-2 text-xs"><span>Run 正在等待已冻结的审批主体；当前工作台以 local-user 决策。</span><div className="flex gap-1"><Button size="sm" onClick={() => void resolveLatestApproval(true)}>通过</Button><Button size="sm" variant="outline" onClick={() => void resolveLatestApproval(false)}>拒绝</Button></div></div>}</div>
-            {inspectedRun && <RunInspector run={inspectedRun} events={inspectedRun.id === selectedRunId ? runEvents : []} />}
+            {inspectedRun && <RunInspector run={inspectedRun} events={inspectedRun.id === selectedRunId && runEvents.runId === inspectedRun.id ? runEvents.events : []} />}
           </main>
           <WorkflowInspector
             node={selectedNode}
