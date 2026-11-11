@@ -6,6 +6,13 @@ interface TestBuildPackageMetadata {
   version?: unknown
 }
 
+/** 冒烟测试必须使用显式或测试包自带的隔离配置目录。 */
+export function assertSmokeTestConfigDir(packageSmoke: boolean, packagedDir?: string, override?: string): void {
+  if (packageSmoke && !packagedDir && !override) {
+    throw new Error('GRAVITAS_PACKAGE_SMOKE requires PROMA_TEST_CONFIG_DIR')
+  }
+}
+
 export function getPackagedTestProfileName(metadata: unknown): string {
   if (typeof metadata !== 'object' || metadata === null) return 'Gravitas Owner Test'
   const name = (metadata as TestBuildPackageMetadata).gravitasTestProfileName

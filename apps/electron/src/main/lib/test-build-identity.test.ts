@@ -2,7 +2,14 @@ import { expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse } from 'yaml'
-import { getPackagedTestConfigDir, getPackagedTestProfileName } from './test-build-identity.ts'
+import { assertSmokeTestConfigDir, getPackagedTestConfigDir, getPackagedTestProfileName } from './test-build-identity.ts'
+
+test('Given 冒烟测试 When 缺少隔离配置目录 Then 拒绝启动', () => {
+  expect(() => assertSmokeTestConfigDir(true)).toThrow('GRAVITAS_PACKAGE_SMOKE requires PROMA_TEST_CONFIG_DIR')
+  expect(() => assertSmokeTestConfigDir(true, '/tmp/packaged-test')).not.toThrow()
+  expect(() => assertSmokeTestConfigDir(true, undefined, '/tmp/smoke-test')).not.toThrow()
+  expect(() => assertSmokeTestConfigDir(false)).not.toThrow()
+})
 
 test('Given带测试标记的已打包应用 When解析配置目录 Then返回独立应用数据路径', () => {
   expect(getPackagedTestConfigDir(true, { gravitasTestBuild: true, version: '0.13.249' }, '/Users/test/Library/Application Support'))
