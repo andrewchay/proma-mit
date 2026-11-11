@@ -25,6 +25,11 @@ test('Given 完成回执没有消息 When 会话包含 SDK 格式回复 Then 读
   expect(await proposeWorkflowPatches(definition, '设计流程', 'channel')).toMatchObject({ reply: '会话回复', patches: [] })
 })
 
+test('Given SDK 助手正文为字符串 When 读取会话 Then 返回设计结果', async () => {
+  records = [{ type: 'assistant', message: { content: JSON.stringify({ reply: '字符串正文', patches: [] }) } }]
+  expect(await proposeWorkflowPatches(definition, '设计流程', 'channel')).toMatchObject({ reply: '字符串正文', patches: [] })
+})
+
 test('Given 用户停止运行 When 会话已有部分回复 Then 不返回方案', async () => {
   stoppedByUser = true
   await expect(proposeWorkflowPatches(definition, '设计流程', 'channel')).rejects.toThrow('已停止')

@@ -21,6 +21,7 @@ function readSessionAssistantText(sessionId: string): string | undefined {
     const message = messages[index]
     if (!message || message.type !== 'assistant' || typeof message.message !== 'object' || message.message === null || !('content' in message.message)) continue
     const content = message.message.content
+    if (typeof content === 'string' && content.trim()) return content
     if (!Array.isArray(content)) continue
     const text = (content as unknown[])
       .filter((block): block is { type: 'text'; text: string } => typeof block === 'object' && block !== null && 'type' in block && block.type === 'text' && 'text' in block && typeof block.text === 'string')
