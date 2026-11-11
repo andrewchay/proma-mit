@@ -302,7 +302,7 @@ import { askUserService } from './lib/agent-ask-user-service'
 import { exitPlanService } from './lib/agent-exit-plan-service'
 import { getAgentSessionWorkspacePath, getAgentWorkspacesDir, getWorkspaceSkillsDir, getWorkspaceFilesDir, getScratchPadPath } from './lib/config-paths'
 import { getPreviewTempDir } from './lib/app-temp-paths'
-import { APP_AUTOMATIC_SIDE_EFFECTS, APP_SERVICE_PORTS } from './lib/app-identity'
+import { APP_AUTOMATIC_SIDE_EFFECTS, APP_CHANNEL, APP_SERVICE_PORTS } from './lib/app-identity'
 import { calculateStorageStats, cleanupStorage, cleanupTempFiles } from './lib/storage-service'
 import type { CleanupOptions } from './lib/storage-service'
 import {
@@ -1344,6 +1344,7 @@ export async function registerIpcHandlers(): Promise<void> {
         effectiveDevModules: resolveEffectiveModules({
           devEnabled: settings.enabledDevModules,
           isPackaged: app.isPackaged,
+          channel: APP_CHANNEL,
         }),
         // 全能力调试放开同样是每次读取时计算的派生结论，不落盘。
         capabilitiesUnlocked: isDevUnlockEnabled({ isPackaged: app.isPackaged }),
@@ -4860,6 +4861,7 @@ export async function registerIpcHandlers(): Promise<void> {
   // 打包环境忽略本地调试开关，避免改 settings.json 解锁未完成功能。
   const isDevModuleEnabled = (moduleId: string): boolean => isModuleVisible(moduleId, {
     isPackaged: app.isPackaged,
+    channel: APP_CHANNEL,
     devEnabled: resolveDevEnabledModules(getSettings().enabledDevModules, { isPackaged: app.isPackaged }),
   })
 

@@ -14,7 +14,9 @@ describe('渲染层开发门禁', () => {
 			'paid-media',
 			'capabilities',
 			'outbound-sourcing',
+			'research',
 			'proactive',
+			'workflow',
 		]
 		for (const view of gated)
 			expect(isViewVisible(view, FALLBACK_DEV_MODULES)).toBe(false)
@@ -26,7 +28,7 @@ describe('渲染层开发门禁', () => {
 	})
 
 	test('项目管理与分析引擎不受门禁影响', () => {
-		for (const view of ['projects', 'analysis', 'conversations', 'workflow']) {
+		for (const view of ['projects', 'analysis', 'conversations']) {
 			expect(moduleOfView(view)).toBeUndefined()
 			expect(isViewVisible(view, [])).toBe(true)
 		}
@@ -54,6 +56,9 @@ describe('渲染层开发门禁', () => {
 		expect(moduleOfView('paid-media')).toBe('marketing')
 		expect(moduleOfView('capabilities')).toBe('marketing')
 		expect(moduleOfView('outbound-sourcing')).toBe('outbound-sourcing')
+		expect(moduleOfView('research')).toBe('research')
 		expect(moduleOfView('proactive')).toBe('proactive')
+		expect(moduleOfView('workflow')).toBe('workflow')
+		expect(isViewVisible('new-media', [])).toBe(true)
 	})
 })

@@ -12,6 +12,7 @@ import { activeViewAtom } from '@/atoms/active-view'
 import { conversationsAtom, currentConversationIdAtom } from '@/atoms/chat-atoms'
 import { agentSessionsAtom, currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
 import { tabsAtom } from '@/atoms/tab-atoms'
+import { enabledDevModulesAtom, isViewVisible } from '@/atoms/dev-gate'
 import { useOpenSession } from '@/hooks/useOpenSession'
 import { cn } from '@/lib/utils'
 
@@ -23,13 +24,6 @@ const MODES: { value: SwitchMode; label: string }[] = [
   { value: 'chat', label: '聊天' },
 ]
 
-/** 滑动指示器位置：三等分 */
-const SLIDER_POSITIONS: Record<SwitchMode, string> = {
-  agent: 'translate-x-0',
-  workflow: 'translate-x-full',
-  chat: 'translate-x-[200%]',
-}
-
 export function ModeSwitcher(): React.ReactElement {
   const [mode, setMode] = useAtom(appModeAtom)
   const setActiveView = useSetAtom(activeViewAtom)
@@ -40,9 +34,15 @@ export function ModeSwitcher(): React.ReactElement {
   const currentConversationId = useAtomValue(currentConversationIdAtom)
   const currentAgentSessionId = useAtomValue(currentAgentSessionIdAtom)
   const tabs = useAtomValue(tabsAtom)
+  const enabledDevModules = useAtomValue(enabledDevModulesAtom)
+  const workflowVisible = isViewVisible('workflow', enabledDevModules)
+  const visibleModes = MODES.filter(({ value }) => value !== 'workflow' || workflowVisible)
 
-  /** 当前激活的模式（activeView === 'workflow' 时为 workflow，否则取 appMode） */
-  const activeMode: SwitchMode = activeView === 'workflow' ? 'workflow' : (mode as SwitchMode)
+  /** Stable 隐藏 Workflow 后，即使旧状态停在该视图，模式切换器也回显 Agent / Chat。 */
+  const activeMode: SwitchMode = activeView === 'workflow' && workflowVisible
+    ? 'workflow'
+    : (mode as SwitchMode)
+  const activeModeIndex = Math.max(0, visibleModes.findIndex(({ value }) => value === activeMode))
 
   /** 恢复 Agent/Chat 模式下的上次会话 */
   const restoreSession = React.useCallback((targetMode: AppMode) => {
@@ -86,12 +86,13 @@ export function ModeSwitcher(): React.ReactElement {
       <div className="relative flex rounded-xl bg-muted p-1 titlebar-drag-region">
         {/* 滑动背景指示器：三等分宽度，选中态为品牌主色实心 pill */}
         <div
-          className={cn(
-            'mode-slider pointer-events-none absolute top-1 bottom-1 w-[calc((100%-8px)/3)] rounded-lg bg-primary shadow-sm transition-transform duration-300 ease-in-out',
-            SLIDER_POSITIONS[activeMode]
-          )}
+          className="mode-slider pointer-events-none absolute top-1 bottom-1 rounded-lg bg-primary shadow-sm transition-[transform,width] duration-300 ease-in-out"
+          style={{
+            width: `calc((100% - 8px) / ${visibleModes.length})`,
+            transform: `translateX(${activeModeIndex * 100}%)`,
+          }}
         />
-        {MODES.map(({ value, label }) => (
+        {visibleModes.map(({ value, label }) => (
           <button
             key={value}
             type="button"
