@@ -768,7 +768,7 @@ export class AISDKRuntimeCore {
       ])
       if (safeAllowedTools.has(toolName)) return { allowed: true }
       if (state.activeSession.ownerActionApproval) {
-        // Owner 工作区内低风险新建免逐次审批；覆盖/敏感路径/越界仍交给权限链路请用户裁决。
+        // Owner 低风险新建及新版授权范围内的普通文件修改可自动放行，其余动作走权限门禁。
         if (isOwnerAutoAllowedWorkspaceWrite(state.sessionId, toolName, input)) return { allowed: true }
         if (state.canUseTool) return state.canUseTool(toolName, input, state.signal)
       }

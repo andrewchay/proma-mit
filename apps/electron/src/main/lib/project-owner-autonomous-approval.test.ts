@@ -74,6 +74,16 @@ test('Given项目Owner执行确认 When显示结果导向授权摘要 Then保留
   expect(dialogs[0]!.message).toContain('季度研究交付')
   expect(dialogs[0]!.buttons).toEqual(['取消', '确认并开始'])
 })
+test('Given混合交付授权 When显示确认摘要 Then说明文本成果和代码验证', async () => {
+  let detail = ''
+  await requestOwnerAutonomousGrantApproval({ projectId: 'project-1' }, { ...preview, executionKind: 'development', qualityManagementVersion: 1 }, {
+    getParent: () => window,
+    showMessageBox: async (_parent, options) => { detail = options.detail; return { response: 1 } },
+  }, { projectTitle: '日记本', deliverables: ['需求说明', '实现页面'], knowledgeNames: [], allowedPaths: ['index.html'], hasTextSteps: true })
+  expect(detail).toContain('文本步骤的完整最终回复保存为本机文本成果')
+  expect(detail).toContain('代码成果质量依据')
+  expect(detail).toContain('允许修改：index.html')
+})
 test('Given授权摘要长于系统确认单行限制 When展示 Then明确标注内容已截短', async () => {
   let detail = ''
   await expect(requestOwnerAutonomousGrantApproval({ projectId: 'project-1' }, preview, {

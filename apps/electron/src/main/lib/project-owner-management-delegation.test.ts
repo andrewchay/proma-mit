@@ -79,6 +79,24 @@ test('Given 明确范围与预算 When 预览确认并重提 Then 持久同一�
   service.revokeOwnerManagementDelegation(f.project.id, grant.id)
 })
 
+test('Given自主研发修改范围 When确认管理授权 Then新许可冻结该范围而旧许可不扩权', () => {
+  const f = fixture()
+  expect(() => service.previewOwnerManagementDelegation({ ...f.input, autonomousWorkspaceEditVersion: 1 })).toThrow('额度或期限无效')
+  const input = { ...f.input, autonomousExecution: true as const, autonomousWorkspaceEditVersion: 1 as const }
+  const preview = service.previewOwnerManagementDelegation(input)
+  expect(preview.autonomousWorkspaceEditVersion).toBe(1)
+  expect(() => service.confirmOwnerManagementDelegation({ input: { ...input, autonomousWorkspaceEditVersion: undefined }, previewHash: preview.previewHash })).toThrow()
+  const grant = service.confirmOwnerManagementDelegation({ input, previewHash: preview.previewHash })
+  const legacy = fixture(), legacyGrant = issue(legacy)
+  try {
+    expect(grant.autonomousWorkspaceEditVersion).toBe(1)
+    expect(legacyGrant.autonomousWorkspaceEditVersion).toBeUndefined()
+  } finally {
+    service.revokeOwnerManagementDelegation(f.project.id, grant.id)
+    service.revokeOwnerManagementDelegation(legacy.project.id, legacyGrant.id)
+  }
+})
+
 test('Given 配置了DeepSeek V4 Pro When 核对项目管理预算 Then按官方峰时上界通过预览且不发送请求', () => {
   const f = fixture('deepseek-v4-pro'), before = calls
   const preview = service.previewOwnerManagementDelegation(f.input)

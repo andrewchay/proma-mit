@@ -377,7 +377,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
         assertRuntimeSessionIdentity(guardedToolContext, piSessionIdentity)
         // purpose感知：无Owner证据=原行为；有证据时仅知识工具可经fence（休眠能力）。
         const ownerApprovalCandidate = isOwnerWorkspaceFileActionCandidate(sessionId, name, args)
-        // 工作区内低风险新建免逐次审批；覆盖/敏感路径/越界仍走权限链路请用户裁决。
+        // 低风险新建和新版授权范围内的普通文件修改可自动放行，其余动作走权限门禁。
         if (ownerApprovalCandidate && isOwnerAutoAllowedWorkspaceWrite(sessionId, name, args)) {
           assertControlledPermissionChange(sessionId, actualProvider().permissionMode)
           if (ownerCommand) await awaitOwnerExecutionRequestsSettled(sessionId)

@@ -57,9 +57,10 @@ export function prepareProjectOwnerGoalBrief(input: unknown): ProjectOwnerGoalBr
 }
 
 function parseStep(input: unknown, roles: ReadonlySet<string>, codeFiles: readonly ProjectOwnerCodeFileMatch[]): ProjectOwnerPlanStep {
-  const value = record(input, ['key', 'title', 'outcome', 'acceptanceCriteria', 'dependencies', 'roleKey', 'sourceReferences'], '计划步骤')
+  const value = record(input, ['key', 'title', 'outcome', 'acceptanceCriteria', 'dependencies', 'roleKey', 'deliveryKind', 'sourceReferences'], '计划步骤')
   const roleKey = text(value.roleKey, 'roleKey', 200)
   if (!roles.has(roleKey)) throw new Error(`计划使用了不可用角色：${roleKey}`)
+  if (value.deliveryKind !== undefined && value.deliveryKind !== 'text' && value.deliveryKind !== 'development') throw new Error('计划步骤交付类型无效')
   let sourceReferences: ProjectOwnerPlanStep['sourceReferences']
   if (value.sourceReferences !== undefined) {
     if (!Array.isArray(value.sourceReferences) || value.sourceReferences.length > 8) throw new Error('计划源码引用无效')
@@ -79,6 +80,7 @@ function parseStep(input: unknown, roles: ReadonlySet<string>, codeFiles: readon
     acceptanceCriteria: texts(value.acceptanceCriteria, 'acceptanceCriteria', 1),
     dependencies: texts(value.dependencies, 'dependencies'),
     roleKey,
+    ...(value.deliveryKind === undefined ? {} : { deliveryKind: value.deliveryKind as 'text' | 'development' }),
     ...(sourceReferences === undefined ? {} : { sourceReferences }),
   }
 }

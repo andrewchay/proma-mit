@@ -1,7 +1,7 @@
 /** 同一Reviewer命令内最多补正一次输出；不重跑Executor、不修改原文或放宽校验。 */
 import { parseOwnerTechnicalReviewResponse, assertOwnerDevelopmentValidationForVerdict } from './project-owner-technical-review'
 import { ownerDevelopmentArtifactFromPrompt } from './project-owner-development-artifact'
-import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
+import { ownerTaskDeliveryKind, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { getOwnerTaskMaterializationRecord } from './project-owner-task-materialization'
 import { assertOwnerReviewerTextDelivery } from './project-owner-text-delivery'
 import * as store from './project-sqlite-store'
@@ -28,7 +28,7 @@ export function ownerReviewerProtocolCorrection(sessionId: string, prompt: strin
   const task = source.tasks.find(item => item.taskId === execution.entityId)
   const link = getOwnerTaskMaterializationRecord(execution.projectId, source.materialization.id).links.find(item => item.id === task?.linkId)
   if (!link) return null
-  const development = source.executionKind === 'development' ? ownerDevelopmentArtifactFromPrompt(prompt) : null
+  const development = ownerTaskDeliveryKind(source, execution.entityId) === 'development' ? ownerDevelopmentArtifactFromPrompt(prompt) : null
   const text = development ? null : assertOwnerReviewerTextDelivery(execution.ownerCommandId)
   if (!development && !text) return null
   try {

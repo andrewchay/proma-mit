@@ -6,6 +6,7 @@ import type { SDKResultMessage, OwnerExecutionAssignmentProposal, ProjectOwnerPl
 import { getOwnerRuntimeBinding } from './project-owner-runtime-binding'
 import { readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
 import { parseProjectOwnerPlanningResponse } from './project-owner-planning-protocol'
+import { isOwnerEvidenceGapRework } from './project-owner-quality-protocol'
 import { appendGeneratedOwnerPlan } from './project-owner-plan-service'
 import { parseOwnerExecutionAssignmentProposal, type OwnerExecutionAssignmentProtocolContext } from './project-owner-execution-assignment-protocol'
 import * as store from './project-sqlite-store'
@@ -138,7 +139,7 @@ function readStoredOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRu
       if (frozen.link.purpose === 'owner_execution_assignment') {
         if (value.state !== 'proposed' || !frozen.assignmentContext || value.planRevision !== undefined || value.clarification !== undefined || value.reply !== undefined || value.changeProposal !== undefined || value.qualityDecision !== undefined) throw new Error('Owner人员安排Run结论字段无效')
         const source = frozen.assignmentContext
-        const protocolContext: OwnerExecutionAssignmentProtocolContext = { ...(source.teamContractVersion ? { teamContractVersion: source.teamContractVersion } : {}), contextFingerprint: source.contextFingerprint, workspaces: source.workspaces.map(({ id, name }) => ({ id, name })), executionKinds: source.executionKinds, ownerCarrierId: source.ownerCarrierId, steps: source.steps.map(({ key, dependencies, roleKey, sourceReferences }) => ({ key, dependencies, roleKey, ...(sourceReferences ? { sourceReferences } : {}) })), ...(source.codeFiles ? { codeFiles: source.codeFiles } : {}), candidates: source.candidates }
+        const protocolContext: OwnerExecutionAssignmentProtocolContext = { ...(source.teamContractVersion ? { teamContractVersion: source.teamContractVersion } : {}), contextFingerprint: source.contextFingerprint, workspaces: source.workspaces.map(({ id, name }) => ({ id, name })), executionKinds: source.executionKinds, ownerCarrierId: source.ownerCarrierId, steps: source.steps.map(({ key, dependencies, roleKey, deliveryKind, sourceReferences }) => ({ key, dependencies, roleKey, ...(deliveryKind ? { deliveryKind } : {}), ...(sourceReferences ? { sourceReferences } : {}) })), ...(source.codeFiles ? { codeFiles: source.codeFiles } : {}), candidates: source.candidates }
         const proposal = parseOwnerExecutionAssignmentProposal(receipt.responseText, protocolContext)
         if (!value.assignmentProposal || JSON.stringify(proposal) !== JSON.stringify(value.assignmentProposal)) throw new Error('人员安排结论与原始响应不一致')
       } else {
@@ -160,7 +161,7 @@ function readStoredOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRu
  */
 export function recoverLegacyOwnerConversationReply(executionId: string): OwnerPlanningRunOutcome | null {
   const original = readStoredOwnerPlanningRunOutcome(executionId)
-  if (!original || original.state !== 'failed' || !['Owner规划响应包含未知字段', 'Owner执行跟进只允许分析回应或必要协商', 'Owner质量决定与准确评审/成果不匹配', 'Owner质量决定未按准确标准逐项判断或引用不符'].includes(original.detail)) return null
+  if (!original || original.state !== 'failed' || !['Owner规划响应包含未知字段', 'Owner执行跟进只允许分析回应或必要协商', 'Owner质量决定与准确评审/成果不匹配', 'Owner质量决定未按准确标准逐项判断或引用不符', 'Owner返工必须指出具体不满足标准及可执行修改'].includes(original.detail)) return null
   const receipt = getOwnerPlanningRunReceipt(original.receiptId)
   if (!receipt || receipt.executionId !== executionId || receipt.purpose !== 'owner_planning' || !receipt.validTerminal || receipt.stopped || receipt.error !== null
     || receipt.runtimeResult?.subtype !== 'success' || receipt.runtimeResult.finish_reason !== 'stop'
@@ -172,6 +173,8 @@ export function recoverLegacyOwnerConversationReply(executionId: string): OwnerP
   try { response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context) }
   catch { return null }
   if (response.kind !== 'conversation_reply' && response.kind !== 'quality_decision') return null
+  if (original.detail === 'Owner返工必须指出具体不满足标准及可执行修改'
+    && (response.kind !== 'quality_decision' || !isOwnerEvidenceGapRework(response.decision))) return null
   const recoveredOutcome: OwnerPlanningRunOutcome = {
     executionId, receiptId: receipt.id, state: 'replied',
     detail: 'Owner旧格式回应已从本地原始回执重新校验；未重发请求，费用仍按原预留记录。',
@@ -324,7 +327,7 @@ export function recordOwnerPlanningRun(executionId: string, runtimeSource: strin
         if (link.purpose === 'owner_execution_assignment') {
           const source = frozen.assignmentContext
           if (!source) throw new Error('Owner安排冻结资料缺失')
-          const protocolContext: OwnerExecutionAssignmentProtocolContext = { ...(source.teamContractVersion ? { teamContractVersion: source.teamContractVersion } : {}), contextFingerprint: source.contextFingerprint, workspaces: source.workspaces.map(({ id, name }) => ({ id, name })), executionKinds: source.executionKinds, ownerCarrierId: source.ownerCarrierId, steps: source.steps.map(({ key, dependencies, roleKey, sourceReferences }) => ({ key, dependencies, roleKey, ...(sourceReferences ? { sourceReferences } : {}) })), ...(source.codeFiles ? { codeFiles: source.codeFiles } : {}), candidates: source.candidates }
+          const protocolContext: OwnerExecutionAssignmentProtocolContext = { ...(source.teamContractVersion ? { teamContractVersion: source.teamContractVersion } : {}), contextFingerprint: source.contextFingerprint, workspaces: source.workspaces.map(({ id, name }) => ({ id, name })), executionKinds: source.executionKinds, ownerCarrierId: source.ownerCarrierId, steps: source.steps.map(({ key, dependencies, roleKey, deliveryKind, sourceReferences }) => ({ key, dependencies, roleKey, ...(deliveryKind ? { deliveryKind } : {}), ...(sourceReferences ? { sourceReferences } : {}) })), ...(source.codeFiles ? { codeFiles: source.codeFiles } : {}), candidates: source.candidates }
           const assignmentProposal = parseOwnerExecutionAssignmentProposal(responseText, protocolContext)
           outcome = { executionId, receiptId: receipt!.id, state: 'proposed', detail: 'Owner已提出执行安排，等待用户审核；不代表准备已保存或获得执行授权', assignmentProposal }
         } else {

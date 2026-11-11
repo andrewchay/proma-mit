@@ -89,6 +89,7 @@ function history(projectId: string): OwnerExecutionPreparationRecord[] {
         'employeeRuntimes',
         'textDeliveryVersion',
         'qualityManagementVersion',
+        'autonomousWorkspaceEditVersion',
         'executor',
         'reviewer',
         'workspaceId',

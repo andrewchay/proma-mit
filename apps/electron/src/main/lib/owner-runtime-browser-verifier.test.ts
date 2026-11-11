@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { runOwnerRuntimeBrowserAssertions, setOwnerRuntimeBrowserRunner } from './owner-runtime-browser-verifier'
@@ -12,8 +12,11 @@ beforeAll(() => {
   writeFileSync(join(root, 'game.html'), '<html><body>game</body></html>')
   writeFileSync(join(root, 'sub', 'inner.html'), '<html></html>')
   writeFileSync(join(root, 'notes.txt'), 'plain')
+  writeFileSync(join(root, 'sub', 'app.js'), 'window.appLoaded = true')
+  writeFileSync(join(root, 'sub', 'style.css'), 'body { color: black }')
   writeFileSync(join(outside, 'escape.html'), '<html></html>')
   symlinkSync(join(outside, 'escape.html'), join(root, 'link.html'))
+  symlinkSync(join(outside, 'escape.html'), join(root, 'link.js'))
 })
 
 afterAll(() => {
@@ -53,4 +56,17 @@ test('Given 子目录内 HTML When 验证 Then 允许且保留相对子路径', 
   setOwnerRuntimeBrowserRunner(async (input) => ({ checks: [{ id: 'html.loads', title: '加载', status: 'passed' as const, detail: 'ok' }], durationMs: 1, timedOut: false, relativePath: input.filePath }))
   const result = await runOwnerRuntimeBrowserAssertions({ workspaceRoot: root, relativePath: 'sub/inner.html', intents: ['加载'] })
   expect(result.relativePath).toBe('sub/inner.html')
+})
+
+test('Given冻结范围中的页面及脚本样式 When验证 Then只向浏览器传递范围内的真实资源并拒绝越界和链接', async () => {
+  let seen: readonly string[] = []
+  setOwnerRuntimeBrowserRunner(async input => {
+    seen = input.resourcePaths ?? []
+    return { checks: [], durationMs: 0, timedOut: false, relativePath: input.filePath }
+  })
+  await runOwnerRuntimeBrowserAssertions({ workspaceRoot: root, relativePath: 'sub/inner.html', intents: [], resourcePaths: ['sub/app.js', 'sub/style.css'] })
+  expect(seen).toEqual([realpathSync(join(root, 'sub/app.js')), realpathSync(join(root, 'sub/style.css'))])
+  await expect(runOwnerRuntimeBrowserAssertions({ workspaceRoot: root, relativePath: 'sub/inner.html', intents: [], resourcePaths: ['../escape.js'] })).rejects.toThrow()
+  await expect(runOwnerRuntimeBrowserAssertions({ workspaceRoot: root, relativePath: 'sub/inner.html', intents: [], resourcePaths: ['link.js'] })).rejects.toThrow()
+  await expect(runOwnerRuntimeBrowserAssertions({ workspaceRoot: root, relativePath: 'sub/inner.html', intents: [], resourcePaths: ['notes.txt'] })).rejects.toThrow()
 })

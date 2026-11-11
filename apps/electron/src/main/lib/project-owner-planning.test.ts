@@ -61,6 +61,13 @@ describe('Given 人类仅提供非代码项目目标', () => {
 })
 
 describe('Given Owner 提出的结构化计划', () => {
+  test('Then 保留每一步的交付类型，旧方案仍可读取，非法类型被拒绝', () => {
+    const input = planInput()
+    const mixed = { ...input, steps: input.steps.map((step, index) => ({ ...step, deliveryKind: index === 0 ? 'text' : 'development' })) }
+    expect(parse(mixed).steps.map(step => step.deliveryKind)).toEqual(['text', 'development'])
+    expect(parse().steps.every(step => step.deliveryKind === undefined)).toBe(true)
+    expect(() => parse({ ...input, steps: [{ ...input.steps[0], deliveryKind: 'unknown' }] })).toThrow('交付类型无效')
+  })
   test('Then 合法依赖计划始终仅为建议，不产生任务/授权/完成事实', () => {
     const proposal = parse()
     expect(proposal.mode).toBe('proposal_only')

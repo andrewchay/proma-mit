@@ -12,3 +12,12 @@ test('Given代码执行准备明确委托质量决定 When解析冻结输入 The
   expect(parseOwnerExecutionInput(input('development', { qualityManagementVersion: 1 }))).toMatchObject({ executionKind: 'development', qualityManagementVersion: 1 })
   expect(() => parseOwnerExecutionInput(input('controlled', { qualityManagementVersion: 1 }))).toThrow('完整成果')
 })
+
+
+test('Given自主修改授权 When解析执行范围 Then必须绑定研发范围和质量委托', () => {
+  const parsed = parseOwnerExecutionInput(input('development', { qualityManagementVersion: 1, autonomousWorkspaceEditVersion: 1 }))
+  expect(parsed.autonomousWorkspaceEditVersion).toBe(1)
+  expect(() => parseOwnerExecutionInput(input('development', { autonomousWorkspaceEditVersion: 1 }))).toThrow('研发范围与质量委托')
+  expect(() => parseOwnerExecutionInput(input('controlled', { textDeliveryVersion: 1, qualityManagementVersion: 1, autonomousWorkspaceEditVersion: 1 }))).toThrow('研发范围与质量委托')
+  expect(parseOwnerExecutionInput(input('development', { qualityManagementVersion: 1 })).autonomousWorkspaceEditVersion).toBeUndefined()
+})

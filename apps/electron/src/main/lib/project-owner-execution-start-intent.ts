@@ -14,6 +14,8 @@ import { getOwnerManagementDelegation } from './project-owner-management-delegat
 import { getOwnerPlanningRunReceipt } from './project-owner-planning-run-service'
 import { readOwnerPlanningSnapshot } from './project-owner-planning-source'
 import { readOwnerQualityActionByExecution } from './project-owner-quality-actions'
+import { settleOwnerCommandUsage } from './project-owner-execution-settlement'
+import type { PilotUsageEvidence } from './project-pilot-budget-ledger'
 
 interface IntentRow { id: string; project_id: string; task_id: string | null; payload: string; integrity_hash: string; state: string; grant_id: string | null; created_at: number; recovery_status: string }
 const key = (subject: ProjectOwnerGoalSubject) => subject.taskId ?? null
@@ -143,7 +145,7 @@ function supersedeDeliveredFeedbackBatch(subject: ProjectOwnerGoalSubject, plan:
   return true
 }
 
-/** 旧成果停在待协商时没有正式交付回执，以原批次的质量决定和后续用户消息核验修订来源。 */
+/** 旧成果停在待协商或验证阻断时，以原批次的质量决定和后续用户消息核验修订来源。 */
 function supersedeEscalatedBatch(subject: ProjectOwnerGoalSubject, plan: ProjectOwnerPlanDraft, previous: OwnerTaskMaterializationRecord): boolean {
   const source = previous.preview.preparation.source
   if (plan.origin !== 'generated' || !plan.sourceRun || plan.goalRevision !== source.goalRevision) return false
@@ -162,7 +164,7 @@ function supersedeEscalatedBatch(subject: ProjectOwnerGoalSubject, plan: Project
   const rows = db.prepare(`
     SELECT q.owner_execution_id FROM project_owner_quality_actions q
     JOIN project_owner_execution_commands c ON c.id=q.reviewer_command_id AND c.grant_id=q.grant_id
-    WHERE q.project_id=? AND q.grant_id=? AND q.created_at<=? AND json_extract(q.payload,'$.state')='escalated'
+    WHERE q.project_id=? AND q.grant_id=? AND q.created_at<=? AND json_extract(q.payload,'$.state') IN ('escalated','blocked')
       AND NOT EXISTS (
         SELECT 1 FROM project_owner_execution_commands newer
         WHERE newer.grant_id=q.grant_id AND newer.source_task_id=q.task_id AND newer.rework_ordinal>c.rework_ordinal
@@ -172,11 +174,56 @@ function supersedeEscalatedBatch(subject: ProjectOwnerGoalSubject, plan: Project
         WHERE newer.grant_id=q.grant_id AND newer.task_id=q.task_id AND newer.rowid>q.rowid
       )
   `).all(subject.projectId, grant.grantId, message.createdAt) as { owner_execution_id: string }[]
-  if (!rows.some(row => readOwnerQualityActionByExecution(row.owner_execution_id)?.state === 'escalated')) return false
+  if (!rows.some(row => ['escalated', 'blocked'].includes(readOwnerQualityActionByExecution(row.owner_execution_id)?.state ?? ''))) return false
   if (grant.state !== 'active') return grant.state === 'paused' || grant.state === 'archived'
   const preview = previewOwnerExecutionGrantRevoke(subject, { grantId: grant.grantId })
   if (preview.blockers.length) throw new Error(`旧批次的执行或费用尚未收敛，不能启动修订：${preview.blockers.join('；')}`)
   return confirmOwnerExecutionGrantRevoke(subject, { grantId: grant.grantId, confirmedFingerprint: preview.fingerprint }).state === 'paused'
+}
+
+/** 对话产生的新方案可以接替已撤权且全部执行失败的批次，原任务和费用记录继续保留。 */
+function supersedeFailedBatch(subject: ProjectOwnerGoalSubject, plan: ProjectOwnerPlanDraft, previous: OwnerTaskMaterializationRecord, development: boolean, historicalReplan = false): boolean {
+  const source = previous.preview.preparation.source
+  if (plan.origin !== 'generated' || !plan.sourceRun || plan.goalRevision !== source.goalRevision
+    || plan.planFingerprint === source.planFingerprint) return false
+  // 多步骤旧研发方案无法可靠区分文本与代码；仅允许重新规划，不能直接沿旧批次类型派发。
+  if (!historicalReplan && development && plan.proposal.steps.length > 1 && plan.proposal.steps.some(step => !step.deliveryKind)
+    && plan.proposal.steps.some(step => step.deliveryKind === 'development' || !step.deliveryKind)) return false
+  const receipt = getOwnerPlanningRunReceipt(plan.sourceRun.receiptId)
+  const planning = receipt && readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true })
+  if (!planning || (planning.sourceWarning && !historicalReplan) || !planning.link.conversationMessageId || planning.link.planRevision < source.planRevision || planning.link.planRevision >= plan.revision) return false
+  const message = getOwnerManagementMessage(subject.projectId, planning.link.conversationMessageId)
+  if (!message || message.role !== 'user' || message.kind !== 'conversation'
+    || message.taskId !== subject.taskId || message.goalRevision !== plan.goalRevision) return false
+  const grant = getOwnerExecutionGrant(subject)
+  if (!grant || grant.state !== 'paused' || grant.dispatchMode !== 'autonomous'
+    || grant.materializationId !== previous.id || grant.materializationIntegrityHash !== previous.integrityHash
+    || grant.taskId !== subject.taskId) return false
+  const db = getProjectDb()
+  const commands = db.prepare(`SELECT c.id, c.state, c.actual_cost_micros, c.usage_evidence, e.status AS execution_status
+    FROM project_owner_execution_commands c JOIN project_owner_execution_grants g ON g.id=c.grant_id
+    LEFT JOIN agent_executions e ON e.id=c.execution_id
+    WHERE c.project_id=? AND g.materialization_id=?`).all(subject.projectId, previous.id) as Array<{
+      id: string; state: string; actual_cost_micros: number | null; usage_evidence: string | null; execution_status: string | null
+    }>
+  if (!commands.length || commands.some(command => command.state !== 'settled' || command.actual_cost_micros === null
+    || !command.usage_evidence || command.execution_status !== 'failed')) return false
+  try {
+    for (const command of commands) {
+      const evidence = JSON.parse(command.usage_evidence!) as PilotUsageEvidence
+      if (settleOwnerCommandUsage(command.id, evidence, Date.now(), { deferSchedulerWake: true }).state !== 'settled') return false
+    }
+  } catch {
+    return false
+  }
+  const pending = db.prepare(`SELECT 1 FROM project_owner_execution_request_reservations r
+    JOIN project_owner_execution_commands c ON c.id=r.command_id
+    JOIN project_owner_execution_grants g ON g.id=c.grant_id
+    WHERE g.project_id=? AND g.materialization_id=? AND r.state!='settled' LIMIT 1`).get(subject.projectId, previous.id)
+  const reviews = db.prepare(`SELECT 1 FROM project_owner_technical_reviews r
+    JOIN project_owner_execution_grants g ON g.id=r.grant_id
+    WHERE g.project_id=? AND g.materialization_id=? LIMIT 1`).get(subject.projectId, previous.id)
+  return !pending && !reviews
 }
 
 /** 新目标已获自主授权时追加新批次；旧任务、成果和账本保留，活动或未知费用仍禁止替换。 */
@@ -296,6 +343,95 @@ export function listPendingOwnerExecutionStartIntents(): OwnerExecutionStartInte
   return rows.map(readRow)
 }
 
+/** 用户再次要求继续时，重新核查曾在任务登记冲突前停住的原确认。 */
+export function requeueConflictedOwnerStartFromConversation(projectId: string, messageId: string, taskId?: string): boolean {
+  const db = getProjectDb()
+  const message = getOwnerManagementMessage(projectId, messageId)
+  if (!message || message.role !== 'user' || message.kind !== 'conversation' || message.taskId !== taskId
+    || message.deliveryReference || !/^(?:请)?(?:继续|继续完成|继续推进|继续执行|接着做|接着完成)[。！!\s]*$/.test(message.content)) return false
+  const latest = db.prepare("SELECT id FROM project_owner_management_messages WHERE project_id=? AND json_extract(payload,'$.role')='user' AND json_extract(payload,'$.kind')='conversation' AND json_extract(payload,'$.taskId') IS ? ORDER BY rowid DESC LIMIT 1").get(projectId, taskId ?? null) as { id: string } | undefined
+  if (latest?.id !== message.id) return false
+  const manager = getOwnerManager(projectId)
+  const delegation = getOwnerManagementDelegation(projectId, taskId)
+  if (manager?.status !== 'active' || delegation.state !== 'active' || !delegation.delegation?.autonomousExecution) return false
+  const row = db.prepare("SELECT * FROM project_owner_execution_start_intents WHERE project_id=? AND task_id IS ? ORDER BY created_at DESC,rowid DESC LIMIT 1").get(projectId, taskId ?? null) as IntentRow | undefined
+  if (!row || row.state !== 'pending' || row.recovery_status !== 'needs_attention' || row.grant_id) return false
+  const intent = readRow(row)
+  const plan = getProjectOwnerPlanDraft(projectId, taskId)
+  // 历史未分类的多步骤研发不能猜测交付类型；只续派明确冻结的混合成果。
+  if (intent.input.executionKind === 'development' && intent.input.selectedStepKeys.length > 1) {
+    const selected = plan?.proposal.steps.filter(step => intent.input.selectedStepKeys.includes(step.key)) ?? []
+    if (selected.length !== intent.input.selectedStepKeys.length || selected.some(step => !step.deliveryKind)
+      || !selected.some(step => step.deliveryKind === 'development')
+      || intent.input.qualityManagementVersion !== 1) return false
+  }
+  const context = getProjectOwnerPlanningContext(projectId, taskId)
+  if (intent.input.expiresAt <= Date.now() || intent.expectedGoalRevision !== message.goalRevision
+    || context.goal.revision !== intent.expectedGoalRevision || context.fingerprint !== intent.contextFingerprint
+    || !plan || plan.state !== 'confirmed' || plan.planFingerprint !== intent.planFingerprint
+    || plan.contextFingerprint !== intent.contextFingerprint
+    || (plan.revision !== intent.expectedPlanRevision && plan.revision !== intent.expectedPlanRevision + 1)) return false
+  const previous = getOwnerTaskMaterialization({ projectId, ...(taskId ? { taskId } : {}) }).materialization
+  if (!previous || previous.preview.preparation.source.planFingerprint === plan.planFingerprint) return false
+  const attention = db.prepare('SELECT id,rowid FROM project_owner_management_messages WHERE project_id=? AND event_id=?').get(projectId, attentionEventId(intent.intentId)) as { id: string; rowid: number } | undefined
+  const messageRow = db.prepare('SELECT rowid FROM project_owner_management_messages WHERE project_id=? AND id=?').get(projectId, message.id) as { rowid: number } | undefined
+  const notice = attention && getOwnerManagementMessage(projectId, attention.id)
+  if (!attention || !messageRow || messageRow.rowid <= attention.rowid || !notice || notice.kind !== 'attention'
+    || !/(已有任务登记绑定其他执行准备；启动意图不能覆盖|这个方案已有一批任务，系统暂时无法继续原批次)/.test(notice.content)) return false
+  if (db.prepare('SELECT 1 FROM project_owner_management_messages WHERE project_id=? AND event_id=?').get(projectId, `${attentionEventId(intent.intentId)}:diagnostic`)) return false
+  if (db.prepare('SELECT 1 FROM project_owner_task_materializations WHERE project_id=? AND request_id=?').get(projectId, `owner-start:${intent.intentId}`)) return false
+  const changed = db.prepare("UPDATE project_owner_execution_start_intents SET recovery_status='pending' WHERE id=? AND state='pending' AND recovery_status='needs_attention'").run(intent.intentId)
+  if (changed.changes !== 1) return false
+  appendOwnerManagementMessage({ projectId, eventId: `conversation-resumed:${message.id}`, role: 'assistant', kind: 'management_progress', ...(taskId ? { taskId } : {}), goalRevision: intent.expectedGoalRevision, content: '收到，我会先核对上次已确认的工作范围、原任务和费用，再继续组织执行。' })
+  return true
+}
+
+/** 历史混合方案没有步骤交付类型时，根据已保存的继续指令发起一次新的规划，不重试旧启动。 */
+export function prepareHistoricalConflictedReplan(projectId: string): void {
+  const db = getProjectDb()
+  const rows = db.prepare("SELECT * FROM project_owner_execution_start_intents WHERE project_id=? AND state='pending' AND recovery_status='needs_attention' AND grant_id IS NULL ORDER BY created_at DESC,rowid DESC").all(projectId) as IntentRow[]
+  const subjects = new Set<string>()
+  for (const row of rows) {
+    const subject = { projectId, ...(row.task_id ? { taskId: row.task_id } : {}) }
+    const subjectKey = row.task_id ?? ''
+    if (subjects.has(subjectKey)) continue
+    subjects.add(subjectKey)
+    try {
+      const latest = db.prepare('SELECT id FROM project_owner_execution_start_intents WHERE project_id=? AND task_id IS ? ORDER BY created_at DESC,rowid DESC LIMIT 1').get(projectId, row.task_id) as { id: string } | undefined
+      if (latest?.id !== row.id || getOwnerManager(projectId)?.status !== 'active') continue
+      const intent = readRow(row), plan = getProjectOwnerPlanDraft(projectId, subject.taskId)
+      const delegation = getOwnerManagementDelegation(projectId, subject.taskId)
+      if (!plan || plan.state !== 'confirmed' || plan.actor !== 'system:owner-manager' || !plan.sourceRun
+        || delegation.state !== 'active' || !delegation.delegation?.autonomousExecution
+        || plan.planFingerprint !== intent.planFingerprint || plan.contextFingerprint !== intent.contextFingerprint
+        || plan.goalRevision !== intent.expectedGoalRevision || intent.input.executionKind !== 'development') continue
+      const selected = plan.proposal.steps.filter(step => intent.input.selectedStepKeys.includes(step.key))
+      if (selected.length < 2 || selected.length !== intent.input.selectedStepKeys.length || selected.every(step => step.deliveryKind)) continue
+      const context = getProjectOwnerPlanningContext(projectId, subject.taskId)
+      if (context.goal.revision !== intent.expectedGoalRevision || context.fingerprint !== intent.contextFingerprint) continue
+      const attention = db.prepare('SELECT id FROM project_owner_management_messages WHERE project_id=? AND event_id=?').get(projectId, attentionEventId(intent.intentId)) as { id: string } | undefined
+      const notice = attention && getOwnerManagementMessage(projectId, attention.id)
+      if (!notice || notice.kind !== 'attention' || !/(已有任务登记绑定其他执行准备；启动意图不能覆盖|这个方案已有一批任务，系统暂时无法继续原批次)/.test(notice.content)) continue
+      const previous = getOwnerTaskMaterialization(subject).materialization
+      if (!previous || !supersedeFailedBatch(subject, plan, previous, true, true)) continue
+      const receipt = getOwnerPlanningRunReceipt(plan.sourceRun.receiptId)
+      const source = receipt && readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true })
+      const messageId = source?.link.conversationMessageId
+      const latestUser = db.prepare("SELECT id FROM project_owner_management_messages WHERE project_id=? AND json_extract(payload,'$.role')='user' AND json_extract(payload,'$.kind')='conversation' AND json_extract(payload,'$.taskId') IS ? ORDER BY rowid DESC LIMIT 1").get(projectId, row.task_id) as { id: string } | undefined
+      if (!messageId || latestUser?.id !== messageId) continue
+      const requestId = `historical-conflict-replan:${intent.intentId}`
+      if (db.prepare('SELECT 1 FROM project_owner_planning_links WHERE project_id=? AND request_id=?').get(projectId, requestId)) continue
+      const runtime = require('./project-owner-runtime-binding') as typeof import('./project-owner-runtime-binding')
+      const binding = runtime.getOwnerRuntimeBinding(projectId)
+      if (!binding) continue
+      runtime.prepareOwnerPlanning(projectId, { requestId, ...(subject.taskId ? { taskId: subject.taskId } : {}), conversationMessageId: messageId, expectedBindingRevision: binding.revision, expectedGoalRevision: context.goal.revision, expectedPlanRevision: plan.revision, expectedContextFingerprint: context.fingerprint })
+      appendOwnerManagementMessage({ projectId, eventId: `historical-conflict-replan:${intent.intentId}`, role: 'assistant', kind: 'management_progress', ...(subject.taskId ? { taskId: subject.taskId } : {}), goalRevision: intent.expectedGoalRevision, content: '我已核对你之前的继续指令和旧批次费用。原记录会保留；我会重新整理缺少交付类型的旧方案，再按当前授权推进。' })
+    } catch (error) {
+      console.warn('[Owner执行] 历史启动冲突未满足自动重新规划条件，保留原记录', projectId, row.id, error)
+    }
+  }
+}
+
 const recoveries = new Map<string, Promise<OwnerExecutionGrant>>()
 /** 崩溃恢复只重放已持久化的用户意图，并逐个重验方案、准备、任务、许可与调度。 */
 export function resumeOwnerExecutionStartIntent(intentId: string, expectedSubject?: ProjectOwnerGoalSubject, dependencies: StartIntentDependencies = production): Promise<OwnerExecutionGrant> {
@@ -333,7 +469,7 @@ export function resumeOwnerExecutionStartIntent(intentId: string, expectedSubjec
     const materializationView = getOwnerTaskMaterialization(subject)
     const previousMaterialization = materializationView.materialization
     const replacingPreviousBatch = Boolean(previousMaterialization && previousMaterialization.input.requestId !== `owner-start:${intent.intentId}`
-      && (supersedeDeliveredFeedbackBatch(subject, plan, previousMaterialization.id) || supersedePreviousGoalBatch(subject, plan, previousMaterialization) || supersedeEscalatedBatch(subject, plan, previousMaterialization)))
+      && (supersedeDeliveredFeedbackBatch(subject, plan, previousMaterialization.id) || supersedePreviousGoalBatch(subject, plan, previousMaterialization) || supersedeEscalatedBatch(subject, plan, previousMaterialization) || supersedeFailedBatch(subject, plan, previousMaterialization, intent.input.executionKind === 'development')))
     const input = getConfirmedPreparationInput(intent, plan)
     const preparationView = getOwnerExecutionPreparation(subject)
     let preparation = preparationView.preparation

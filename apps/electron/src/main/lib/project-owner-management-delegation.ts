@@ -45,7 +45,7 @@ function object(raw: unknown, fields: string[]): Record<string, unknown> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.keys(raw).some(key => !fields.includes(key))) throw new Error('Owner管理委托字段无效')
   return raw as Record<string, unknown>
 }
-const fields = ['projectId', 'taskId', 'requestId', 'maxRequests', 'maxCostMicros', 'expiresAt', 'startApproval', 'autonomousExecution']
+const fields = ['projectId', 'taskId', 'requestId', 'maxRequests', 'maxCostMicros', 'expiresAt', 'startApproval', 'autonomousExecution', 'autonomousWorkspaceEditVersion']
 const MAX_MANAGEMENT_REQUESTS = 12
 function parse(raw: unknown): OwnerManagementDelegationInput {
   const value = object(raw, fields)
@@ -54,6 +54,7 @@ function parse(raw: unknown): OwnerManagementDelegationInput {
   }
   if (!Number.isSafeInteger(value.maxRequests) || Number(value.maxRequests) < 1 || (!value.autonomousExecution && Number(value.maxRequests) > MAX_MANAGEMENT_REQUESTS)
     || (value.autonomousExecution !== undefined && value.autonomousExecution !== true)
+    || (value.autonomousWorkspaceEditVersion !== undefined && (value.autonomousWorkspaceEditVersion !== 1 || value.autonomousExecution !== true))
     || !Number.isSafeInteger(value.maxCostMicros) || Number(value.maxCostMicros) < 1 || Number(value.maxCostMicros) > 100_000_000
     || !Number.isSafeInteger(value.expiresAt)) throw new Error('Owner管理委托额度或期限无效')
   let startApproval: OwnerManagementDelegationInput['startApproval']
@@ -66,7 +67,7 @@ function parse(raw: unknown): OwnerManagementDelegationInput {
     startApproval = { expectedGoalRevision: Number(approval.expectedGoalRevision), expectedPlanRevision: Number(approval.expectedPlanRevision), planFingerprint: approval.planFingerprint, contextFingerprint: approval.contextFingerprint }
   }
   return { projectId: value.projectId as string, ...(typeof value.taskId === 'string' ? { taskId: value.taskId } : {}), requestId: value.requestId as string,
-    maxRequests: Number(value.maxRequests), maxCostMicros: Number(value.maxCostMicros), expiresAt: Number(value.expiresAt), ...(value.autonomousExecution ? { autonomousExecution: true as const } : {}), ...(startApproval ? { startApproval } : {}) }
+    maxRequests: Number(value.maxRequests), maxCostMicros: Number(value.maxCostMicros), expiresAt: Number(value.expiresAt), ...(value.autonomousExecution ? { autonomousExecution: true as const } : {}), ...(value.autonomousWorkspaceEditVersion === 1 ? { autonomousWorkspaceEditVersion: 1 as const } : {}), ...(startApproval ? { startApproval } : {}) }
 }
 function scope(projectId: string, taskId?: string, conversationEnabled = false, executionFollowupEnabled = false, fullDeliveryReviewEnabled = false, qualityDecisionEnabled = false) {
   assertLocalActorEnabled()

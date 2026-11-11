@@ -165,7 +165,7 @@ function pendingOwnerObservation(projectId: string, taskId?: string): { id: stri
 /** 新消息串行交给同一管理主体；运行期间只落消息，结果回调后再准备后续批次。 */
 export function preparePendingOwnerConversation(projectId: string, taskId?: string): boolean {
   const database = store.getProjectDb()
-  const user = database.prepare("SELECT id FROM project_owner_management_messages WHERE project_id = ? AND json_extract(payload, '$.kind') = 'conversation' AND json_extract(payload, '$.role') = 'user' AND COALESCE(json_extract(payload, '$.deliveryReviewDecision'), '') <> 'deferred' AND COALESCE(json_extract(payload, '$.chainReview.choice'), '') <> 'later' AND json_extract(payload, '$.teamWorkspaceApproval') IS NULL AND json_extract(payload, '$.taskId') IS ? AND NOT EXISTS (SELECT 1 FROM project_owner_management_messages ignored WHERE ignored.project_id=project_owner_management_messages.project_id AND ignored.event_id='conversation-stale:' || project_owner_management_messages.id) ORDER BY rowid DESC LIMIT 1").get(projectId, taskId ?? null) as { id: string } | undefined
+  const user = database.prepare("SELECT id FROM project_owner_management_messages WHERE project_id = ? AND json_extract(payload, '$.kind') = 'conversation' AND json_extract(payload, '$.role') = 'user' AND COALESCE(json_extract(payload, '$.deliveryReviewDecision'), '') <> 'deferred' AND COALESCE(json_extract(payload, '$.chainReview.choice'), '') <> 'later' AND json_extract(payload, '$.teamWorkspaceApproval') IS NULL AND json_extract(payload, '$.taskId') IS ? AND NOT EXISTS (SELECT 1 FROM project_owner_management_messages ignored WHERE ignored.project_id=project_owner_management_messages.project_id AND ignored.event_id IN ('conversation-stale:' || project_owner_management_messages.id, 'conversation-resumed:' || project_owner_management_messages.id)) ORDER BY rowid DESC LIMIT 1").get(projectId, taskId ?? null) as { id: string } | undefined
   const prepared = (id: string) => Boolean(database.prepare("SELECT 1 FROM project_owner_planning_links WHERE project_id=? AND json_extract(payload, '$.conversationMessageId')=? LIMIT 1").get(projectId, id))
   const observation = pendingOwnerObservation(projectId, taskId)
   // 公平性：上一轮若处理的是用户对话，下一轮优先员工待决事项，避免连续对话把员工问题永久饿死。
@@ -189,6 +189,15 @@ export function preparePendingOwnerConversation(projectId: string, taskId?: stri
     appendOwnerManagementMessage({ projectId, eventId: `conversation-stale:${message.id}`, role: 'assistant', kind: 'attention', ...(taskId ? { taskId } : {}), content: message.kind === 'file_change_observation' ? '文件变化观察记录后项目目标已更新，我不会把旧观察套用到新目标。' : message.kind === 'web_change_observation' ? '外部变化观察记录后项目目标已更新，我不会把旧观察套用到新目标。' : '这条消息保存后，项目目标已更新。我保留了原文，但不会把它套用到新目标；请在当前目标下补充你的想法。' })
     return false
   }
+  // 已完成的消息无需再次检查授权。授权可能在响应后耗尽或撤销，
+  // 此时再次报告“没有发送”会与已经保存的规划结果矛盾。
+  const previousLink = links.find(link => (JSON.parse(link.payload) as { conversationMessageId?: string }).conversationMessageId === message.id)
+  const previousExecutions = previousLink ? store.listAgentExecutionsByEntity('task', previousLink.planning_task_id) : []
+  const runs = require('./project-owner-planning-run-service') as typeof import('./project-owner-planning-run-service')
+  if (previousExecutions.some(execution => {
+    const outcome = runs.getOwnerPlanningRunOutcome(execution.id)
+    return outcome && ['replied', 'proposed', 'needs_clarification'].includes(outcome.state)
+  })) return true
   if (message.kind === 'file_change_observation' && (!message.fileChangeObservationId || !(require('./project-file-change-observations') as typeof import('./project-file-change-observations')).getAuthorizedProjectFileChangeObservation(projectId, message.fileChangeObservationId))) {
     appendOwnerManagementMessage({ projectId, eventId: `conversation-stale:${message.id}`, role: 'assistant', kind: 'attention', content: '文件变化分析授权已撤销，未启动该观察的模型分析。' })
     return false
@@ -241,8 +250,6 @@ export function preparePendingOwnerConversation(projectId: string, taskId?: stri
     return true
   }
   // 已发送的请求不因回调或重启再次生成；未启动的链接仅在来源过期时重建。
-  const previousLink = links.find(link => (JSON.parse(link.payload) as { conversationMessageId?: string }).conversationMessageId === message.id)
-  const previousExecutions = previousLink ? store.listAgentExecutionsByEntity('task', previousLink.planning_task_id) : []
   if (previousExecutions.length) return true
   const binding = getOwnerRuntimeBinding(projectId)
   if (!binding) {
@@ -275,7 +282,7 @@ export function preparePendingOwnerConversation(projectId: string, taskId?: stri
 /** 重启或旧版本遗留的消息链接尚未创建执行时，允许在恢复授权后重新准备。 */
 export function hasUnstartedOwnerConversation(projectId: string, taskId?: string): boolean {
   if (pendingOwnerObservation(projectId, taskId)) return true
-  const row = store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id = ? AND json_extract(payload, '$.kind') = 'conversation' AND json_extract(payload, '$.role') = 'user' AND COALESCE(json_extract(payload, '$.deliveryReviewDecision'), '') <> 'deferred' AND COALESCE(json_extract(payload, '$.chainReview.choice'), '') <> 'later' AND json_extract(payload, '$.teamWorkspaceApproval') IS NULL AND json_extract(payload, '$.taskId') IS ? AND NOT EXISTS (SELECT 1 FROM project_owner_management_messages ignored WHERE ignored.project_id=project_owner_management_messages.project_id AND ignored.event_id='conversation-stale:' || project_owner_management_messages.id) ORDER BY rowid DESC LIMIT 1").get(projectId, taskId ?? null) as { id: string } | undefined
+  const row = store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id = ? AND json_extract(payload, '$.kind') = 'conversation' AND json_extract(payload, '$.role') = 'user' AND COALESCE(json_extract(payload, '$.deliveryReviewDecision'), '') <> 'deferred' AND COALESCE(json_extract(payload, '$.chainReview.choice'), '') <> 'later' AND json_extract(payload, '$.teamWorkspaceApproval') IS NULL AND json_extract(payload, '$.taskId') IS ? AND NOT EXISTS (SELECT 1 FROM project_owner_management_messages ignored WHERE ignored.project_id=project_owner_management_messages.project_id AND ignored.event_id IN ('conversation-stale:' || project_owner_management_messages.id, 'conversation-resumed:' || project_owner_management_messages.id)) ORDER BY rowid DESC LIMIT 1").get(projectId, taskId ?? null) as { id: string } | undefined
   if (!row) return false
   const link = store.getProjectDb().prepare("SELECT planning_task_id, payload FROM project_owner_planning_links WHERE project_id = ? AND json_extract(payload, '$.conversationMessageId') = ? ORDER BY rowid DESC LIMIT 1").get(projectId, row.id) as { planning_task_id: string; payload: string } | undefined
   if (!link) return true

@@ -1,5 +1,5 @@
 import { assertOwnerReviewerTextDelivery } from './project-owner-text-delivery'
-import { readOwnerCommandRuntime, assertOwnerCommandPrice } from './project-owner-employee-runtime'
+import { readOwnerCommandRuntime, assertOwnerCommandPrice, ownerTaskDeliveryKind } from './project-owner-employee-runtime'
 import { resolveOwnerEmployeeInvocation } from './project-owner-employee-invocation'
 /** Owner命令专用、显式dispatch入口；不由heartbeat、普通排队或启动恢复调用。 */
 import { isAgentCompatibleProvider } from '@gravitas/shared'
@@ -93,7 +93,7 @@ async function dispatchOwnerCommandExecutionForMode(raw: unknown, expectedMode: 
     || !task || task.projectId !== command.project_id || task.status !== 'paused') {
     throw new Error('Owner派发来源、员工、渠道、工作区或任务状态已变化')
   }
-  resolveOwnerEmployeeInvocation(employee, record.source)
+  resolveOwnerEmployeeInvocation(employee, { ...record.source, executionKind: ownerTaskDeliveryKind(record.source, command.source_task_id) === 'text' ? 'controlled' : 'development' })
   if (command.role === 'reviewer') assertOwnerReviewerTextDelivery(command.id)
   const link = database.prepare('SELECT revalidation_revision FROM project_owner_execution_command_links WHERE command_id=? AND execution_id=?').get(command.id, execution.id) as { revalidation_revision: number } | undefined
   if (!link || link.revalidation_revision !== record.revision) throw new Error('Owner命令与重验证版本链接不一致')

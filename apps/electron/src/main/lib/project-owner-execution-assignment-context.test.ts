@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { OwnerExecutionAssignmentCandidate, ProjectOwnerPlanDraft, ProjectOwnerPlanningContext } from '@gravitas/shared'
-import { createOwnerExecutionAssignmentContext, parseOwnerExecutionAssignmentContext } from './project-owner-execution-assignment-context'
+import { createOwnerExecutionAssignmentContext, ownerAssignmentContextsEquivalent, ownerAssignmentContextMatchesApprovalTransition, parseOwnerExecutionAssignmentContext } from './project-owner-execution-assignment-context'
 
 const plan: ProjectOwnerPlanDraft = {
   projectId: 'p', schemaVersion: 1, revision: 2, planVersion: 1, goalRevision: 1, goalVersion: 1, state: 'confirmed', actor: 'local-user', origin: 'manual', savedAt: 1, changeReason: '确认', contextFingerprint: 'a'.repeat(64), planFingerprint: 'b'.repeat(64),
@@ -115,6 +115,15 @@ test('Given 旧安排请求与新岗位覆盖提示 When 恢复冻结来源 Then
     expect(protocol.resolveOwnerExecutionAssignmentRequest(value, hash)).toEqual(request)
     expect(request.systemPrompt.includes('每个岗位恰好一项')).toBe(strict)
   }
+  const typed = { ...value, steps: value.steps.map((step, index) => ({ ...step, deliveryKind: index === 0 ? 'text' as const : 'development' as const })) }
+  for (const enabled of [true, false]) {
+    const request = protocol.buildOwnerExecutionAssignmentRequest(typed, true, 'current', enabled)
+    expect(request.systemPrompt.includes('steps中的deliveryKind')).toBe(enabled)
+    expect(protocol.resolveOwnerExecutionAssignmentRequest(typed, createHash('sha256').update(JSON.stringify(request)).digest('hex'))).toEqual(request)
+  }
+  const previousStepPrompt = protocol.buildOwnerExecutionAssignmentRequest(typed, true, 'current', true, false)
+  expect(previousStepPrompt.systemPrompt).toContain('并选择兼容研发调用的员工')
+  expect(protocol.resolveOwnerExecutionAssignmentRequest(typed, createHash('sha256').update(JSON.stringify(previousStepPrompt)).digest('hex'))).toEqual(previousStepPrompt)
   expect(() => protocol.resolveOwnerExecutionAssignmentRequest(value, 'f'.repeat(64))).toThrow('不属于已知格式')
 })
 
@@ -133,10 +142,18 @@ test('Given 无代码候选但工作区是git仓库 When 构造上下文 Then �
     const protocol = await import('./project-owner-execution-assignment-protocol')
     const { OWNER_RUNTIME_ASSERTION_TEMPLATES } = await import('./owner-runtime-assertion-templates')
     const { createHash } = await import('node:crypto')
-    for (const variant of ['current', 'registry-v1', 'legacy-6'] as const) {
+    expect(protocol.buildOwnerExecutionAssignmentRequest(value).systemPrompt).not.toContain('优先选择仓库根目录下的新文件')
+    const previousRootPrompt = protocol.buildOwnerExecutionAssignmentRequest(value, true, 'current', true, true, true)
+    expect(protocol.resolveOwnerExecutionAssignmentRequest(value, createHash('sha256').update(JSON.stringify(previousRootPrompt)).digest('hex'))).toEqual(previousRootPrompt)
+    for (const variant of ['current', 'registry-v2', 'registry-v1', 'legacy-6'] as const) {
       const request = protocol.buildOwnerExecutionAssignmentRequest(value, true, variant)
       expect(protocol.resolveOwnerExecutionAssignmentRequest(value, createHash('sha256').update(JSON.stringify(request)).digest('hex'))).toEqual(request)
       if (variant === 'current') for (const item of OWNER_RUNTIME_ASSERTION_TEMPLATES) expect(request.systemPrompt).toContain(item.id)
+      if (variant === 'registry-v2') {
+        expect(request.systemPrompt).toContain('match3.board')
+        expect(request.systemPrompt).not.toContain('diary.five-years')
+        expect(request.systemPrompt).toContain(OWNER_RUNTIME_ASSERTION_TEMPLATES.filter(item => !item.id.startsWith('diary.')).map(item => `${item.id}（${item.title}）`).join('、'))
+      }
       if (variant === 'registry-v1') {
         // 三消断言加入前的冻结注册表：保留旧提示可解析，且不夹带新断言。
         expect(request.systemPrompt).toContain('behavior.game-over')
@@ -174,4 +191,16 @@ test('Given 只有git init没有首个提交 When 构造上下文 Then 不提供
     expect(value.executionKinds).not.toContain('development')
     expect(value.greenfieldDevelopment).toBeUndefined()
   } finally { rmSync(empty, { recursive: true, force: true }) }
+})
+
+
+test('Given工作区能力顺序改变 When核对已冻结安排 Then相同能力仍有效而真实增删须重验', () => {
+  const first = create({ workspaces: [{ id: 'w1', name: '研究工作区', capabilities: ['Skill:z', 'Skill:a'] }, { id: 'w2', name: '研发工作区' }] })
+  const second = create({ workspaces: [{ id: 'w1', name: '研究工作区', capabilities: ['Skill:a', 'Skill:z'] }, { id: 'w2', name: '研发工作区' }] })
+  expect(first.contextFingerprint).toBe(second.contextFingerprint)
+  const historical = { ...first, contextFingerprint: 'f'.repeat(64), workspaces: first.workspaces.map(item => item.id === 'w1' ? { ...item, capabilities: ['Skill:z', 'Skill:a'] } : item) }
+  expect(ownerAssignmentContextsEquivalent(historical, second)).toBe(true)
+  expect(ownerAssignmentContextMatchesApprovalTransition(historical, { ...second, planRevision: second.planRevision + 1 })).toBe(true)
+  const changed = create({ workspaces: [{ id: 'w1', name: '研究工作区', capabilities: ['Skill:a'] }, { id: 'w2', name: '研发工作区' }] })
+  expect(ownerAssignmentContextsEquivalent(historical, changed)).toBe(false)
 })

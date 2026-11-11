@@ -288,6 +288,20 @@ test('Given有效持续对话委托 When离页后台回应并在途收到两条�
   } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
 })
 
+test('Given 对话已经发出并产生方案 When 管理授权随后撤销 Then 不声称该消息未发送', async () => {
+  const f = fixture(), message = sendOwnerManagementMessage(f.message('继续完成')), grant = f.issue(), stop = startOwnerManagementLoop()
+  try {
+    await until(() => Boolean(active(f)))
+    finish(f, 'plan')
+    await until(() => Boolean(plans.getProjectOwnerPlanDraft(f.project.id)))
+    await stop()
+    delegation.revokeOwnerManagementDelegation(f.project.id, grant.id)
+    preparePendingOwnerConversation(f.project.id)
+    expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.eventId.startsWith(`conversation-blocked:${message.id}:`))).toBe(false)
+    expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(1)
+  } finally { await stop() }
+})
+
 test('Given用户在对话要求方案修改 WhenOwner生成提案 Then保存待审计划、不自动确认或发业务授权', async () => {
   const f = fixture(), content = '首次已验收的产品建议', artifactHash = createHash('sha256').update(content, 'utf8').digest('hex')
   const delivery = appendOwnerManagementMessage({ projectId: f.project.id, eventId: `delivery:${randomUUID()}`, role: 'assistant', kind: 'delivery', content: 'Owner已验收首次交付', delivery: { schemaVersion: 1, planVersion: 1, items: [{ stepKey: 'brief', title: '产品建议', acceptanceCriteria: ['说明依据'], artifactHash, content, ownerDecision: '按标准接受', reviewerSummary: '独立检查通过' }] } })

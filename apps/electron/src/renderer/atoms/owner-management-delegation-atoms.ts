@@ -53,14 +53,14 @@ export const actOwnerDelegationAtom = atom(null, async (get, set, input: { subje
       const binding = await api.ensureOwnerRuntimeBinding({ projectId: input.subject.projectId })
       if (!binding.ok) throw new Error(binding.error.message)
       if (!binding.value) throw new Error('Owner尚无有效模型和项目工作区配置；请先完成本地配置')
-      const request: OwnerManagementDelegationInput = { ...input.subject, requestId: crypto.randomUUID(), maxRequests: AUTONOMOUS_REQUEST_CEILING, autonomousExecution: true, maxCostMicros: Math.round(Number(old.budgetUsd) * 1000000), expiresAt: Date.now() + Number(old.hours) * 3600000 }
+      const request: OwnerManagementDelegationInput = { ...input.subject, requestId: crypto.randomUUID(), maxRequests: AUTONOMOUS_REQUEST_CEILING, autonomousExecution: true, autonomousWorkspaceEditVersion: 1, maxCostMicros: Math.round(Number(old.budgetUsd) * 1000000), expiresAt: Date.now() + Number(old.hours) * 3600000 }
       const result = await api.previewOwnerManagementDelegation(request)
       if (!result.ok) throw new Error(result.error.message)
       update({ preview: result.value })
     } else if (input.action === 'confirm') {
       if (!old.preview) throw new Error('请先审阅本次管理范围')
-      const { projectId, taskId, requestId, maxRequests, autonomousExecution, maxCostMicros, expiresAt, previewHash } = old.preview
-      const result = await api.confirmOwnerManagementDelegation({ input: { projectId, ...(taskId ? { taskId } : {}), requestId, maxRequests, autonomousExecution, maxCostMicros, expiresAt }, previewHash })
+      const { projectId, taskId, requestId, maxRequests, autonomousExecution, autonomousWorkspaceEditVersion, maxCostMicros, expiresAt, previewHash } = old.preview
+      const result = await api.confirmOwnerManagementDelegation({ input: { projectId, ...(taskId ? { taskId } : {}), requestId, maxRequests, autonomousExecution, ...(autonomousWorkspaceEditVersion === 1 ? { autonomousWorkspaceEditVersion } : {}), maxCostMicros, expiresAt }, previewHash })
       if (!result.ok) throw new Error(result.error.message)
       update({ preview: null })
       await Promise.all([

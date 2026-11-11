@@ -12,6 +12,7 @@ beforeAll(() => {
   writeFileSync(join(root, 'index.html'), '<html></html>')
   writeFileSync(join(root, 'dist', 'app.html'), '<html></html>')
   writeFileSync(join(root, 'readme.md'), '# x')
+  writeFileSync(join(root, 'dist', 'app.js'), 'window.appLoaded = true')
 })
 
 afterAll(() => {
@@ -53,6 +54,17 @@ test('Given 断言全部通过 When 执行命令 Then 退出码 0 且带输出�
   expect(outcome.checks.map(check => check.id)).toEqual(['html.loads', 'dom.board'])
   expect(outcome.rawOutputSha256).toMatch(/^[a-f0-9]{64}$/)
   expect(outcome.rawOutputByteLength).toBeGreaterThan(0)
+})
+
+test('Given页面引用冻结目标脚本 When执行验证 Then将该脚本交给受管浏览器', async () => {
+  let resources: readonly string[] = []
+  setOwnerRuntimeBrowserRunner(async input => {
+    resources = input.resourcePaths ?? []
+    return { checks: [{ id: 'html.loads', title: '加载', status: 'passed', detail: 'ok' }], durationMs: 1, timedOut: false, relativePath: '' }
+  })
+  await executeBrowserVerificationCommand({ workspaceRoot: root, targetPaths: ['dist/app.html', 'dist/app.js'], command: 'browser:html.loads', timeoutMs: 30_000 })
+  expect(resources).toHaveLength(1)
+  expect(resources[0]).toEndWith('/dist/app.js')
 })
 
 test('Given 断言失败 When 执行命令 Then 退出码非 0 供既有门禁判定', async () => {
