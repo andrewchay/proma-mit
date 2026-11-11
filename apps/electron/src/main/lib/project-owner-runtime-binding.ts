@@ -83,20 +83,34 @@ export function getOwnerCarrierFacts(projectId: string, carrierId: string, works
   if (!hasProjectWorkspaceBinding(projectId, workspaceId)) throw new Error('Owner工作区未明确绑定项目')
   const channel = getChannelById(employee.channelId)!
   const workspace = getAgentWorkspace(workspaceId)!
-  // 配置只保存指纹，不落渠道凭据或工作区路径。旧指纹保留兼容；新配置另存排除运行统计的稳定指纹。
+  // 配置只保存指纹，不落渠道凭据或工作区路径。
+  // 旧指纹对整棵对象做哈希，连运行统计和 updatedAt 都会改变它——渠道被保存一次、
+  // 员工跑过任务，都会让已签发委托因「配置已变化」失效，而实际配置没动。
+  // 新指纹只取真正决定「能不能、往哪里发请求」的字段。
   const { totalTasks: _totalTasks, completedTasks: _completedTasks, avgDurationMs: _avgDurationMs, failureCount: _failureCount, updatedAt: _updatedAt, ...employeeConfiguration } = employee
+  const channelConfiguration = { id: channel.id, provider: channel.provider, baseUrl: channel.baseUrl ?? null, enabled: channel.enabled === true }
+  const workspaceConfiguration = { id: workspace.id, slug: workspace.slug, rootPath: workspace.rootPath ?? null }
   return {
     channelId: channel.id,
     modelId: target.modelId,
     runtime: 'ai-sdk' as const,
     carrierFingerprint: hash({ employee, channel, workspace }),
-    carrierConfigurationFingerprint: hash({ employee: employeeConfiguration, channel, workspace }),
+    carrierConfigurationFingerprint: hash({ employee: employeeConfiguration, channel: channelConfiguration, workspace: workspaceConfiguration }),
+    // 上一版「配置指纹」仍含整个 channel/workspace 对象，保留以便核验历史绑定。
+    legacyConfigurationFingerprint: hash({ employee: employeeConfiguration, channel, workspace }),
   }
+}
+/** 只保留可落入绑定的字段；legacyConfigurationFingerprint 仅供比对历史记录。 */
+function persistedFacts(facts: ReturnType<typeof getOwnerCarrierFacts>) {
+  const { legacyConfigurationFingerprint: _legacy, ...rest } = facts
+  return rest
 }
 export function ownerCarrierBindingMatches(binding: OwnerRuntimeBinding, facts: ReturnType<typeof getOwnerCarrierFacts>): boolean {
   if (binding.channelId !== facts.channelId || binding.modelId !== facts.modelId || binding.runtime !== facts.runtime) return false
+  // 同时接受当前、上一版和最初的三种指纹，历史绑定不会因算法升级而失效。
   return binding.carrierConfigurationFingerprint
     ? binding.carrierConfigurationFingerprint === facts.carrierConfigurationFingerprint
+      || binding.carrierConfigurationFingerprint === facts.legacyConfigurationFingerprint
     : binding.carrierFingerprint === facts.carrierFingerprint
 }
 function parseBinding(payload: string, projectId: string, expectedRevision: number): OwnerRuntimeBinding {
@@ -127,7 +141,12 @@ export function saveOwnerRuntimeBinding(projectId: string, expectedRevision: num
     const current = getOwnerRuntimeBinding(projectId)
     if ((current?.revision ?? 0) !== expectedRevision) throw new Error('Owner绑定已更新，请比较后重试')
     const facts = getOwnerCarrierFacts(projectId, carrierId, workspaceId)
-    const result: OwnerRuntimeBinding = { schemaVersion: 1, projectId, revision: expectedRevision + 1, ownerRole: 'project_owner', ownerName, carrierId, workspaceId, ...facts, actor: 'local-user', savedAt: Date.now(), changeReason }
+    // 内容未变时幂等返回：管理委托绑定的是 revision，无意义的版本递增会让已签发委托
+    // 因「配置已变化」失效，而实际配置一个字节都没改。真实变更仍然新增版本。
+    if (current && current.carrierId === carrierId && current.workspaceId === workspaceId
+      && current.ownerName === ownerName
+      && ownerCarrierBindingMatches(current, facts)) return current
+    const result: OwnerRuntimeBinding = { schemaVersion: 1, projectId, revision: expectedRevision + 1, ownerRole: 'project_owner', ownerName, carrierId, workspaceId, ...persistedFacts(facts), actor: 'local-user', savedAt: Date.now(), changeReason }
     store.getProjectDb().prepare('INSERT INTO project_owner_runtime_revisions (project_id, revision, payload) VALUES (?, ?, ?)').run(projectId, result.revision, JSON.stringify(result))
     recordOwnerManagementBinding(projectId, result.revision)
     return result
@@ -171,7 +190,7 @@ export function resolveOwnerRuntimeBindingFromDefaults(projectId: string): Owner
       const facts = getOwnerCarrierFacts(projectId, carrier.id, existing.workspaceId)
       const result: OwnerRuntimeBinding = {
         schemaVersion: 1, projectId, revision: existing.revision + 1, ownerRole: 'project_owner', ownerName: existing.ownerName,
-        carrierId: carrier.id, workspaceId: existing.workspaceId, ...facts, actor: 'system:owner-manager',
+        carrierId: carrier.id, workspaceId: existing.workspaceId, ...persistedFacts(facts), actor: 'system:owner-manager',
         savedAt: Date.now(), changeReason: 'Owner内部模型配置已刷新；沿用原项目授权工作区，旧管理授权需由用户重新确认',
       }
       store.getProjectDb().prepare('INSERT INTO project_owner_runtime_revisions (project_id, revision, payload) VALUES (?, ?, ?)').run(projectId, result.revision, JSON.stringify(result))
@@ -207,7 +226,7 @@ export function resolveOwnerRuntimeBindingFromDefaults(projectId: string): Owner
     const facts = getOwnerCarrierFacts(projectId, carrier.id, workspace.id)
     const result: OwnerRuntimeBinding = {
       schemaVersion: 1, projectId, revision: 1, ownerRole: 'project_owner', ownerName: '项目Owner',
-      carrierId: carrier.id, workspaceId: workspace.id, ...facts, actor: 'system:owner-manager',
+      carrierId: carrier.id, workspaceId: workspace.id, ...persistedFacts(facts), actor: 'system:owner-manager',
       savedAt: Date.now(), changeReason: model.modelId === DEFAULT_OWNER_MODEL_ID
         ? '按Owner默认模型绑定GLM-5.3-Flash与项目已授权工作区；仅建立Owner规划载体，不触发模型请求'
         : '复用本应用已配置模型与项目已授权工作区；仅建立Owner规划载体，不触发模型请求',

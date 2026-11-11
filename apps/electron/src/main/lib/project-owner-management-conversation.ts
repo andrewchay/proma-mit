@@ -9,6 +9,7 @@ import { getOwnerRuntimeBinding, prepareOwnerPlanning } from './project-owner-ru
 import * as store from './project-sqlite-store'
 import { readOwnerExecutionObservation } from './project-owner-management-execution'
 import { getOwnerManagementDelegation } from './project-owner-management-delegation'
+import { decideAttentionCarryover } from './project-owner-attention-carryover-policy'
 
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 function parse(raw: unknown): SendOwnerManagementMessageRequest {
@@ -287,26 +288,4 @@ export function hasUnstartedOwnerConversation(projectId: string, taskId?: string
   const link = store.getProjectDb().prepare("SELECT planning_task_id, payload FROM project_owner_planning_links WHERE project_id = ? AND json_extract(payload, '$.conversationMessageId') = ? ORDER BY rowid DESC LIMIT 1").get(projectId, row.id) as { planning_task_id: string; payload: string } | undefined
   if (!link) return true
   return store.listAgentExecutionsByEntity('task', link.planning_task_id).length === 0
-}
-
-/**
- * 决定"上次请求结论不可继续"时该如何处理新消息。
- *
- * 原则：旧请求保持保守预留、费用记为未知、绝不重试；新消息可以作为新请求继续，
- * 但如果剩余预算不足以覆盖一次保守上界，就必须停下来说明，不能靠放行绕过额度。
- */
-export function decideAttentionCarryover(view: {
-  state: string
-  usedRequests: number
-  reservedCostMicros: number
-  attentionCheck?: { reason: string }
-  delegation: { maxRequests: number; maxCostMicros: number; perRequestCeilingMicros: number; autonomousExecution?: boolean } | null
-}): 'blocked' | 'budget_blocked' | 'proceed' {
-  if (view.state !== 'attention') return 'blocked'
-  if (view.attentionCheck?.reason !== 'non_continueable_outcome') return 'blocked'
-  const row = view.delegation
-  if (!row) return 'blocked'
-  const withinBudget = (row.autonomousExecution === true || view.usedRequests < row.maxRequests)
-    && view.reservedCostMicros + row.perRequestCeilingMicros <= row.maxCostMicros
-  return withinBudget ? 'proceed' : 'budget_blocked'
 }

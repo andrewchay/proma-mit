@@ -637,3 +637,18 @@ test('Given下一笔预留无法装入Owner占比 When实际排队 Then事务回
   expect(calls).toBe(beforeCalls)
   expect(service.getOwnerManagementDelegation(f.project.id).state).toBe('exhausted')
 })
+
+test('Given 已签发管理委托 When 渠道服务地址或模型变化 Then 委托失效并要求重新确认', () => {
+  const f = fixture(), grant = issue(f)
+  expect(service.getOwnerManagementDelegation(f.project.id).state).toBe('active')
+  const channelId = (service.getOwnerManagementDelegation(f.project.id).delegation)!.modelId
+  expect(channelId).toBeTruthy()
+  // 改服务地址：受控目标变化，委托必须失效。
+  const channels = require('./channel-manager') as typeof import('./channel-manager')
+  const binding = (require('./project-owner-runtime-binding') as typeof import('./project-owner-runtime-binding')).getOwnerRuntimeBinding(f.project.id)!
+  channels.updateChannel(binding.channelId, { baseUrl: 'https://changed.invalid/v1' })
+  const after = service.getOwnerManagementDelegation(f.project.id)
+  expect(after.state).not.toBe('active')
+  expect(() => service.claimOwnerManagementTask(f.taskId, 'exec-x')).toThrow()
+  service.revokeOwnerManagementDelegation(f.project.id, grant.id)
+})

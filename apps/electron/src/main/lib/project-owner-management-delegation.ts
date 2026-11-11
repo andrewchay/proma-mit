@@ -10,6 +10,7 @@ export function ownerPlanningOutputCeiling(modelId: string, provider: string): 8
 /** 有界管理委托：复用Owner零工具出口，永久占用每次保守上界；无退款或未知状态自动重试。 */
 import { createHash, randomUUID } from 'node:crypto'
 import type { OwnerManagementAttentionCheck, OwnerManagementDelegation, OwnerManagementDelegationInput, OwnerManagementDelegationPreview, OwnerManagementDelegationView } from '@gravitas/shared'
+import { decideAttentionCarryover } from './project-owner-attention-carryover-policy'
 import { getAgentProviderProtocol } from '@gravitas/shared'
 import * as store from './project-sqlite-store'
 import { getChannelById } from './channel-manager'
@@ -82,14 +83,29 @@ function scope(projectId: string, taskId?: string, conversationEnabled = false, 
   const price = getPilotReviewedPriceEvidenceForModel(binding.modelId, kind)
   if (!price || price.maxModelOutputTokens < 8192) throw new Error(`当前 Owner 模型「${binding.modelId}」暂不支持项目预算内的持续管理。请点击“更换 Owner 模型”选择支持的模型，再核对项目预算；添加渠道模型不会自动切换项目 Owner。`)
   const context = getProjectOwnerPlanningContext(projectId, taskId)
+  // 只把「配置内容」纳入指纹：revision / savedAt / changeReason 是版本元数据，
+  // 同一份配置被重新保存（哪怕只是换了变更说明）也会让它们变化。
+  // 若把它们算进 scopeHash，已签发的委托会因「配置已变化」失效，而实际配置一个字节都没改。
+  const { revision: _revision, savedAt: _savedAt, changeReason: _changeReason, ...bindingContent } = binding
   // 不保存渠道凭据；配置/资料摘要用于每次发送前复核。
-  const scopeHash = hash({ ownerId: manager.ownerId, binding, configurationFingerprint: facts.carrierConfigurationFingerprint, sources: context.sources, price, ...(conversationEnabled ? { conversationEnabled: true } : {}), ...(executionFollowupEnabled ? { executionFollowupEnabled: true } : {}), ...(fullDeliveryReviewEnabled ? { fullDeliveryReviewEnabled: true } : {}), ...(qualityDecisionEnabled ? { qualityDecisionEnabled: true } : {}) })
+  const scopeHash = hash({ ownerId: manager.ownerId, binding: bindingContent, configurationFingerprint: facts.carrierConfigurationFingerprint, sources: context.sources, price,
+    ...(conversationEnabled ? { conversationEnabled: true } : {}), ...(executionFollowupEnabled ? { executionFollowupEnabled: true } : {}),
+    ...(fullDeliveryReviewEnabled ? { fullDeliveryReviewEnabled: true } : {}), ...(qualityDecisionEnabled ? { qualityDecisionEnabled: true } : {}) })
+  // 旧算法：完整 binding（含 revision/savedAt/changeReason）。历史上 flags 是逐个加入的，
+  // 因此穷举 16 种组合，任一命中即视为同一份配置。
+  const legacyBase = { ownerId: manager.ownerId, binding, configurationFingerprint: facts.carrierConfigurationFingerprint, sources: context.sources, price }
+  const legacyScopeHashes = new Set<string>()
+  for (let mask = 0; mask < 16; mask++) {
+    legacyScopeHashes.add(hash({ ...legacyBase,
+      ...(mask & 1 ? { conversationEnabled: true } : {}), ...(mask & 2 ? { executionFollowupEnabled: true } : {}),
+      ...(mask & 4 ? { fullDeliveryReviewEnabled: true } : {}), ...(mask & 8 ? { qualityDecisionEnabled: true } : {}) }))
+  }
   const outputCeiling = ownerPlanningOutputCeiling(binding.modelId, getChannelById(binding.channelId)!.provider)
   const inputCeiling = usesBoundedOwnerPlanningEnvelope(binding.modelId, channel.provider)
     ? Math.min(price.maxModelInputTokens, OWNER_PLANNING_V6_INPUT_TOKEN_CEILING) : price.maxModelInputTokens
   const perRequestCeilingMicros = Number((BigInt(inputCeiling) * BigInt(price.inputMicrosPerMillion) + BigInt(outputCeiling) * BigInt(price.outputMicrosPerMillion) + 999999n) / 1000000n) + price.extraCostCeilingMicros
   if (!Number.isSafeInteger(perRequestCeilingMicros) || perRequestCeilingMicros < 1) throw new Error('Owner管理请求费用上界无效')
-  return { binding, context, scopeHash, perRequestCeilingMicros, priceEvidenceId: price.evidenceId, outputCeiling }
+  return { binding, context, scopeHash, legacyScopeHashes, perRequestCeilingMicros, priceEvidenceId: price.evidenceId, outputCeiling }
 }
 export function previewOwnerManagementDelegation(raw: unknown): OwnerManagementDelegationPreview {
   const input = parse(raw), current = scope(input.projectId, input.taskId, true, true, true, true)
@@ -245,7 +261,10 @@ function assertGoalLineage(delegation: OwnerManagementDelegation, currentRevisio
 function assertCurrent(delegation: OwnerManagementDelegation): void {
   if (!delegation.autonomousExecution && delegation.maxRequests > MAX_MANAGEMENT_REQUESTS) throw new Error('管理委托超过当前调用安全上限，请重新确认预算与期限')
   const current = scope(delegation.projectId, delegation.taskId, delegation.conversationEnabled === true, delegation.executionFollowupEnabled === true, delegation.fullDeliveryReviewEnabled === true, delegation.qualityDecisionEnabled === true)
-  if (current.scopeHash !== delegation.scopeHash || current.binding.revision !== delegation.bindingRevision || current.perRequestCeilingMicros !== delegation.perRequestCeilingMicros) throw new Error('Owner管理委托的配置、资料或价格已变化')
+  // 配置内容一致即视为当前：revision 只作历史标识，不参与「是否变化」判定。
+  // 同时接受旧算法（含版本元数据）算出的哈希，以兼容存量委托。
+  const scopeMatches = current.scopeHash === delegation.scopeHash || current.legacyScopeHashes.has(delegation.scopeHash)
+  if (!scopeMatches || current.perRequestCeilingMicros !== delegation.perRequestCeilingMicros) throw new Error('Owner管理委托的配置、资料或价格已变化')
   assertGoalLineage(delegation, current.context.goal.revision)
 }
 export function getOwnerManagementDelegation(projectId: string, taskId?: string): OwnerManagementDelegationView {
@@ -269,8 +288,12 @@ export function getOwnerManagementDelegation(projectId: string, taskId?: string)
       localConfigurationFailure = true
       continue
     }
-    const protocolRejected = Boolean(receipt && value && (receipt.purpose === 'owner_planning' && (value.detail.startsWith('Owner规划') || ['Owner质量决定未按准确标准逐项判断或引用不符', 'Owner质量决定与准确评审/成果不匹配'].includes(value.detail))
-      || receipt.purpose === 'owner_execution_assignment' && (value.detail.startsWith('Owner安排') || value.detail.startsWith('Owner人员安排'))))
+    // 优先用 outcome 里的显式标记判断「模型响应未通过协议校验」。
+    // 历史记录没有该标记，回退到旧的文案前缀匹配以保持兼容。
+    const protocolRejected = Boolean(receipt && value && (
+      value.protocolRejected === true
+      || (receipt.purpose === 'owner_planning' && (value.detail.startsWith('Owner规划') || ['Owner质量决定未按准确标准逐项判断或引用不符', 'Owner质量决定与准确评审/成果不匹配'].includes(value.detail)))
+      || (receipt.purpose === 'owner_execution_assignment' && (value.detail.startsWith('Owner安排') || value.detail.startsWith('Owner人员安排')))))
     const rejectedReply = value?.state === 'failed'
       && protocolRejected
       && receipt?.validTerminal === true
@@ -378,7 +401,9 @@ export function claimOwnerManagementTask(taskId: string, executionId: string): v
   const source = resolveOwnerPlanningTask(taskId)
   if (!source) throw new Error('管理委托只适用于Owner受限推理')
   const view = getOwnerManagementDelegation(source.link.projectId, source.link.targetTaskId)
-  if (view.state !== 'active' || !view.delegation) throw new Error(view.detail || '没有有效管理委托')
+  // 与对话层、调度器共用同一判定：上一条请求只是「结论不可继续」且仍在预算内时，
+  // 新消息照常占额发送。旧请求保持原记录、不重试、不补造用量。
+  if ((view.state !== 'active' && decideAttentionCarryover(view) !== 'proceed') || !view.delegation) throw new Error(view.detail || '没有有效管理委托')
   if (source.context.conversation?.executionObservation && view.delegation.executionFollowupEnabled !== true) throw new Error('旧管理委托不包含业务结果主动跟进，请重新确认管理范围')
   if (source.context.conversation?.deliveryReview && view.delegation.fullDeliveryReviewEnabled !== true) throw new Error('旧管理委托未包含完整成果读取，请重新确认管理范围')
   if (source.context.conversation?.deliveryReview?.qualityDecisionVersion === 1 && view.delegation.qualityDecisionEnabled !== true) throw new Error('旧管理委托未包含质量决定')

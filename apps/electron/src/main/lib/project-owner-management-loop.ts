@@ -1,4 +1,5 @@
 import { findOwnerFollowupFuse, hasUnstartedOwnerConversation, preparePendingOwnerConversation } from './project-owner-management-conversation'
+import { decideAttentionCarryover } from './project-owner-attention-carryover-policy'
 import { prepareOwnerManagementAssignment, projectOwnerManagementAssignmentResult, queueOwnerAssignmentProtocolRetry, isRecoverableOwnerAssignmentRejection } from './project-owner-management-assignment'
 import { getOwnerManagementDelegation, hasActiveOwnerManagementRequest } from './project-owner-management-delegation'
 import type { OwnerManagementEvent } from '@gravitas/shared'
@@ -442,7 +443,8 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
         if (store.listAgentExecutionsByEntity('task', link.planning_task_id).length) continue
         subjects.add(subjectKey)
         // 已有调用时等待完成回调；先入队再失败回滚会产生新唤醒，造成忙重试。
-        if (view.state !== 'active' || !view.delegation || hasActiveOwnerManagementRequest(view.delegation.id)) continue
+        // attention 且可接续（上条仅结论不可继续、仍在预算内）时放行，与对话层和认领闸门判定一致。
+        if ((view.state !== 'active' && decideAttentionCarryover(view) !== 'proceed') || !view.delegation || hasActiveOwnerManagementRequest(view.delegation.id)) continue
         if (readOwnerPlanningSnapshot(link.planning_task_id, { allowUnknownPromptForHistory: true })?.context.conversation?.executionObservation && view.delegation?.executionFollowupEnabled !== true) {
           appendOwnerManagementMessage({ projectId, eventId: `followup-scope:${link.planning_task_id}`, role: 'assistant', kind: 'attention', ...(subject.targetTaskId ? { taskId: subject.targetTaskId } : {}), content: '执行结果已保留。此前管理委托未包含主动跟进分析；重新确认管理范围后，我才能在额度内分析，不会自动消耗旧许可。' })
           continue

@@ -51,6 +51,8 @@ export interface OwnerPlanningRunOutcome {
   planRevision?: number
   clarification?: Extract<ReturnType<typeof parseProjectOwnerPlanningResponse>, { kind: 'needs_clarification' }>
   assignmentProposal?: OwnerExecutionAssignmentProposal
+  /** 模型响应未通过协议校验（而非运行/网络失败）；下游据此允许下一条消息继续，不必卡在 attention。 */
+  protocolRejected?: true
 }
 interface ReceiptRow { id: string; execution_id: string; capture_hash: string; payload: string }
 interface OutcomeRow { receipt_id: string; payload: string }
@@ -129,7 +131,7 @@ function readStoredOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRu
   try {
     const parsed = JSON.parse(row.payload) as OwnerPlanningRunOutcome & { integrityHash: string }
     const { integrityHash, ...value } = parsed
-    const allowed = ['executionId', 'receiptId', 'state', 'detail', 'planRevision', 'clarification', 'assignmentProposal', 'reply', 'changeProposal', 'qualityDecision', 'employeeDecision']
+    const allowed = ['executionId', 'receiptId', 'state', 'detail', 'planRevision', 'clarification', 'assignmentProposal', 'reply', 'changeProposal', 'qualityDecision', 'employeeDecision', 'protocolRejected']
     const receipt = getOwnerPlanningRunReceipt(value.receiptId)
     if (Object.keys(value).some(key => !allowed.includes(key)) || hash(value) !== integrityHash || value.executionId !== executionId || value.receiptId !== row.receipt_id || !receipt || receipt.executionId !== executionId || !['proposed', 'needs_clarification', 'replied', 'stale', 'failed', 'unknown', 'stopped'].includes(value.state) || typeof value.detail !== 'string') throw new Error('结论完整性无效')
     if (value.state === 'proposed' || value.state === 'needs_clarification' || value.state === 'replied') {
@@ -322,16 +324,23 @@ export function recordOwnerPlanningRun(executionId: string, runtimeSource: strin
     const concurrent = getOwnerPlanningRunOutcome(executionId)
     if (concurrent) { outcome = concurrent; return }
     if (validTerminal && !stopped && !error && execution.status === 'running') {
+      // responseRejected 只表示「模型响应未通过协议解析」，用于区分可重试的解析失败与运行/存储失败。
+      // 仅由 parse* 抛错时置位；写库等后续步骤失败不算响应校验失败。
+      let responseRejected = false
       try {
         try { resolveOwnerPlanningTask(execution.entityId) } catch (cause) { outcome = { executionId, receiptId: receipt!.id, state: 'stale', detail: cause instanceof Error ? cause.message : '来源版本更新，保留原文' }; throw new Error('owner-source-stale') }
         if (link.purpose === 'owner_execution_assignment') {
           const source = frozen.assignmentContext
           if (!source) throw new Error('Owner安排冻结资料缺失')
           const protocolContext: OwnerExecutionAssignmentProtocolContext = { ...(source.teamContractVersion ? { teamContractVersion: source.teamContractVersion } : {}), contextFingerprint: source.contextFingerprint, workspaces: source.workspaces.map(({ id, name }) => ({ id, name })), executionKinds: source.executionKinds, ownerCarrierId: source.ownerCarrierId, steps: source.steps.map(({ key, dependencies, roleKey, deliveryKind, sourceReferences }) => ({ key, dependencies, roleKey, ...(deliveryKind ? { deliveryKind } : {}), ...(sourceReferences ? { sourceReferences } : {}) })), ...(source.codeFiles ? { codeFiles: source.codeFiles } : {}), candidates: source.candidates }
-          const assignmentProposal = parseOwnerExecutionAssignmentProposal(responseText, protocolContext)
+          let assignmentProposal: ReturnType<typeof parseOwnerExecutionAssignmentProposal>
+          try { assignmentProposal = parseOwnerExecutionAssignmentProposal(responseText, protocolContext) }
+          catch (cause) { responseRejected = true; throw cause }
           outcome = { executionId, receiptId: receipt!.id, state: 'proposed', detail: 'Owner已提出执行安排，等待用户审核；不代表准备已保存或获得执行授权', assignmentProposal }
         } else {
-          const response = parseProjectOwnerPlanningResponse(responseText, frozen.context)
+          let response: ReturnType<typeof parseProjectOwnerPlanningResponse>
+          try { response = parseProjectOwnerPlanningResponse(responseText, frozen.context) }
+          catch (cause) { responseRejected = true; throw cause }
           if (response.kind === 'employee_decision') outcome = { executionId, receiptId: receipt!.id, state: 'replied', detail: 'Owner已形成员工问题决定，待权威回流核验', reply: response.message, employeeDecision: response.decision }
           else if (response.kind === 'quality_decision') outcome = { executionId, receiptId: receipt!.id, state: 'replied', detail: 'Owner已提出质量决定，等待权威服务核验执行', reply: response.message, qualityDecision: response.decision }
           else if (response.kind === 'conversation_reply' || response.kind === 'conversation_change') outcome = { executionId, receiptId: receipt!.id, state: 'replied', detail: response.kind === 'conversation_change' ? 'Owner已整理理解，等待用户确认后更新内容' : 'Owner已回应当前消息，未修改计划或执行许可', reply: response.message, ...(response.kind === 'conversation_change' ? { changeProposal: response.change } : {}) }
@@ -341,7 +350,14 @@ export function recordOwnerPlanningRun(executionId: string, runtimeSource: strin
             outcome = { executionId, receiptId: receipt!.id, state: 'proposed', detail: 'AI提案待人工内容确认，不是执行许可', planRevision: plan.revision }
           }
         }
-      } catch (cause) { if (outcome.state !== 'stale') outcome = { executionId, receiptId: receipt!.id, state: 'failed', detail: cause instanceof Error ? cause.message : '响应无效，保留原始证据，不覆盖计划' } }
+      } catch (cause) {
+        if (outcome.state !== 'stale') outcome = {
+          executionId, receiptId: receipt!.id, state: 'failed',
+          detail: cause instanceof Error ? cause.message : '响应无效，保留原始证据，不覆盖计划',
+          // 只有响应解析失败才标记为可继续：下游据此允许下一条消息，不再依赖错误文案前缀。
+          ...(responseRejected ? { protocolRejected: true as const } : {}),
+        }
+      }
     }
     store.getProjectDb().prepare('INSERT INTO project_owner_planning_run_outcomes (execution_id, receipt_id, payload) VALUES (?, ?, ?)').run(executionId, outcome.receiptId, JSON.stringify({ ...outcome, integrityHash: hash(outcome) }))
     // 规划承载Run终结；业务目标/DoD、员工绩效/学习/Review和通知不在这里写回。

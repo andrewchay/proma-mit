@@ -1540,7 +1540,9 @@ test('Given验证过期导致准确质量失败且请求用量完整 When明确�
     const originalOutcome = runs.getOwnerPlanningRunOutcome(held.executionId)
     expect(originalOutcome?.detail).toBe('Owner不能在独立检查未通过或标准未满足时接受成果')
     const previous = delegation.getOwnerManagementDelegation(f.project.id)
-    expect(previous).toMatchObject({ state: 'attention', attentionCheck: { reason: 'non_continueable_outcome', outcomeDetail: originalOutcome!.detail, inputTokens: 10, outputTokens: 20 } })
+    // 协议拒绝不再把项目永久冻结在 attention：委托保持可接续，原失败记录与预留照旧保留。
+    expect(previous).toMatchObject({ state: 'active' })
+    expect(runs.getOwnerPlanningRunOutcome(held.executionId)).toMatchObject({ state: 'failed', protocolRejected: true })
     const planningTaskId = store.getAgentExecution(held.executionId)!.entityId
     const snapshot = source.readOwnerPlanningSnapshot(planningTaskId)!
     const artifactHash = snapshot.context.conversation!.deliveryReview!.developmentArtifact!.contentHash
@@ -1557,7 +1559,8 @@ test('Given验证过期导致准确质量失败且请求用量完整 When明确�
     recoverySmoke.authorizeOwnerQualityRevalidationFromFailedRun(f.project.id, held.executionId, artifactHash)
     const renewed = delegation.getOwnerManagementDelegation(f.project.id)
     expect(renewed).toMatchObject({ state: 'active', delegation: { maxRequests: previous.delegation!.maxRequests, maxCostMicros: previous.delegation!.maxCostMicros, expiresAt: previous.delegation!.expiresAt } })
-    expect(renewed.delegation!.id).not.toBe(previous.delegation!.id)
+    // 委托在协议拒绝后仍可接续，复验走 reusable 分支复用原委托，不重复签发消耗额度。
+    expect(renewed.delegation!.id).toBe(previous.delegation!.id)
     const migratedGrant = executionGrants.getOwnerExecutionGrant({ projectId: f.project.id })!
     expect(migratedGrant).toMatchObject({ grantId: originalGrant.grantId, revalidationId: originalGrant.revalidationId, revalidationRevision: originalGrant.revalidationRevision, ownerManagementDelegationId: renewed.delegation!.id })
     expect(migratedGrant.budget.expiresAt).toBe(originalGrant.budget.expiresAt)
@@ -1612,7 +1615,8 @@ test('Given原成果复验许可与两项授权均已到期且同身份渠道配
     const permitRows = () => store.getProjectDb().prepare("SELECT payload FROM project_activities WHERE project_id=? AND action='owner_quality_revalidation_smoke_authorized' ORDER BY rowid").all(f.project.id) as Array<{ payload: string }>
     const firstPermit = permitRows()[0]!
     const staleBinding = binding.getOwnerRuntimeBinding(f.project.id)!
-    channels.updateChannel(staleBinding.channelId, { name: 'fake-after-key-check' })
+    // 真实配置漂移（服务地址变化）；仅改显示名不应触发重新绑定。
+    channels.updateChannel(staleBinding.channelId, { baseUrl: 'https://changed.invalid/v1' })
     clock = spyOn(Date, 'now').mockReturnValue(Math.max(firstDelegation.expiresAt, firstGrant.budget.expiresAt) + 1000)
     recoverySmoke.authorizeOwnerQualityRevalidationFromFailedRun(f.project.id, held.executionId, artifactHash)
     const renewed = delegation.getOwnerManagementDelegation(f.project.id).delegation!
