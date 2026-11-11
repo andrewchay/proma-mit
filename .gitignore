@@ -76,3 +76,6 @@ apps/electron/resources/dynamic-island/macos/island.node
 .context/package-smoke-evidence/
 # esbuild 构建产物
 tools/match3-assertion-check/driver.cjs
+
+# 清理脚本每次运行都会追加，属本地执行记录，不入版本控制。
+cleanup-gravitas.log
