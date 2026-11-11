@@ -3,14 +3,33 @@
 import { z } from 'zod'
 import type { AgentMessage, AgentSendInput, WorkflowDefinition, WorkflowPatchProposal } from '@gravitas/shared'
 import { WorkflowPatchSchema } from '@gravitas/shared/workflow'
-import { createAgentSession } from './agent-session-manager'
+import { createAgentSession, getAgentSessionSDKMessages } from './agent-session-manager'
 import { runAgentHeadless } from './agent-service'
 
 const DesignerResponseSchema = z.object({ reply: z.string().min(1).max(2000), patches: z.array(WorkflowPatchSchema).max(30) })
 
-function extractJson(text: string): unknown {
+function extractDesignerJson(text: string): unknown {
   const fenced = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
-  return JSON.parse((fenced?.[1] ?? text).trim())
+  const parsed: unknown = JSON.parse((fenced?.[1] ?? text).trim())
+  if (typeof parsed === 'string' && /^[\s]*[\[{]/.test(parsed)) return JSON.parse(parsed)
+  return parsed
+}
+
+function readSessionAssistantText(sessionId: string): string | undefined {
+  const messages = getAgentSessionSDKMessages(sessionId)
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (!message || message.type !== 'assistant' || typeof message.message !== 'object' || message.message === null || !('content' in message.message)) continue
+    const content = message.message.content
+    if (typeof content === 'string' && content.trim()) return content
+    if (!Array.isArray(content)) continue
+    const text = (content as unknown[])
+      .filter((block): block is { type: 'text'; text: string } => typeof block === 'object' && block !== null && 'type' in block && block.type === 'text' && 'text' in block && typeof block.text === 'string')
+      .map((block) => block.text)
+      .join('\n').trim()
+    if (text) return text
+  }
+  return undefined
 }
 
 function buildDesignerPrompt(definition: WorkflowDefinition, instruction: string): string {
@@ -22,13 +41,16 @@ export async function proposeWorkflowPatches(definition: WorkflowDefinition, ins
   const session = createAgentSession(`Workflow 设计：${definition.name}`, channelId, definition.workspaceId)
   let resultMessages: AgentMessage[] = []
   let failure: string | null = null
+  let stopped = false
   const input: AgentSendInput = { sessionId: session.id, userMessage: buildDesignerPrompt(definition, instruction), channelId, ...(modelId ? { modelId } : {}), workspaceId: definition.workspaceId, permissionModeOverride: 'auto', workflowCapabilityPolicy: { allowedTools: [], permissionProfileId: 'workflow-readonly' } }
-  await runAgentHeadless(input, { onError: (error) => { failure = error }, onComplete: (messages) => { resultMessages = messages ?? [] }, onTitleUpdated: () => {}, source: 'workflow' })
+  await runAgentHeadless(input, { onError: (error) => { failure = error }, onComplete: (messages, result) => { resultMessages = messages ?? []; stopped = result?.stoppedByUser === true }, onTitleUpdated: () => {}, source: 'workflow' })
   if (failure) throw new Error(failure)
-  const assistant = [...resultMessages].reverse().find((message) => message.role === 'assistant')
-  if (!assistant) throw new Error('Workflow 设计器没有返回结果')
+  if (stopped) throw new Error('Workflow 设计已停止')
+  const assistantText = [...resultMessages].reverse().find((message) => message.role === 'assistant' && message.content.trim())?.content
+    ?? readSessionAssistantText(session.id)
+  if (!assistantText) throw new Error('Workflow 设计器没有返回结果')
   try {
-    const result = DesignerResponseSchema.parse(extractJson(assistant.content))
+    const result = DesignerResponseSchema.parse(extractDesignerJson(assistantText))
     return { ...result, designerSessionId: session.id }
   } catch (error) {
     const message = error instanceof Error ? error.message : '未知格式错误'
