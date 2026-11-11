@@ -12,6 +12,7 @@ import { AGENT_REACH_PARAM_LABELS, AGENT_REACH_WATCH_TEMPLATES, type WebWatchSou
  */
 
 import * as React from 'react'
+import { mergeTaskSnapshot } from './project-task-view-sync'
 import { useState, useEffect, useCallback, useMemo } from "react"
 import { DndContext, PointerSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, arrayMove, rectSortingStrategy, useSortable } from '@dnd-kit/sortable'
@@ -1113,6 +1114,11 @@ function ProjectDetail({
     }
   }, [project.id])
 
+  const applyTasksChange = useCallback((next: Task[]) => {
+    setTasks(next)
+    setDependencyTasks((current) => mergeTaskSnapshot(current, next, (task) => Boolean(task.parentId) || task.status === 'draft'))
+  }, [])
+
   const ownerTasksRefreshed = useAtomValue(ownerTaskListRefreshSignalAtom)
   React.useEffect(() => {
     if (detailsActive && ownerTasksRefreshed?.projectId === project.id) void loadData()
@@ -1571,7 +1577,7 @@ function ProjectDetail({
             projectId={project.id}
             tasks={tasks}
             statuses={taskStatuses}
-            onTasksChange={setTasks}
+            onTasksChange={applyTasksChange}
             onReviewChanged={loadData}
             focusTaskId={pilotTaskFocus?.taskId}
             focusSubTaskId={pilotTaskFocus?.subTaskId}
@@ -1582,7 +1588,7 @@ function ProjectDetail({
             projectId={project.id}
             notes={notes}
             onNotesChange={setNotes}
-            onTasksChange={setTasks}
+            onTasksChange={() => { void loadData() }}
           />
         )}
         {detailTab === 'board' && (
