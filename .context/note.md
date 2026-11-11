@@ -1,5 +1,248 @@
 # Gravitas 浏览器重构 · 工作日志
 
+## 2026-11-09 卡顿诊断与磁盘清理（含执行结果）
+
+### 结论
+
+卡顿不是 CPU 或磁盘 I/O 引起，而是三层叠加：
+
+1. **渲染层无虚拟滚动**：消息列表和会话列表都全量构建 DOM。单个会话最重 32MB / 953 条消息 / 59 张 base64 图，切换会话时主线程要一次解码图片 + 全量 Markdown 解析 + shiki 代码高亮。
+2. **内存压力**：24GB 物理内存，free 页仅 0.53GB，swap 已用 7.32GB / 8.19GB（89%）。输入时的每次 React 状态更新都要跨换页执行。
+3. **数据体量失控**：`~/.gravitas` 14GB，其中 5.2GB 是 skills-inactive 死备份，2.1GB 是单个审计日志文件，1.07GB 是 run 事件日志。
+
+### 证据
+
+| 项目 | 实测值 |
+|---|---|
+| `~/.gravitas` 总体积 | 14 GB |
+| 会话数量 | 968 个（agent-sessions.json 记录 983 条） |
+| 最大会话 | 32.0MB / 953 行 / 59 张 base64 图 |
+| >5MB 会话 | 11 个，合计 157MB |
+| 含 base64 图的会话 | 16 个，图片 101 张 |
+| 渲染 bundle | 5.3MB（`assets/index-B3bbaprZ.js`） |
+| 虚拟列表库 | react-window / Virtuoso / useVirtualizer / react-virtualized 命中数 **全为 0** |
+| Markdown / 高亮 | markdown 105 处引用、shiki 13 处、highlight.js 4 处 |
+| Chromium 缓存 | Cache 357MB + Code Cache 311MB = 905MB |
+| swap | 已用 7321.5MB / 8192MB |
+| 内存空闲页 | 34004 页 × 16KB ≈ 0.53GB |
+| `config-audit/events.jsonl` | 单个文件 2.1GB |
+| `runs/` 月度日志 | 11 月 253,073 行 / 126MB；8-10 月合计 947MB |
+| `agent-workspaces/*/skills-inactive` | 5.2GB |
+| `~/Library/Application Support/Gravitas*` | 2.5GB（含 Dev Backups 854MB、GravitAI 393MB、多个 Owner Test 残留） |
+
+磁盘 I/O 不是瓶颈：读 32MB jsonl 39ms，解析 953 行 18ms，readdir + stat 969 个文件 13ms。所以**卡在渲染与内存，不在磁盘**。
+
+### 为什么"切会话"和"打字"都卡
+
+两个动作的共同点是触发 React 主线程工作：
+
+- 切会话 → 反序列化该会话全部消息 → 为 953 条消息建 DOM → 59 张 base64 图同步解码 → 每块 Markdown 解析 + 代码高亮
+- 打字 → 每次 keystroke 的 state 更新排在上述长任务之后；同时内存换页导致单次任务耗时进一步放大
+
+`useDeferredValue` 有 7 处、`startTransition` 仅 1 处，说明做了局部优化但没有解决根因（无虚拟化）。
+
+### 可回收空间（约 10GB，需确认后执行）
+
+| 目标 | 可回收 |
+|---|---|
+| `agent-workspaces/*/skills-inactive` | 5.2GB |
+| `config-audit/events.jsonl` 轮转 | 2.1GB |
+| `~/Library/Application Support` 历史残留（Dev Backups / GravitAI / Owner Test） | ~1.6GB |
+| `runs/2026-08~10.jsonl` | 947MB |
+| Chromium Cache + Code Cache | 905MB |
+| `agent-sessions/compaction-archive` | 130MB |
+
+### 源码定位（2026-11-09 补）
+
+源码仓库：`~/LLM/proma-mit`（package name = gravitas），分支 `feat/design-content-pack`。
+运行中的 App 构建于 11-09 16:32，晚于 `perf(electron): 分批渲染 Agent 会话历史`（commit 32dfd096, 11-08）与未提交的 `React.memo`（11-08 23:04），因此**这两个优化已在运行版本中生效**。
+
+### 打字卡的真实链路
+
+`AgentView.tsx:660` `useAtomValue(agentSessionDraftAtomFamily(sessionId))`
+
+每次按键 → `RichTextInput` 触发 `onChange`(markdown) + `onHtmlChange`(html) → 两次写 atom Map（`setDraftsMap` 复制整个 Map）→ AgentView 因订阅该 atom 而**整体重渲染**（该组件 2741 行，`inputToolbarItems` 等 useMemo 连带重算）。
+
+`AgentMessages` 虽已 memo 且 props 稳定（`allAttachedDirs` 走 useMemo，回调多为 useCallback），但 AgentView 自身的重渲染在 swap 压力下已足够慢。
+
+### 切会话卡的真实链路
+
+`AgentMessages.tsx:631`
+```ts
+const visibleGroups = historyPositionRef.current.restore ? allGroups : allGroups.slice(-visibleCount)
+```
+有保存滚动位置的会话**直接全量渲染**，分批逻辑被绕过。这是 32MB / 953 条 / 59 图会话最坏路径。
+
+### 图片内存
+
+`SDKMessageRenderer.tsx:276`、`1018` 的 `<img>` 均无 `loading="lazy"` / `decoding="async"`，消息内联 base64 同步解码。
+
+### 修改方案
+
+| 编号 | 改动 | 目标症状 | 文件 |
+|---|---|---|---|
+| P0-1 | 输入区抽成 `AgentComposer` 自订阅 draft，AgentView 改用 `store.get()` 非响应式读取 | 打字卡 | AgentView.tsx、新增 AgentComposer.tsx |
+| P0-2 | 两处 `<img>` 加 `loading="lazy" decoding="async"`；大图改 objectURL | 切会话卡、swap | SDKMessageRenderer.tsx |
+| P1-1 | restore 分支超过阈值仍分批渲染 | 切会话卡 | AgentMessages.tsx:631 |
+| P1-2 | 主进程 runs/*.jsonl 按大小轮转 | 磁盘继续膨胀 | 主进程日志写入处 |
+
+### 执行阻塞
+
+Bash 沙箱只允许写会话目录 `/Users/chaihao/.proma/agent-workspaces/proma-mit/main-30bf421e`。
+测试结果：
+- `~/LLM/proma-mit` 不可写
+- `~/.gravitas` 不可写
+- `~/Library/Application Support` 不可写
+- `/Applications` 不可写（`rm -rf` 返回 exit=1，文件仍在）
+
+需要用户在 Proma 界面把上述目录加入可访问工作目录，才能执行清理与源码修改。
+
+### 空间主要来源（2026-11-09 复核修正）
+
+先前判断 skills-inactive 占 5.2GB。深入核查后发现真正原因并更正：
+
+**ma-media-crawler/MediaCrawler/.venv 在 18 个工作区各存一份，每份 501MB，合计 8.8GB。**
+其中 10 份在 `skills-inactive`，8 份在活动 `skills`。全部是同一 skill 的 Python 虚拟环境（501MB 里 `.venv` 占 501MB，源码仅 20MB）。
+
+可重建：目录内有 `pyproject.toml` + `uv.lock` + `requirements.txt`，本机 `uv 0.11.2` 可用，`uv sync` 即可恢复。
+
+推论：早先「删 skills-inactive 回收 5.2GB」的方案既不彻底（漏了活动 skills 里的 8 份）又有代价（丢失 skill 配置）。改成**只删 `.venv`**，回收 8.8GB 且保留全部 SKILL.md 与源码。
+
+其他项复核：
+- `config-audit/events.jsonl` 2.1GB / 21787 行，平均每行约 100KB，因为每行都带完整 settings `beforeSnapshot`/`afterSnapshot`。实测 gzip 压缩率 6%，归档后约 130MB。
+- `runs/2026-08~10.jsonl` 947MB，实测 gzip 压缩率 10%，归档后约 95MB。
+- `/Applications` 下 8 个 app，每个约 873MB，合计 6.8GB。保留 `Gravitas.app`、`Gravitas Dev.app`、`Gravitas.pre-owner-0.13.571.app`，可删 5 个旧副本 4.3GB。
+- `Application Support` 下 14 个 Owner Test 目录 + Dev Backups 854MB + GravitAI 393MB，合计约 1.4GB。`GravitAI` 无对应已安装 app，是改名前的旧产品残留。
+- Chromium 缓存 357M + 311M + 1.6M + 46M ≈ 0.9GB。
+
+### 清理脚本验证记录（2026-11-09 17:33）
+
+脚本经沙箱端到端实测，六项清理全部生效：
+
+| 项 | 沙箱验证结果 |
+|---|---|
+| T1 venv | .venv 剩余 0 份 |
+| T2 apps | 保留 `Gravitas.app`、`Gravitas Dev.app`、`pre-owner-0.13.571`，其余删除 |
+| T3 audit | 生成 `events-YYYYmmdd-HHMM.jsonl.gz`，原文件截断为 0 字节 |
+| T4 runs | 8/9/10 月转 `.gz`，11 月未动 |
+| T5 residue | 仅保留 `Gravitas` |
+| T6 cache | 应用运行时自动跳过并提示 |
+
+本轮加固内容：
+- 新增 `--doctor` 诊断模式：检查 HOME、bash 版本、各目标路径可写性、待清理项数量、应用是否运行
+- 新增 `cleanup-gravitas.log` 逐条记录 OK/FAIL/SKIP，便于事后核对
+- 删除失败不再静默：明确打印红色失败行，并针对 `/Applications` 给出 `sudo` 建议
+- T2 改为通配 `Gravitas*.app` + 白名单保留，自动覆盖后续新产生的备份
+- 移除 `exec > >(tee)` 进程替换（在受限 shell 中会报 `/dev/fd/62: Operation not permitted`）
+
+### 用户侧两次执行均未生效的原因排查
+
+17:28 与 17:31 两次核对，磁盘状态零变化（18 份 .venv 全在、无任何 .gz、缓存 357M 未减）。脚本逻辑已证明正确，因此问题在执行环节，可能原因：
+1. 缺少 `--yes`（脚本进入预演模式，只打印不删）
+2. 未在脚本所在目录执行，`bash cleanup-gravitas.sh` 报 not found
+3. 用了 `sh` 而非 `bash`
+
+现改用绝对路径 + `--doctor` 先自检，并以日志文件作为执行证据。
+
+### 三次执行均未生效：根因定位（2026-11-09 17:40）
+
+### 结论：终端被 macOS 沙箱限制，不是脚本问题
+
+在本应用的 Bash 工具内实测：
+
+```
+touch /Applications/.wt_test      → Operation not permitted (退出码 1)
+touch ~/.gravitas/.wt_test        → Operation not permitted (退出码 1)
+/dev/fd/62: Operation not permitted （进程替换被禁，沙箱特征）
+```
+
+即进程对目标路径完全没有写权限。用户若在应用内嵌终端执行同一脚本，会遇到同样的 EPERM。
+
+旧版脚本的静默失败缺陷放大了这个问题：
+
+```bash
+rm -rf "$path" && printf '  [删除] %s\n' "$path"   # rm 失败则 && 短路，什么都不打印
+if [ "$DRY_RUN" = "0" ]; then rm -rf "$v"; fi      # 完全静默
+gzip "$f" && printf '  [压缩] %s\n' "$f"           # gzip 失败则静默
+```
+
+结果就是"脚本跑完了，屏幕上看起来正常，磁盘一点没变"。
+
+### 已修复
+
+1. **新增启动预检 `preflight()`**：按所选 tier 逐个检测目标路径可写性，任一不可写立即中止并退出码 3，打印明确的沙箱提示与"请在 Terminal.app 中运行"的指引。
+2. **删除失败不再静默**：`del_dir` 改为显式判断 `rm -rf` 返回码，失败打印红色 `[删除失败]` 并针对 `/Applications` 给出 `sudo` 建议。
+3. **新增 `--doctor`** 与 `cleanup-gravitas.log` 回溯证据。
+
+### 验证
+
+| 场景 | 结果 |
+|---|---|
+| 沙箱内 `--yes` | 预检拦截，列出 6 个不可写路径，退出码 3 |
+| 可写目录 `--yes` | 预检放行，六项全成功，退出码 0 |
+| 沙箱内 `--yes --tier=apps` | 7 个 app 全部打印红色 `[删除失败]` 并给出 sudo 命令 |
+
+### 空间真正的增长源：重复构建产生的 app 备份
+
+`/Applications` 现有 **10 个** Gravitas 应用，合计 **8.5GB**，全部产生于 2026-11-09 当天：
+
+| 时间 | 名称 | 大小 |
+|---|---|---|
+| 10:30 | Gravitas.pre-owner-0.13.571.app | 875M |
+| 12:59 | Gravitas.pre-order-fix.app | 873M |
+| 13:46 | Gravitas.pre-review-recovery.app | 873M |
+| 14:03 | Gravitas.pre-quality-quote.app | 873M |
+| 14:09 | Gravitas.pre-hang-fix.app | 873M |
+| 15:32 | Gravitas.pre-late-recovery.app | 873M |
+| 16:32 | Gravitas.pre-diary-final.app | 873M |
+| 17:14 | Gravitas.pre-blocked-resume.app | 873M |
+| 17:25 | Gravitas.app（当前版本） | 873M |
+| 11-06 | Gravitas Dev.app | 875M |
+
+每跑一次 `build-mac-app.sh` 就多一个 873MB 副本，一天 8 次构建 = 7GB。这是空间膨胀的主因，比日志增长快一个数量级。
+
+建议：在构建脚本里加保留策略，只保留最近 1-2 个备份，而不是全部累积。
+
+### 清理执行结果（2026-11-09 17:42，成功）
+
+在 macOS 真实终端中执行 `bash cleanup-gravitas.sh --yes`，日志 43 条 OK、0 条 FAIL。
+
+| 项 | 执行结果 |
+|---|---|
+| T1 venv | **删除 18 份** .venv，残留 0 |
+| T2 apps | **删除 7 个**副本，保留 `Gravitas.app`、`Gravitas Dev.app`、`pre-owner-0.13.571.app` |
+| T3 audit | 2.1GB → 归档 `events-20261109-1741.jsonl.gz`（278MB），原文件截断 |
+| T4 runs | 8/9/10 月压缩为 gz（9M/15M/11M），11 月保留 1 个 jsonl |
+| T5 residue | **删除 17 个**残留目录，`Gravitas` 与 `Gravitas Dev` 保留 |
+| T6 cache | **跳过**（Gravitas 运行中），Cache 357M + Code Cache 311M 仍在 |
+
+磁盘可用空间：**118Gi → 129Gi，增加 11Gi**。
+
+### 关于 11GB 与 du 名义值 18.4GB 的差额
+
+du 名义减少量：
+- `~/.gravitas` 14G → 2.9G = 11.1GB
+- `/Applications` 8.5G → 2.6G = 5.9GB
+- AppSupport 残留 1.4GB → 0
+
+合计约 18.4GB，但 df 只增加 11Gi。差额约 7.4GB，基本等于 `/Applications` 的 5.9GB + AppSupport 的 1.4GB。
+
+已排除：无 Time Machine 本地快照（`tmutil listlocalsnapshots` 为空），空间未随时间继续释放（连续 3 次观测稳定 129Gi）。
+
+最可能原因是 du 对备份副本的名义统计与 APFS 实际物理分配不一致（构建流程使用 ditto/clone 复制时，多个 .app 副本可能共享物理块）。此点未做决定性验证，不宜作为定论。
+
+### 结论与后续
+
+- 核心目标达成：`~/.gravitas` 从 14GB 降到 2.9GB，减少 79%。
+- T6 缓存需在应用退出后补跑：`bash cleanup-gravitas.sh --yes --tier=cache`（约 716MB）。
+- 持续膨胀源未解决：每跑一次 `build-mac-app.sh` 仍新增 873MB 副本。今天一天产生过 8 个备份，共约 7GB。建议在构建脚本加保留策略（只留最近 1-2 个）。
+
+### 修复优先级
+
+- P0（立即，低风险）：清 Chromium 缓存；轮转 2.1GB 审计日志；清理历史测试残留目录
+- P1：归档 >5MB 的 11 个会话；清 skills-inactive
+- P2（产品级）：消息列表虚拟滚动、图片懒加载/缩略图、会话列表虚拟化、日志按大小轮转、agent-sessions.json 增量写入
+
 ## 2026-11-03 修复：Owner 默认建队被外部工作区建议压制（测试项目"没有可派工员工实例"根因）
 
 分支 feat/pi-1.5.0-upgrade，未提交、未重建应用。用户测试项目 6336c41d（"测试项目"）出现：已确认方案无法派工，
