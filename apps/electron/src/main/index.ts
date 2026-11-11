@@ -15,7 +15,7 @@ import {
   APP_SERVICE_PORTS,
 } from './lib/app-identity'
 export { getMainWindow } from './main-window'
-import { getPackagedTestConfigDir } from './lib/test-build-identity'
+import { assertSmokeTestConfigDir, getPackagedTestConfigDir } from './lib/test-build-identity'
 
 app.setName(APP_DISPLAY_NAME)
 const allowMultipleInstancesForTest = process.env.PROMA_ALLOW_MULTI_INSTANCE === '1'
@@ -29,6 +29,7 @@ const packagedTestConfigDir = getPackagedTestConfigDir(
   process.env.PROMA_TEST_CONFIG_DIR,
   allowMultipleInstancesForTest,
 )
+assertSmokeTestConfigDir(process.env.GRAVITAS_PACKAGE_SMOKE === '1', packagedTestConfigDir, process.env.PROMA_TEST_CONFIG_DIR)
 if (packagedTestConfigDir) {
   process.env.PROMA_TEST_CONFIG_DIR = packagedTestConfigDir
   app.setPath('userData', join(dirname(packagedTestConfigDir), 'electron'))
