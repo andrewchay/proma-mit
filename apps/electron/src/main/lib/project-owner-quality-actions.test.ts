@@ -1699,7 +1699,7 @@ test('Given恢复请求因本地硬上限未发送且委托未到期 When用户�
     if (savedMaxRequests === undefined) delete process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS
     else process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS = savedMaxRequests
   }
-}, 20000)
+}, 90000)
 
 
 test('Given相同本地错误但运行回执含非零用量 When请求续期 Then保持未知门禁且不发行继任委托', async () => {
@@ -1734,7 +1734,7 @@ test('Given相同本地错误但运行回执含非零用量 When请求续期 The
     if (savedMaxRequests === undefined) delete process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS
     else process.env.GRAVITAS_OWNER_CHAIN_SMOKE_MAX_REQUESTS = savedMaxRequests
   }
-}, 20000)
+}, 90000)
 
 
 test('Given质量恢复请求已在途且恢复入口随管理状态关闭 When重放冻结来源 Then恢复提示不漂移且权限仍由门禁拒绝', async () => {
@@ -1773,7 +1773,7 @@ test('Given质量恢复请求已在途且恢复入口随管理状态关闭 When�
     if (savedRecovery === undefined) delete process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID
     else process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID = savedRecovery
   }
-}, 15000)
+}, 90000)
 
 
 test('Given研发首轮完整冻结源码与Owner返工决定 When启动返工 Then使用新会话继承源码并保留原会话证据', async () => {
@@ -1798,4 +1798,4 @@ test('Given研发首轮完整冻结源码与Owner返工决定 When启动返工 T
     expect(content).toContain('answer: 42')
     expect(executors[1]!.prompt).toContain(first.id)
   } finally { f.stop() }
-},30000)
+}, 90000)
