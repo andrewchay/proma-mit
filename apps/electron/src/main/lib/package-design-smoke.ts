@@ -175,10 +175,16 @@ export async function runPackageDesignSmoke(root: string): Promise<Record<string
   })
   try {
     await window.loadFile(join(__dirname, 'renderer', 'index.html'))
-    await waitRenderer(window, `document.body.innerText.includes('开始使用')`, '首次启动欢迎页')
-    await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent?.trim() === '开始使用').click()`, true)
-    await waitRenderer(window, `document.body.innerText.includes('稍后设置')`, '订阅引导页')
-    await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent?.trim() === '稍后设置').click()`, true)
+    await waitRenderer(window, `document.body.innerText.includes('开始设置')`, '首次启动欢迎页')
+    await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent?.trim() === '开始设置').click()`, true)
+    await waitRenderer(window, `document.querySelector('h1')?.textContent?.includes('连接你的 AI 模型')`, '模型配置引导页')
+    await window.webContents.executeJavaScript(`[...document.querySelectorAll('footer button')].at(-1).click()`, true)
+    if (process.platform === 'win32') {
+      await waitRenderer(window, `document.body.innerText.includes('检查运行环境')`, '环境检测引导页')
+      await window.webContents.executeJavaScript(`[...document.querySelectorAll('footer button')].at(-1).click()`, true)
+    }
+    await waitRenderer(window, `document.body.innerText.includes('进入 Gravitas')`, '账户引导页')
+    await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent?.trim() === '进入 Gravitas').click()`, true)
     await waitRenderer(window, `[...document.querySelectorAll('button')].some(item => item.textContent?.trim() === '智能体')`, '模式导航加载')
     await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent?.trim() === '智能体').click()`, true)
     await waitRenderer(window, `[...document.querySelectorAll('button')].some(item => item.textContent?.trim() === '项目管理')`, '应用导航加载')

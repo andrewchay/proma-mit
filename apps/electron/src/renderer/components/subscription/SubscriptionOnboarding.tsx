@@ -37,6 +37,8 @@ export interface SubscriptionOnboardingProps {
   onLoggedIn?: () => void
   /** 紧凑模式：用于设置页内嵌 */
   compact?: boolean
+  /** 引导页已有统一的继续操作时隐藏面板内的跳过按钮 */
+  showLater?: boolean
 }
 
 type Step = 'intro' | 'email' | 'code'
@@ -44,6 +46,7 @@ type Step = 'intro' | 'email' | 'code'
 export function SubscriptionOnboarding({
   onLoggedIn,
   compact = false,
+  showLater = true,
 }: SubscriptionOnboardingProps): React.ReactElement {
   const [state, setState] = useAtom(subscriptionStateAtom)
   const [step, setStep] = React.useState<Step>('intro')
@@ -101,6 +104,7 @@ export function SubscriptionOnboarding({
       })
       setState(result)
       setNotice(null)
+      setStep('intro')
       onLoggedIn?.()
     } catch (err) {
       setError(err instanceof Error ? err.message : '验证码校验失败')
@@ -164,13 +168,13 @@ export function SubscriptionOnboarding({
             </div>
           )}
 
-          {endpointMissing ? (
+          {endpointMissing && showLater ? (
             <div className="mt-4 flex justify-center">
               <Button variant="outline" onClick={() => onLoggedIn?.()}>
                 稍后设置
               </Button>
             </div>
-          ) : (
+          ) : !endpointMissing ? (
             <div className="mt-4 space-y-3">
               <div className="flex items-center gap-2">
                 <div className="h-px flex-1 bg-border" />
@@ -211,7 +215,7 @@ export function SubscriptionOnboarding({
                 </Button>
               </div>
             </div>
-          )}
+          ) : null}
         </>
       )}
 
@@ -255,14 +259,14 @@ export function SubscriptionOnboarding({
             >
               换个邮箱
             </Button>
-            <Button
+            {showLater && <Button
               variant="ghost"
               size="sm"
               className="text-muted-foreground"
               onClick={() => onLoggedIn?.()}
             >
               稍后再说
-            </Button>
+            </Button>}
           </div>
         </>
       )}
