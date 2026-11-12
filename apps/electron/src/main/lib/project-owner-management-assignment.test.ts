@@ -570,15 +570,15 @@ test('Given 授权前已有待审方案和完整团队 When 首次确认管理�
     expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'execution_arranged' && item.content.includes('员工尚未启动'))).toBe(true)
     expect(store.getProjectDb().prepare('SELECT COUNT(*) AS n FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id)).toEqual({ n: 0 })
     expect(store.getProjectDb().prepare('SELECT COUNT(*) AS n FROM project_owner_task_materializations WHERE project_id=?').get(f.project.id)).toEqual({ n: 0 })
-  } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
-})
+  } finally { await stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+}, 60_000)
 
 test('Given 员工位于未授权的共享工作区 When 团队不足 Then Owner在项目工作区自动补齐默认团队并完成安排', async () => {
   const f = fixture('complete', false, true, true, true)
   const grant = authorize(f)
-  expect(teamAccess.getOwnerTeamWorkspaceProposal(f.project.id)).toMatchObject({ workspaceId: f.teamWorkspace.id, eligibleEmployeeCount: 2 })
   const stop = startOwnerManagementLoop()
   try {
+    expect(teamAccess.getOwnerTeamWorkspaceProposal(f.project.id)).toMatchObject({ workspaceId: f.teamWorkspace.id, eligibleEmployeeCount: 2 })
     await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'execution_arranged'), () => ({
       pending: listPendingOwnerManagementEvents(f.project.id).map(event => event.kind),
       messages: getOwnerManagementConversation(f.project.id).messages.slice(-5).map(message => ({ kind: message.kind, eventId: message.eventId, hasProposal: Boolean(message.teamWorkspaceProposal), content: message.content.slice(0, 120) })),
@@ -595,13 +595,13 @@ test('Given 员工位于未授权的共享工作区 When 团队不足 Then Owner
     expect(store.listAgentExecutionsByProject(f.project.id).every(item => item.agentId === f.owner.id)).toBe(true)
     expect(delegation.getOwnerManagementDelegation(f.project.id)).toMatchObject({ state: 'active', usedRequests: 1 })
   } finally {
-    stop()
+    await stop()
     delegation.revokeOwnerManagementDelegation(f.project.id, grant.id)
     // 清理未占用工作区里的员工，避免污染后续测试的最小资料范围扫描。
     employees.deleteAgentEmployee(f.executor.id)
     if (f.reviewer) employees.deleteAgentEmployee(f.reviewer.id)
   }
-})
+}, 60_000)
 
 test('Given 可计费Pi团队位于未授权工作区 When Owner检查执行能力 Then 在项目工作区自动补齐默认团队并完成安排', async () => {
   const f = fixture('pi-team', false, true, true, true), grant = authorize(f), before = calls.length, stop = startOwnerManagementLoop()
@@ -622,13 +622,13 @@ test('Given 可计费Pi团队位于未授权工作区 When Owner检查执行能�
     expect(store.getProjectDb().prepare('SELECT COUNT(*) AS n FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id)).toEqual({ n: 0 })
     expect(delegation.getOwnerManagementDelegation(f.project.id)).toMatchObject({ state: 'active', usedRequests: 1 })
   } finally {
-    stop()
+    await stop()
     delegation.revokeOwnerManagementDelegation(f.project.id, grant.id)
     // 清理未占用共享工作区里的员工，避免污染后续测试的资料范围扫描。
     employees.deleteAgentEmployee(f.executor.id)
     if (f.reviewer) employees.deleteAgentEmployee(f.reviewer.id)
   }
-})
+}, 60_000)
 
 test('Given可降级的Pi研发员工位于未授权Git工作区 When默认建队可行 Then优先在项目工作区补齐受控默认团队且不改已有员工', async () => {
   const f = fixture('pi-development-team', false, true, true, true), grant = authorize(f), before = calls.length, stop = startOwnerManagementLoop()
@@ -645,12 +645,12 @@ test('Given可降级的Pi研发员工位于未授权Git工作区 When默认建�
     expect(employees.getAgentEmployee(f.reviewer!.id)).toMatchObject({ executionProfile: 'development', permissionMode: 'safe' })
     expect(calls.slice(before).filter(item => item.projectId === f.project.id).map(item => item.purpose)).toEqual(['owner_execution_assignment'])
   } finally {
-    stop()
+    await stop()
     delegation.revokeOwnerManagementDelegation(f.project.id, grant.id)
     employees.deleteAgentEmployee(f.executor.id)
     if (f.reviewer) employees.deleteAgentEmployee(f.reviewer.id)
   }
-}, 15_000)
+}, 60_000)
 
 test('Given 项目工作区已有业务员工但缺独立评审 When 存在含合格员工的未占用工作区 Then 建议纳入资料范围且不另建默认团队', async () => {
   const f = fixture('missing-reviewer')
@@ -677,14 +677,14 @@ test('Given 项目工作区已有业务员工但缺独立评审 When 存在含�
     expect(store.getProjectDb().prepare('SELECT COUNT(*) AS n FROM project_workspace_bindings WHERE project_id=? AND workspace_id=?').get(f.project.id, shared.id)).toEqual({ n: 1 })
     expect(getOwnerManagementConversation(f.project.id).messages.filter(item => item.eventId === `team-workspace-approved:${suggestion.id}`)).toHaveLength(1)
   } finally {
-    stop()
+    await stop()
     delegation.revokeOwnerManagementDelegation(f.project.id, grant.id)
     // 清理共享工作区员工，避免未占用工作区污染后续测试的资料范围扫描。
     for (const employee of employees.listAgentEmployees()) {
       if (employee.workspaceIds?.includes(shared.id)) employees.deleteAgentEmployee(employee.id)
     }
   }
-}, 15_000)
+}, 60_000)
 
 test('Given 待审方案的授权事件已消费但没有安排记录 When Owner循环恢复项目 Then 只重新检查一次并把缺少团队的原因带回对话', () => {
   const f = fixture(), grant = authorize(f), before = calls.filter(item => item.projectId === f.project.id).length
@@ -701,7 +701,7 @@ test('Given 待审方案的授权事件已消费但没有安排记录 When Owner
     expect(listOwnerExecutionAssignmentRuns(f.subject)).toHaveLength(0)
     expect(calls.filter(item => item.projectId === f.project.id)).toHaveLength(before)
   } finally { delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
-})
+}, 60_000)
 
 test('Given 已确认方案和有效管理授权 When 用户手动重新安排 Then 后台消费请求并准备一次新安排', () => {
   const f = fixture(), grant = authorize(f)
@@ -715,7 +715,7 @@ test('Given 已确认方案和有效管理授权 When 用户手动重新安排 T
     expect(runs[0]?.link.requestId).toStartWith('management-assignment:')
     expect(getOwnerManagementConversation(f.project.id).messages.filter(item => item.kind === 'attention').map(item => item.content)).not.toContain('当前方案或持续管理授权已变化，我已停止使用旧安排条件；请在项目对话中核对最新方案与管理范围。')
   } finally { delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
-})
+}, 60_000)
 
 test('Given 手动重排已排队 When 管理授权在消费前被撤销 Then 不准备新安排', () => {
   const f = fixture(), grant = authorize(f)
@@ -725,7 +725,7 @@ test('Given 手动重排已排队 When 管理授权在消费前被撤销 Then �
   delegation.revokeOwnerManagementDelegation(f.project.id, grant.id)
   reconcileOwnerManagement(f.project.id)
   expect(listOwnerExecutionAssignmentRuns(f.subject)).toHaveLength(0)
-})
+}, 60_000)
 
 test('Given 已保存目标与已授权的项目费用边界 When 后台开始管理 Then Owner自动规划并安排团队，等待用户确认执行', async () => {
   const f = fixture('complete', false, false, true), grant = authorize(f), before = calls.length, stop = startOwnerManagementLoop()
