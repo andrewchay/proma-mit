@@ -134,7 +134,7 @@ test('Given 绿地项目 When 验证命令要求执行仓库脚本 Then 拒绝',
     expect(() => parseOwnerExecutionAssignmentProposal({
       ...greenfieldResponse,
       developmentScope: { ...greenfieldResponse.developmentScope!, verificationCommands: [command] },
-    }, greenfieldContext)).toThrow('只能用内置浏览器断言验证')
+    }, greenfieldContext)).toThrow('只能使用内置浏览器断言或内置构建命令验证')
   }
 })
 
@@ -170,4 +170,51 @@ test('Given 有代码候选 When 目标路径不在源码引用内 Then 仍按�
     ...greenfieldResponse,
     developmentScope: { ...greenfieldResponse.developmentScope!, targetPaths: ['index.html'], allowedPaths: ['index.html'] },
   }, withCode)).toThrow('源码引用')
+})
+
+// 原生/命令行绿地项目没有网页可断言，必须能用内置构建命令产出真实进程证据。
+const swiftResponse: OwnerExecutionAssignmentProposal = {
+  ...greenfieldResponse,
+  developmentScope: {
+    targetPaths: ['Sources/SleepBar/MenuBarApp.swift', 'Tests/SleepBarTests/PowerAssertionTests.swift'],
+    allowedPaths: ['Sources/SleepBar/MenuBarApp.swift', 'Tests/SleepBarTests/PowerAssertionTests.swift'],
+    verificationCommands: ['build:swift', 'build:swift-test'],
+    reason: '原生 Swift 菜单栏工具，用 Swift Package 构建与测试验证',
+  },
+}
+
+test('Given 绿地原生项目 When 用内置构建命令验证 Then 接受', () => {
+  expect(parseOwnerExecutionAssignmentProposal(swiftResponse, greenfieldContext)).toEqual(swiftResponse)
+})
+
+test('Given 绿地原生项目 When 构建命令与目标扩展名不匹配 Then 拒绝', () => {
+  expect(() => parseOwnerExecutionAssignmentProposal({
+    ...swiftResponse,
+    developmentScope: { ...swiftResponse.developmentScope!, targetPaths: ['index.html'], allowedPaths: ['index.html'] },
+  }, greenfieldContext)).toThrow('与目标文件不匹配')
+})
+
+test('Given 绿地原生项目 When 构建命令标识未知或自带参数 Then 拒绝', () => {
+  for (const command of ['build:unknown', 'build:', 'build:swift build --verbose']) {
+    expect(() => parseOwnerExecutionAssignmentProposal({
+      ...swiftResponse,
+      developmentScope: { ...swiftResponse.developmentScope!, verificationCommands: [command] },
+    }, greenfieldContext)).toThrow(/验证命令无效|构建命令验证/)
+  }
+})
+
+test('Given 绿地原生项目 When 用任意 shell 命令冒充验证 Then 仍拒绝', () => {
+  for (const command of ['swift build', 'xcodebuild -scheme App', 'sh build.sh']) {
+    expect(() => parseOwnerExecutionAssignmentProposal({
+      ...swiftResponse,
+      developmentScope: { ...swiftResponse.developmentScope!, verificationCommands: [command] },
+    }, greenfieldContext)).toThrow('只能使用内置浏览器断言或内置构建命令验证')
+  }
+})
+
+test('Given 绿地原生项目 When 验证命令为空 Then 仍拒绝而不是放行', () => {
+  expect(() => parseOwnerExecutionAssignmentProposal({
+    ...swiftResponse,
+    developmentScope: { ...swiftResponse.developmentScope!, verificationCommands: [] },
+  }, greenfieldContext)).toThrow('验证命令无效')
 })

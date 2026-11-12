@@ -28,6 +28,7 @@ import { completeOwnerDevelopmentValidationAttempt, ownerDevelopmentValidationId
 import { ownerExecutionHash } from './project-owner-execution-hash'
 import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { executeBrowserVerificationCommand, isBrowserVerificationCommand } from './owner-runtime-verification-command'
+import { isBuildVerificationCommand, resolveOwnerRuntimeBuildCommand } from './owner-runtime-build-command'
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 
@@ -105,7 +106,8 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
   }
 
   const startedAt = Date.now()
-  // browser: 前缀走受管浏览器内置断言，复用同一套证据格式与门禁；其余仍按 argv 直接执行。
+  // browser: 前缀走受管浏览器内置断言，复用同一套证据格式与门禁；
+  // build: 前缀解析成注册表里的固定 argv（模型不能自带参数）；其余仍按 argv 直接执行。
   const browserRun = isBrowserVerificationCommand(trimmed)
     ? await executeBrowserVerificationCommand({
         workspaceRoot: world.worktreePath,
@@ -114,7 +116,9 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
         timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       })
     : undefined
-  const { exitCode, timedOut, output, rawOutputSha256, rawOutputByteLength } = browserRun ?? await runCommand(trimmed, world.worktreePath, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+  const argv = isBuildVerificationCommand(trimmed) ? [...resolveOwnerRuntimeBuildCommand(trimmed).argv] : undefined
+  const { exitCode, timedOut, output, rawOutputSha256, rawOutputByteLength } = browserRun
+    ?? await runCommand(trimmed, world.worktreePath, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, argv)
   const finishedAt = Date.now()
 
   const staleAfter = !validationWorldStillMatches(world)
@@ -292,9 +296,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-/** 受控运行：无 shell，参数按空格切分（首版不支持引号）；完整字节仅做hash/长度统计，文本只保留有界尾部。 */
-async function runCommand(command: string, cwd: string, timeoutMs: number): Promise<{ exitCode: number | null; timedOut: boolean; output: string; rawOutputSha256: string; rawOutputByteLength: number }> {
-  const parts = command.split(/\s+/).filter(Boolean)
+/**
+ * 受控运行：无 shell。argv 由调用方给定（内置构建命令）时原样使用，
+ * 否则按空格切分命令文本（首版不支持引号）；完整字节仅做hash/长度统计，文本只保留有界尾部。
+ */
+async function runCommand(command: string, cwd: string, timeoutMs: number, argv?: string[]): Promise<{ exitCode: number | null; timedOut: boolean; output: string; rawOutputSha256: string; rawOutputByteLength: number }> {
+  const parts = argv ?? command.split(/\s+/).filter(Boolean)
   if (!parts.length) throw new DevelopmentValidationError('验证命令不能为空')
   return new Promise((resolve) => {
     const child = spawn(parts[0]!, parts.slice(1), {
