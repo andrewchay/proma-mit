@@ -16,11 +16,13 @@ const files = [...new Set(listing.stdout.toString().split('\0'))]
 if (!files.length) throw new Error('没有匹配的测试文件')
 let failures = 0
 for (const path of files) {
-  // 这组集成测试会累积大量 Owner 数据及后台调度；互补筛选保证每项只运行一次，
-  // 分进程隔离数据库和异步任务，避免前一批超时污染后一批。
+  // Owner 集成测试会累积数据及后台调度；互补筛选保证每项只运行一次，
+  // 分进程隔离数据库、浏览器和异步任务，避免前一批超时污染后一批。
   const patterns = path === 'apps/electron/src/main/lib/project-owner-quality-actions.test.ts'
     ? ['恢复', '^(?!.*恢复)']
-    : [null]
+    : path === 'apps/electron/src/renderer/atoms/owner-delivery-flow.integration.test.ts'
+      ? ['^Given真实任务服务与旧手动', '^Given真实任务服务与Owner自主', '^(?!Given真实任务服务与(?:旧手动|Owner自主))']
+      : [null]
   for (const pattern of patterns) {
     const directory = mkdtempSync(join(tmpdir(), 'gravitas-test-'))
     try {

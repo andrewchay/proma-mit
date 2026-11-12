@@ -338,7 +338,7 @@ bun run electron:start
 bun run typecheck
 
 # 测试（逐文件独立进程；全量不要用裸 bun test）
-# Owner 质量动作集成测试分为两个互补的隔离批次
+# Owner 质量动作与交付集成测试分别分为互补的隔离批次
 bun run test
 ```
 
