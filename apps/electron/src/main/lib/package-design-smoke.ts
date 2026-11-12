@@ -177,8 +177,8 @@ export async function runPackageDesignSmoke(root: string): Promise<Record<string
     await window.loadFile(join(__dirname, 'renderer', 'index.html'))
     await waitRenderer(window, `document.body.innerText.includes('开始设置')`, '首次启动欢迎页')
     await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent?.trim() === '开始设置').click()`, true)
-    await waitRenderer(window, `document.body.innerText.includes('稍后配置')`, '模型配置引导页')
-    await window.webContents.executeJavaScript(`[...document.querySelectorAll('button')].find(item => item.textContent?.trim() === '稍后配置').click()`, true)
+    await waitRenderer(window, `document.querySelector('h1')?.textContent?.includes('连接你的 AI 模型')`, '模型配置引导页')
+    await window.webContents.executeJavaScript(`[...document.querySelectorAll('footer button')].at(-1).click()`, true)
     if (process.platform === 'win32') {
       await waitRenderer(window, `document.body.innerText.includes('检查运行环境')`, '环境检测引导页')
       await window.webContents.executeJavaScript(`[...document.querySelectorAll('footer button')].at(-1).click()`, true)
