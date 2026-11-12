@@ -176,8 +176,8 @@ test('Given 有代码候选 When 目标路径不在源码引用内 Then 仍按�
 const swiftResponse: OwnerExecutionAssignmentProposal = {
   ...greenfieldResponse,
   developmentScope: {
-    targetPaths: ['Sources/SleepBar/MenuBarApp.swift', 'Tests/SleepBarTests/PowerAssertionTests.swift'],
-    allowedPaths: ['Sources/SleepBar/MenuBarApp.swift', 'Tests/SleepBarTests/PowerAssertionTests.swift'],
+    targetPaths: ['Package.swift', 'Sources/SleepBar/MenuBarApp.swift', 'Tests/SleepBarTests/PowerAssertionTests.swift'],
+    allowedPaths: ['Package.swift', 'Sources/SleepBar/MenuBarApp.swift', 'Tests/SleepBarTests/PowerAssertionTests.swift'],
     verificationCommands: ['build:swift', 'build:swift-test'],
     reason: '原生 Swift 菜单栏工具，用 Swift Package 构建与测试验证',
   },
@@ -185,6 +185,12 @@ const swiftResponse: OwnerExecutionAssignmentProposal = {
 
 test('Given 绿地原生项目 When 用内置构建命令验证 Then 接受', () => {
   expect(parseOwnerExecutionAssignmentProposal(swiftResponse, greenfieldContext)).toEqual(swiftResponse)
+})
+
+test('Given Swift 目标缺少 Package.swift When 安排构建 Then 提示补齐包结构', () => {
+  const previous = { ...swiftResponse, developmentScope: { ...swiftResponse.developmentScope!, targetPaths: ['Sources/App.swift'], allowedPaths: ['Sources/App.swift'] } }
+  expect(() => parseOwnerExecutionAssignmentProposal(previous, greenfieldContext, true)).toThrow('需要根目录 Package.swift')
+  expect(parseOwnerExecutionAssignmentProposal(previous, greenfieldContext)).toEqual(previous)
 })
 
 test('Given 绿地原生项目 When 构建命令与目标扩展名不匹配 Then 拒绝', () => {

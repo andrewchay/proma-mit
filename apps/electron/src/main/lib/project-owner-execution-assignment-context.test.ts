@@ -145,6 +145,9 @@ test('Given 无代码候选但工作区是git仓库 When 构造上下文 Then �
     expect(protocol.buildOwnerExecutionAssignmentRequest(value).systemPrompt).not.toContain('优先选择仓库根目录下的新文件')
     const previousRootPrompt = protocol.buildOwnerExecutionAssignmentRequest(value, true, 'current', true, true, true)
     expect(protocol.resolveOwnerExecutionAssignmentRequest(value, createHash('sha256').update(JSON.stringify(previousRootPrompt)).digest('hex'))).toEqual(previousRootPrompt)
+    const previousSwiftPrompt = protocol.buildOwnerExecutionAssignmentRequest(value, true, 'current', true, true, false, true, false)
+    expect(previousSwiftPrompt.systemPrompt).not.toContain('根目录的 Package.swift')
+    expect(protocol.resolveOwnerExecutionAssignmentRequest(value, createHash('sha256').update(JSON.stringify(previousSwiftPrompt)).digest('hex'))).toEqual(previousSwiftPrompt)
     for (const variant of ['current', 'registry-v2', 'registry-v1', 'legacy-6'] as const) {
       const request = protocol.buildOwnerExecutionAssignmentRequest(value, true, variant)
       expect(protocol.resolveOwnerExecutionAssignmentRequest(value, createHash('sha256').update(JSON.stringify(request)).digest('hex'))).toEqual(request)

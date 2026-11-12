@@ -30,7 +30,7 @@ function buildRegistryText(includeBuildCommands: boolean): string {
   const items = listOwnerRuntimeBuildCommands().map(item => `${item.id}（${item.title}）`).join('、')
   return items ? `；原生或命令行项目可用 build:<标识>，可选标识：${items}` : ''
 }
-export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, requireRoleCoverage = true, browserRegistryVariant: OwnerBrowserRegistryVariant = 'current', stepDeliveryInstructions = true, roleSpecificCapabilities = true, greenfieldRootTargets = false, includeBuildCommands = true): OwnerExecutionAssignmentRequest {
+export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, requireRoleCoverage = true, browserRegistryVariant: OwnerBrowserRegistryVariant = 'current', stepDeliveryInstructions = true, roleSpecificCapabilities = true, greenfieldRootTargets = false, includeBuildCommands = true, requireSwiftPackage = true): OwnerExecutionAssignmentRequest {
   return {
     expectedGoalRevision: context.goalRevision,
     expectedContextFingerprint: context.sourceContextFingerprint,
@@ -48,6 +48,7 @@ export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssi
           : '本次为绿地研发：项目没有既有代码候选，executionKind应选development并在developmentScope中声明本次要新建的文件。targetPaths写工作区内的新文件相对路径（禁止绝对路径、..、反斜杠、受保护文件）；allowedPaths必须是targetPaths的子集；verificationCommands只能用browser:<断言标识>。controlled时不得输出developmentScope。'
         : 'executionKind为development时必须给developmentScope：目标路径必须来自所选步骤sourceReferences；允许修改路径必须来自冻结codeFiles，且只选本次真正需要的最小范围；至少提出一条验证命令供执行边界核对。代码依据不足时不得编造路径。controlled时不得输出developmentScope。',
       ...(greenfieldRootTargets && context.greenfieldDevelopment ? ['绿地仓库没有可核验的目标目录时，请优先选择仓库根目录下的新文件，例如index.html、app.js和style.css，避免把缺失父目录误当成已有能力。若用户明确要求目录结构，应如实保留要求和不确定性，不得静默改写。'] : []),
+      ...(includeBuildCommands && requireSwiftPackage && context.greenfieldDevelopment && context.executionKinds.includes('development') ? ['使用 build:swift 或 build:swift-test 时，目标路径须包含工作区根目录的 Package.swift 和实际 Swift 源文件，并按 Swift Package 布局创建。构建在禁止网络的隔离环境中运行，不能依赖下载外部包。构建成功不代表原生界面或业务行为已验证。'] : []),
       ...(context.executionKinds.includes('development')
         ? [includeBuildCommands
           ? `本次提供development方式：验证命令只接受内置运行验证形式 browser:<断言标识>（多个用+连接，可选标识：${browserRegistryText(browserRegistryVariant)}）${buildRegistryText(true)}。禁止提出bun test、npm test、pytest等仓库自带测试或自写验证脚本：Owner员工不执行仓库代码。成果含HTML页面时必须至少声明一条browser断言；成果是原生或命令行程序时用对应的build命令（目标文件扩展名须与命令匹配）。无法用任何内置形式覆盖时，在reason中如实说明验证缺口，但不得留空。`
@@ -68,8 +69,10 @@ export function resolveOwnerExecutionAssignmentRequest(context: OwnerExecutionAs
           for (const greenfieldRootTargets of [false, true]) {
             // includeBuildCommands=false 还原"只有 browser 断言"的历史提示文本。
             for (const includeBuildCommands of [true, false]) {
-              const request = buildOwnerExecutionAssignmentRequest(context, requireRoleCoverage, registryVariant, stepDeliveryInstructions, roleSpecificCapabilities, greenfieldRootTargets, includeBuildCommands)
-              if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) return request
+              for (const requireSwiftPackage of [true, false]) {
+                const request = buildOwnerExecutionAssignmentRequest(context, requireRoleCoverage, registryVariant, stepDeliveryInstructions, roleSpecificCapabilities, greenfieldRootTargets, includeBuildCommands, requireSwiftPackage)
+                if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) return request
+              }
             }
           }
         }
@@ -98,7 +101,7 @@ function text(value: unknown, name: string, maximum = 1200): string {
   return value
 }
 /** 模型输出只用于提案；只接受冻结计划、项目工作区与员工候选，不接受权限、预算或执行指令。 */
-export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: OwnerExecutionAssignmentProtocolContext): OwnerExecutionAssignmentProposal {
+export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: OwnerExecutionAssignmentProtocolContext, requireSwiftPackage = false): OwnerExecutionAssignmentProposal {
   let value = raw
   if (typeof raw === 'string') {
     try { value = JSON.parse(raw) } catch { throw new Error('Owner人员安排不是有效JSON') }
@@ -152,6 +155,7 @@ export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: Own
           if (!buildCommandCoversTargets(template, targetPaths)) {
             throw new Error(`Owner绿地研发验证命令与目标文件不匹配：${command} 需要 ${template.requiresExtensions.join('/')} 目标`)
           }
+          if (requireSwiftPackage && (!targetPaths.includes('Package.swift') || !targetPaths.some(path => path.endsWith('.swift') && path !== 'Package.swift'))) throw new Error('Owner绿地 Swift 构建需要根目录 Package.swift 和 Swift 源文件')
           continue
         }
         if (!/^browser:[a-z0-9.\-]+(?:\+[a-z0-9.\-]+)*$/i.test(command)) {

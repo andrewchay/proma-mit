@@ -12,8 +12,9 @@
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { StringDecoder } from 'node:string_decoder'
-import { existsSync, lstatSync, readFileSync, readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { homedir, tmpdir } from 'node:os'
 import type { DevelopmentSnapshot, DevelopmentTaskScope, DevelopmentValidationBinding, DevelopmentValidationEvidence, DevelopmentValidationResult } from '@gravitas/shared'
 import { writeJsonFileAtomic } from './safe-file'
 import { getAgentExecution, getProjectDb, getTask } from './project-sqlite-store'
@@ -29,6 +30,7 @@ import { ownerExecutionHash } from './project-owner-execution-hash'
 import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { executeBrowserVerificationCommand, isBrowserVerificationCommand } from './owner-runtime-verification-command'
 import { isBuildVerificationCommand, resolveOwnerRuntimeBuildCommand } from './owner-runtime-build-command'
+import { buildSeatbeltProfile, SANDBOX_EXEC_PATH } from './pinned-verifier-sandbox'
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000
 
@@ -116,9 +118,65 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
         timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       })
     : undefined
-  const argv = isBuildVerificationCommand(trimmed) ? [...resolveOwnerRuntimeBuildCommand(trimmed).argv] : undefined
+  let commandRun: Awaited<ReturnType<typeof runCommand>> | undefined
+  if (!browserRun && isBuildVerificationCommand(trimmed)) {
+    if (process.platform !== 'darwin' || !existsSync(SANDBOX_EXEC_PATH)) throw new DevelopmentValidationError('当前平台缺少原生构建隔离，无法运行验证')
+    const manifest = join(world.worktreePath, 'Package.swift')
+    if (!existsSync(manifest) || !lstatSync(manifest).isFile() || lstatSync(manifest).isSymbolicLink()) throw new DevelopmentValidationError('Swift 构建需要工作目录根部的 Package.swift')
+    const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'gravitas-swift-validation-')))
+    try {
+      const worktree = realpathSync(world.worktreePath)
+      if ([worktree, scratch, realpathSync(tmpdir())].some(path => /["\r\n]/.test(path))) throw new DevelopmentValidationError('工作目录路径无法安全用于构建隔离')
+      // Foundation 的原子替换使用系统 TemporaryItems，忽略 TMPDIR；仅放行 SwiftPM 的专用临时项。
+      const temporaryItems = join(realpathSync(tmpdir()), 'TemporaryItems')
+      const temporaryPattern = `^${temporaryItems.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/NSIRD_swift-(build|test)_[^/]+(/.*)?$`
+      const protectedPattern = `^${worktree.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/(.*/)?(\\.git|\\.context|\\.[Ee][Nn][Vv](\\.[^/]*)?|AGENTS\\.md|package-lock\\.json|bun\\.lockb?|yarn\\.lock|pnpm-lock\\.yaml|[^/]*\\.([Pp][Ee][Mm]|[Kk][Ee][Yy]|[Pp]12|[Pp][Ff][Xx])|[Ii][Dd]_[Rr][Ss][Aa][^/]*|[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll][Ss]?\\.([Jj][Ss][Oo][Nn]|[Tt][Xx][Tt])|[Ss][Ee][Cc][Rr][Ee][Tt][Ss]?)(/.*)?$`
+      const temporaryRoot = realpathSync(tmpdir())
+      const xcrunPattern = `^${temporaryRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/xcrun_db-[^/]+$`
+      const parents = new Set<string>()
+      for (const path of [worktree, scratch, temporaryItems]) {
+        for (let parent = dirname(path); parent !== '/'; parent = dirname(parent)) parents.add(parent)
+      }
+      const metadataPaths = [...parents].map(path => `(literal ${JSON.stringify(path)})`).join(' ')
+      // Seatbelt 的正则字面量保留反斜杠，不能用 JSON.stringify 双重转义。
+      const temporaryPaths = `(literal ${JSON.stringify(temporaryItems)}) (regex #"${temporaryPattern}") (regex #"${xcrunPattern}")`
+      const profile = [
+        buildSeatbeltProfile({ writableRoots: [scratch], denyRoots: [realpathSync(homedir()), '/Users', '/Volumes', '/private/tmp', '/private/var/tmp', '/private/var/folders', temporaryRoot] }),
+        `(allow file-read-metadata ${metadataPaths})`,
+        `(allow file-read* (subpath ${JSON.stringify(worktree)}) (subpath ${JSON.stringify(scratch)}) ${temporaryPaths})`,
+        `(deny file-read* (regex #"${protectedPattern}"))`,
+        `(allow file-write* (subpath ${JSON.stringify(scratch)}) ${temporaryPaths})`,
+        '(deny network*)',
+        '(deny mach-lookup)',
+        '(deny appleevent-send)',
+        '(deny signal)',
+      ].join('\n')
+      // SwiftPM 自带沙箱无法嵌套 Seatbelt，使用已应用的外层沙箱。
+      const argv = [SANDBOX_EXEC_PATH, '-p', profile, ...resolveOwnerRuntimeBuildCommand(trimmed).argv,
+        '--disable-sandbox', '--build-system', 'native', '--scratch-path', join(scratch, 'build'),
+        '--cache-path', join(scratch, 'cache'), '--config-path', join(scratch, 'config'), '--security-path', join(scratch, 'security')]
+      const env: NodeJS.ProcessEnv = {
+        HOME: scratch, TMPDIR: scratch, PATH: '/usr/bin:/bin:/usr/sbin:/sbin',
+        CLANG_MODULE_CACHE_PATH: join(scratch, 'clang-cache'), SWIFT_MODULECACHE_PATH: join(scratch, 'swift-cache'),
+        XDG_CACHE_HOME: join(scratch, 'xdg-cache'),
+        ...(process.env.DEVELOPER_DIR ? { DEVELOPER_DIR: process.env.DEVELOPER_DIR } : {}),
+      }
+      if (trimmed === 'build:swift-test') {
+        const hasXCTest = (candidate: NodeJS.ProcessEnv): boolean =>
+          spawnSync('/usr/bin/xcrun', ['--no-cache', '--find', 'xctest'], { env: candidate, stdio: 'ignore', timeout: 10_000 }).status === 0
+        let available = hasXCTest(env)
+        if (!available && !env.DEVELOPER_DIR && existsSync('/Applications/Xcode.app/Contents/Developer')) {
+          const xcodeEnv = { ...env, DEVELOPER_DIR: '/Applications/Xcode.app/Contents/Developer' }
+          available = hasXCTest(xcodeEnv)
+          if (available) env.DEVELOPER_DIR = xcodeEnv.DEVELOPER_DIR
+        }
+        if (!available) throw new DevelopmentValidationError('Swift 测试需要可用的 Xcode 和 XCTest，请检查 Xcode 安装与许可')
+      }
+      commandRun = await runCommand(trimmed, worktree, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, argv, env)
+    } finally { rmSync(scratch, { recursive: true, force: true }) }
+  }
   const { exitCode, timedOut, output, rawOutputSha256, rawOutputByteLength } = browserRun
-    ?? await runCommand(trimmed, world.worktreePath, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, argv)
+    ?? commandRun ?? await runCommand(trimmed, world.worktreePath, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
   const finishedAt = Date.now()
 
   const staleAfter = !validationWorldStillMatches(world)
@@ -300,7 +358,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * 受控运行：无 shell。argv 由调用方给定（内置构建命令）时原样使用，
  * 否则按空格切分命令文本（首版不支持引号）；完整字节仅做hash/长度统计，文本只保留有界尾部。
  */
-async function runCommand(command: string, cwd: string, timeoutMs: number, argv?: string[]): Promise<{ exitCode: number | null; timedOut: boolean; output: string; rawOutputSha256: string; rawOutputByteLength: number }> {
+async function runCommand(command: string, cwd: string, timeoutMs: number, argv?: string[], env?: NodeJS.ProcessEnv): Promise<{ exitCode: number | null; timedOut: boolean; output: string; rawOutputSha256: string; rawOutputByteLength: number }> {
   const parts = argv ?? command.split(/\s+/).filter(Boolean)
   if (!parts.length) throw new DevelopmentValidationError('验证命令不能为空')
   return new Promise((resolve) => {
@@ -308,7 +366,7 @@ async function runCommand(command: string, cwd: string, timeoutMs: number, argv?
       cwd,
       shell: false,
       detached: process.platform !== 'win32',
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      env: { ...(env ?? process.env), GIT_TERMINAL_PROMPT: '0' },
       stdio: ['ignore', 'pipe', 'pipe'],
     })
     let output = ''

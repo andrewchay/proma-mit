@@ -334,7 +334,7 @@ export function recordOwnerPlanningRun(executionId: string, runtimeSource: strin
           if (!source) throw new Error('Owner安排冻结资料缺失')
           const protocolContext: OwnerExecutionAssignmentProtocolContext = { ...(source.teamContractVersion ? { teamContractVersion: source.teamContractVersion } : {}), contextFingerprint: source.contextFingerprint, workspaces: source.workspaces.map(({ id, name }) => ({ id, name })), executionKinds: source.executionKinds, ownerCarrierId: source.ownerCarrierId, steps: source.steps.map(({ key, dependencies, roleKey, deliveryKind, sourceReferences }) => ({ key, dependencies, roleKey, ...(deliveryKind ? { deliveryKind } : {}), ...(sourceReferences ? { sourceReferences } : {}) })), ...(source.codeFiles ? { codeFiles: source.codeFiles } : {}), candidates: source.candidates }
           let assignmentProposal: ReturnType<typeof parseOwnerExecutionAssignmentProposal>
-          try { assignmentProposal = parseOwnerExecutionAssignmentProposal(responseText, protocolContext) }
+          try { assignmentProposal = parseOwnerExecutionAssignmentProposal(responseText, protocolContext, true) }
           catch (cause) { responseRejected = true; throw cause }
           outcome = { executionId, receiptId: receipt!.id, state: 'proposed', detail: 'Owner已提出执行安排，等待用户审核；不代表准备已保存或获得执行授权', assignmentProposal }
         } else {

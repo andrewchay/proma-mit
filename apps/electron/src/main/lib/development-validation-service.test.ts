@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
 import { buildElectronMock } from './testing/electron-mock'
@@ -25,6 +25,16 @@ const { createDevelopmentWorktree } = await import('./agent-development-worktree
 const chainService = await import('./project-chain-service')
 const { submitDevelopmentDelivery } = await import('./development-delivery-service')
 const { runDevelopmentValidation, runOwnerDevelopmentValidations, listDevelopmentValidations, readDevelopmentValidationEvidence, DevelopmentValidationError } = await import('./development-validation-service')
+const hasXCTest = (() => {
+  if (process.platform !== 'darwin') return false
+  for (const developerDir of [process.env.DEVELOPER_DIR, ...(process.env.DEVELOPER_DIR ? [] : ['/Applications/Xcode.app/Contents/Developer'])]) {
+    try {
+      execFileSync('xcrun', ['--no-cache', '--find', 'xctest'], { stdio: 'ignore', env: { ...process.env, ...(developerDir ? { DEVELOPER_DIR: developerDir } : {}) } })
+      return true
+    } catch { /* 检查下一个已安装的工具链 */ }
+  }
+  return false
+})()
 
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => {
@@ -39,7 +49,7 @@ function git(repo: string, ...args: string[]): string {
   return execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
 }
 
-function fixture(options: { scriptName?: string; scriptContent?: string } = {}): { taskId: string; executionId: string; worktreePath: string; command: string; sessionDirectory: string } {
+function fixture(options: { scriptName?: string; scriptContent?: string; baselineSecret?: string } = {}): { taskId: string; executionId: string; worktreePath: string; command: string; sessionDirectory: string } {
   const scriptName = options.scriptName ?? 'verify.cjs'
   const scriptContent = options.scriptContent ?? "const fs=require('fs');process.exit(fs.readFileSync('src/a.ts','utf8')==='fixed\\n'?0:1)"
   const command = `node src/${scriptName}`
@@ -48,6 +58,7 @@ function fixture(options: { scriptName?: string; scriptContent?: string } = {}):
   git(repo, 'init'); git(repo, 'config', 'user.name', 'Test'); git(repo, 'config', 'user.email', 'test@example.invalid')
   mkdirSync(join(repo, 'src'))
   writeFileSync(join(repo, 'src', 'a.ts'), 'original\n')
+  if (options.baselineSecret) writeFileSync(join(repo, '.env'), options.baselineSecret)
   git(repo, 'add', '.'); git(repo, 'commit', '-m', 'baseline')
 
   const workspace = createAgentWorkspace(`validate-${randomUUID().slice(0, 6)}`, repo)
@@ -78,6 +89,104 @@ function fixture(options: { scriptName?: string; scriptContent?: string } = {}):
 }
 
 describe('验证证据（T27/T28）', () => {
+  test.skipIf(process.platform !== 'darwin')('Given Swift 验证缺少包清单 When 启动 Then 提示缺少 Package.swift', async () => {
+    const w = fixture()
+    const task = store.getTask(w.taskId)!
+    store.updateTask(w.taskId, { developmentScope: { ...task.developmentScope!, verificationCommands: ['build:swift'] } })
+    submitDevelopmentDelivery(w.executionId)
+    await expect(runDevelopmentValidation(w.taskId, 'build:swift')).rejects.toThrow('根部的 Package.swift')
+  })
+  test.skipIf(!hasXCTest)('Given Swift 测试目标 When 隔离验证 Then 真实测试通过且不污染工作目录', async () => {
+    const w = fixture()
+    writeFileSync(join(w.worktreePath, 'Package.swift'), '// swift-tools-version: 5.9\nimport PackageDescription\nlet package = Package(name: "Example", targets: [.executableTarget(name: "Example", path: "src", sources: ["main.swift"]), .testTarget(name: "ExampleTests", path: "tests")])\n')
+    writeFileSync(join(w.worktreePath, 'src', 'main.swift'), 'print("hello")\n')
+    mkdirSync(join(w.worktreePath, 'tests'))
+    writeFileSync(join(w.worktreePath, 'tests', 'ExampleTests.swift'), 'import XCTest\nfinal class ExampleTests: XCTestCase { func testExample() { XCTAssertTrue(true) } }\n')
+    const task = store.getTask(w.taskId)!
+    store.updateTask(w.taskId, { developmentScope: { ...task.developmentScope!, targetPaths: ['Package.swift', 'src/main.swift', 'tests/ExampleTests.swift'], allowedPaths: ['Package.swift', 'src', 'tests'], verificationCommands: ['build:swift-test'] } })
+    submitDevelopmentDelivery(w.executionId)
+    const result = await runDevelopmentValidation(w.taskId, 'build:swift-test', { timeoutMs: 120_000 })
+    if (result.status !== 'passed') throw new Error(result.outputTail)
+    expect(result.status).toBe('passed')
+    expect(result.outputTail).toContain('testExample')
+    expect(git(w.worktreePath, 'status', '--porcelain', '--untracked-files=all')).not.toContain('.build/')
+  }, 150_000)
+  test.skipIf(process.platform !== 'darwin')('Given 用户目录中的工作区 When 隔离构建 Then 可以读取获准的工作区', async () => {
+    const config = mkdtempSync(join(homedir(), '.gravitas-swift-test-'))
+    const previous = process.env.PROMA_TEST_CONFIG_DIR
+    process.env.PROMA_TEST_CONFIG_DIR = config
+    try {
+      const w = fixture()
+      writeFileSync(join(w.worktreePath, 'Package.swift'), '// swift-tools-version: 5.9\nimport PackageDescription\nlet package = Package(name: "Example", targets: [.executableTarget(name: "Example", path: "src", sources: ["main.swift"])])\n')
+      writeFileSync(join(w.worktreePath, 'src', 'main.swift'), 'print("hello")\n')
+      const task = store.getTask(w.taskId)!
+      store.updateTask(w.taskId, { developmentScope: { ...task.developmentScope!, targetPaths: ['Package.swift', 'src/main.swift'], allowedPaths: ['Package.swift', 'src'], verificationCommands: ['build:swift'] } })
+      submitDevelopmentDelivery(w.executionId)
+      const result = await runDevelopmentValidation(w.taskId, 'build:swift', { timeoutMs: 120_000 })
+      if (result.status !== 'passed') throw new Error(result.outputTail)
+      expect(result.status).toBe('passed')
+    } finally {
+      if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
+      else process.env.PROMA_TEST_CONFIG_DIR = previous
+      rmSync(config, { recursive: true, force: true })
+    }
+  }, 150_000)
+  test.skipIf(process.platform !== 'darwin')('Given Swift 交付 When 隔离构建 Then 真实构建通过且不污染工作目录', async () => {
+    const w = fixture({ baselineSecret: 'workspace-private' })
+    expect(readFileSync(join(w.worktreePath, '.env'), 'utf8')).toBe('workspace-private')
+    const secret = join(directory, 'outside-secret.txt')
+    const outsideWrite = join(directory, 'outside-write.txt')
+    const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('reachable') })
+    writeFileSync(secret, 'private')
+    writeFileSync(join(w.worktreePath, 'Package.swift'), `// swift-tools-version: 5.9
+import PackageDescription
+import Foundation
+import Darwin
+if ProcessInfo.processInfo.environment["GRAVITAS_SWIFT_TEST_SECRET"] != nil { fatalError("环境泄露") }
+if (try? String(contentsOfFile: ${JSON.stringify(secret)}, encoding: .utf8)) != nil { fatalError("外部文件可读") }
+if (try? String(contentsOfFile: ${JSON.stringify(join(w.worktreePath, '.env'))}, encoding: .utf8)) != nil { fatalError("工作区敏感文件可读") }
+if FileManager.default.createFile(atPath: ${JSON.stringify(outsideWrite)}, contents: Data()) { fatalError("外部文件可写") }
+if kill(getppid(), 0) == 0 { fatalError("其他进程可发送信号") }
+let security = Process()
+security.executableURL = URL(fileURLWithPath: "/usr/bin/security")
+security.arguments = ["list-keychains"]
+security.standardOutput = Pipe()
+security.standardError = Pipe()
+try security.run()
+security.waitUntilExit()
+if security.terminationStatus == 0 { fatalError("钥匙串服务可访问") }
+let fd = socket(AF_INET, SOCK_STREAM, 0)
+if fd >= 0 {
+ var address = sockaddr_in()
+ address.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+ address.sin_family = sa_family_t(AF_INET)
+ address.sin_port = in_port_t(${server.port}).bigEndian
+ address.sin_addr = in_addr(s_addr: in_addr_t(0x7f000001).bigEndian)
+ let connected = withUnsafePointer(to: &address) { $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { connect(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) } }
+ close(fd)
+ if connected == 0 { fatalError("网络可访问") }
+}
+let package = Package(name: "Example", targets: [.executableTarget(name: "Example", path: "src", sources: ["main.swift"])])
+`)
+    writeFileSync(join(w.worktreePath, 'src', 'main.swift'), 'print("hello")\n')
+    const task = store.getTask(w.taskId)!
+    store.updateTask(w.taskId, { developmentScope: { ...task.developmentScope!, targetPaths: ['Package.swift', 'src/main.swift'], allowedPaths: ['Package.swift', 'src'], verificationCommands: ['build:swift'] } })
+    submitDevelopmentDelivery(w.executionId)
+    const previousSecret = process.env.GRAVITAS_SWIFT_TEST_SECRET
+    process.env.GRAVITAS_SWIFT_TEST_SECRET = 'private'
+    let result: Awaited<ReturnType<typeof runDevelopmentValidation>>
+    try { result = await runDevelopmentValidation(w.taskId, 'build:swift', { timeoutMs: 120_000 }) }
+    finally {
+      server.stop(true)
+      if (previousSecret === undefined) delete process.env.GRAVITAS_SWIFT_TEST_SECRET
+      else process.env.GRAVITAS_SWIFT_TEST_SECRET = previousSecret
+    }
+    if (result.status !== 'passed') throw new Error(result.outputTail)
+    expect(result.status).toBe('passed')
+    expect(result.exitCode).toBe(0)
+    expect(() => readFileSync(outsideWrite)).toThrow()
+    expect(git(w.worktreePath, 'status', '--porcelain', '--untracked-files=all')).not.toContain('.build/')
+  }, 150_000)
   test('Given 白名单命令与匹配内容 When 运行 Then exitCode=0 status=passed', async () => {
     const w = fixture()
     submitDevelopmentDelivery(w.executionId)
