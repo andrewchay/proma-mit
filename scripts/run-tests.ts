@@ -23,6 +23,7 @@ for (const path of files) {
     : path === 'apps/electron/src/renderer/atoms/owner-delivery-flow.integration.test.ts'
       ? ['^Given真实任务服务与旧手动', '^Given真实任务服务与Owner自主', '^(?!Given真实任务服务与(?:旧手动|Owner自主))']
       : [null]
+  let fileFailed = false
   for (const pattern of patterns) {
     const directory = mkdtempSync(join(tmpdir(), 'gravitas-test-'))
     try {
@@ -32,9 +33,10 @@ for (const path of files) {
         env: { ...process.env, PROMA_TEST_CONFIG_DIR: directory },
         stdout: 'inherit', stderr: 'inherit',
       })
-      if (await child.exited !== 0) failures++
+      if (await child.exited !== 0) fileFailed = true
     } finally { rmSync(directory, { recursive: true, force: true }) }
   }
+  if (fileFailed) failures++
 }
 console.log('测试文件: ' + files.length + '，失败文件: ' + failures)
 process.exitCode = failures ? 1 : 0
