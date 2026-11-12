@@ -235,6 +235,27 @@ Owner 模型回复写入对话前执行 `stripUnsupportedClaims`：本地没有�
 
 `codex/owner-validation-integrity` 未提交修复已构建为独立Owner测试包（同为`.332`，按ZIP/ASAR hash区分）。用户明确授权GLM-5.3-Flash、1.40美元与最多8次请求。最终真实运行使用4次请求：员工写出index.html；正式6项验证4过2失败；Reviewer自述approved但引用不满足精确原文要求，未形成有效评审表行；Owner最终验收和delivery未检查。平台安装包passed不等于本轮业务passed，包装脚本已补独立结果判定。11个原始证据与成果文件已导出并逐项校验hash，服务商账单仍未核对。详见[真实冒烟记录](owner-real-smoke-20261026.md)。
 
+### 2026-11-12 绿地原生项目接入内置构建验证
+
+（Electron 0.14.1–0.14.2）
+
+**问题**：绿地项目如果交付物是原生或命令行程序（如 macOS 菜单栏工具），此前没有任何可用的验证命令。派发协议只接受 `browser:<断言标识>`，而内置断言注册表全是 HTML/DOM/2048/三消目标；提示词又要求"无法用内置断言覆盖时在理由里如实说明验证缺口"，但解析器对空命令列表直接抛 `Owner研发验证命令无效`。模型无论怎么回答都无法通过，人员安排必然失败。
+
+**修复**：新增 `owner-runtime-build-command.ts` 内置构建命令注册表。当前两条：`build:swift` → `swift build`、`build:swift-test` → `swift test`，各自声明所需目标扩展名（`.swift`）。约束：
+
+- 模型只能引用注册表标识，不能自带参数、shell 语法、管道或环境变量；`build:swift build --verbose` 这类带后缀的直接拒绝；
+- 目标文件扩展名必须与命令匹配，避免把 Swift 构建安到纯网页交付上；
+- 裸命令（`swift build`、`xcodebuild -scheme App`、`sh build.sh`）仍拒绝；
+- `verificationCommands` 为空仍拒绝——这次没有放宽到"允许无验证"。
+
+**执行侧**：`development-validation-service.ts` 把 `build:` 解析成固定 argv 再 spawn（否则 `spawn('build:swift')` 会 ENOENT）。`.2` 进一步收紧了执行边界：Swift 构建跑在 macOS seatbelt 沙箱里，只允许写独立 scratch 目录，禁止网络、`mach-lookup`、AppleEvent 与信号；工作区只读且显式拒绝 `.git`/`.env`/密钥等受保护路径；要求工作区根部有真实（非符号链接）的 `Package.swift`；XCTest 不可用时先尝试 `DEVELOPER_DIR` 回退，仍不可用则明确失败而不是改动系统默认工具链。
+
+**兼容性**：提示词文本变化会让历史 `promptHash` 失配，因此 `resolveOwnerExecutionAssignmentRequest` 穷举 `includeBuildCommands`（和 `.2` 的 `requireSwiftPackage`）两个变体，改动前冻结的安排仍可重新校验。
+
+**边界**：构建成功只证明能编译，不证明原生界面或业务行为正确——这一点在提示词里已明确写出。`build:swift` 依赖工作区是 Swift Package 布局；非 Swift 原生项目（如 Xcode 工程）仍无可用命令，需要时再扩注册表。
+
+验证：`project-owner-execution-assignment-protocol` 24 例、`owner-runtime-build-command` 4 例、`development-validation-service` 30 例，`bun run test` 三文件 58 例 0 失败；Electron typecheck、Biome 通过。未在真实 Provider 下跑通原生项目的完整旅程。
+
 ## 要做成什么
 
 **项目管理者是一个独立、持续负责、主动工作的 AI。用户在一个类似 Agent 工作空间的对话里给出目标、约束和资料，确认要交付什么及必要边界；之后由 Owner 自己决定如何组织和推进，直到交付结果或遇到必须由用户决定的事项。**
@@ -477,7 +498,7 @@ Owner 派发协议原先把验证命令写成自由文本，实际会建议 `bun
 对应协议分支（`codeFiles` 为空时）：
 - `targetPaths` 是本次要新建的文件相对路径；仍走 `normalizeRepoRelativePath`（拒绝绝对路径、`..`、反斜杠、空段）与受保护路径规则；
 - `allowedPaths` 必须是 `targetPaths` 的子集（`pathWithinAllowed`）；
-- `verificationCommands` **只接受** `browser:<断言标识>`，并用注册表校验标识存在；不接受 `bun test`／`node verify.cjs`／`npm run check` 等执行仓库代码的命令。
+- `verificationCommands` **只接受** `browser:<断言标识>`，并用注册表校验标识存在；不接受 `bun test`／`node verify.cjs`／`npm run check` 等执行仓库代码的命令。（2026-11-12 起另接受注册表内的 `build:<标识>`，见[绿地原生项目接入内置构建验证](#2026-11-12-绿地原生项目接入内置构建验证)；本条记录的当时状态不变。）
 
 有代码候选时仍按原严格规则（目标必须来自源码引用、允许范围必须来自冻结候选），未被放宽。
 
