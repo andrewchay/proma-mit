@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
-import { OwnerDeliveredArtifact, extractDeliveredHtml } from './OwnerDeliveredArtifact'
+import { OwnerDeliveredArtifact, extractDeliveredCodeFiles, extractDeliveredHtml } from './OwnerDeliveredArtifact'
 
 test('Given已交付HTML文本 When显示成果 Then正文直接可见且有原文和HTML下载、不运行HTML', () => {
   const html = '<!DOCTYPE html><html><body><script>window.unsafe=true</script></body></html>'
@@ -20,4 +20,21 @@ test('Given多份或不完整HTML代码块 When导出 Then不猜测文件、不�
   expect(extractDeliveredHtml('保存成2048.html即可打开')).toBeNull()
   expect(extractDeliveredHtml('```html\n<div>不完整</div>\n```')).toBeNull()
   expect(extractDeliveredHtml('```html\n<!DOCTYPE html><html></html>\n```\n```html\n<!DOCTYPE html><html></html>\n```')).toBeNull()
+})
+
+test('Given已绑定代码快照 When展示交付 Then列出可下载文件和删除记录', () => {
+  const hash = 'a'.repeat(64)
+  const content = JSON.stringify({ executionId: 'exec', workspaceId: 'workspace', baseCommit: 'b'.repeat(40), contentHash: hash, files: [
+    { file: { path: 'diary/index.html', changeType: 'add' }, newContent: '<html>日记</html>' },
+    { file: { path: 'diary/old.js', changeType: 'delete' }, newContent: null },
+  ] })
+  expect(extractDeliveredCodeFiles(content, hash)).toEqual([{ path: 'diary/index.html', changeType: 'add', content: '<html>日记</html>' }, { path: 'diary/old.js', changeType: 'delete', content: null }])
+  const markup = renderToStaticMarkup(createElement(OwnerDeliveredArtifact, { item: { stepKey: 'build', title: '日记', content, artifactHash: hash, acceptanceCriteria: [], ownerDecision: '接受', reviewerSummary: '已核对' } }))
+  expect(markup).toContain('代码成果文件')
+  expect(markup).toContain('diary/index.html')
+  expect(markup).toContain('下载文件')
+  const chainMarkup = renderToStaticMarkup(createElement(OwnerDeliveredArtifact, { source: 'chain', item: { stepKey: 'build', title: '日记', content, artifactHash: hash, acceptanceCriteria: [], ownerDecision: '接受', reviewerSummary: '已核对' } }))
+  expect(chainMarkup).not.toContain('代码成果文件')
+  expect(extractDeliveredCodeFiles(content, 'f'.repeat(64))).toBeNull()
+  expect(extractDeliveredCodeFiles(content.replace('diary/index.html', '../outside.html'), hash)).toBeNull()
 })

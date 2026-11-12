@@ -7,13 +7,13 @@ import { assertOwnerManagementTask, getOwnerManagementDelegation } from './proje
 import { assertOwnerReviewerTextDelivery } from './project-owner-text-delivery'
 import { listOwnerTechnicalReviewEvidence } from './project-owner-technical-review'
 import { getOwnerExecutionRevalidation } from './project-owner-execution-revalidation'
-import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
+import { ownerTaskDeliveryKind, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { resolveOwnerPlanningTask, readOwnerPlanningSnapshot } from './project-owner-planning-source'
 import { getPilotPolicy } from './project-pilot-policy'
 import { readOwnerGrantUsage } from './project-owner-execution-settlement'
 import { requestOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
 import { isCompletedStatus } from './task-status-logic'
-import { parseOwnerQualityDecision } from './project-owner-quality-protocol'
+import { isOwnerEvidenceGapRework, parseOwnerQualityDecision } from './project-owner-quality-protocol'
 
 export interface OwnerQualityAction {
   ownerExecutionId: string; ownerReceiptId: string; actor: string; projectId: string; grantId: string; taskId: string
@@ -30,8 +30,8 @@ function managementTaskId(ownerExecutionId: string): string | undefined {
 interface OwnerQualityActionRow { reviewer_command_id: string; owner_execution_id: string; project_id: string; grant_id: string; task_id: string; payload: string; integrity_hash: string; created_at: number }
 export interface OwnerQualityArtifact { contentHash: string; content: string; projectId: string; grantId: string; taskId: string; stepLinkId: string; sourceHash: string; planRevision: number; reworkOrdinal: number }
 export function readOwnerQualityArtifact(reviewerCommandId: string): OwnerQualityArtifact | null {
-  const source = readOwnerCommandFrozenSource(reviewerCommandId).source
-  if (source.executionKind === 'development') {
+  const { source, taskId } = readOwnerCommandFrozenSource(reviewerCommandId)
+  if (ownerTaskDeliveryKind(source, taskId) === 'development') {
     const review = listOwnerTechnicalReviewEvidence(source.projectId).find(item => item.reviewerCommandId === reviewerCommandId && item.artifactVerified === true)
     const artifact = review?.developmentArtifact
     if (!review || !artifact || artifact.executorCommandId !== review.executorCommandId || artifact.executorExecutionId !== review.executorExecutionId
@@ -137,6 +137,9 @@ function execute(value: OwnerQualityAction, planningTaskId: string): Pick<OwnerQ
   if (store.listTaskBlockers(value.projectId).some(item => item.taskId === value.taskId)) throw new Error('任务仍有未解除的权威依赖')
   if (value.decision.verdict === 'escalate') return { state: 'escalated', detail: 'Owner保留成果并提出需协商事项，未验收或启动返工。' }
   if (value.decision.verdict === 'rework') {
+    if (isOwnerEvidenceGapRework(value.decision)) {
+      return { state: 'blocked', detail: '独立评审缺少运行验证证据；已保存Owner提出的验证要求。现有授权未包含对应验证，暂不重复执行员工或宣称验收。' }
+    }
     const usage = readOwnerGrantUsage(value.grantId)
     if (value.reworkOrdinal >= frozen.budget.maxRework || frozen.budget.maxRuns - usage.runReservations < 2 || usage.committedCostMicros >= frozen.budget.maxCostMicros) throw new Error('授权返工次数、执行/复验请求或费用额度不足，需协商边界')
     return { state: 'rework_authorized', detail: 'Owner已按具体缺陷安排授权内返工；调度器将复核许可后启动执行与复验。' }

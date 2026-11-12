@@ -84,3 +84,11 @@ test('授权或结果来源过期时拒绝构造确认摘要', () => {
   expect(() => buildOwnerAutonomousApprovalSummary(f.subject, { ...f.preview, sourceHash: '0'.repeat(64) }, f.view, f.plan, f.context)).toThrow('无法生成开始确认摘要')
   expect(() => buildOwnerAutonomousApprovalSummary(f.subject, f.preview, f.view, { ...f.plan, planFingerprint: 'changed' }, f.context)).toThrow('无法生成开始确认摘要')
 })
+
+test('混合步骤的授权摘要按冻结任务标识文本交付', () => {
+  const f = fixture()
+  const source = { ...f.source, tasks: f.source.tasks.map(task => ({ ...task, deliveryKind: 'text' as const })) }
+  const view = { ...f.view, revalidation: { ...f.record, source } }
+  const summary = buildOwnerAutonomousApprovalSummary(f.subject, { ...f.preview, sourceHash: ownerExecutionHash(source) }, view, f.plan, f.context)
+  expect(summary.hasTextSteps).toBe(true)
+})

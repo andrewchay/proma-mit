@@ -54,21 +54,27 @@ export async function executeEditTool(input: unknown, ctx: ToolContext): Promise
   let settle: typeof import('../file-mutation-journal').settleFileMutation | undefined
   try {
     const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
+    let ownerGated = false
     gates.assertBoundToolSession(ctx)
     if (requiresOwnerToolGate(ctx.sessionId, ctx.ownerWorkspaceWrite)) {
+      ownerGated = true
       const toolInput = input as Record<string, unknown>
       gates.assertOwnerToolWorkingDirectory(ctx.sessionId, ctx.cwd)
       gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Edit', toolInput)
-      const { consumeApprovedOwnerAction } = require('../../project-owner-action-approval') as typeof import('../../project-owner-action-approval')
-      if (!consumeApprovedOwnerAction(ctx.sessionId, { toolName: 'Edit', toolInput })) throw new Error('Owner动作批准已使用或失效，请重新审批')
+      if (!gates.isOwnerAutoAllowedWorkspaceWrite(ctx.sessionId, 'Edit', toolInput)) {
+        const { consumeApprovedOwnerAction } = require('../../project-owner-action-approval') as typeof import('../../project-owner-action-approval')
+        if (!consumeApprovedOwnerAction(ctx.sessionId, { toolName: 'Edit', toolInput })) throw new Error('Owner动作批准已使用或失效，请重新审批')
+      }
     }
     // 打开前固定 inode 基准，打开后比对，关闭父目录替换竞态。
     const expected = join(realpathSync(dirname(path)), basename(path))
+    if (ownerGated) gates.assertOwnerCanonicalWorkspacePath(ctx.sessionId, expected)
     const before = statSync(expected)
     const descriptor = openSync(path, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK)
     try {
       const stat = fstatSync(descriptor)
       if (!stat.isFile() || stat.nlink !== 1) throw new Error('Edit拒绝符号链接、硬链接和非普通文件')
+      if (ownerGated) gates.assertOwnerCanonicalWorkspacePath(ctx.sessionId, join(realpathSync(dirname(path)), basename(path)))
       assertDescriptorMatchesStat(descriptor, before)
       const scope = resolveToolPath(expected, ctx.cwd)
       if (scope.error) throw new Error(scope.error)

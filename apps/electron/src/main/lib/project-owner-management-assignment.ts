@@ -5,7 +5,7 @@ import type { OwnerExecutionPreparationInput, OwnerManagementEvent } from '@grav
 import { getProjectOwnerPlanDraft, getProjectOwnerPlanningContext } from './project-owner-plan-service'
 import { getOwnerRuntimeBinding } from './project-owner-runtime-binding'
 import { getCurrentOwnerExecutionAssignmentContext } from './project-owner-execution-assignment-context-service'
-import { OwnerExecutionAssignmentCapabilityError, ownerAssignmentContextMatchesApprovalTransition, parseOwnerExecutionAssignmentContext } from './project-owner-execution-assignment-context'
+import { OwnerExecutionAssignmentCapabilityError, ownerAssignmentContextMatchesApprovalTransition, ownerAssignmentContextsEquivalent, parseOwnerExecutionAssignmentContext } from './project-owner-execution-assignment-context'
 import { listOwnerExecutionAssignmentRuns, prepareOwnerExecutionAssignment } from './project-owner-execution-assignment-service'
 import { getOwnerExecutionPreparation } from './project-owner-execution-preparation'
 import { getOwnerManagementDelegation } from './project-owner-management-delegation'
@@ -50,7 +50,7 @@ export function queueOwnerAssignmentProtocolRetry(projectId: string, taskId: str
     expectedGoalRevision: planningContext.goal.revision, expectedPlanRevision: plan.revision,
     expectedPlanFingerprint: plan.planFingerprint, expectedContextFingerprint: planningContext.fingerprint,
   })
-  if (source.assignmentContext.contextFingerprint !== current.context.contextFingerprint
+  if (!ownerAssignmentContextsEquivalent(source.assignmentContext, current.context)
     && !ownerAssignmentContextMatchesApprovalTransition(source.assignmentContext, current.context)) return false
   const previousRetry = store.getProjectDb().prepare("SELECT 1 FROM project_owner_management_events WHERE project_id = ? AND json_extract(payload, '$.kind') = 'assignment_recheck' AND json_extract(payload, '$.taskId') IS ? AND json_extract(payload, '$.sourceRevision') = ? AND json_extract(payload, '$.sourceId') LIKE 'protocol-retry:%' LIMIT 1").get(projectId, taskId ?? null, plan.revision)
   if (previousRetry) return false
@@ -128,8 +128,14 @@ export function prepareOwnerManagementAssignment(event: OwnerManagementEvent): v
   const roles = [...new Set(source.context.steps.map(step => step.roleKey))]
   const completeTeam = source.context.workspaces.some(workspace => source.context.candidates.some(reviewer => {
     if ((source.context.teamContractVersion === undefined && !['reviewer', 'delivery-verifier'].includes(reviewer.roleTemplateId ?? '')) || !reviewer.workspaceIds.includes(workspace.id)) return false
+    const typed = source.context.steps.every(step => step.deliveryKind !== undefined)
+    const kindForStep = (step: typeof source.context.steps[number]) => step.deliveryKind === 'development' ? 'development' : 'controlled'
+    const reviewerKinds = [...new Set(source.context.steps.map(kindForStep))]
+    if (typed && reviewerKinds.some(kind => !supportsOwnerExecutionKind(reviewer, kind))) return false
     return roles.every(role => source.context.candidates.some(employee => employee.id !== reviewer.id && (source.context.teamContractVersion !== undefined || employee.roleTemplateId === role)
-      && employee.workspaceIds.includes(workspace.id) && source.context.executionKinds.some(kind => supportsOwnerExecutionKind(employee, kind) && supportsOwnerExecutionKind(reviewer, kind))
+      && employee.workspaceIds.includes(workspace.id) && (typed
+        ? source.context.steps.filter(step => step.roleKey === role).every(step => supportsOwnerExecutionKind(employee, kindForStep(step)))
+        : source.context.executionKinds.some(kind => supportsOwnerExecutionKind(employee, kind) && supportsOwnerExecutionKind(reviewer, kind)))
       && (source.context.teamContractVersion === 3 ? supportsOwnerMixedTeam([employee, reviewer]) : employee.channelId === reviewer.channelId && employee.modelId === reviewer.modelId && employee.runtime === reviewer.runtime)))
   }))
   if (!completeTeam) {
@@ -150,7 +156,8 @@ export function prepareOwnerManagementAssignment(event: OwnerManagementEvent): v
     const arranged = store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id = ? AND json_extract(payload, '$.planningTaskId') = ? AND json_extract(payload, '$.kind') = 'execution_arranged' LIMIT 1").get(event.projectId, existing.planning_task_id)
     if (arranged) return
     const execution = store.getProjectDb().prepare("SELECT status FROM agent_executions WHERE entity_type = 'task' AND entity_id = ? ORDER BY started_at DESC LIMIT 1").get(existing.planning_task_id) as { status: string } | undefined
-    if (execution && ['queued', 'running'].includes(execution.status)) return
+    // 已准备但尚未派发的安排仍待后台调度，不是已结束且缺少结论。
+    if (!execution || ['queued', 'running'].includes(execution.status)) return
     if (listPendingOwnerManagementEvents(event.projectId).some(pending => pending.kind === 'assignment_result' && pending.taskId === event.taskId)) return
     const previousRun = listOwnerExecutionAssignmentRuns({ projectId: event.projectId, ...(event.taskId ? { taskId: event.taskId } : {}) }).find(run => run.link.planningTaskId === existing.planning_task_id && run.sourceStatus === 'current')
     const previousOutcome = previousRun?.outcomes.at(-1)
@@ -213,6 +220,11 @@ export function projectOwnerManagementAssignmentResult(event: OwnerManagementEve
       : `已确认的工作安排仍保留，但持续管理预算${delegationView.state === 'exhausted' ? '已用尽' : '已失效或需要核对'}，所以我没有启动团队。请在这里核对预算或授权状态后再继续。` })
     return
   }
+  if (delegation?.autonomousExecution && delegationView.state !== 'active') {
+    const reason = delegationView.state === 'exhausted' ? '项目管理预算预留不足' : '项目管理授权需要核对'
+    appendOwnerManagementMessage({ projectId: event.projectId, eventId: `${event.id}:autonomous-start-blocked`, role: 'assistant', kind: 'attention', ...(event.taskId ? { taskId: event.taskId } : {}), content: `团队安排已完成，但${reason}，员工尚未启动。已有方案和费用记录都已保留；请在项目对话中核对授权后继续。` })
+    return
+  }
   if ((matchesStartApproval || withinAutonomousProjectGrant) && plan && delegation && delegationView.state === 'active') {
     const selectedSteps = plan.proposal.steps.filter(step => outcome.assignmentProposal!.selectedStepKeys.includes(step.key))
     // 执行准备按稳定roleKey排序并要求首个岗位员工与executor一致；这里先统一排序再确定主执行员工。
@@ -241,6 +253,7 @@ export function projectOwnerManagementAssignmentResult(event: OwnerManagementEve
       selectedStepKeys: [...outcome.assignmentProposal.selectedStepKeys], executionKind: outcome.assignmentProposal.executionKind,
       employeeRuntimeVersion: 2,
       qualityManagementVersion: 1,
+      ...(delegation.autonomousWorkspaceEditVersion === 1 && outcome.assignmentProposal.executionKind === 'development' && outcome.assignmentProposal.developmentScope ? { autonomousWorkspaceEditVersion: 1 as const } : {}),
       // 代码任务按文件交付：带研发范围时不再强制完整文本交付，否则 Write/Edit 会被移出工具集，员工只能把代码写在回复里。
       ...(outcome.assignmentProposal.executionKind === 'controlled' && !outcome.assignmentProposal.developmentScope ? { textDeliveryVersion: 1 as const } : {}),
       // 自主管理额度仅覆盖当前项目已绑定工作区；该绑定来自项目预设或用户刚批准的团队范围。

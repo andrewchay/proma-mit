@@ -2,7 +2,7 @@ import { ownerAssignmentFailureReason } from './project-owner-failure-reason'
 import { captureOwnerTextDelivery } from './project-owner-text-delivery'
 import { requestOwnerManagementWake } from './project-owner-management-events'
 import { appendOwnerManagementMessage, recordOwnerManagementTeamChanged } from './project-owner-management-store'
-import { readOwnerCommandFrozenSource, readOwnerCommandRuntime } from './project-owner-employee-runtime'
+import { ownerTaskDeliveryKind, readOwnerCommandFrozenSource, readOwnerCommandRuntime } from './project-owner-employee-runtime'
 import { resolveOwnerEmployeeInvocation } from './project-owner-employee-invocation'
 import { awaitOwnerRequestSettlements } from './project-owner-execution-request-exit'
 import {
@@ -73,7 +73,8 @@ import { settleOwnerCommandUsage } from './project-owner-execution-settlement'
 import { requestOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
 import { recordOwnerTechnicalReviewEvidence } from './project-owner-technical-review'
 import { ownerExecutionHash } from './project-owner-execution-hash'
-import { hydrateOwnerDevelopmentReviewerPrompt, ownerDevelopmentArtifactReferenceFromPrompt, readOwnerDevelopmentArtifactForReview, seedOwnerDevelopmentRework } from './project-owner-development-artifact'
+import { hydrateOwnerDevelopmentReviewerPrompt, ownerDevelopmentArtifactReferenceFromPrompt, readOwnerDevelopmentArtifactForReview, seedOwnerDevelopmentRework, seedOwnerDevelopmentDependencies } from './project-owner-development-artifact'
+import { prepareOwnerTargetDirectories } from './project-owner-safe-directory'
 import type { PilotUsageEvidence } from './project-pilot-budget-ledger'
 import { updateTask, getTask, updateExecutionSubTask } from './project-service'
 import { getSettings } from './settings-service'
@@ -864,7 +865,10 @@ export async function startOwnerCommandExecution(input: { executionId: string; c
   const originalEmployee = store.getAgentEmployee(execution.agentId)
   if (!originalEmployee?.enabled || !['ai-sdk', 'pi'].includes(originalEmployee.runtime) || originalEmployee.workflowId) return false
   let employee: AgentEmployee
-  try { employee = resolveOwnerEmployeeInvocation(originalEmployee, view.revalidation!.source) } catch { return false }
+  try {
+    const source = view.revalidation!.source
+    employee = resolveOwnerEmployeeInvocation(originalEmployee, { ...source, executionKind: ownerTaskDeliveryKind(source, execution.entityId) === 'text' ? 'controlled' : 'development' })
+  } catch { return false }
   // 重开应用时知识索引尚未被UI/工具打开；必须在claim前准备句柄，避免准备错误被误记为已启动后的未知用量。
   if (view.revalidation!.source.knowledgeSources.length) {
     try { await (await import('./knowledge-index-service')).openKnowledgeIndexStore() }
@@ -998,7 +1002,12 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
       const worktree = previousPath ? { path: previousPath, continuedFromExecutionId: previous!.id } : createDevelopmentWorktree(workspace.rootPath!, sessionDirectory, executionId)
       if (ownerExecution?.role === 'executor') {
         const continuedFrom = await seedOwnerDevelopmentRework(ownerExecution.commandId, worktree.path)
+          ?? await seedOwnerDevelopmentDependencies(ownerExecution.commandId, worktree.path)
         if (continuedFrom) Object.assign(worktree, { continuedFromExecutionId: continuedFrom })
+        const { source: frozen, taskId } = readOwnerCommandFrozenSource(ownerExecution.commandId)
+        const scope = frozen.tasks.find(item => item.taskId === taskId)?.developmentScope
+        if (!scope) throw new Error('Owner研发执行缺少冻结文件范围')
+        prepareOwnerTargetDirectories(worktree.path, scope.targetPaths, scope.allowedPaths)
       }
       const taskPrompt = ownerExecution || execution.developmentStandardId ? execution.prompt : buildAgentTaskPrompt(task!, employee)
       const prompt = `${taskPrompt}\n\n本次执行基线：${JSON.stringify(worktree)}`
@@ -1069,8 +1078,8 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
   let userMessage = ownerPlanning?.request.userPrompt ?? updated.prompt
   if (ownerExecution?.role === 'reviewer') {
     try {
-      const frozen = readOwnerCommandFrozenSource(ownerExecution.commandId).source
-      if (frozen.executionKind === 'development') {
+      const { source: frozen, taskId } = readOwnerCommandFrozenSource(ownerExecution.commandId)
+      if (ownerTaskDeliveryKind(frozen, taskId) === 'development') {
         const artifactReference = ownerDevelopmentArtifactReferenceFromPrompt(updated.prompt)
         if (!artifactReference) throw new Error('Owner代码Reviewer缺少冻结快照引用')
         const artifact = await readOwnerDevelopmentArtifactForReview(ownerExecution.commandId)
@@ -1376,6 +1385,11 @@ function recordPilotTerminalUsage(
 const pendingOwnerCommandCallbacks = new Map<string, string>()
 const conflictingOwnerCommandCallbacks = new Set<string>()
 
+/** 终态冻结和结算未结束时，恢复服务不得抢先修改同一命令。 */
+export function isOwnerCommandFinalizing(commandId: string): boolean {
+  return pendingOwnerCommandCallbacks.has(commandId)
+}
+
 /** Owner终态回调串行化；重复Runtime事件共享同一次冻结和结算。 */
 function handleOwnerCommandRunCallback(execution: AgentExecution, messages: AgentMessage[] | undefined, stopped: boolean, error?: string): boolean {
   const commandId = execution.ownerCommandId
@@ -1398,6 +1412,8 @@ function handleOwnerCommandRunCallback(execution: AgentExecution, messages: Agen
   }).finally(() => {
     pendingOwnerCommandCallbacks.delete(commandId)
     conflictingOwnerCommandCallbacks.delete(commandId)
+    // 若心跳已保守暂停，终态处理完全退出后再让恢复服务重读持久证据。
+    requestOwnerAutonomousScheduleWake(execution.projectId)
   })
   return true
 }
@@ -1769,6 +1785,8 @@ export function scanAgentEmployeeHeartbeat(maxDurationMs: number = DEFAULT_MAX_D
   for (const execution of running.filter((e) => e.status === 'running')) {
     // Stage B Owner执行不能进入普通超时/失联回写与Pilot用量路径；会话失活或探测异常时按unknown恢复并撤权。
     if (execution.ownerCommandId) {
+      // Runtime已结束但终态冻结/结算仍在进行时，会话可能已不活跃；不能抢先判定中断。
+      if (pendingOwnerCommandCallbacks.has(execution.ownerCommandId)) continue
       let active = false
       try { active = isAgentSessionActive(execution.sessionId) } catch { /* 探测异常按unknown保全，绝不普通重试 */ }
       if (active) store.updateAgentExecution(execution.id, { lastHeartbeatAt: now })

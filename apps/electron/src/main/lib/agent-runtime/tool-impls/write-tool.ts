@@ -49,14 +49,17 @@ export async function executeWriteTool(input: unknown, ctx: ToolContext): Promis
   let settle: typeof import('../file-mutation-journal').settleFileMutation | undefined
   try {
     let exclusiveCreate = false
+    let ownerGated = false
     const gates = require('../../project-owner-execution-gates') as typeof import('../../project-owner-execution-gates')
     gates.assertBoundToolSession(ctx)
     if (requiresOwnerToolGate(ctx.sessionId, ctx.ownerWorkspaceWrite)) {
+      ownerGated = true
       const toolInput = input as Record<string, unknown>
       gates.assertOwnerToolWorkingDirectory(ctx.sessionId, ctx.cwd)
       gates.assertToolAllowedForSessionPurpose(ctx.sessionId, 'Write', toolInput)
-      exclusiveCreate = gates.isOwnerAutoAllowedWorkspaceWrite(ctx.sessionId, 'Write', toolInput)
-      if (!exclusiveCreate) {
+      const autoAllowed = gates.isOwnerAutoAllowedWorkspaceWrite(ctx.sessionId, 'Write', toolInput)
+      exclusiveCreate = autoAllowed && !gates.isOwnerAutoAllowedExistingWorkspaceWrite(ctx.sessionId, toolInput)
+      if (!autoAllowed) {
         const { consumeApprovedOwnerAction } = require('../../project-owner-action-approval') as typeof import('../../project-owner-action-approval')
         if (!consumeApprovedOwnerAction(ctx.sessionId, { toolName: 'Write', toolInput })) throw new Error('Owner动作批准已使用或失效，请重新审批')
       }
@@ -65,6 +68,7 @@ export async function executeWriteTool(input: unknown, ctx: ToolContext): Promis
     if (!existsSync(dir)) {
       mkdirSync(dir, { recursive: true })
     }
+    if (ownerGated) gates.assertOwnerCanonicalWorkspacePath(ctx.sessionId, join(realpathSync(dir), basename(path)))
     // 先记写入意图：崩溃后能定位"哪个文件可能半写"，而不是靠猜。
     const journal = require('../file-mutation-journal') as typeof import('../file-mutation-journal')
     settle = journal.settleFileMutation
@@ -84,6 +88,7 @@ export async function executeWriteTool(input: unknown, ctx: ToolContext): Promis
       // 新建文件无法在打开前 stat，组合两道校验：打开后 stat 预期路径比 inode（捕获
       // "换出去再换回来"），再按规范化路径复核范围（捕获替换后持续指向外部）。
       const expected = join(realpathSync(dirname(path)), basename(path))
+      if (ownerGated) gates.assertOwnerCanonicalWorkspacePath(ctx.sessionId, expected)
       assertDescriptorMatchesStat(descriptor, statSync(expected))
       const scope = resolveToolPath(expected, ctx.cwd)
       if (scope.error) throw new Error(scope.error)

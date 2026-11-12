@@ -11,6 +11,41 @@ export function extractDeliveredHtml(content: string): string | null {
   return /^<!doctype html\s*>/i.test(html) && /<html(?:\s|>)/i.test(html) && /<\/html\s*>$/i.test(html) ? html : null
 }
 
+interface DeliveredCodeFile { path: string; changeType: 'add' | 'modify' | 'delete'; content: string | null }
+/** 研发成果由主进程在写入对话时核验快照与文件摘要；这里仅解析已绑定版本的展示。 */
+export function extractDeliveredCodeFiles(content: string, artifactHash: string): DeliveredCodeFile[] | null {
+  try {
+    const value: unknown = JSON.parse(content)
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+    const snapshot = value as { contentHash?: unknown; executionId?: unknown; workspaceId?: unknown; baseCommit?: unknown; files?: unknown }
+    if (snapshot.contentHash !== artifactHash || !/^[a-f0-9]{64}$/.test(artifactHash) || typeof snapshot.executionId !== 'string' || !snapshot.executionId
+      || typeof snapshot.workspaceId !== 'string' || !snapshot.workspaceId || typeof snapshot.baseCommit !== 'string' || !/^[a-f0-9]{40,64}$/.test(snapshot.baseCommit)
+      || !Array.isArray(snapshot.files) || !snapshot.files.length || snapshot.files.length > 100) return null
+    const files: DeliveredCodeFile[] = [], seen = new Set<string>()
+    for (const raw of snapshot.files as unknown[]) {
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+      const entry = raw as { file?: unknown; newContent?: unknown }
+      if (!entry.file || typeof entry.file !== 'object' || Array.isArray(entry.file)) return null
+      const { path, changeType } = entry.file as { path?: unknown; changeType?: unknown }
+      if (typeof path !== 'string' || !path || path.startsWith('/') || path.includes('\\') || path.includes('\0') || path.split('/').some(segment => !segment || segment === '.' || segment === '..') || seen.has(path)
+        || (changeType !== 'add' && changeType !== 'modify' && changeType !== 'delete')
+        || (changeType === 'delete' ? entry.newContent !== null : typeof entry.newContent !== 'string')) return null
+      seen.add(path); files.push({ path, changeType, content: entry.newContent as string | null })
+    }
+    return files
+  } catch { return null }
+}
+
+function downloadCodeFile(file: DeliveredCodeFile): void {
+  if (file.content === null) return
+  const filename = file.path.split('/').at(-1)!.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 200) || '成果文件'
+  const url = URL.createObjectURL(new Blob([file.content], { type: 'text/plain;charset=utf-8' }))
+  const link = document.createElement('a')
+  link.href = url; link.download = filename
+  document.body.appendChild(link); link.click(); link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 function downloadArtifact(title: string, content: string, extension: 'md' | 'html'): void {
   const filename = `${title.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').slice(0, 100) || '成果'}.${extension}`
   const url = URL.createObjectURL(new Blob([content], { type: extension === 'html' ? 'text/html;charset=utf-8' : 'text/markdown;charset=utf-8' }))
@@ -33,6 +68,7 @@ function ValidationRecords({ validation }: { validation: OwnerDeliveryValidation
 
 export function OwnerDeliveredArtifact({ item, validation, onRequestChanges, feedbackDisabled = false, feedbackCapacity = 4000, source = 'conversation' }: { item: OwnerManagementDelivery['items'][number]; validation?: OwnerDeliveryValidationRecord; onRequestChanges?: (excerpt?: string, intent?: 'question' | 'change') => void; feedbackDisabled?: boolean; feedbackCapacity?: number; source?: 'conversation' | 'chain' }): React.ReactElement {
   const html = extractDeliveredHtml(item.content)
+  const codeFiles = source === 'conversation' ? extractDeliveredCodeFiles(item.content, item.artifactHash) : null
   const previewAtom = useMemo(() => atom<{ hash: string; visible: boolean; viewport: 'adaptive' | 'mobile' }>({ hash: '', visible: false, viewport: 'adaptive' }), [])
   const [preview, setPreview] = useAtom(previewAtom)
   const selectionAtom = useMemo(() => atom<{ hash: string; text: string; tooLong: boolean }>({ hash: '', text: '', tooLong: false }), [])
@@ -75,6 +111,7 @@ export function OwnerDeliveredArtifact({ item, validation, onRequestChanges, fee
       <p><span className="font-medium">Owner 内部审阅：</span>{item.ownerDecision || '未附带审阅摘要'}</p>
       {validation?.unavailable ? <p role="alert" className="text-xs text-destructive">当前研发成果的验证来源无法核对，不能据此认可通过。</p> : validation?.validations.length ? <ValidationRecords validation={validation} /> : <p className="text-xs text-muted-foreground">本卡片未展示独立的运行或浏览器验证记录；不能据此认定运行验证通过。</p>}
     </section>
+    {codeFiles && <section aria-label="代码成果文件" className="space-y-2 rounded-lg bg-muted/40 p-3 text-sm"><p className="font-medium">代码成果文件</p><p className="text-xs text-muted-foreground">按路径分别下载；如文件相互引用，请保留显示的相对目录结构。删除项仅记录变化，不提供文件下载。</p><ul className="space-y-2">{codeFiles.map(file => <li key={file.path} className="flex flex-wrap items-center justify-between gap-2"><span className="break-all font-mono text-xs">{file.path} · {file.changeType === 'add' ? '新增' : file.changeType === 'modify' ? '修改' : '删除'}</span>{file.content !== null && <button type="button" className="rounded-lg bg-primary/10 px-3 py-1.5 text-xs text-primary" onClick={() => downloadCodeFile(file)}>下载文件</button>}</li>)}</ul></section>}
     {html && <p className="text-sm text-muted-foreground">源码已保存在{source === 'chain' ? '项目交付记录' : '本对话'}中。下载 HTML 后可用浏览器打开；运行验证情况以当前版本的验证记录为准。</p>}
     <div><p className="mb-2 text-xs font-medium text-muted-foreground">成果正文</p><pre ref={contentRef} onMouseUp={captureSelection} onKeyUp={captureSelection} className="max-h-96 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted/50 p-3 font-sans text-sm">{item.content}</pre>{selection.hash === item.artifactHash && selection.tooLong && <p className="mt-2 text-xs text-destructive">选中片段超过 300 字，请缩小选区。</p>}{onRequestChanges && selection.hash === item.artifactHash && selection.text && <div className="mt-2 space-y-2 rounded-lg bg-primary/5 p-3"><p className="text-xs text-muted-foreground">已选中内容，可连同本成果版本提问或提交修改意见。</p><p className="break-words text-sm">{selection.text}</p><button type="button" disabled={feedbackDisabled || selection.text.length + 20 > feedbackCapacity} className="rounded-lg bg-primary/10 px-3 py-1.5 text-sm text-primary disabled:opacity-50" onClick={() => onRequestChanges(selection.text)}>针对选中内容提出修改</button><button type="button" disabled={feedbackDisabled || selection.text.length + 20 > feedbackCapacity} className="ml-2 rounded-lg bg-muted px-3 py-1.5 text-sm disabled:opacity-50" onClick={() => onRequestChanges(selection.text, 'question')}>针对选中内容提问</button>{selection.text.length + 20 > feedbackCapacity && <p className="text-xs text-destructive">当前草稿空间不足，请精简后再引用。</p>}</div>}</div>
     {showPreview && previewHtml && <div className="overflow-hidden rounded-xl bg-muted/40 p-2">

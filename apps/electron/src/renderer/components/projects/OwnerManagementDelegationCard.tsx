@@ -42,7 +42,7 @@ export function OwnerManagementDelegationCard({ projectId, taskId }: { projectId
     ? '上一条模型请求尚未核对完成，Owner 已暂停并保留你的新消息。重新确认授权范围不会解除这次暂停，也不会重发请求；请先核对下方的原请求证据。'
     : stale
       ? '确认时使用的项目配置、资料范围或费用依据已有变化，因此 Owner 暂停后续模型请求，不会沿用旧授权。请重新核对当前预算和期限，再确认新范围；确认后 Owner 会从当前进度继续。'
-      : '确认后，Owner会在项目总预算、目标和资料范围内自行规划、安排并启动团队，跟进进度、独立检查成果和组织返工。只有需要业务决定、扩大范围或触及外部敏感动作时才会回来商量；发布和外发不包含在内。'
+      : '确认后，Owner会在项目总预算、目标和资料范围内自行规划、安排并启动团队，跟进进度、独立检查成果和组织返工。研发任务可在隔离工作树内自主新建和修改授权范围中的普通文件；敏感文件仍需确认。只有需要业务决定、扩大范围或触及外部敏感动作时才会回来商量；发布和外发不包含在内。'
   useEffect(() => {
     if (!editor.view || !canOffer || editor.preview || editor.busy || editor.error) return
     const timer = window.setTimeout(() => { void act({ subject, action: 'preview' }) }, 250)

@@ -32,6 +32,20 @@ export function assertOwnerEmployeePrice(runtime: OwnerEmployeeRuntime): void {
   if (!price || price.model !== runtime.modelId || price.providerKind !== 'openai' || ownerExecutionHash(price) !== runtime.priceEvidenceHash) throw new Error('Owner员工审核价格已变化或与冻结模型不匹配')
 }
 export interface OwnerCommandRuntime { channelId: string; modelId: string; runtime: string; channelHash?: string; priceEvidenceId?: string; priceEvidenceHash?: string }
+
+/** 根据准确冻结任务判断成果类型；旧批次没有步骤类型时沿用批次执行方式。 */
+export function ownerTaskDeliveryKind(source: Pick<OwnerExecutionRevalidationSource, 'executionKind' | 'tasks'>, taskId: string): 'text' | 'development' {
+  const tasks = source.tasks.filter(task => task.taskId === taskId)
+  if (tasks.length !== 1) throw new Error('Owner步骤交付类型缺少唯一冻结任务')
+  const kind = tasks[0]!.deliveryKind
+  if (kind !== undefined && kind !== 'text' && kind !== 'development') throw new Error('Owner步骤交付类型无效')
+  return kind ?? (source.executionKind === 'development' ? 'development' : 'text')
+}
+
+export function ownerTaskHasTextDelivery(source: Pick<OwnerExecutionRevalidationSource, 'executionKind' | 'tasks' | 'textDeliveryVersion'>, taskId: string): boolean {
+  const kind = ownerTaskDeliveryKind(source, taskId)
+  return kind === 'text' && (source.textDeliveryVersion === 1 || (source.executionKind === 'development' && source.tasks.some(task => task.taskId === taskId && task.deliveryKind === 'text')))
+}
 export function ownerEmployeeRuntimeFromSource(source: Pick<OwnerExecutionRevalidationSource, 'employeeRuntimes' | 'channelId' | 'modelId' | 'runtime'>, employeeId: string): OwnerCommandRuntime {
   if (!source.employeeRuntimes) return { channelId: source.channelId, modelId: source.modelId, runtime: source.runtime }
   const matches = source.employeeRuntimes.filter(item => item.employeeId === employeeId)
@@ -39,7 +53,7 @@ export function ownerEmployeeRuntimeFromSource(source: Pick<OwnerExecutionRevali
   return matches[0]!
 }
 /** 费用及晚到回调读取准确历史来源，不能受后续改目标/配置影响，也不赋予发送许可。 */
-export function readOwnerCommandFrozenSource(commandId: string): { source: OwnerExecutionRevalidationSource; employeeId: string } {
+export function readOwnerCommandFrozenSource(commandId: string): { source: OwnerExecutionRevalidationSource; employeeId: string; taskId: string } {
   const row = store.getProjectDb().prepare(`SELECT c.project_id,c.employee_id,c.role,c.source_task_id,g.task_id,g.revalidation_id,g.revalidation_revision,g.revalidation_integrity_hash,g.source_hash,g.channel_id,g.model_id,g.runtime,g.workspace_id
     FROM project_owner_execution_commands c JOIN project_owner_execution_grants g ON g.id=c.grant_id AND g.project_id=c.project_id WHERE c.id=?`).get(commandId) as { project_id: string; employee_id: string; role: string; source_task_id: string; task_id: string | null; revalidation_id: string; revalidation_revision: number; revalidation_integrity_hash: string; source_hash: string; channel_id: string; model_id: string; runtime: string; workspace_id: string } | undefined
   if (!row) throw new Error('Owner命令缺少运行授权来源')
@@ -51,7 +65,7 @@ export function readOwnerCommandFrozenSource(commandId: string): { source: Owner
   const task = record?.source.tasks.find(item => item.taskId === row.source_task_id)
   const employeeId = row.role === 'executor' ? task?.executor?.id ?? record?.source.executor.id : row.role === 'reviewer' ? record?.source.reviewer.id : undefined
   if (!record || !task || employeeId !== row.employee_id || record.revision !== row.revalidation_revision || record.integrityHash !== row.revalidation_integrity_hash || ownerExecutionHash(record.source) !== row.source_hash || record.source.channelId !== row.channel_id || record.source.modelId !== row.model_id || record.source.runtime !== row.runtime || record.source.workspaceId !== row.workspace_id) throw new Error('Owner命令运行配置与准确历史来源不一致')
-  return { source: record.source, employeeId: row.employee_id }
+  return { source: record.source, employeeId: row.employee_id, taskId: row.source_task_id }
 }
 
 export function readOwnerCommandRuntime(commandId: string): ReturnType<typeof ownerEmployeeRuntimeFromSource> {

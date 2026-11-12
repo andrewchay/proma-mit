@@ -79,6 +79,10 @@ files:
 
 # 通用额外资源
 extraResources:
+  - from: resources/owner-safe-directory
+    to: owner-safe-directory
+    filter:
+      - "*.node"
   - from: resources/development-employee-standard.json
     to: development-employee-standard.json
   # 模板虽已内嵌renderer，仍随包附带原始资源与完整来源许可。

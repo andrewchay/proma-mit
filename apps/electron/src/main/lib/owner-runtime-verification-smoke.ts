@@ -219,6 +219,49 @@ export async function runOwnerRuntimeVerificationSmoke(configRoot: string): Prom
   assert.match(commandRun.rawOutputSha256, /^[a-f0-9]{64}$/, '输出摘要格式无效')
   assert(commandRun.rawOutputByteLength > 0, '输出字节数为 0')
 
+  // 分离式页面必须加载冻结目标中的 JS/CSS，同时不得读取未声明脚本。
+  writeFileSync(join(workspaceRoot, 'resources.html'), '<!doctype html><link rel="stylesheet" href="resources.css"><div id="board"></div><script src="resources.js"></script><script src="undeclared.js"></script>')
+  writeFileSync(join(workspaceRoot, 'resources.css'), '#board { display: grid; grid-template-columns: repeat(4, 1fr) }')
+  writeFileSync(join(workspaceRoot, 'resources.js'), 'for (let i=0; i<16; i++) document.getElementById("board").appendChild(document.createElement("div"))')
+  writeFileSync(join(workspaceRoot, 'undeclared.js'), 'document.getElementById("board").replaceChildren()')
+  const resourceRun = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['resources.html', 'resources.js', 'resources.css'], command: 'browser:dom.board', timeoutMs: 20_000 })
+  assert.equal(resourceRun.exitCode, 0, `声明的 JS/CSS 未加载或未声明脚本被执行：${JSON.stringify(resourceRun.checks)}`)
+  const missingResource = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['resources.html', 'resources.js', 'resources.css'], command: 'browser:html.loads', timeoutMs: 20_000 })
+  assert.equal(missingResource.exitCode, 1, '页面有被阻断的脚本时不能报告完整加载成功')
+
+  // 日记检查必须真实驱动页面；无保存保护的反例不能通过草稿检查。
+  const diaryHtml = '<!doctype html><section id="review"><input id="date" type="date"><button id="write">撰写日记</button><div id="years"></div></section><section id="edit" hidden><button id="back">返回</button><input id="edit-date" type="date"><textarea></textarea><button id="save">保存</button></section><script src="diary.js"></script>'
+  const diaryScript = `
+    const date = document.querySelector('#date'), years = document.querySelector('#years'), text = document.querySelector('textarea')
+    const read = () => JSON.parse(localStorage.getItem('entries') || '{}')
+    function render() { years.replaceChildren(); const y = Number(date.value.slice(0,4)), md = date.value.slice(5); for (let i=0; i<5; i++) { const year=y-i, el=document.createElement('article'); el.textContent = year + ' ' + (md === '02-29' && !(year%4===0 && (year%100!==0 || year%400===0)) ? '该年份无 02-29' : (read()[year+'-'+md] || '无记录')); years.appendChild(el) } }
+    date.value='2024-02-29'; date.onchange=()=>{ if (!date.value) date.value='2024-02-29'; render() }; render()
+    document.querySelector('#write').onclick=()=>{ text.value=read()[date.value] || ''; document.querySelector('#edit-date').value=date.value; document.querySelector('#review').hidden=true; document.querySelector('#edit').hidden=false }
+    document.querySelector('#save').onclick=()=>{ const entries=read(); entries[date.value]=text.value; localStorage.setItem('entries',JSON.stringify(entries)) }
+    document.querySelector('#back').onclick=()=>{ if (text.value !== (read()[date.value] || '') && !confirm('未保存，离开？')) return; document.querySelector('#edit').hidden=true; document.querySelector('#review').hidden=false; render() }
+    document.querySelector('#edit-date').onchange=function(){ if (text.value !== (read()[date.value] || '') && !confirm('未保存，切换？')) { this.value=date.value; return }; date.value=this.value; text.value=read()[date.value] || '' }
+    window.addEventListener('beforeunload', event => { if (!document.querySelector('#edit').hidden && text.value !== (read()[date.value] || '')) { event.preventDefault(); event.returnValue='' } })
+  `
+  writeFileSync(join(workspaceRoot, 'diary.html'), diaryHtml)
+  writeFileSync(join(workspaceRoot, 'diary.js'), diaryScript)
+  const diary = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['diary.html', 'diary.js'], command: 'browser:diary.five-years+diary.history+diary.empty-date+diary.save-reload+diary.unsaved-draft+diary.switch-date', timeoutMs: 30_000 })
+  assert.equal(diary.exitCode, 0, `日记正例未通过：${JSON.stringify(diary.checks)}`)
+  writeFileSync(join(workspaceRoot, 'diary.js'), diaryScript.replace("read()[year+'-'+md]", "read()[(year-1)+'-'+md]"))
+  const wrongYear = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['diary.html', 'diary.js'], command: 'browser:diary.history', timeoutMs: 20_000 })
+  assert.equal(wrongYear.exitCode, 1, '历史内容显示在错误年份不得通过')
+  writeFileSync(join(workspaceRoot, 'diary.js'), diaryScript.replace("if (text.value !== (read()[date.value] || '') && !confirm('未保存，离开？')) return;", ''))
+  const lostDraft = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['diary.html', 'diary.js'], command: 'browser:diary.unsaved-draft', timeoutMs: 20_000 })
+  assert.equal(lostDraft.exitCode, 1, '未保存草稿静默丢失不得通过')
+  writeFileSync(join(workspaceRoot, 'diary.js'), diaryScript.replace("if (text.value !== (read()[date.value] || '') && !confirm('未保存，离开？')) return;", "const entries=read(); entries['1999-01-01']=text.value; localStorage.setItem('entries',JSON.stringify(entries));"))
+  const wrongDraftDate = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['diary.html', 'diary.js'], command: 'browser:diary.unsaved-draft', timeoutMs: 20_000 })
+  assert.equal(wrongDraftDate.exitCode, 1, '草稿保存到错误日期不得通过')
+  writeFileSync(join(workspaceRoot, 'diary.js'), diaryScript.replace("if (text.value !== (read()[date.value] || '') && !confirm('未保存，切换？')) { this.value=date.value; return };", ''))
+  const lostOnSwitch = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['diary.html', 'diary.js'], command: 'browser:diary.switch-date', timeoutMs: 20_000 })
+  assert.equal(lostOnSwitch.exitCode, 1, '切换日期后草稿静默丢失不得通过')
+  writeFileSync(join(workspaceRoot, 'diary.js'), diaryScript.replace("if (text.value !== (read()[date.value] || '') && !confirm('未保存，切换？')) { this.value=date.value; return };", "const entries=read(); entries[date.value]=text.value; entries[this.value]=text.value; localStorage.setItem('entries',JSON.stringify(entries));"))
+  const copiedToNewDate = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['diary.html', 'diary.js'], command: 'browser:diary.switch-date', timeoutMs: 20_000 })
+  assert.equal(copiedToNewDate.exitCode, 1, '切换日期时将草稿复制到新日期不得通过')
+
   // 3) 网络拦截：本地探针服务不得收到任何请求
   let probeHits = 0
   const probe = createServer((_request, response) => { probeHits += 1; response.end('hit') })

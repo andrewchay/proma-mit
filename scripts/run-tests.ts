@@ -16,14 +16,27 @@ const files = [...new Set(listing.stdout.toString().split('\0'))]
 if (!files.length) throw new Error('没有匹配的测试文件')
 let failures = 0
 for (const path of files) {
-  const directory = mkdtempSync(join(tmpdir(), 'gravitas-test-'))
-  try {
-    const child = Bun.spawn([process.execPath, 'test', './' + path], {
-      env: { ...process.env, PROMA_TEST_CONFIG_DIR: directory },
-      stdout: 'inherit', stderr: 'inherit',
-    })
-    if (await child.exited !== 0) failures++
-  } finally { rmSync(directory, { recursive: true, force: true }) }
+  // Owner 集成测试会累积数据及后台调度；互补筛选保证每项只运行一次，
+  // 分进程隔离数据库、浏览器和异步任务，避免前一批超时污染后一批。
+  const patterns = path === 'apps/electron/src/main/lib/project-owner-quality-actions.test.ts'
+    ? ['恢复', '^(?!.*恢复)']
+    : path === 'apps/electron/src/renderer/atoms/owner-delivery-flow.integration.test.ts'
+      ? ['^Given真实任务服务与旧手动', '^Given真实任务服务与Owner自主', '^(?!Given真实任务服务与(?:旧手动|Owner自主))']
+      : [null]
+  let fileFailed = false
+  for (const pattern of patterns) {
+    const directory = mkdtempSync(join(tmpdir(), 'gravitas-test-'))
+    try {
+      const args = [process.execPath, 'test', './' + path]
+      if (pattern) args.push('--test-name-pattern', pattern)
+      const child = Bun.spawn(args, {
+        env: { ...process.env, PROMA_TEST_CONFIG_DIR: directory },
+        stdout: 'inherit', stderr: 'inherit',
+      })
+      if (await child.exited !== 0) fileFailed = true
+    } finally { rmSync(directory, { recursive: true, force: true }) }
+  }
+  if (fileFailed) failures++
 }
 console.log('测试文件: ' + files.length + '，失败文件: ' + failures)
 process.exitCode = failures ? 1 : 0

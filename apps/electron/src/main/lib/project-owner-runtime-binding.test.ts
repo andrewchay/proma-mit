@@ -51,7 +51,8 @@ test('Given 系统Owner载体配置漂移 When 自动刷新 Then 复用原项目
   const f = fixture()
   writeFileSync(getSettingsPath(), JSON.stringify({ agentChannelId: f.employee.channelId, agentModelId: f.employee.modelId, agentWorkspaceId: f.workspace.id }))
   const first = service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding)
-  updateChannel(first.channelId, { name: '已更新的配置名称' })
+  // 真实配置漂移：服务地址变化（不是显示名）。仅改名不应触发重建。
+  updateChannel(first.channelId, { baseUrl: 'https://changed.invalid/v1' })
   const refreshed = service.resolveOwnerRuntimeBindingFromDefaults(f.project.id)
   expect(refreshed).toMatchObject({ actor: 'system:owner-manager', revision: 2, workspaceId: first.workspaceId, ownerName: first.ownerName })
   expect(refreshed?.carrierId).not.toBe(first.carrierId)
@@ -221,8 +222,49 @@ test('Given 已明确绑定其他模型且随后新增GLM When 渠道配置刷�
   const f = fixture()
   const first = service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding)
   createChannel({ name: '新增GLM默认', provider: 'zhipu', baseUrl: 'https://example.invalid', apiKey: 'fake', enabled: true, models: [{ id: 'glm-5.3-flash', name: 'GLM', enabled: true }] })
-  updateChannel(first.channelId, { name: '更新渠道名称' })
+  // 真实配置漂移：服务地址变化推动重新绑定（仅改名不触发）。
+  updateChannel(first.channelId, { baseUrl: 'https://changed.invalid/v1' })
   const result = service.resolveOwnerRuntimeBindingFromDefaults(f.project.id)
   expect(result).toMatchObject({ revision: 2, channelId: first.channelId, modelId: first.modelId })
   expect(service.getOwnerRuntimeBinding(f.project.id, 1)).toEqual(first)
+})
+
+test('Given 绑定内容完全未变 When 以当前版本再次保存 Then 幂等返回原版本且不新增revision', () => {
+  const f = fixture()
+  const first = service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding)
+  expect(first.revision).toBe(1)
+  const countRevisions = () => (store.getProjectDb().prepare('SELECT COUNT(*) AS n FROM project_owner_runtime_revisions WHERE project_id = ?').get(f.project.id) as { n: number }).n
+  // 同一份配置重复保存：版本必须保持不变，否则已签发委托会因「配置已变化」失效。
+  const again = service.saveOwnerRuntimeBinding(f.project.id, first.revision, f.binding)
+  expect(again.revision).toBe(1)
+  expect(countRevisions()).toBe(1)
+  // 真实变更仍然新增版本：换一个载体必须被记录。
+  const other = employees.createAgentEmployee({ name: '另一载体', role: '规划', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: f.employee.channelId, modelId: f.employee.modelId ?? 'deepseek-flash', workspaceIds: [f.workspace.id] })
+  const changed = service.saveOwnerRuntimeBinding(f.project.id, again.revision, { ...f.binding, carrierId: other.id, changeReason: '更换载体' })
+  expect(changed.revision).toBe(2)
+  expect(countRevisions()).toBe(2)
+})
+
+test('Given 渠道被保存或模型列表刷新 When 重新计算载体事实 Then 配置指纹不变，已签发绑定仍有效', () => {
+  const f = fixture()
+  const binding = service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding)
+  const before = service.getOwnerCarrierFacts(f.project.id, f.employee.id, f.workspace.id)
+  // 模拟「渠道被保存一次」：只改显示名（配置内容不变），updatedAt 会随之变化。
+  updateChannel(f.employee.channelId!, { name: '假渠道（已重命名）' })
+  const after = service.getOwnerCarrierFacts(f.project.id, f.employee.id, f.workspace.id)
+  expect(after.carrierConfigurationFingerprint).toBe(before.carrierConfigurationFingerprint)
+  expect(service.ownerCarrierBindingMatches(binding, after)).toBe(true)
+  // 真实配置变化仍然必须被识别：改动渠道的服务地址后指纹必须变化。
+  updateChannel(f.employee.channelId!, { baseUrl: 'https://changed.invalid/v1' })
+  const changed = service.getOwnerCarrierFacts(f.project.id, f.employee.id, f.workspace.id)
+  expect(changed.carrierConfigurationFingerprint).not.toBe(before.carrierConfigurationFingerprint)
+  expect(service.ownerCarrierBindingMatches(binding, changed)).toBe(false)
+})
+
+test('Given 旧版含整棵渠道对象的指纹 When 重新计算 Then 仍被接受，历史绑定不会因算法升级失效', () => {
+  const f = fixture()
+  const binding = service.saveOwnerRuntimeBinding(f.project.id, 0, f.binding)
+  const facts = service.getOwnerCarrierFacts(f.project.id, f.employee.id, f.workspace.id)
+  // 历史绑定保存的是上一版算法（整棵 channel/workspace 对象）算出的指纹。
+  expect(service.ownerCarrierBindingMatches({ ...binding, carrierConfigurationFingerprint: facts.legacyConfigurationFingerprint }, facts)).toBe(true)
 })

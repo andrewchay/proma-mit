@@ -109,6 +109,25 @@ const greenfieldResponse: OwnerExecutionAssignmentProposal = {
 test('Given 绿地项目无代码候选 When Owner声明新建文件与内置断言 Then 接受', () => {
   expect(parseOwnerExecutionAssignmentProposal(greenfieldResponse, greenfieldContext)).toEqual(greenfieldResponse)
 })
+test('Given计划区分文本与代码 When安排混合步骤 Then选择研发批次并拒绝错误的执行类型', () => {
+  const steps = [{ ...context.steps[0]!, deliveryKind: 'text' as const }, { ...context.steps[1]!, deliveryKind: 'development' as const }]
+  const mixed = { ...greenfieldContext, steps }
+  expect(parseOwnerExecutionAssignmentProposal(greenfieldResponse, mixed)).toEqual(greenfieldResponse)
+  expect(() => parseOwnerExecutionAssignmentProposal(response, { ...context, steps })).toThrow('研发步骤不能使用受控文本执行方式')
+  expect(() => parseOwnerExecutionAssignmentProposal(greenfieldResponse, { ...greenfieldContext, steps: steps.map(step => ({ ...step, deliveryKind: 'text' as const })) })).toThrow('仅有文本成果')
+})
+test('Given文本与代码使用不同岗位 When安排混合团队 Then各岗位只需具备所承担步骤的能力', () => {
+  const steps = [{ ...context.steps[0]!, deliveryKind: 'text' as const }, { ...context.steps[1]!, deliveryKind: 'development' as const }]
+  const candidates = greenfieldContext.candidates.map(candidate => candidate.id === 'researcher2'
+    ? { ...candidate, executionProfile: 'general' as const, ownerControlledCompatible: true as const }
+    : { ...candidate, ownerControlledCompatible: true as const })
+  const mixed = { ...greenfieldContext, steps, candidates, teamContractVersion: 2 as const }
+  expect(parseOwnerExecutionAssignmentProposal(greenfieldResponse, mixed)).toEqual(greenfieldResponse)
+  const incapable = { ...mixed, candidates: candidates.map(candidate => candidate.id === 'researcher2' ? { ...candidate, ownerControlledCompatible: undefined } : candidate) }
+  expect(() => parseOwnerExecutionAssignmentProposal(greenfieldResponse, incapable)).toThrow('执行方式')
+  const wrongReviewer = { ...mixed, candidates: candidates.map(candidate => candidate.id === 'reviewer' ? { ...candidate, ownerControlledCompatible: undefined } : candidate) }
+  expect(() => parseOwnerExecutionAssignmentProposal(greenfieldResponse, wrongReviewer)).toThrow('独立评审')
+})
 
 test('Given 绿地项目 When 验证命令要求执行仓库脚本 Then 拒绝', () => {
   for (const command of ['bun test', 'node verify.cjs', 'npm run check']) {

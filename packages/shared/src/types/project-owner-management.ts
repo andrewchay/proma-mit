@@ -295,6 +295,8 @@ export interface OwnerManagementDelegationInput {
   maxRequests: number
   /** 新授权允许在项目总额内自主组织员工；旧委托缺省为 false，避免静默扩权。 */
   autonomousExecution?: true
+  /** 新确认允许隔离工作树内按冻结范围自主修改普通文件。 */
+  autonomousWorkspaceEditVersion?: 1
   maxCostMicros: number
   expiresAt: number
   /** 旧版委托兼容字段；新授权不绑定单份方案。 */

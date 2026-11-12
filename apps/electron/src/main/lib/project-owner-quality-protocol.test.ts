@@ -29,10 +29,39 @@ function context(): ProjectOwnerPlanningContext {
   }
 }
 
+test('Given文本质量判断仅有引号排版差异 When匹配唯一原文 Then保存真实原文且拒绝虚构或歧义', async () => {
+  const { parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
+  const c = context(), delivery = c.conversation!.deliveryReview!
+  delete delivery.developmentArtifact
+  const content = '设计有"年份占位"并可返回。'
+  delivery.artifact = { schemaVersion: 1, projectId: 'project-1', grantId: 'grant-1', commandId: 'executor', executionId: 'exec', sessionId: 'session', taskId: 'task-1', stepLinkId: 'link-1', sourceHash: 'd'.repeat(64), planRevision: 2, reworkOrdinal: 0, messageId: 'message', content, contentSha256: 'c'.repeat(64), byteLength: Buffer.byteLength(content), capturedAt: 1, integrityHash: 'e'.repeat(64) }
+  const base = acceptDecision(), criteria = base.criteria as OwnerQualityDecision['criteria']
+  criteria[0]!.quote = '设计有“年份占位”并可返回。'
+  expect(parseOwnerQualityDecision(base, c).criteria[0]?.quote).toBe(content)
+  delivery.artifact.content = `${content}\n${content}`
+  expect(() => parseOwnerQualityDecision(base, c)).toThrow('引用不符')
+  delivery.artifact.content = content
+  criteria[0]!.quote = '设计有“年份占位”但无法返回。'
+  expect(() => parseOwnerQualityDecision(base, c)).toThrow('引用不符')
+})
+
 function acceptDecision(): Record<string, unknown> {
   return { reviewerCommandId: 'review-cmd', artifactHash: 'c'.repeat(64), verdict: 'accept', reason: '修复和验证证据均符合标准。',
     criteria: [{ criterion: '包含修复逻辑', status: 'met', evidence: '代码快照包含修复逻辑', quote: 'return value + 1' }], findings: [] }
 }
+
+test('Given独立评审因缺少运行证据阻断 When Owner请求补验证 Then保留判断但不能作为代码缺陷自动返工', async () => {
+  const protocol = await import('./project-owner-quality-protocol')
+  const c = context(), review = c.conversation!.deliveryReview!.review!
+  review.verdict = 'blocked'
+  review.criteria[0] = { criterion: '包含修复逻辑', status: 'not_verified', evidence: '缺少运行回执', quote: null }
+  const decision = { ...acceptDecision(), verdict: 'rework', criteria: [{ ...review.criteria[0] }], findings: [{ severity: 'medium', description: '缺少验证', requestedChange: '补充运行验证' }] }
+  const parsed = protocol.parseOwnerQualityDecision(decision, c)
+  expect(protocol.isOwnerEvidenceGapRework(parsed)).toBe(true)
+  expect(() => protocol.parseOwnerQualityDecision({ ...decision, findings: [] }, c)).toThrow()
+  review.verdict = 'approved'
+  expect(() => protocol.parseOwnerQualityDecision(decision, c)).toThrow()
+})
 
 test('Given代码快照和全部新鲜成功验证回执 When Owner提出accept Then接受绑定准确快照的判断', async () => {
   const protocol = await import('./project-owner-quality-protocol')

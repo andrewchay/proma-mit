@@ -80,7 +80,9 @@ test('Given自然语言消息 When保存、重复提交及数据库重开 Then�
 test('Given管理配置变化使委托失效 When用户继续发消息 Then先解释暂停且重新授权后自动处理原消息', async () => {
   const f = fixture(), previousGrant = f.issue()
   const binding = (await import('./project-owner-runtime-binding')).getOwnerRuntimeBinding(f.project.id)!
-  saveOwnerRuntimeBinding(f.project.id, binding.revision, { ownerName: 'Owner', carrierId: binding.carrierId, workspaceId: binding.workspaceId, changeReason: '模拟授权后配置修订' })
+  // 只有真实配置变化（换载体）才应让已签发委托失效；仅改说明文字属于幂等保存。
+  const replacement = employees.createAgentEmployee({ name: '替换载体', role: '规划', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: binding.channelId, modelId: binding.modelId, workspaceIds: [binding.workspaceId] })
+  saveOwnerRuntimeBinding(f.project.id, binding.revision, { ownerName: 'Owner', carrierId: replacement.id, workspaceId: binding.workspaceId, changeReason: '模拟授权后更换执行载体' })
   const saved = sendOwnerManagementMessage(f.message('请继续推进，并告诉我目前卡在哪里'))
   const stop = startOwnerManagementLoop()
   let renewedGrant: ReturnType<typeof delegation.confirmOwnerManagementDelegation> | undefined
@@ -140,7 +142,8 @@ test('Given旧授权失效且旧版已有未执行对话Link When后台对账并
   expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(0)
 
   const binding = (await import('./project-owner-runtime-binding')).getOwnerRuntimeBinding(f.project.id)!
-  saveOwnerRuntimeBinding(f.project.id, binding.revision, { ownerName: 'Owner', carrierId: binding.carrierId, workspaceId: binding.workspaceId, changeReason: '模拟旧版待处理消息期间配置修订' })
+  const replacement = employees.createAgentEmployee({ name: '替换载体二', role: '规划', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: binding.channelId, modelId: binding.modelId, workspaceIds: [binding.workspaceId] })
+  saveOwnerRuntimeBinding(f.project.id, binding.revision, { ownerName: 'Owner', carrierId: replacement.id, workspaceId: binding.workspaceId, changeReason: '模拟旧版待处理消息期间更换载体' })
   const stop = startOwnerManagementLoop()
   let renewedGrant: ReturnType<typeof delegation.confirmOwnerManagementDelegation> | undefined
   try {
@@ -286,6 +289,20 @@ test('Given有效持续对话委托 When离页后台回应并在途收到两条�
     expect(goals.getProjectOwnerGoalDraft(f.project.id)?.revision).toBe(1)
     expect(plans.getProjectOwnerPlanDraft(f.project.id)).toBeNull()
   } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+})
+
+test('Given 对话已经发出并产生方案 When 管理授权随后撤销 Then 不声称该消息未发送', async () => {
+  const f = fixture(), message = sendOwnerManagementMessage(f.message('继续完成')), grant = f.issue(), stop = startOwnerManagementLoop()
+  try {
+    await until(() => Boolean(active(f)))
+    finish(f, 'plan')
+    await until(() => Boolean(plans.getProjectOwnerPlanDraft(f.project.id)))
+    await stop()
+    delegation.revokeOwnerManagementDelegation(f.project.id, grant.id)
+    preparePendingOwnerConversation(f.project.id)
+    expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.eventId.startsWith(`conversation-blocked:${message.id}:`))).toBe(false)
+    expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(1)
+  } finally { await stop() }
 })
 
 test('Given用户在对话要求方案修改 WhenOwner生成提案 Then保存待审计划、不自动确认或发业务授权', async () => {

@@ -1,14 +1,14 @@
-import { createHash } from 'node:crypto'
-import { lstat, mkdir, writeFile, unlink, readFile } from 'node:fs/promises'
-import { dirname, join, relative, resolve } from 'node:path'
+import { lstat, readFile } from 'node:fs/promises'
+import { dirname, join } from 'node:path'
 import type { DevelopmentSnapshot } from '@gravitas/shared'
 import { getAgentWorkspace } from './agent-workspace-manager'
 import { getAgentSessionMeta } from './agent-session-manager'
 import { getAgentSessionWorkspacePath } from './config-paths'
 import { resolveDevelopmentWorktree } from './agent-development-worktree'
 import { createDevelopmentSnapshotAsync, developmentWorktreeMatchesSnapshotAsync, loadDevelopmentSnapshotAsync, readDevelopmentSnapshotContentsAsync } from './development-snapshot-service'
-import { validateDevelopmentScope, normalizeRepoRelativePath, pathWithinAllowed } from './development-task-service'
-import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
+import { validateDevelopmentScope } from './development-task-service'
+import { applyOwnerDevelopmentSnapshot, mergeOwnerDevelopmentSnapshots, type OwnerDevelopmentHandoffInput } from './project-owner-development-handoff'
+import { ownerTaskDeliveryKind, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { ownerExecutionHash } from './project-owner-execution-hash'
 import { ownerDevelopmentValidationId, readOwnerDevelopmentValidationAttempt } from './development-validation-attempt'
 import { DEVELOPMENT_VALIDATION_EVIDENCE_VALIDITY_MS } from './development-validation-acceptance'
@@ -132,7 +132,7 @@ export async function freezeOwnerDevelopmentArtifact(commandId: string, executio
 
   const { source } = readOwnerCommandFrozenSource(commandId)
   const frozenTask = source.tasks.find(item => item.taskId === command.source_task_id)
-  if (source.executionKind !== 'development') return null
+  if (ownerTaskDeliveryKind(source, command.source_task_id) !== 'development') return null
   if (!frozenTask?.developmentScope) throw new Error('Owner研发执行缺少冻结任务范围')
   if (frozenTask.linkId !== command.source_step_link_id || !source.workspaceId) throw new Error('Owner研发快照缺少冻结步骤或工作区来源')
   const task = store.getTask(command.source_task_id)
@@ -177,7 +177,7 @@ export async function readOwnerDevelopmentArtifactForReview(reviewerCommandId: s
   } | undefined
   if (!reviewer || reviewer.role !== 'reviewer' || reviewer.state !== 'running' || !reviewer.execution_id) throw new Error('Owner代码Reviewer命令来源无效')
   const { source } = readOwnerCommandFrozenSource(reviewerCommandId)
-  if (source.executionKind !== 'development') return null
+  if (ownerTaskDeliveryKind(source, reviewer.source_task_id) !== 'development') return null
   const executors = database.prepare(`SELECT c.id, c.execution_id, c.source_hash, c.state, c.actual_cost_micros, c.usage_evidence,
       c.usage_record_key, e.status AS execution_status, e.owner_command_id, e.session_id
     FROM project_owner_execution_commands c JOIN agent_executions e ON e.id=c.execution_id
@@ -289,20 +289,75 @@ export async function seedOwnerDevelopmentRework(commandId: string, worktreePath
   if (!previousPath || snapshot.workspaceId !== workspace.id || !await developmentWorktreeMatchesSnapshotAsync(previousPath,snapshot,scope)) throw new Error('Owner返工上一轮worktree与冻结快照不一致')
   if (revalidation && snapshot.contentHash !== revalidation.artifactHash) throw new Error('Owner复验交接前的原成果哈希已变化')
   const files = await readDevelopmentSnapshotContentsAsync(previousDirectory,previous.execution_id)
-  for (const { file, newContent } of files) {
-    const name = normalizeRepoRelativePath(file.path)
-    if (!pathWithinAllowed(name,scope.allowedPaths)) throw new Error('Owner返工文件不在冻结修改范围内')
-    if (newContent !== null && createHash('sha256').update(newContent,'utf8').digest('hex') !== file.newSha256) throw new Error('Owner返工快照不是可无损交接的UTF-8源码')
-    const target = resolve(worktreePath,name)
-    if (relative(worktreePath,target).startsWith('..')) throw new Error('Owner返工文件越界')
-    let cursor = worktreePath
-    for (const segment of name.split('/')) {
-      cursor = join(cursor,segment)
-      try { const stat = await lstat(cursor); if (stat.isSymbolicLink() || stat.isFile() && stat.nlink !== 1 || !stat.isFile() && !stat.isDirectory()) throw new Error('Owner返工目标不能是符号链接、硬链接或特殊文件') }
-      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
-    }
-    if (newContent === null) await unlink(target).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error })
-    else { await mkdir(dirname(target),{ recursive:true }); await writeFile(target,newContent,'utf8') }
-  }
+  applyOwnerDevelopmentSnapshot(worktreePath, targetDirectory, snapshot, files, scope.allowedPaths)
   return previous.execution_id
+}
+
+/** 后继研发步骤继承已验收的上游快照，始终创建独立会话与worktree。 */
+export async function seedOwnerDevelopmentDependencies(commandId: string, worktreePath: string): Promise<string | undefined> {
+  const database = store.getProjectDb()
+  const command = database.prepare('SELECT project_id,grant_id,source_task_id,source_hash,rework_ordinal,role,state,execution_id FROM project_owner_execution_commands WHERE id=?').get(commandId) as { project_id: string; grant_id: string; source_task_id: string; source_hash: string; rework_ordinal: number; role: string; state: string; execution_id: string } | undefined
+  if (!command || command.state !== 'queued') throw new Error('Owner代码交接命令尚未处于可准备状态')
+  if (command.role !== 'executor' || command.rework_ordinal !== 0) return undefined
+  const { source } = readOwnerCommandFrozenSource(commandId)
+  if (source.qualityManagementVersion !== 1 || ownerTaskDeliveryKind(source, command.source_task_id) !== 'development') return undefined
+  const task = source.tasks.find(item => item.taskId === command.source_task_id)
+  const workspace = getAgentWorkspace(source.workspaceId)
+  if (!task?.developmentScope || !workspace?.rootPath) throw new Error('Owner代码交接缺少冻结研发任务或工作区')
+  const ancestors = new Set<string>()
+  const visit = (taskId: string) => {
+    const current = source.tasks.find(item => item.taskId === taskId)
+    if (!current) throw new Error('Owner代码交接依赖不在冻结任务中')
+    for (const edge of current.dependencies.filter(item => item.taskId === taskId)) {
+      if (!ancestors.has(edge.dependsOnTaskId)) { ancestors.add(edge.dependsOnTaskId); visit(edge.dependsOnTaskId) }
+    }
+  }
+  visit(command.source_task_id)
+  const codeAncestors = [...ancestors].filter(id => ownerTaskDeliveryKind(source, id) === 'development')
+  if (!codeAncestors.length) return undefined
+  // 只交接依赖链末端快照；它已经包含自身通过验收的代码祖先。
+  const dependsOn = (id: string, predecessor: string, seen = new Set<string>()): boolean => {
+    if (seen.has(id)) return false
+    seen.add(id)
+    const current = source.tasks.find(item => item.taskId === id)
+    return Boolean(current?.dependencies.filter(edge => edge.taskId === id).some(edge => edge.dependsOnTaskId === predecessor || dependsOn(edge.dependsOnTaskId, predecessor, seen)))
+  }
+  const tips = codeAncestors.filter(candidate => !codeAncestors.some(other => candidate !== other && dependsOn(other, candidate)))
+  if (!tips.length) throw new Error('Owner代码依赖缺少可核验的上游版本')
+  const targetDirectory = dirname(worktreePath)
+  const targetBinding = JSON.parse(await readFile(join(targetDirectory, 'development-worktree.json'), 'utf8')) as { branch?: string }
+  const targetExecution = store.getAgentExecution(command.execution_id)
+  if (targetExecution?.ownerCommandId !== commandId || targetExecution.status !== 'queued' || targetExecution.sessionId !== ''
+    || targetBinding.branch !== `employee/${command.execution_id}` || resolveDevelopmentWorktree(workspace.rootPath, targetDirectory) !== worktreePath) throw new Error('Owner代码交接目标工作树来源不一致')
+  const handoffs: OwnerDevelopmentHandoffInput[] = []
+  const executionIds: string[] = []
+  for (const tip of tips) {
+    const predecessor = source.tasks.find(item => item.taskId === tip)!
+    const rows = database.prepare('SELECT reviewer_command_id FROM project_owner_quality_actions WHERE project_id=? AND grant_id=? AND task_id=? ORDER BY rowid DESC LIMIT 1').all(command.project_id, command.grant_id, predecessor.taskId) as { reviewer_command_id: string }[]
+    const quality = require('./project-owner-quality-actions') as typeof import('./project-owner-quality-actions')
+    const decision = rows[0] ? quality.readOwnerQualityAction(rows[0].reviewer_command_id) : null
+    const artifact = rows[0] ? quality.readOwnerQualityArtifact(rows[0].reviewer_command_id) : null
+    const reviews = (require('./project-owner-technical-review') as typeof import('./project-owner-technical-review')).listOwnerTechnicalReviewEvidence(command.project_id, predecessor.taskId)
+    const review = reviews.find(item => item.reviewerCommandId === decision?.reviewerCommandId)
+    if (!decision || decision.state !== 'accepted' || !artifact || artifact.contentHash !== decision.artifactHash || artifact.stepLinkId !== predecessor.linkId
+      || !review || review.verdict !== 'approved' || !review.artifactVerified || !review.validationEvidenceVerified || review.artifactHash !== artifact.contentHash) throw new Error('Owner代码上游缺少准确验收、独立评审或验证证据')
+    const upstream = database.prepare("SELECT id,execution_id,state,actual_cost_micros,usage_evidence,source_hash FROM project_owner_execution_commands WHERE id=? AND project_id=? AND grant_id=? AND source_task_id=? AND source_step_link_id=? AND role='executor' AND rework_ordinal=?").get(review.executorCommandId, command.project_id, command.grant_id, predecessor.taskId, predecessor.linkId, decision.reworkOrdinal) as { id: string; execution_id: string; state: string; actual_cost_micros: number | null; usage_evidence: string | null; source_hash: string } | undefined
+    const execution = upstream && store.getAgentExecution(upstream.execution_id)
+    let knownUsage = false
+    try { const usage = JSON.parse(upstream?.usage_evidence ?? 'null') as { source?: string } | null; knownUsage = Boolean(usage?.source && usage.source !== 'unknown') } catch { /* 用量无法核对时保留原记录。 */ }
+    if (!upstream || upstream.state !== 'settled' || upstream.actual_cost_micros === null || upstream.source_hash !== artifact.sourceHash || upstream.source_hash !== review.sourceHash || !knownUsage
+      || !execution || execution.ownerCommandId !== upstream.id || execution.status !== 'completed' || !execution.sessionId || execution.id !== review.executorExecutionId) throw new Error('Owner代码上游执行或费用无法核验')
+    const previousDirectory = getAgentSessionWorkspacePath(workspace.slug, execution.sessionId)
+    const previousPath = resolveDevelopmentWorktree(workspace.rootPath, previousDirectory)
+    const snapshot = await loadDevelopmentSnapshotAsync(previousDirectory, execution.id)
+    const priorScope = predecessor.developmentScope && validateDevelopmentScope(predecessor.developmentScope, { getWorkspace: getAgentWorkspace })
+    if (!priorScope || !previousPath || snapshot.workspaceId !== workspace.id || snapshot.contentHash !== artifact.contentHash
+      || !await developmentWorktreeMatchesSnapshotAsync(previousPath, snapshot, priorScope)) throw new Error('Owner代码交接快照来源不一致')
+    handoffs.push({ snapshot, files: await readDevelopmentSnapshotContentsAsync(previousDirectory, execution.id) })
+    executionIds.push(execution.id)
+  }
+  const targetScope = validateDevelopmentScope(task.developmentScope, { getWorkspace: getAgentWorkspace })
+  const merged = mergeOwnerDevelopmentSnapshots(handoffs)
+  applyOwnerDevelopmentSnapshot(worktreePath, targetDirectory, merged.snapshot, merged.files, targetScope.allowedPaths)
+  return executionIds.length === 1 ? executionIds[0] : undefined
 }

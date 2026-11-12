@@ -57,7 +57,7 @@ export function createOwnerExecutionAssignmentContext(input: CreateOwnerExecutio
   const steps = input.plan.proposal.steps
   if (!steps.length || !input.plan.planFingerprint || input.context.goal.goal.projectId !== input.plan.projectId || !['proposed', 'confirmed'].includes(input.plan.state)) throw new Error('Owner计划或项目来源不是当前有效版本')
   if (!input.workspaces.length) throw new Error('当前项目没有可用于执行的授权工作区')
-  const workspaces = input.workspaces.map(workspace => ({ id: workspace.id, name: boundedText(workspace.name, 200), ...(workspace.capabilities ? { capabilities: workspace.capabilities.slice(0, 80).map(item => boundedText(item, 160)) } : {}) })).sort((a, b) => a.id.localeCompare(b.id))
+  const workspaces = input.workspaces.map(workspace => ({ id: workspace.id, name: boundedText(workspace.name, 200), ...(workspace.capabilities ? { capabilities: workspace.capabilities.map(item => boundedText(item, 160)).sort().slice(0, 80) } : {}) })).sort((a, b) => a.id.localeCompare(b.id))
   const workspaceIds = new Set(workspaces.map(workspace => workspace.id))
   const candidates = input.candidates
     .filter(candidate => candidate.id !== input.ownerCarrierId && !candidate.isOwnerCarrier
@@ -98,7 +98,7 @@ export function createOwnerExecutionAssignmentContext(input: CreateOwnerExecutio
     constraints: input.context.goal.goal.constraints.slice(0, 30).map(item => boundedText(item, 1000)),
     acceptanceCriteria: (input.context.goal.goal.acceptanceCriteria ?? []).slice(0, 30).map(item => boundedText(item, 1000)),
     roles: roles.map(roleKey => ({ roleKey, name: boundedText(roleNames.get(roleKey) ?? roleKey, 200) })),
-    steps: steps.map(step => ({ key: step.key, title: boundedText(step.title, 300), outcome: boundedText(step.outcome, 1200), acceptanceCriteria: step.acceptanceCriteria.slice(0, 30).map(item => boundedText(item, 1000)), dependencies: [...step.dependencies], roleKey: step.roleKey, ...(step.sourceReferences ? { sourceReferences: step.sourceReferences.map(reference => ({ ...reference })) } : {}) })),
+    steps: steps.map(step => ({ key: step.key, title: boundedText(step.title, 300), outcome: boundedText(step.outcome, 1200), acceptanceCriteria: step.acceptanceCriteria.slice(0, 30).map(item => boundedText(item, 1000)), dependencies: [...step.dependencies], roleKey: step.roleKey, ...(step.deliveryKind ? { deliveryKind: step.deliveryKind } : {}), ...(step.sourceReferences ? { sourceReferences: step.sourceReferences.map(reference => ({ ...reference })) } : {}) })),
     ...(greenfieldDevelopment ? { greenfieldDevelopment: true as const } : {}),
     ...(input.plan.sources.code ? { codeFiles: input.plan.sources.code.files.slice(0, 256).map(file => ({ path: boundedText(file.path, 1000), sha256: file.sha256, matchedTerms: file.matchedTerms.slice(0, 20).map(term => boundedText(term, 120)) })) } : {}),
     candidates,
@@ -128,14 +128,22 @@ export function parseOwnerExecutionAssignmentContext(raw: unknown): OwnerExecuti
   return value as unknown as OwnerExecutionAssignmentContext
 }
 
+/** 能力列表是无序集合；旧快照保留原指纹，比较时只忽略列表的排列差异。 */
+export function ownerAssignmentContextsEquivalent(previous: OwnerExecutionAssignmentContext, current: OwnerExecutionAssignmentContext): boolean {
+  const normalize = ({ contextFingerprint: _fingerprint, ...value }: OwnerExecutionAssignmentContext) => ({
+    ...value,
+    workspaces: value.workspaces.map(workspace => ({ ...workspace, ...(workspace.capabilities ? { capabilities: [...workspace.capabilities].sort() } : {}) })),
+  })
+  return hash(normalize(previous)) === hash(normalize(current))
+}
+
 /** 仅接受同一提案从待审到确认时产生的单次revision递增；其他来源变化仍判旧。 */
 export function ownerAssignmentContextMatchesApprovalTransition(previous: OwnerExecutionAssignmentContext, current: OwnerExecutionAssignmentContext): boolean {
   if (current.planRevision !== previous.planRevision + 1 || current.planFingerprint !== previous.planFingerprint
     || current.projectId !== previous.projectId || current.taskId !== previous.taskId
     || current.goalRevision !== previous.goalRevision || current.sourceContextFingerprint !== previous.sourceContextFingerprint
     || current.bindingRevision !== previous.bindingRevision) return false
-  const withoutRevision = ({ planRevision: _revision, contextFingerprint: _fingerprint, ...value }: OwnerExecutionAssignmentContext) => value
-  return hash(withoutRevision(previous)) === hash(withoutRevision(current))
+  return ownerAssignmentContextsEquivalent({ ...previous, planRevision: current.planRevision }, current)
 }
 
 /**
