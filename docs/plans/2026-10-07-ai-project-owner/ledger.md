@@ -248,13 +248,13 @@ Owner 模型回复写入对话前执行 `stripUnsupportedClaims`：本地没有�
 - 裸命令（`swift build`、`xcodebuild -scheme App`、`sh build.sh`）仍拒绝；
 - `verificationCommands` 为空仍拒绝——这次没有放宽到"允许无验证"。
 
-**执行侧**：`development-validation-service.ts` 把 `build:` 解析成固定 argv 再 spawn（否则 `spawn('build:swift')` 会 ENOENT）。`.2` 进一步收紧了执行边界：Swift 构建跑在 macOS seatbelt 沙箱里，只允许写独立 scratch 目录，禁止网络、`mach-lookup`、AppleEvent 与信号；工作区只读且显式拒绝 `.git`/`.env`/密钥等受保护路径；要求工作区根部有真实（非符号链接）的 `Package.swift`；XCTest 不可用时先尝试 `DEVELOPER_DIR` 回退，仍不可用则明确失败而不是改动系统默认工具链。
+**执行侧**：`development-validation-service.ts` 把 `build:` 解析成固定 argv 再 spawn（否则 `spawn('build:swift')` 会 ENOENT）。`.2` 进一步收紧了执行边界：Swift 构建跑在 macOS seatbelt 沙箱里，允许写独立 scratch 目录以及 SwiftPM 和 xcrun 所需的特定系统临时路径，禁止网络、`mach-lookup`、AppleEvent 与信号；工作区只读且显式拒绝 `.git`/`.env`/密钥等受保护路径；要求工作区根部有真实（非符号链接）的 `Package.swift`；XCTest 不可用时尝试已安装的 Xcode，仍不可用则明确失败而不改动系统默认工具链。
 
 **兼容性**：提示词文本变化会让历史 `promptHash` 失配，因此 `resolveOwnerExecutionAssignmentRequest` 穷举 `includeBuildCommands`（和 `.2` 的 `requireSwiftPackage`）两个变体，改动前冻结的安排仍可重新校验。
 
 **边界**：构建成功只证明能编译，不证明原生界面或业务行为正确——这一点在提示词里已明确写出。`build:swift` 依赖工作区是 Swift Package 布局；非 Swift 原生项目（如 Xcode 工程）仍无可用命令，需要时再扩注册表。
 
-验证：`project-owner-execution-assignment-protocol` 24 例、`owner-runtime-build-command` 4 例、`development-validation-service` 30 例，`bun run test` 三文件 58 例 0 失败；Electron typecheck、Biome 通过。未在真实 Provider 下跑通原生项目的完整旅程。
+验证：`project-owner-execution-assignment-protocol` 25 例、`owner-runtime-build-command` 4 例、`development-validation-service` 29 例，各文件独立运行共 58 例通过；Electron typecheck、Biome 通过。未在真实 Provider 下跑通原生项目的完整旅程。
 
 ## 要做成什么
 
