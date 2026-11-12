@@ -4,7 +4,7 @@
  * 职责：只读打开工作区内的 HTML 成果，在受管浏览器上下文执行系统内置断言，产出逐项结果。
  * 边界：
  * - 文件必须落在给定工作区根内，拒绝符号链接、非 HTML、越界路径；
- * - 使用独立 partition 并阻断一切非 file 请求，页面无法访问网络；
+ * - 使用独立 partition，网络请求被阻断；本地仅加载目标 HTML 和冻结范围中明确列出的脚本/样式；
  * - 断言脚本来自内置模板，本模块不接受调用方传入脚本；
  * - 本模块只产出证据，不判断业务质量，也不写入工作区文件。
  */
@@ -32,6 +32,7 @@ export interface OwnerRuntimeBrowserRunResult {
 
 export interface OwnerRuntimeBrowserRunInput {
   filePath: string
+  resourcePaths?: readonly string[]
   templates: readonly OwnerRuntimeAssertionTemplate[]
   timeoutMs: number
 }
@@ -98,13 +99,26 @@ export async function runOwnerRuntimeBrowserAssertions(input: {
   intents: readonly string[]
   /** 显式指定断言模板（来自 browser: 验证命令）；缺省才按意图选择。 */
   templates?: readonly OwnerRuntimeAssertionTemplate[]
+  /** 已冻结范围中明确列出的脚本及样式，不能扩展到其他本地文件。 */
+  resourcePaths?: readonly string[]
   timeoutMs?: number
 }): Promise<OwnerRuntimeBrowserRunResult> {
   const filePath = resolveOwnerRuntimeVerificationTarget(input.workspaceRoot, input.relativePath)
   const templates = input.templates ? [...input.templates] : selectOwnerRuntimeAssertionTemplates(input.intents)
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const runner = injectedRunner ?? defaultBrowserRunner
-  const result = await runner({ filePath, templates, timeoutMs })
+  const root = resolve(input.workspaceRoot), realRoot = realpathSync(root)
+  const resourcePaths = (input.resourcePaths ?? []).map(path => {
+    if (isAbsolute(path) || !['.js', '.mjs', '.css'].includes(extname(path).toLowerCase())) throw new OwnerRuntimeVerificationError('验证资源必须是范围内的脚本或样式')
+    const target = resolve(root, path), inside = relative(root, target)
+    if (!inside || inside.startsWith('..') || isAbsolute(inside) || !existsSync(target)) throw new OwnerRuntimeVerificationError('验证资源不在工作区内或不存在')
+    const stat = lstatSync(target)
+    if (stat.isSymbolicLink() || !stat.isFile()) throw new OwnerRuntimeVerificationError('验证资源必须是普通文件，不能为符号链接')
+    const real = realpathSync(target), realInside = relative(realRoot, real)
+    if (!realInside || realInside.startsWith('..') || isAbsolute(realInside)) throw new OwnerRuntimeVerificationError('验证资源真实路径不在工作区内')
+    return real
+  })
+  const result = await runner({ filePath, resourcePaths, templates, timeoutMs })
   return { ...result, relativePath: input.relativePath }
 }
 
@@ -117,16 +131,23 @@ export function ownerRuntimeAssertionCount(): number {
  * 默认执行器：隐藏窗口 + 独立 partition + 阻断非 file 请求。
  * 单独抽出以便测试注入假实现，真实执行路径需要 Electron 运行时。
  */
-const defaultBrowserRunner: OwnerRuntimeBrowserRunner = async ({ filePath, templates, timeoutMs }) => {
+const defaultBrowserRunner: OwnerRuntimeBrowserRunner = async ({ filePath, resourcePaths = [], templates, timeoutMs }) => {
   const { BrowserWindow, session } = await import('electron')
   const partition = createVerificationPartition()
   const partitionSession = session.fromPartition(partition)
-  // 只允许本次成果自身、data: 与 about:。放宽到任意 file: 会让页面跳到本机其他文件，
+  // 只允许本次 HTML、明确声明的脚本/样式、data: 与 about:。放宽到任意 file: 会让页面跳到本机其他文件，
   // 而断言会把页面文本写进证据详情，等于把本地文件内容带进证据链。
   const allowedTarget = pathToFileURL(filePath).href
+  const allowedResources = new Set(resourcePaths.map(path => pathToFileURL(path).href))
+  const pageErrors: string[] = []
   partitionSession.webRequest.onBeforeRequest((details, callback) => {
-    const beyondTarget = details.url !== allowedTarget && !details.url.startsWith(`${allowedTarget}#`) && !details.url.startsWith(`${allowedTarget}?`)
-    callback({ cancel: beyondTarget && !/^(data|about):/i.test(details.url) })
+    const url = new URL(details.url)
+    url.hash = ''
+    url.search = ''
+    const allowed = url.href === allowedTarget || (details.resourceType !== 'mainFrame' && allowedResources.has(url.href))
+    const blocked = !allowed && !/^(data|about):/i.test(details.url)
+    if (blocked && (details.resourceType === 'script' || details.resourceType === 'stylesheet')) pageErrors.push('页面脚本或样式未在冻结验证范围内，已阻止加载')
+    callback({ cancel: blocked })
   })
   const window = new BrowserWindow({
     show: false,
@@ -140,12 +161,13 @@ const defaultBrowserRunner: OwnerRuntimeBrowserRunner = async ({ filePath, templ
     },
   })
   const startedAt = Date.now()
-  const pageErrors: string[] = []
   const onConsole = (_event: unknown, level: number, message: string) => {
     if (level >= 3) pageErrors.push(message.slice(0, 200))
   }
   window.webContents.on('console-message', onConsole as never)
   window.webContents.on('did-fail-load', (_event, code, description) => { pageErrors.push(`${code} ${description}`.slice(0, 200)) })
+  // 验证 partition 是一次性数据；断言之间必须能重载，不能让页面的 beforeunload 阻断整个验证器。
+  window.webContents.on('will-prevent-unload', event => event.preventDefault())
   // 成果不能把窗口导航到别处：离开本次目标即取消，防止借导航读取其他本地文件。
   window.webContents.on('will-navigate', (event, url) => {
     if (url !== allowedTarget && !url.startsWith(`${allowedTarget}#`) && !url.startsWith(`${allowedTarget}?`)) {
@@ -199,6 +221,10 @@ const defaultBrowserRunner: OwnerRuntimeBrowserRunner = async ({ filePath, templ
         break
       }
       try {
+        if (template.id.startsWith('diary.')) {
+          await withinDeadline(() => window.loadFile(filePath), '日记断言初始化')
+          if (window.webContents.getURL() !== allowedTarget) throw new Error('初始化后已离开目标页面')
+        }
         let raw = await withinDeadline(
           () => window.webContents.executeJavaScript(template.script, true),
           `断言 ${template.id}`,
@@ -211,6 +237,12 @@ const defaultBrowserRunner: OwnerRuntimeBrowserRunner = async ({ filePath, templ
           raw = after?.passed === true && before && after.bestScore === before
             ? { ...after, detail: `${after.detail}；刷新后保持一致` }
             : { passed: false, detail: '刷新后最高分未恢复，或持久值发生变化' }
+        }
+        if (template.id === 'diary.save-reload' && raw?.passed === true) {
+          await withinDeadline(() => window.loadFile(filePath), '日记刷新检查')
+          if (window.webContents.getURL() !== allowedTarget) throw new Error('刷新后已离开目标页面')
+          const after = await withinDeadline(() => window.webContents.executeJavaScript(template.script, true), '刷新后日记检查') as typeof raw
+          raw = after?.passed === true ? { ...after, detail: `${after.detail}；刷新后保持一致` } : { passed: false, detail: '刷新后日记未在原日期回顾中恢复' }
         }
         const status = raw?.passed === true ? 'passed' : raw?.skipped === true ? 'skipped' : 'failed'
         checks.push({ id: template.id, title: template.title, status, detail: String(raw?.detail ?? '').slice(0, 500) })

@@ -265,7 +265,29 @@ export async function runOwnerAutonomousSchedule(projectId: string, driver: Owne
     return pending
   }
   const task = (async () => {
-    const evaluation = evaluate(projectId)
+    let evaluation = evaluate(projectId)
+    if (evaluation.status.state === 'paused') {
+      try {
+        const { recoverOwnerLateCompletions } = await import('./project-owner-late-completion-recovery')
+        const { isAgentSessionActive } = await import('./agent-service')
+        if (await recoverOwnerLateCompletions(projectId, isAgentSessionActive)) evaluation = evaluate(projectId)
+      } catch (error) {
+        console.warn('[Owner Scheduler] 迟到终态恢复检查失败，保留暂停:', error instanceof Error ? error.message : '未知错误')
+      }
+    }
+    if (evaluation.status.state === 'waiting' && evaluation.status.nextAction === 'human_decision'
+      && evaluation.status.role === 'reviewer' && evaluation.status.grantId && evaluation.status.taskId
+      && evaluation.status.reworkOrdinal !== undefined) {
+      try {
+        const { recoverOwnerReviewTypography } = await import('./project-owner-review-recovery')
+        if (recoverOwnerReviewTypography(projectId, evaluation.status.grantId, evaluation.status.taskId, evaluation.status.reworkOrdinal)) {
+          evaluation = evaluate(projectId)
+          requestOwnerAutonomousScheduleWake(projectId)
+        }
+      } catch (error) {
+        console.warn('[Owner Scheduler] 评审原文恢复未通过核验，保留原记录:', error instanceof Error ? error.message : '未知错误')
+      }
+    }
     if (!evaluation.action) return evaluation.status
     if (evaluation.action.kind === 'dispatch') {
       try {

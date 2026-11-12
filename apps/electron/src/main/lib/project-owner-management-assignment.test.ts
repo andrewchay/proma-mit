@@ -1,8 +1,9 @@
 import { afterAll, beforeAll, expect, mock, spyOn, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
 import type { OwnerExecutionPreparationInput, ProjectOwnerExecutionLaunchApi } from '@gravitas/shared'
 import { buildElectronMock } from './testing/electron-mock'
@@ -36,6 +37,10 @@ let rejectNextAssignmentProjectId: string | null = null
 let legacyNullScopeProjectId: string | null = null
 let rejectNextAssignmentKind: 'reviewer' | 'coverage' = 'reviewer'
 let nextOwnerPlanningResponseGate: { started(): void; wait: Promise<void> } | null = null
+let failBusinessProjectId: string | null = null
+let reviseConversationProjectId: string | null = null
+let mixedRecoveryProjectId: string | null = null
+let legacyUntypedRecoveryProjectId: string | null = null
 beforeAll(async () => {
   await store.initProjectDb()
   // 排队、来源与最终单发送准入使用产品实现；runner/HTTP和模型回答是隔离替身。
@@ -51,13 +56,65 @@ beforeAll(async () => {
       const boundary = await import('./controlled-provider-boundary')
       const fetch = boundary.createControlledProviderFetch(input.sessionId, () => ({ runtime: 'ai-sdk', cwd: workspaceManager.getAgentWorkspaceCwd(workspace, input.sessionId), modelId: input.modelId!, permissionMode: 'safe' }), transport)
       await fetch('https://example.invalid/v1/chat/completions', { method: 'POST', body: JSON.stringify({ model: input.modelId, max_tokens: 100, messages: [{ role: 'user', content: input.userMessage }] }) })
+      if (failBusinessProjectId === execution.projectId) {
+        failBusinessProjectId = null
+        handlers.onError('模拟员工执行失败')
+        return
+      }
       let content = '已整理目标范围、证据和取舍，并标明仍需业务核验的不确定项。'
+      const frozen = (await import('./project-owner-employee-runtime')).readOwnerCommandFrozenSource(execution.ownerCommandId)
+      const development = (await import('./project-owner-employee-runtime')).ownerTaskDeliveryKind(frozen.source, frozen.taskId) === 'development'
+      if (mixedRecoveryProjectId === execution.projectId && development && command.role === 'executor') {
+        const { bindTestToolContext } = await import('./testing/bound-tool-context')
+        const { executeWriteTool } = await import('./agent-runtime/tool-impls/write-tool')
+        const cwd = workspaceManager.getAgentWorkspaceCwd(workspace, input.sessionId)
+        const result = await executeWriteTool({ file_path: 'diary/index.html', content: '<!doctype html><html><body>五年日记</body></html>' }, bindTestToolContext({ cwd, sessionId: input.sessionId, ownerWorkspaceWrite: true }))
+        if (result.isError) throw new Error(result.content)
+        expect(frozen.source.autonomousWorkspaceEditVersion).toBe(1)
+        const gates = await import('./project-owner-execution-gates')
+        const args = { file_path: 'diary/index.html', content: '内容' }
+        expect(gates.isOwnerAutoAllowedWorkspaceWrite(input.sessionId, 'Write', args)).toBe(true)
+        expect(() => gates.assertOwnerCanonicalWorkspacePath(input.sessionId, join(cwd, 'other/index.html'))).toThrow('真实路径不在已确认范围内')
+        renameSync(join(cwd, 'diary'), join(cwd, 'other'))
+        symlinkSync('other', join(cwd, 'diary'))
+        try {
+          expect(gates.isOwnerAutoAllowedWorkspaceWrite(input.sessionId, 'Write', args)).toBe(false)
+          const redirected = await executeWriteTool({ file_path: 'diary/index.html', content: '越界覆盖' }, bindTestToolContext({ cwd, sessionId: input.sessionId, ownerWorkspaceWrite: true }))
+          expect(redirected.isError).toBe(true)
+          expect(readFileSync(join(cwd, 'other/index.html'), 'utf8')).toContain('五年日记')
+        } finally { unlinkSync(join(cwd, 'diary')); renameSync(join(cwd, 'other'), join(cwd, 'diary')) }
+        linkSync(join(cwd, 'diary/index.html'), join(cwd, 'diary/link.html'))
+        expect(gates.isOwnerAutoAllowedWorkspaceWrite(input.sessionId, 'Write', args)).toBe(false)
+        unlinkSync(join(cwd, 'diary/link.html'))
+        const db = store.getProjectDb()
+        const grant = db.prepare('SELECT grant_id FROM project_owner_execution_commands WHERE id=?').get(execution.ownerCommandId) as { grant_id: string }
+        db.prepare("UPDATE project_owner_execution_grants SET state='paused' WHERE id=?").run(grant.grant_id)
+        try {
+          expect(gates.isOwnerAutoAllowedWorkspaceWrite(input.sessionId, 'Write', args)).toBe(false)
+          expect(gates.isOwnerAutoAllowedExistingWorkspaceWrite(input.sessionId, args)).toBe(false)
+        } finally { db.prepare("UPDATE project_owner_execution_grants SET state='active' WHERE id=?").run(grant.grant_id) }
+        const delegation = db.prepare('SELECT owner_management_delegation_id FROM project_owner_execution_grants WHERE id=?').get(grant.grant_id) as { owner_management_delegation_id: string }
+        db.prepare('UPDATE project_owner_management_delegations SET revoked_at=? WHERE id=?').run(Date.now(), delegation.owner_management_delegation_id)
+        try { expect(gates.isOwnerAutoAllowedExistingWorkspaceWrite(input.sessionId, args)).toBe(false) }
+        finally { db.prepare('UPDATE project_owner_management_delegations SET revoked_at=NULL WHERE id=?').run(delegation.owner_management_delegation_id) }
+        const edited = await (await import('./agent-runtime/tool-impls/edit-tool')).executeEditTool({ file_path: 'diary/index.html', old_string: '五年日记', new_string: '五年日记本' }, bindTestToolContext({ cwd, sessionId: input.sessionId, ownerWorkspaceWrite: true }))
+        if (edited.isError) throw new Error(edited.content)
+        const rewritten = await executeWriteTool({ file_path: 'diary/index.html', content: '<!doctype html><html><body>五年日记本</body></html>' }, bindTestToolContext({ cwd, sessionId: input.sessionId, ownerWorkspaceWrite: true }))
+        if (rewritten.isError) throw new Error(rewritten.content)
+        const denied = await executeWriteTool({ file_path: 'diary/outside.html', content: '越界' }, bindTestToolContext({ cwd, sessionId: input.sessionId, ownerWorkspaceWrite: true }))
+        expect(denied.isError).toBe(true)
+      }
       if (command.role === 'reviewer') {
+        if (mixedRecoveryProjectId === execution.projectId && development) {
+          const artifact = (await import('./project-owner-development-artifact')).ownerDevelopmentArtifactFromPrompt(input.userMessage)!
+          content = JSON.stringify({ schemaVersion: 3, artifactHash: artifact.contentHash, verdict: 'approved', summary: '页面与验证符合目标', criteria: [{ criterion: '页面可打开', status: 'met', evidence: '快照包含页面，浏览器验证通过', quote: '五年日记' }], findings: [], blockerReason: null })
+        } else {
         const textDelivery = await import('./project-owner-text-delivery')
         const artifact = textDelivery.assertOwnerReviewerTextDelivery(execution.ownerCommandId)!
         const link = store.getProjectDb().prepare('SELECT payload FROM project_owner_task_step_links WHERE task_id=?').get(execution.entityId) as { payload: string }
         const acceptance = (JSON.parse(link.payload) as { projection: { acceptanceCriteria: string[] } }).projection.acceptanceCriteria[0]!
         content = JSON.stringify({ schemaVersion: 2, artifactHash: artifact.contentSha256, verdict: 'approved', summary: '完整成果符合当前范围', criteria: [{ criterion: acceptance, status: 'met', evidence: '完整文本成果含有可核对依据', quote: artifact.content }], findings: [], blockerReason: null })
+        }
       }
       const message = { id: randomUUID(), role: 'assistant' as const, content, createdAt: Date.now() }
       ;(await import('./agent-session-manager')).appendAgentMessage(input.sessionId, message)
@@ -82,11 +139,11 @@ beforeAll(async () => {
       }),
       new URL('https://example.invalid/v1/chat/completions'),
     )
-    if (delivery?.qualityDecisionVersion === 1 && delivery.artifact && observation) {
+    if (delivery?.qualityDecisionVersion === 1 && (delivery.artifact || delivery.developmentArtifact) && observation) {
       calls.push({ projectId: source.link.projectId, purpose: 'owner_quality', candidates: [] })
       claimProviderRequest()
       const binding = { projectId: source.link.projectId, ...(source.context.goal.goal.taskId ? { taskId: source.context.goal.goal.taskId } : {}), goalVersion: source.context.goal.goal.goalVersion, contextFingerprint: source.context.fingerprint }
-      const decision = { reviewerCommandId: observation.commandId, artifactHash: delivery.artifact.contentSha256, verdict: 'accept', reason: '已按完整成果、验收标准与独立评审核对', criteria: delivery.review!.criteria.map(item => ({ criterion: item.criterion, status: 'met', evidence: '成果与独立评审均包含对应依据', quote: delivery.artifact!.content })), findings: [] }
+      const decision = { reviewerCommandId: observation.commandId, artifactHash: delivery.artifact?.contentSha256 ?? delivery.developmentArtifact!.contentHash, verdict: 'accept', reason: '已按完整成果、验收标准与独立评审核对', criteria: delivery.review!.criteria.map(item => ({ criterion: item.criterion, status: 'met', evidence: '成果与独立评审均包含对应依据', quote: delivery.artifact?.content ?? '五年日记' })), findings: [] }
       const response = { schemaVersion: 1, kind: 'quality_decision', ...binding, messageId: conversation.throughMessageId, message: '成果与独立检查已完成核对，正在记录验收结果。', decision }
       handlers.onComplete([], { runtimeResult: { type: 'result', subtype: 'success', session_id: input.sessionId, finish_reason: 'stop', result: JSON.stringify(response), usage: { input_tokens: 10, output_tokens: 20 }, owner_planning_usage: { inputTokens: 10, outputTokens: 20, cacheReadTokens: null, cacheWriteTokens: null } } })
       return
@@ -101,7 +158,9 @@ beforeAll(async () => {
     if (source.link.purpose === 'owner_planning') {
       calls.push({ projectId: source.link.projectId, purpose: source.link.purpose, candidates: [] })
       const roleKey = source.context.sources.roles.find(role => role.key === 'requirements-analyst')?.key ?? source.context.sources.roles[0]!.key
-      const proposal = { schemaVersion: 1, kind: 'plan_proposal', binding: { projectId: source.link.projectId, goalVersion: source.context.goal.goal.goalVersion, contextFingerprint: source.context.fingerprint }, proposal: { summary: '按目标形成定位简报', assumptions: [], risks: [], steps: [{ key: 'brief', title: '分析需求', outcome: '定位简报', acceptanceCriteria: ['证据和取舍明确'], dependencies: [], roleKey }] } }
+      const recoveringMixed = conversation && mixedRecoveryProjectId === source.link.projectId
+      const legacyUntyped = recoveringMixed && legacyUntypedRecoveryProjectId === source.link.projectId && !source.link.requestId.startsWith('historical-conflict-replan:')
+      const proposal = { schemaVersion: 1, kind: 'plan_proposal', binding: { projectId: source.link.projectId, goalVersion: source.context.goal.goal.goalVersion, contextFingerprint: source.context.fingerprint }, proposal: { summary: conversation && reviseConversationProjectId === source.link.projectId ? '继续完成定位简报' : '按目标形成定位简报', assumptions: [], risks: [], steps: [{ key: 'brief', title: '分析需求', outcome: '定位简报', acceptanceCriteria: ['证据和取舍明确'], dependencies: [], roleKey, ...(conversation && reviseConversationProjectId === source.link.projectId && !legacyUntyped ? { deliveryKind: 'text' as const } : {}) }, ...(recoveringMixed ? [{ key: 'build', title: '实现页面', outcome: '日记页面', acceptanceCriteria: ['页面可打开'], dependencies: ['brief'], roleKey, ...(!legacyUntyped ? { deliveryKind: 'development' as const } : {}) }] : [])] } }
       claimProviderRequest()
       const gate = nextOwnerPlanningResponseGate
       if (gate) {
@@ -123,7 +182,8 @@ beforeAll(async () => {
     if (!workspaceId) throw new Error('fake安排没有共同的已授权员工工作区')
     const rejectedReviewer = rejectNextAssignmentProjectId === source.link.projectId ? assignments[0]?.employeeId : undefined
     if (rejectedReviewer) rejectNextAssignmentProjectId = null
-    const proposal = { schemaVersion: 1, contextFingerprint: context.contextFingerprint, selectedStepKeys: context.steps.map(step => step.key), scopeReason: '执行已确认的完整方案', workspaceId, workspaceReason: '复用项目已有授权', executionKind: 'controlled', executionKindReason: '无需代码修改', assignments: rejectedReviewer && rejectNextAssignmentKind === 'coverage' ? [] : assignments, reviewerEmployeeId: rejectNextAssignmentKind === 'reviewer' ? rejectedReviewer ?? reviewer.id : reviewer.id, reviewerReason: '独立检查成果' }
+    const development = context.steps.some(step => step.deliveryKind === 'development') || (legacyUntypedRecoveryProjectId === source.link.projectId && context.steps.length > 1 && context.steps.every(step => !step.deliveryKind))
+    const proposal = { schemaVersion: 1, contextFingerprint: context.contextFingerprint, selectedStepKeys: context.steps.map(step => step.key), scopeReason: '执行已确认的完整方案', workspaceId, workspaceReason: '复用项目已有授权', executionKind: development ? 'development' : 'controlled', executionKindReason: development ? '需要实现页面' : '无需代码修改', assignments: rejectedReviewer && rejectNextAssignmentKind === 'coverage' ? [] : assignments, reviewerEmployeeId: rejectNextAssignmentKind === 'reviewer' ? rejectedReviewer ?? reviewer.id : reviewer.id, reviewerReason: '独立检查成果', ...(development ? { developmentScope: { targetPaths: ['diary/index.html'], allowedPaths: ['diary/index.html'], verificationCommands: ['browser:html.loads'], reason: '交付日记页面' } } : {}) }
     const isLegacyNullScope = legacyNullScopeProjectId === source.link.projectId
     const rejected = isLegacyNullScope ? spyOn(await import('./project-owner-execution-assignment-protocol'), 'parseOwnerExecutionAssignmentProposal').mockImplementationOnce(() => { throw new Error('受控非研发安排不得包含代码范围') }) : null
     if (isLegacyNullScope) legacyNullScopeProjectId = null
@@ -133,15 +193,20 @@ beforeAll(async () => {
   })
 })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
-function fixture(team: 'complete' | 'missing-reviewer' | 'missing-role' | 'general' | 'mixed' | 'pi-team' | 'pi-development-team' = 'complete', taskScoped = false, savePlan = true, saveGoal = true, separateTeamWorkspace = false) {
-  const project = store.createProject({ title: '自动组织团队', description: '' }), workspace = createAgentWorkspace(`自动安排-${randomUUID()}`, team === 'pi-development-team' && !separateTeamWorkspace ? directory : undefined)
+function fixture(team: 'complete' | 'missing-reviewer' | 'missing-role' | 'general' | 'mixed' | 'development' | 'pi-team' | 'pi-development-team' = 'complete', taskScoped = false, savePlan = true, saveGoal = true, separateTeamWorkspace = false) {
+  const repo = team === 'development' ? mkdtempSync(join(tmpdir(), 'owner-recovery-git-')) : undefined
+  if (repo) {
+    execFileSync('git', ['init', '-q', repo])
+    execFileSync('git', ['-C', repo, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'baseline'])
+  }
+  const project = store.createProject({ title: '自动组织团队', description: '' }), workspace = createAgentWorkspace(`自动安排-${randomUUID()}`, repo ?? (team === 'pi-development-team' && !separateTeamWorkspace ? directory : undefined))
   const teamWorkspace = separateTeamWorkspace ? createAgentWorkspace(`共享团队-${randomUUID()}`, team === 'pi-development-team' ? directory : undefined) : workspace
   bindWorkspaceToProject(project.id, workspace.id)
   const channel = createChannel({ name: 'fake', provider: 'openai', baseUrl: 'https://example.invalid/v1', apiKey: 'fake', enabled: true, models: [{ id: 'deepseek-flash', name: 'fake', enabled: true }] })
   const executorChannel = ['mixed', 'pi-team', 'pi-development-team'].includes(team) ? createChannel({ name: 'fake executor', provider: team === 'pi-team' || team === 'pi-development-team' ? 'zhipu' : 'openai', baseUrl: team === 'pi-team' || team === 'pi-development-team' ? 'https://open.bigmodel.cn/api/paas/v4' : 'https://executor.invalid/v1', apiKey: 'fake', enabled: true, models: [{ id: 'glm-5.3-flash', name: 'glm', enabled: true }] }) : channel
   const employee = (name: string, roleTemplateId?: string) => {
     const teamEmployee = name !== 'Owner' && (team === 'pi-team' || team === 'pi-development-team' || name === '分析师' && team === 'mixed')
-    const executionProfile = ['general', 'mixed'].includes(team) && name !== 'Owner' ? 'general' : team === 'pi-development-team' && name !== 'Owner' ? 'development' : 'controlled'
+    const executionProfile = ['general', 'mixed'].includes(team) && name !== 'Owner' ? 'general' : ['development', 'pi-development-team'].includes(team) && name !== 'Owner' ? 'development' : 'controlled'
     return employees.createAgentEmployee({ name, role: name, ...(roleTemplateId ? { roleTemplateId } : {}), description: '', executionProfile, permissionMode: 'safe', runtime: teamEmployee && ['pi-team', 'pi-development-team'].includes(team) ? 'pi' : 'ai-sdk', channelId: teamEmployee ? executorChannel.id : channel.id, modelId: teamEmployee ? 'glm-5.3-flash' : 'deepseek-flash', workspaceIds: [(separateTeamWorkspace && name !== 'Owner' ? teamWorkspace : workspace).id] })
   }
   const owner = employee('Owner'), executor = employee('分析师', ['general', 'mixed'].includes(team) ? undefined : team === 'missing-role' ? 'visual-designer' : 'requirements-analyst'), reviewer = team === 'missing-reviewer' ? null : employee('独立检查', ['general', 'mixed'].includes(team) ? undefined : 'delivery-verifier')
@@ -151,11 +216,11 @@ function fixture(team: 'complete' | 'missing-reviewer' | 'missing-role' | 'gener
   saveOwnerRuntimeBinding(project.id, 0, { ownerName: 'Owner', carrierId: owner.id, workspaceId: workspace.id, changeReason: '隔离测试' })
   const context = saveGoal ? plans.getProjectOwnerPlanningContext(project.id, taskId) : null
   const plan = savePlan && context ? plans.saveProjectOwnerPlanDraft(project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '定位研究', assumptions: [], risks: [], steps: [{ key: 'brief', title: '分析需求', outcome: '定位简报', acceptanceCriteria: ['证据和取舍明确'], dependencies: [], roleKey: 'requirements-analyst' }], changeReason: '创建可审核方案' }, taskId) : null
-  return { project, workspace, teamWorkspace, owner, executor, reviewer, taskId, subject, plan }
+  return { project, workspace, teamWorkspace, owner, executor, reviewer, taskId, subject, plan, repo }
 }
 function confirm(f: ReturnType<typeof fixture>) { return plans.confirmProjectOwnerPlanDraft(f.project.id, 1, 1, f.taskId) }
-function authorize(f: ReturnType<typeof fixture>, autonomousExecution = false, maxRequests = 3) {
-  const input = { ...f.subject, requestId: randomUUID(), maxRequests, maxCostMicros: 10_000_000, expiresAt: Date.now() + 3600000, ...(autonomousExecution ? { autonomousExecution: true as const } : {}) }
+function authorize(f: ReturnType<typeof fixture>, autonomousExecution = false, maxRequests = 3, maxCostMicros = 10_000_000) {
+  const input = { ...f.subject, requestId: randomUUID(), maxRequests, maxCostMicros, expiresAt: Date.now() + 3600000, ...(autonomousExecution ? { autonomousExecution: true as const, autonomousWorkspaceEditVersion: 1 as const } : {}) }
   const preview = delegation.previewOwnerManagementDelegation(input)
   return delegation.confirmOwnerManagementDelegation({ input, previewHash: preview.previewHash })
 }
@@ -180,6 +245,153 @@ test('Given旧目标已有执行批次 When用户修订目标并确认新自主�
     await until(() => getOwnerManagementConversation(f.project.id).messages.filter(item => item.kind === 'delivery').length === 2)
   } finally { stop(); stopSchedule() }
 }, 15000)
+
+test('Given 旧批次执行失败且费用已结算 When 用户对话要求继续 Then 按新方案接续并保留旧账本', async () => {
+  const f = fixture('complete', false, false)
+  failBusinessProjectId = f.project.id
+  reviseConversationProjectId = f.project.id
+  authorize(f, true, 6, 20_000_000)
+  const stop = startOwnerManagementLoop()
+  try {
+    const db = store.getProjectDb()
+    await until(() => Boolean(db.prepare("SELECT 1 FROM project_owner_execution_commands c JOIN agent_executions e ON e.id=c.execution_id WHERE c.project_id=? AND c.state='settled' AND e.status='failed'").get(f.project.id)))
+    const original = db.prepare('SELECT id FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id) as { id: string }
+    const grantService = await import('./project-owner-execution-grant-issue')
+    const preview = grantService.previewOwnerExecutionGrantRevoke(f.subject, { grantId: original.id })
+    expect(preview.blockers).toEqual([])
+    grantService.confirmOwnerExecutionGrantRevoke(f.subject, { grantId: original.id, confirmedFingerprint: preview.fingerprint })
+    const { sendOwnerManagementMessage } = await import('./project-owner-management-conversation')
+    sendOwnerManagementMessage({ ...f.subject, conversationId: getOwnerManager(f.project.id)!.conversationId, requestId: randomUUID(), expectedGoalRevision: 1, content: '继续完成' })
+    await until(() => (db.prepare('SELECT COUNT(*) AS n FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id) as { n: number }).n === 2,
+      () => ({ delegation: delegation.getOwnerManagementDelegation(f.project.id), messages: getOwnerManagementConversation(f.project.id).messages.slice(-5) }))
+    expect(db.prepare('SELECT state FROM project_owner_execution_grants WHERE id=?').get(original.id)).toEqual({ state: 'paused' })
+    expect(db.prepare('SELECT COUNT(*) AS n FROM project_owner_task_materializations WHERE project_id=?').get(f.project.id)).toEqual({ n: 2 })
+    expect(db.prepare('SELECT COUNT(*) AS n FROM project_owner_execution_commands WHERE grant_id=?').get(original.id)).toEqual({ n: 1 })
+    const revised = plans.getProjectOwnerPlanDraft(f.project.id)!
+    expect(revised.proposal.steps[0]!.deliveryKind).toBe('text')
+    expect(revised.planVersion).toBeGreaterThan(1)
+  } finally {
+    failBusinessProjectId = null
+    reviseConversationProjectId = null
+    await stop()
+  }
+}, 20000)
+
+test.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('Given已说继续但旧方案未分类且启动冲突 When旧账本已结算 Then无需重复指令即可重新规划并交付代码', async () => {
+  const native = resolve(import.meta.dir, '../../../resources/owner-safe-directory/owner_safe_directory.node')
+  if (!existsSync(native)) execFileSync('bun', ['run', 'build:owner-safe-directory'], { cwd: resolve(import.meta.dir, '../../..') })
+  const f = fixture('development', false, false)
+  failBusinessProjectId = f.project.id
+  reviseConversationProjectId = f.project.id
+  authorize(f, true, 20, 20_000_000)
+  const scheduler = await import('./project-owner-autonomous-scheduler')
+  const { onOwnerAutonomousScheduleWake } = await import('./project-owner-autonomous-scheduler-events')
+  const browser = await import('./owner-runtime-browser-verifier')
+  browser.setOwnerRuntimeBrowserRunner(async input => {
+    expect(readFileSync(input.filePath, 'utf8')).toContain('五年日记')
+    return { checks: input.templates.map(template => ({ id: template.id, title: template.title, status: 'passed' as const, detail: '隔离测试替身：源码存在' })), durationMs: 1, timedOut: false, relativePath: input.filePath }
+  })
+  const stopSchedule = onOwnerAutonomousScheduleWake(id => { if (id === f.project.id) void scheduler.runOwnerAutonomousSchedule(id) })
+  const stop = startOwnerManagementLoop()
+  try {
+    const db = store.getProjectDb()
+    await until(() => Boolean(db.prepare("SELECT 1 FROM project_owner_execution_commands c JOIN agent_executions e ON e.id=c.execution_id WHERE c.project_id=? AND c.state='settled' AND e.status='failed'").get(f.project.id)))
+    const original = db.prepare('SELECT id FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id) as { id: string }
+    const grantService = await import('./project-owner-execution-grant-issue')
+    const preview = grantService.previewOwnerExecutionGrantRevoke(f.subject, { grantId: original.id })
+    grantService.confirmOwnerExecutionGrantRevoke(f.subject, { grantId: original.id, confirmedFingerprint: preview.fingerprint })
+    mixedRecoveryProjectId = f.project.id
+    legacyUntypedRecoveryProjectId = f.project.id
+    const { sendOwnerManagementMessage } = await import('./project-owner-management-conversation')
+    sendOwnerManagementMessage({ ...f.subject, conversationId: getOwnerManager(f.project.id)!.conversationId, requestId: randomUUID(), expectedGoalRevision: 1, content: '继续完成' })
+    await until(() => getOwnerManagementConversation(f.project.id).messages.some(message => message.kind === 'delivery' && message.delivery?.items.some(item => item.stepKey === 'build')), () => ({ messages: getOwnerManagementConversation(f.project.id).messages.slice(-5), executions: store.listAgentExecutionsByProject(f.project.id).filter(item => item.status === 'failed').map(item => item.error) }), 3000)
+    const delivery = getOwnerManagementConversation(f.project.id).messages.find(message => message.kind === 'delivery' && message.delivery?.items.some(item => item.stepKey === 'build'))!
+    expect(delivery.delivery!.items.find(item => item.stepKey === 'build')!.content).toContain('diary/index.html')
+    expect(db.prepare("SELECT COUNT(*) AS n FROM project_owner_planning_links WHERE project_id=? AND request_id LIKE 'historical-conflict-replan:%'").get(f.project.id)).toEqual({ n: 1 })
+    expect(getOwnerManagementConversation(f.project.id).messages.filter(message => message.role === 'user' && message.content === '继续完成')).toHaveLength(1)
+    expect(db.prepare('SELECT state FROM project_owner_execution_grants WHERE id=?').get(original.id)).toEqual({ state: 'paused' })
+    expect(db.prepare('SELECT COUNT(*) AS n FROM project_owner_execution_commands WHERE grant_id=?').get(original.id)).toEqual({ n: 1 })
+  } finally {
+    failBusinessProjectId = null; reviseConversationProjectId = null; mixedRecoveryProjectId = null; legacyUntypedRecoveryProjectId = null
+    await stop()
+    stopSchedule()
+    browser.setOwnerRuntimeBrowserRunner(null)
+    if (f.repo) rmSync(f.repo, { recursive: true, force: true })
+  }
+}, 45000)
+
+test('Given 旧批次费用未知或已成功 When 对话要求继续 Then 保留证据且不重复派工', async () => {
+  for (const scenario of ['unknown', 'unsettled', 'completed'] as const) {
+    const f = fixture('development', false, false)
+    failBusinessProjectId = f.project.id
+    reviseConversationProjectId = f.project.id
+    authorize(f, true, 6, 20_000_000)
+    const stop = startOwnerManagementLoop()
+    try {
+      const db = store.getProjectDb()
+      await until(() => Boolean(db.prepare("SELECT 1 FROM project_owner_execution_commands c JOIN agent_executions e ON e.id=c.execution_id WHERE c.project_id=? AND c.state='settled' AND e.status='failed'").get(f.project.id)))
+      const original = db.prepare('SELECT id FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id) as { id: string }
+      const grantService = await import('./project-owner-execution-grant-issue')
+      const preview = grantService.previewOwnerExecutionGrantRevoke(f.subject, { grantId: original.id })
+      grantService.confirmOwnerExecutionGrantRevoke(f.subject, { grantId: original.id, confirmedFingerprint: preview.fingerprint })
+      if (scenario === 'unknown') db.prepare('UPDATE project_owner_execution_commands SET usage_evidence=NULL WHERE grant_id=?').run(original.id)
+      if (scenario === 'unsettled') db.prepare("UPDATE project_owner_execution_request_reservations SET state='needs_reconcile' WHERE command_id IN (SELECT id FROM project_owner_execution_commands WHERE grant_id=?)").run(original.id)
+      if (scenario === 'completed') db.prepare("UPDATE agent_executions SET status='completed' WHERE owner_command_id IN (SELECT id FROM project_owner_execution_commands WHERE grant_id=?)").run(original.id)
+      mixedRecoveryProjectId = f.project.id
+      legacyUntypedRecoveryProjectId = f.project.id
+      const { sendOwnerManagementMessage } = await import('./project-owner-management-conversation')
+      sendOwnerManagementMessage({ ...f.subject, conversationId: getOwnerManager(f.project.id)!.conversationId, requestId: randomUUID(), expectedGoalRevision: 1, content: '继续完成' })
+      await until(() => Boolean(db.prepare("SELECT 1 FROM project_owner_execution_start_intents WHERE project_id=? AND recovery_status='needs_attention'").get(f.project.id)), () => ({ scenario, messages: getOwnerManagementConversation(f.project.id).messages.slice(-3) }))
+      const recovery = await import('./project-owner-execution-start-intent')
+      recovery.prepareHistoricalConflictedReplan(f.project.id)
+      expect(db.prepare("SELECT COUNT(*) AS n FROM project_owner_planning_links WHERE project_id=? AND request_id LIKE 'historical-conflict-replan:%'").get(f.project.id)).toEqual({ n: 0 })
+      expect(db.prepare('SELECT COUNT(*) AS n FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id)).toEqual({ n: 1 })
+      expect(db.prepare('SELECT COUNT(*) AS n FROM project_owner_task_materializations WHERE project_id=?').get(f.project.id)).toEqual({ n: 1 })
+    } finally {
+      failBusinessProjectId = null
+      reviseConversationProjectId = null
+      mixedRecoveryProjectId = null
+      legacyUntypedRecoveryProjectId = null
+      await stop()
+      if (f.repo) rmSync(f.repo, { recursive: true, force: true })
+    }
+  }
+}, 30000)
+
+test('Given 原启动因旧任务冲突停住 When 费用已核对且用户再次说继续 Then 复用原确认而不再次规划', async () => {
+  const f = fixture('complete', false, false)
+  failBusinessProjectId = f.project.id
+  reviseConversationProjectId = f.project.id
+  authorize(f, true, 6, 20_000_000)
+  const stop = startOwnerManagementLoop()
+  try {
+    const db = store.getProjectDb()
+    await until(() => Boolean(db.prepare("SELECT 1 FROM project_owner_execution_commands c JOIN agent_executions e ON e.id=c.execution_id WHERE c.project_id=? AND c.state='settled' AND e.status='failed'").get(f.project.id)))
+    const grant = db.prepare('SELECT id FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id) as { id: string }
+    const grantService = await import('./project-owner-execution-grant-issue')
+    const preview = grantService.previewOwnerExecutionGrantRevoke(f.subject, { grantId: grant.id })
+    grantService.confirmOwnerExecutionGrantRevoke(f.subject, { grantId: grant.id, confirmedFingerprint: preview.fingerprint })
+    const oldCommand = db.prepare('SELECT id,usage_evidence FROM project_owner_execution_commands WHERE grant_id=?').get(grant.id) as { id: string; usage_evidence: string }
+    db.prepare('UPDATE project_owner_execution_commands SET usage_evidence=NULL WHERE id=?').run(oldCommand.id)
+    const { sendOwnerManagementMessage } = await import('./project-owner-management-conversation')
+    const send = (content: string) => sendOwnerManagementMessage({ ...f.subject, conversationId: getOwnerManager(f.project.id)!.conversationId, requestId: randomUUID(), expectedGoalRevision: 1, content })
+    send('继续完成')
+    await until(() => Boolean(db.prepare("SELECT 1 FROM project_owner_execution_start_intents WHERE project_id=? AND recovery_status='needs_attention'").get(f.project.id)))
+    const intent = db.prepare("SELECT id FROM project_owner_execution_start_intents WHERE project_id=? AND recovery_status='needs_attention'").get(f.project.id) as { id: string }
+    const countPlanning = () => (db.prepare("SELECT COUNT(*) AS n FROM project_owner_planning_links WHERE project_id=? AND json_extract(payload,'$.conversationMessageId') IS NOT NULL").get(f.project.id) as { n: number }).n
+    const previousPlanningCount = countPlanning()
+    db.prepare('UPDATE project_owner_execution_commands SET usage_evidence=? WHERE id=?').run(oldCommand.usage_evidence, oldCommand.id)
+    const message = send('继续')
+    await until(() => Boolean(db.prepare("SELECT 1 FROM project_owner_execution_start_intents WHERE id=? AND state='completed'").get(intent.id)), () => getOwnerManagementConversation(f.project.id).messages.slice(-5))
+    expect(countPlanning()).toBe(previousPlanningCount)
+    expect(db.prepare('SELECT COUNT(*) AS n FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id)).toEqual({ n: 2 })
+    expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.eventId === `conversation-resumed:${message.id}`)).toBe(true)
+  } finally {
+    failBusinessProjectId = null
+    reviseConversationProjectId = null
+    await stop()
+  }
+}, 20000)
 test('Given旧批次请求费用转待核对 When新目标已授权 Then保留旧占额且不发行新执行批次', async () => {
   const f = fixture('complete', false, false)
   authorize(f, true, 6)
@@ -290,7 +502,22 @@ test('Given 缺少独立评审员且历史含撤销提示 When 重新授权后�
   expect(calls.length).toBe(before)
   delegation.revokeOwnerManagementDelegation(f.project.id, second.id)
 })
-async function until(predicate: () => boolean, diagnostic: () => unknown = () => undefined) { for (let i = 0; i < 1000; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)) } throw new Error(`等待自动安排超时${JSON.stringify(diagnostic())}`) }
+test('Given人员安排已准备但尚未启动 When重复核对授权 Then等待原安排且不误报终态', async () => {
+  const f = fixture(), grant = authorize(f)
+  confirm(f)
+  const { prepareOwnerManagementAssignment } = await import('./project-owner-management-assignment')
+  const event = { id: 'prepared-not-started', projectId: f.project.id, kind: 'delegation_confirmed' as const, sourceId: grant.id, sourceRevision: 1, createdAt: Date.now(), consumedAt: null }
+  try {
+    prepareOwnerManagementAssignment(event)
+    prepareOwnerManagementAssignment({ ...event, id: 'prepared-not-started-again' })
+    const runs = listOwnerExecutionAssignmentRuns(f.subject)
+    expect(runs).toHaveLength(1)
+    expect(runs[0]!.executions).toHaveLength(0)
+    expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'attention' && item.content.includes('已结束且没有可展示的安排结论'))).toBe(false)
+  } finally { delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+})
+
+async function until(predicate: () => boolean, diagnostic: () => unknown = () => undefined, attempts = 1000) { for (let i = 0; i < attempts; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)) } throw new Error(`等待自动安排超时${JSON.stringify(diagnostic())}`) }
 
 test('Given 已有可用团队和管理委托 When 用户确认方案 Then 无页面参与自动安排，复用已有员工且不签发执行许可', async () => {
   const f = fixture(), grant = authorize(f), stop = startOwnerManagementLoop()
@@ -309,7 +536,7 @@ test('Given 已有可用团队和管理委托 When 用户确认方案 Then 无�
     expect(listOwnerExecutionAssignmentRuns(f.subject)).toHaveLength(1)
     delegation.revokeOwnerManagementDelegation(f.project.id, grant.id)
   } finally { stop() }
-})
+}, 30000)
 
 test.each(['reviewer', 'coverage'] as const)('Given 安排请求完整结束但违反%s协议 When Owner收到失败结果 Then 在原预算内只续跑一次并保留两次运行证据', async (kind) => {
   rejectNextAssignmentKind = kind
@@ -516,7 +743,7 @@ test('Given 已保存目标与已授权的项目费用边界 When 后台开始�
     expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'plan_proposal')).toBe(true)
     expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'execution_arranged')).toBe(true)
   } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
-})
+}, 30000)
 
 test('Given 已审核价格模型但没有项目费用授权 When Owner收到目标 Then 等待用户补齐边界且不发送请求', async () => {
   const f = fixture('complete', false, false, true), before = calls.length, stop = startOwnerManagementLoop()

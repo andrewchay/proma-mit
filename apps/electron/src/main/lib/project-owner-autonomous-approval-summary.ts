@@ -12,6 +12,7 @@ export interface OwnerAutonomousApprovalSummary {
   deliverables: string[]
   knowledgeNames: string[]
   allowedPaths: string[]
+  hasTextSteps?: boolean
 }
 
 /** 仅从与本次授权预览完全一致的主进程冻结记录构造用户可读摘要。 */
@@ -50,5 +51,6 @@ export function buildOwnerAutonomousApprovalSummary(
     deliverables,
     knowledgeNames: [...new Set(record.source.knowledgeSources.map(source => source.name))],
     allowedPaths: [...new Set(record.source.tasks.flatMap(task => task.developmentScope?.allowedPaths ?? []))],
+    ...(record.source.tasks.some(task => task.deliveryKind === 'text') ? { hasTextSteps: true } : {}),
   }
 }

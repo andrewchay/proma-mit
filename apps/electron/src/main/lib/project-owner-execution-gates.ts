@@ -1,7 +1,6 @@
 import { assertOwnerReviewerTextDelivery } from './project-owner-text-delivery'
 import { ownerDevelopmentArtifactFromPrompt } from './project-owner-development-artifact'
-import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
-import { readOwnerCommandRuntime, assertOwnerCommandPrice } from './project-owner-employee-runtime'
+import { readOwnerCommandFrozenSource, readOwnerCommandRuntime, assertOwnerCommandPrice, ownerTaskDeliveryKind, ownerTaskHasTextDelivery } from './project-owner-employee-runtime'
 /** Owner业务执行侧休眠门禁：资料fence/逐请求核验/purpose。本片不发行、不派工，gate行无生产创建路径。 */
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync, lstatSync, realpathSync } from 'node:fs'
@@ -9,6 +8,8 @@ import { resolveAgentRuntimeBaseUrl } from '@gravitas/shared'
 import type { OwnerExecutionRevalidationRecord } from '@gravitas/shared'
 import { dirname, relative, resolve, sep } from 'node:path'
 import { getAgentWorkspace, getAgentWorkspaceCwd } from './agent-workspace-manager'
+import { getAgentSessionWorkspacePath } from './config-paths'
+import { resolveDevelopmentWorktree } from './agent-development-worktree'
 import { getChannelById } from './channel-manager'
 import { isProtectedDevelopmentPath, normalizeRepoRelativePath, pathWithinAllowed } from './development-task-service'
 import * as store from './project-sqlite-store'
@@ -70,7 +71,9 @@ export function isOwnerWorkspaceFileActionCandidate(sessionId: string, toolName:
     }
     const realRoot = realpathSync(root)
     const realParent = realpathSync(dirname(target))
-    if (realParent !== realRoot && !realParent.startsWith(`${realRoot}${sep}`)) return false
+    // 目录中的符号链接即使指向工作树内部，也可能绕开冻结的相对路径范围。
+    const expectedParent = resolve(realRoot, relative(root, dirname(target)))
+    if (realParent !== expectedParent || (realParent !== realRoot && !realParent.startsWith(`${realRoot}${sep}`))) return false
     try {
       const targetStat = lstatSync(target)
       if (targetStat.isSymbolicLink() || (targetStat.isFile() && targetStat.nlink !== 1)) return false
@@ -112,6 +115,11 @@ function developmentScopeForExecution(context: OwnerBusinessChain) {
   const execution = store.getAgentExecution(context.executionId)
   return execution ? context.record.source.tasks.find(task => task.taskId === execution.entityId)?.developmentScope : undefined
 }
+function hasTextDeliveryForExecution(context: OwnerBusinessChain): boolean {
+  const execution = store.getAgentExecution(context.executionId)
+  if (!execution || execution.entityType !== 'task') throw new Error('Owner会话缺少准确冻结任务')
+  return ownerTaskHasTextDelivery(context.record.source, execution.entityId)
+}
 function resolveOwnerBusinessChain(sessionId: string): { kind: 'restricted'; reason: string } | OwnerBusinessChain {
   try {
     const execution = (store.getProjectDb().prepare("SELECT id, entity_id, owner_command_id FROM agent_executions WHERE session_id = ? AND status = 'running' ORDER BY started_at DESC").all(sessionId) as Array<{ id: string; entity_id: string; owner_command_id: string | null }>)
@@ -147,7 +155,7 @@ export function getOwnerExecutionToolNames(sessionId: string): ReadonlySet<strin
   const context = resolveOwnerExecutionGateSession(sessionId)
   if (context.kind === 'unrestricted') return null
   if (context.kind !== 'owner_business') return new Set()
-  const fileActions = context.record.source.textDeliveryVersion === 1 ? [] : ['Write', 'Edit']
+  const fileActions = hasTextDeliveryForExecution(context) ? [] : ['Write', 'Edit']
   return new Set([...OWNER_TOOL_ALLOWED, 'AskUserQuestion', ...(developmentScopeForExecution(context) ? ['Read'] : []), ...fileActions])
 }
 
@@ -226,13 +234,47 @@ export function classifyOwnerWorkspaceWrite(sessionId: string, toolName: string,
   if (!scope) return 'high'
   if (isOwnerHighRiskWritePath(relativePath)) return 'high'
   if (scope && (isProtectedDevelopmentPath(normalizeRepoRelativePath(relativePath)) || !pathWithinAllowed(normalizeRepoRelativePath(relativePath), scope.allowedPaths))) return 'high'
-  if (toolName !== 'Write') return 'high'
-  // 新建普通文本文件可自动放行；覆盖已有文件需要用户确认。
-  return existsSync(target) ? 'high' : 'normal'
+  if (toolName === 'Write' && !existsSync(target)) return 'normal'
+  return canModifyExistingOwnerFile(context, workspace, sessionId, root, target) ? 'normal' : 'high'
 }
-/** 权限层用：Owner 工作区内低风险新建可直接执行，高风险仍走逐次人工审批。 */
+
+/** 旧授权继续要求逐次确认；新版只允许执行员工修改其隔离工作树内的普通文件。 */
+function canModifyExistingOwnerFile(context: OwnerBusinessChain, workspace: NonNullable<ReturnType<typeof getAgentWorkspace>>, sessionId: string, root: string, target: string): boolean {
+  if (context.record.source.autonomousWorkspaceEditVersion !== 1 || !workspace.rootPath) return false
+  try {
+    const execution = store.getAgentExecution(context.executionId)
+    if (!execution?.ownerCommandId || execution.sessionId !== sessionId || ownerTaskDeliveryKind(context.record.source, execution.entityId) !== 'development') return false
+    const command = store.getProjectDb().prepare(`SELECT c.role, c.execution_id, c.source_task_id, c.state AS command_state,
+      g.state, g.expires_at, g.revalidation_id, g.revalidation_integrity_hash, g.owner_management_delegation_id
+      FROM project_owner_execution_commands c JOIN project_owner_execution_grants g ON g.id=c.grant_id AND g.project_id=c.project_id
+      WHERE c.id=? AND c.project_id=?`).get(execution.ownerCommandId, context.subject.projectId) as { role: string; execution_id: string; source_task_id: string; command_state: string; state: string; expires_at: number; revalidation_id: string; revalidation_integrity_hash: string; owner_management_delegation_id: string | null } | undefined
+    if (!command || command.role !== 'executor' || command.execution_id !== execution.id || command.source_task_id !== execution.entityId || command.command_state !== 'running' || command.state !== 'active' || command.expires_at <= Date.now() || command.revalidation_id !== context.record.id || command.revalidation_integrity_hash !== context.record.integrityHash) return false
+    if (command.owner_management_delegation_id) {
+      const management = require('./project-owner-management-delegation') as typeof import('./project-owner-management-delegation')
+      const current = management.getOwnerManagementDelegation(context.subject.projectId, context.subject.taskId)
+      if (current.delegation?.id !== command.owner_management_delegation_id || current.delegation.autonomousWorkspaceEditVersion !== 1 || !['active', 'exhausted'].includes(current.state)) return false
+    }
+    const worktree = resolveDevelopmentWorktree(workspace.rootPath, getAgentSessionWorkspacePath(workspace.slug, sessionId))
+    const stat = lstatSync(target)
+    return Boolean(worktree && realpathSync(root) === worktree && stat.isFile() && !stat.isSymbolicLink() && stat.nlink === 1)
+  } catch { return false }
+}
+/** 权限层用：允许范围内的低风险动作直接执行，高风险仍走逐次人工审批。 */
 export function isOwnerAutoAllowedWorkspaceWrite(sessionId: string, toolName: string, args?: Record<string, unknown>): boolean {
   return classifyOwnerWorkspaceWrite(sessionId, toolName, args) === 'normal'
+}
+/** 单独核对已有文件授权，不能把新建文件的放行结果当成覆盖许可。 */
+export function isOwnerAutoAllowedExistingWorkspaceWrite(sessionId: string, args?: Record<string, unknown>): boolean {
+  if (classifyOwnerWorkspaceWrite(sessionId, 'Write', args) !== 'normal') return false
+  const context = resolveOwnerExecutionGateSession(sessionId)
+  if (context.kind !== 'owner_business') return false
+  const workspace = getAgentWorkspace(context.record.source.workspaceId)
+  const filePath = typeof args?.file_path === 'string' ? args.file_path.trim() : ''
+  if (!workspace || !filePath) return false
+  try {
+    const root = resolve(getAgentWorkspaceCwd(workspace, sessionId))
+    return canModifyExistingOwnerFile(context, workspace, sessionId, root, resolve(root, filePath))
+  } catch { return false }
 }
 
 /**
@@ -268,11 +310,11 @@ export function assertToolAllowedForSessionPurpose(sessionId: string, toolName: 
   if (!OWNER_TOOL_ALLOWED.has(toolName)) {
     if (context.kind === 'restricted') throw new Error(context.reason)
     if (context.kind === 'owner_business') {
-      if (context.record.source.textDeliveryVersion !== 1 && isOwnerWorkspaceFileActionCandidate(sessionId, toolName, args)) {
+      if (!hasTextDeliveryForExecution(context) && isOwnerWorkspaceFileActionCandidate(sessionId, toolName, args)) {
         if (classifyOwnerWorkspaceWrite(sessionId, toolName, args) === 'normal') return
         if (hasApprovedOwnerAction(sessionId, { toolName, toolInput: args ?? {} })) return
       }
-      throw new Error('Owner业务会话仅允许工作区内Write/Edit；覆盖、敏感路径或越界写入须经逐次人工审批')
+      throw new Error('Owner业务会话仅允许工作区内Write/Edit；未授权的覆盖或敏感路径须经逐次人工审批，越界写入被拒绝')
     }
     assertNoOwnerBusinessSession(sessionId)
     return
@@ -323,6 +365,21 @@ export function assertOwnerToolWorkingDirectory(sessionId: string, cwd: string):
   const workspace = getAgentWorkspace(context.record.source.workspaceId)
   if (!workspace || realpathSync(cwd) !== realpathSync(getAgentWorkspaceCwd(workspace, sessionId))) throw new Error('Owner工具工作目录与冻结工作区不一致')
 }
+/** 文件打开前后复核真实父目录映射，不能让内部符号链接绕过冻结的路径范围。 */
+export function assertOwnerCanonicalWorkspacePath(sessionId: string, canonicalPath: string): void {
+  const context = resolveOwnerExecutionGateSession(sessionId)
+  if (context.kind !== 'owner_business') throw new Error('Owner工具会话未准入')
+  const workspace = getAgentWorkspace(context.record.source.workspaceId)
+  if (!workspace) throw new Error('Owner代码工作区已失效')
+  const root = realpathSync(getAgentWorkspaceCwd(workspace, sessionId))
+  const resolved = resolve(canonicalPath)
+  if (!resolved.startsWith(`${root}${sep}`)) throw new Error('Owner代码路径越出工作区')
+  const scope = developmentScopeForExecution(context)
+  if (scope) {
+    const relativePath = normalizeRepoRelativePath(relative(root, resolved).split(sep).join('/'))
+    if (isProtectedDevelopmentPath(relativePath) || !pathWithinAllowed(relativePath, scope.allowedPaths)) throw new Error('Owner代码真实路径不在已确认范围内')
+  }
+}
 /** 逐请求Owner分支（休眠）：旧guard先行拒绝后本函数对controlled_task用途立即返回；owner用途须全链核验。 */
 export function assertOwnerExecutionRequestGate(input: { commandPurpose: string; sessionId: string; runtime: string; modelId: string; permissionMode: string; cwd: string; baseUrl: string; requestUrl: string }): void {
   if (input.commandPurpose === 'controlled_task') return
@@ -336,8 +393,8 @@ export function assertOwnerExecutionRequestGate(input: { commandPurpose: string;
   const employee = command ? store.getAgentEmployee(command.employee_id) : undefined
   const runtime = execution?.ownerCommandId ? readOwnerCommandRuntime(execution.ownerCommandId) : null
   if (command && command.role === 'reviewer' && execution?.ownerCommandId) {
-    const frozen = readOwnerCommandFrozenSource(execution.ownerCommandId).source
-    if (frozen.executionKind === 'development') {
+    const { source: frozen, taskId } = readOwnerCommandFrozenSource(execution.ownerCommandId)
+    if (ownerTaskDeliveryKind(frozen, taskId) === 'development') {
       const artifact = ownerDevelopmentArtifactFromPrompt(execution.prompt ?? '')
       const executors = store.getProjectDb().prepare(`SELECT id, execution_id FROM project_owner_execution_commands
         WHERE grant_id=? AND source_task_id=? AND source_step_link_id=? AND role='executor' AND rework_ordinal=?`).all(

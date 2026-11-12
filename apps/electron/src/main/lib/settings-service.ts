@@ -88,18 +88,35 @@ export function updateSettings(updates: Partial<AppSettings>, options: SettingsR
     throw new Error('写入应用设置失败')
   }
 
-  // 审计：设置更新
+  // 只记录变更字段；文件树状态按本次更新的工作区键记录，避免每次都复制全部工作区。
+  const audit = buildSettingsAuditSnapshots(current, updated, persistable)
   void appendConfigAudit({
     category: 'settings',
     action: 'update',
     targetId: 'app-settings',
-    beforeSnapshot: redactSensitive(current as unknown as Record<string, unknown>),
-    afterSnapshot: redactSensitive(updated as unknown as Record<string, unknown>),
+    beforeSnapshot: audit.before,
+    afterSnapshot: audit.after,
     metadata: { changedKeys: Object.keys(persistable) },
   })
 
   notifySettingsChange(updated, updates)
   return updated
+}
+
+export function buildSettingsAuditSnapshots(current: AppSettings, updated: AppSettings, updates: Partial<AppSettings>): { before: Record<string, unknown>; after: Record<string, unknown> } {
+  const before: Record<string, unknown> = {}, after: Record<string, unknown> = {}
+  for (const key of Object.keys(updates) as Array<keyof AppSettings>) {
+    if (key === 'fileTreeViewState' && isPlainObject(updates.fileTreeViewState)) {
+      const previous = current.fileTreeViewState ?? {}, next = updated.fileTreeViewState ?? {}
+      const treeKeys = Object.keys(updates.fileTreeViewState)
+      before[key] = Object.fromEntries(treeKeys.filter(treeKey => Object.hasOwn(previous, treeKey)).map(treeKey => [treeKey, previous[treeKey]]))
+      after[key] = Object.fromEntries(treeKeys.filter(treeKey => Object.hasOwn(next, treeKey)).map(treeKey => [treeKey, next[treeKey]]))
+    } else {
+      if (current[key] !== undefined) before[key] = current[key]
+      if (updated[key] !== undefined) after[key] = updated[key]
+    }
+  }
+  return { before: redactSensitive(before), after: redactSensitive(after) }
 }
 
 /** 需要深度合并的嵌套对象字段（更新子字段时保留其余子字段，避免整块替换丢失）。 */

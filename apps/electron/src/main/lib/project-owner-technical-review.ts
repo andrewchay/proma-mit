@@ -4,11 +4,12 @@ import { isOwnerValidationEvidenceExpired } from './development-validation-accep
 import type { OwnerDevelopmentValidationArtifact } from './project-owner-development-artifact'
 import type { OwnerDevelopmentDeliveryArtifact } from '@gravitas/shared'
 import { ownerDevelopmentValidationId } from './development-validation-attempt'
-import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
+import { ownerTaskDeliveryKind, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { createHash } from 'node:crypto'
 import { getOwnerExecutionRevalidation } from './project-owner-execution-revalidation'
 import { getOwnerTaskMaterializationRecord } from './project-owner-task-materialization'
 import * as store from './project-sqlite-store'
+import { resolveOwnerTypographyQuote } from './project-owner-quote'
 
 export type OwnerTechnicalReviewVerdict = 'approved' | 'changes_requested' | 'blocked'
 export type OwnerTechnicalReviewCriterionStatus = 'met' | 'not_met' | 'not_verified'
@@ -126,16 +127,24 @@ function unwrapReviewReceipt(raw: string): string {
 }
 
 /** 仅把评审已经逐字引用的依据补入缺失的 quote 字段。 */
-function restoreVerbatimReviewQuotes(receipt: string, artifactContent: string | undefined): string {
+export function restoreVerbatimReviewQuotes(receipt: string, artifactContent: string | undefined): string {
   if (artifactContent === undefined || receipt.length > MAX_RESPONSE_LENGTH) return receipt
   let value: unknown
   try { value = JSON.parse(receipt) } catch { return receipt }
   if (!isRecord(value) || !Array.isArray(value.criteria)) return receipt
   let changed = false
   const criteria = value.criteria.map((item: unknown) => {
-    if (!isRecord(item) || Object.hasOwn(item, 'quote') || !boundedText(item.evidence, 1000) || !artifactContainsQuote(artifactContent, item.evidence)) return item
+    if (!isRecord(item)) return item
+    if (!Object.hasOwn(item, 'quote') && boundedText(item.evidence, 1000) && artifactContainsQuote(artifactContent, item.evidence)) {
+      changed = true
+      return { ...item, quote: item.evidence }
+    }
+    if (typeof item.quote !== 'string' || !item.quote || artifactContainsQuote(artifactContent, item.quote)) return item
+    // 只修复直引号与排版引号的区别；找到唯一原文后仍保存真正的逐字引用。
+    const quote = resolveOwnerTypographyQuote(artifactContent, item.quote)
+    if (quote === null) return item
     changed = true
-    return { ...item, quote: item.evidence }
+    return { ...item, quote }
   })
   return changed ? JSON.stringify({ ...value, criteria }) : receipt
 }
@@ -298,18 +307,19 @@ export function recordOwnerTechnicalReviewEvidence(reviewerCommandId: string, re
     throw new Error('Owner Executor 存在未解决的停止升级，拒绝技术评审续派')
   }
   const frozenSource = readOwnerCommandFrozenSource(row.id).source
+  const development = ownerTaskDeliveryKind(frozenSource, row.source_task_id) === 'development'
   const reviewerExecution = store.getAgentExecution(reviewerExecutionId)
-  const developmentArtifact = frozenSource.executionKind === 'development' && reviewerExecution?.prompt
+  const developmentArtifact = development && reviewerExecution?.prompt
     ? ownerDevelopmentArtifactFromPrompt(reviewerExecution.prompt) : null
-  const textArtifact = frozenSource.executionKind === 'development' ? null : assertOwnerReviewerTextDelivery(row.id)
-  if (frozenSource.executionKind === 'development' && (!developmentArtifact
+  const textArtifact = development ? null : assertOwnerReviewerTextDelivery(row.id)
+  if (development && (!developmentArtifact
     || developmentArtifact.executorCommandId !== executor.id || developmentArtifact.executorExecutionId !== executor.execution_id)) {
     throw new Error('Owner代码Reviewer没有收到准确Executor快照')
   }
   const artifactHash = developmentArtifact?.contentHash ?? textArtifact?.contentSha256
   const artifactContent = developmentArtifact?.content ?? textArtifact?.content
   let validationEvidence: OwnerDevelopmentValidationArtifact[] | undefined
-  if (frozenSource.executionKind === 'development') {
+  if (development) {
     const frozenTask = frozenSource.tasks.find(task => task.taskId === row.source_task_id && task.linkId === row.source_step_link_id)
     const expectedCommands = frozenTask?.developmentScope?.verificationCommands ?? []
     validationEvidence = developmentArtifact?.validationEvidence
@@ -323,7 +333,7 @@ export function recordOwnerTechnicalReviewEvidence(reviewerCommandId: string, re
   const receiptJson = artifactHash && rawResponse.length <= MAX_RESPONSE_LENGTH
     ? restoreVerbatimReviewQuotes(unwrapReviewReceipt(rawResponse), artifactContent)
     : rawResponse
-  const response = parseOwnerTechnicalReviewResponse(receiptJson, listFrozenCriteria(row), artifactHash, artifactContent, frozenSource.executionKind === 'development' ? 'development' : 'text')
+  const response = parseOwnerTechnicalReviewResponse(receiptJson, listFrozenCriteria(row), artifactHash, artifactContent, development ? 'development' : 'text')
   if (validationEvidence) assertOwnerDevelopmentValidationForVerdict(response.verdict, validationEvidence)
   const evidence = toEvidence(row, executor, response, receiptJson, createdAt, validationEvidence)
   const originalResponse = receiptJson === rawResponse ? null : rawResponse

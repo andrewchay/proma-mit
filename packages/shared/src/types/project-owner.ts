@@ -70,6 +70,8 @@ export interface ProjectOwnerPlanStep {
   acceptanceCriteria: string[]
   dependencies: string[]
   roleKey: string
+  /** 新方案可显式区分文本成果与需要修改文件的研发成果；旧方案保持缺省。 */
+  deliveryKind?: 'text' | 'development'
   /** 模型引用的工作区代码定位证据；只指向本次冻结搜索命中的路径/行，不代表验证结论。 */
   sourceReferences?: { path: string; line: number; sha256: string }[]
 }
@@ -439,6 +441,8 @@ export interface OwnerExecutionPreparationInput {
   textDeliveryVersion?: 1
   /** 新确认明确委托Owner依据准确成果/独立检查决定子任务验收及有限返工。 */
   qualityManagementVersion?: 1
+  /** 新授权允许在隔离研发工作树内修改冻结范围中的普通文件。 */
+  autonomousWorkspaceEditVersion?: 1
   developmentScope?: import('./development-review').DevelopmentTaskScope
   /** 兼容旧准备；新输入同时提供按稳定 roleKey 显式绑定的数组。 */
   executorEmployeeId: string
@@ -481,6 +485,8 @@ export interface OwnerExecutionPreparationSource extends ProjectOwnerGoalSubject
   textDeliveryVersion?: 1
   /** 新确认明确委托Owner依据准确成果/独立检查决定子任务验收及有限返工。 */
   qualityManagementVersion?: 1
+  /** 新授权允许在隔离研发工作树内修改冻结范围中的普通文件。 */
+  autonomousWorkspaceEditVersion?: 1
   ownerBindingProvenance: { state: 'none' } | { state: 'bound'; bindingRevision: number; carrierId: string; carrierFingerprint: string; bindingHash: string }
   schemaVersion: 1
   stage: 'pending_task_links'
@@ -597,7 +603,7 @@ export interface OwnerExecutionAssignmentContext {
   constraints: string[]
   acceptanceCriteria: string[]
   roles: Array<{ roleKey: string; name: string }>
-  steps: Array<{ key: string; title: string; outcome: string; acceptanceCriteria: string[]; dependencies: string[]; roleKey: string; sourceReferences?: Array<{ path: string; line: number; sha256: string }> }>
+  steps: Array<{ key: string; title: string; outcome: string; acceptanceCriteria: string[]; dependencies: string[]; roleKey: string; deliveryKind?: 'text' | 'development'; sourceReferences?: Array<{ path: string; line: number; sha256: string }> }>
   codeFiles?: Array<{ path: string; sha256: string; matchedTerms: string[] }>
   /** 绿地研发：项目没有既有代码候选，本次目标是要新建的文件。 */
   greenfieldDevelopment?: true
@@ -663,6 +669,7 @@ export interface OwnerTaskProjection {
   title: string
   description: string
   roleKey: string
+  deliveryKind?: 'text' | 'development'
   outcome: string
   acceptanceCriteria: string[]
   dependencies: string[]
@@ -740,6 +747,7 @@ export interface OwnerExecutionRevalidationInput {
 export interface OwnerExecutionRevalidationTask {
   taskId: string
   stepKey: string
+  deliveryKind?: 'text' | 'development'
   linkId: string
   linkKind: 'created' | 'existing_target'
   linkIntegrityHash: string
@@ -756,6 +764,8 @@ export interface OwnerExecutionRevalidationSource {
   textDeliveryVersion?: 1
   /** 新确认明确委托Owner依据准确成果/独立检查决定子任务验收及有限返工。 */
   qualityManagementVersion?: 1
+  /** 新授权允许在隔离研发工作树内修改冻结范围中的普通文件。 */
+  autonomousWorkspaceEditVersion?: 1
   schemaVersion: 2
   stage: 'paused_task_links'
   projectId: string
@@ -842,6 +852,8 @@ export interface OwnerExecutionGrantIssuePreview extends ProjectOwnerGoalSubject
   textDeliveryVersion?: 1
   /** 新确认明确委托Owner依据准确成果/独立检查决定子任务验收及有限返工。 */
   qualityManagementVersion?: 1
+  /** 新授权允许在隔离研发工作树内修改冻结范围中的普通文件。 */
+  autonomousWorkspaceEditVersion?: 1
   executionKind: 'controlled' | 'development'
   dispatchMode: OwnerExecutionDispatchMode
   policyRevision: number

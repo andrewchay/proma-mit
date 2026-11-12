@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import type { OwnerDeliveryValidationRecord, OwnerExecutionObservation, OwnerExecutionRevalidationRecord, OwnerExecutionRevalidationTask, OwnerManagementDeliveryItem, OwnerManagementDeliveryReview, OwnerManagementMessage, ProjectOwnerPlanDraft } from '@gravitas/shared'
 import { readOwnerTextDelivery, assertOwnerReviewerTextDelivery } from './project-owner-text-delivery'
 import { listOwnerTechnicalReviewEvidence } from './project-owner-technical-review'
-import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
+import { ownerTaskDeliveryKind, ownerTaskHasTextDelivery, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { getOwnerQualityRecovery, readOwnerQualityAction } from './project-owner-quality-actions'
 import { ownerExecutionHash } from './project-owner-execution-hash'
 import { getOwnerExecutionRevalidation, listOwnerExecutionRevalidationHistory } from './project-owner-execution-revalidation'
@@ -70,11 +70,12 @@ export function readOwnerManagementDelivery(projectId: string, observation: Owne
   if (observation.trigger !== 'terminal' || observation.executionStatus !== 'completed') return { ...base, state: 'unavailable', detail: '本次工作没有完整完成成果，不能作质量结论。' }
   try {
     const frozen = readOwnerCommandFrozenSource(observation.commandId).source
+    const development = ownerTaskDeliveryKind(frozen, observation.businessTaskId) === 'development'
     const technicalReview = observation.role === 'reviewer' ? listOwnerTechnicalReviewEvidence(projectId, observation.businessTaskId).find(item => item.reviewerCommandId === observation.commandId && item.reviewerExecutionId === observation.executionId && item.artifactVerified === true) : undefined
-    const developmentArtifact = frozen.executionKind === 'development' && observation.role === 'reviewer' ? technicalReview?.developmentArtifact : undefined
+    const developmentArtifact = development && observation.role === 'reviewer' ? technicalReview?.developmentArtifact : undefined
     const artifact = developmentArtifact ? undefined : observation.role === 'reviewer' ? assertOwnerReviewerTextDelivery(observation.commandId) : readOwnerTextDelivery(observation.commandId, true)
     if (!artifact && !developmentArtifact) {
-      if (frozen.textDeliveryVersion === 1 || frozen.executionKind === 'development') throw new Error('已冻结成果正文缺失')
+      if (ownerTaskHasTextDelivery(frozen, observation.businessTaskId) || development) throw new Error('已冻结成果正文缺失')
       return { ...base, state: 'legacy', detail: '本次来源未提供可核验的完整文本成果；旧摘要不能作为已读全文的证明。' }
     }
     if (artifact && (artifact.projectId !== projectId || artifact.grantId !== observation.grantId || artifact.taskId !== observation.businessTaskId || artifact.planRevision !== observation.sourcePlanRevision)) throw new Error('成果与Owner观察归属不一致')
@@ -145,9 +146,10 @@ function publishGrantCompletion(projectId: string, grant: OwnerDeliveryGrant): b
     const action = readOwnerQualityAction(actionRow.reviewer_command_id)
     if (!action || action.grantId !== grant.id || action.taskId !== task.id || action.state !== 'accepted') return false
     const frozen = readOwnerCommandFrozenSource(action.reviewerCommandId).source
+    const development = ownerTaskDeliveryKind(frozen, task.id) === 'development'
     const technicalEvidence = listOwnerTechnicalReviewEvidence(projectId, task.id).find(item => item.reviewerCommandId === action.reviewerCommandId && item.artifactVerified === true)
-    const developmentArtifact = frozen.executionKind === 'development' ? technicalEvidence?.developmentArtifact : undefined
-    if (frozen.executionKind === 'development' && (!technicalEvidence?.validationEvidenceVerified || !technicalEvidence.validationEvidence
+    const developmentArtifact = development ? technicalEvidence?.developmentArtifact : undefined
+    if (development && (!technicalEvidence?.validationEvidenceVerified || !technicalEvidence.validationEvidence
       || technicalEvidence.validationEvidence.some(item => item.attemptState !== 'completed' || item.freshness !== 'fresh' || item.status !== 'passed'
         || item.exitCode !== 0 || item.timedOut !== false || item.outputTruncated !== false || !item.rawOutputSha256 || !Number.isSafeInteger(item.rawOutputByteLength)))) return false
     const artifact = developmentArtifact ? undefined : assertOwnerReviewerTextDelivery(action.reviewerCommandId)

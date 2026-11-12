@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import type { OwnerTextDelivery } from '@gravitas/shared'
 import { getProjectsDir } from './config-paths'
 import { ownerExecutionHash } from './project-owner-execution-hash'
-import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
+import { ownerTaskHasTextDelivery, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import * as store from './project-sqlite-store'
 
 export const OWNER_TEXT_DELIVERY_MAX_BYTES = 64 * 1024
@@ -25,8 +25,8 @@ function source(commandId: string) {
   const command = store.getProjectDb().prepare('SELECT * FROM project_owner_execution_commands WHERE id=?').get(commandId) as DeliveryCommand | undefined
   if (!command) throw new Error('文本成果命令不存在')
   const frozen = readOwnerCommandFrozenSource(commandId).source
-  if (frozen.textDeliveryVersion !== 1) return null
-  if (frozen.executionKind !== 'controlled' || command.role !== 'executor' || !command.execution_id) throw new Error('文本成果只允许准确的非代码Executor命令')
+  if (!ownerTaskHasTextDelivery(frozen, command.source_task_id)) return null
+  if (command.role !== 'executor' || !command.execution_id) throw new Error('文本成果只允许准确的非代码Executor命令')
   const execution = store.getAgentExecution(command.execution_id)
   if (!execution || execution.ownerCommandId !== commandId || execution.projectId !== command.project_id || execution.entityType !== 'task' || execution.entityId !== command.source_task_id || !execution.sessionId) throw new Error('文本成果执行归属无法核验')
   return { command, frozen, execution }
@@ -106,8 +106,8 @@ export function readOwnerTextDelivery(commandId: string, requireKnownSettlement 
 
 /** 评审排队时的哈希是输入身份；后续文件变化不能由新的模型回执追认。 */
 export function assertOwnerReviewerTextDelivery(commandId: string): OwnerTextDelivery | null {
-  const frozen = readOwnerCommandFrozenSource(commandId).source
-  if (frozen.textDeliveryVersion !== 1) return null
+  const { source: frozen, taskId } = readOwnerCommandFrozenSource(commandId)
+  if (!ownerTaskHasTextDelivery(frozen, taskId)) return null
   const reviewer = store.getProjectDb().prepare("SELECT grant_id,source_task_id,source_step_link_id,rework_ordinal,text_delivery_hash FROM project_owner_execution_commands WHERE id=? AND role='reviewer'").get(commandId) as { grant_id: string; source_task_id: string; source_step_link_id: string; rework_ordinal: number; text_delivery_hash: string | null } | undefined
   if (!reviewer?.text_delivery_hash) throw new Error('评审缺少冻结的完整成果版本')
   const executors = store.getProjectDb().prepare("SELECT id FROM project_owner_execution_commands WHERE grant_id=? AND source_task_id=? AND source_step_link_id=? AND role='executor' AND rework_ordinal=?").all(reviewer.grant_id, reviewer.source_task_id, reviewer.source_step_link_id, reviewer.rework_ordinal) as { id: string }[]

@@ -26,6 +26,7 @@ import {
   getProjectOwnerPlanDraft,
   getProjectOwnerPlanningContext,
 } from './project-owner-plan-service'
+
 import { getOwnerCarrierFacts, getOwnerRuntimeBinding, ownerCarrierBindingMatches } from './project-owner-runtime-binding'
 import { readCatalog } from './knowledge-catalog-service'
 import {
@@ -33,6 +34,7 @@ import {
   getActiveAgentEmployeeCapabilityVersions,
   getAgentEmployee,
 } from './project-sqlite-store'
+
 
 export class OwnerExecutionPreparationConflictError extends Error {
   constructor(message: string) {
@@ -91,6 +93,7 @@ export function parseOwnerExecutionInput(raw: unknown): OwnerExecutionPreparatio
     'employeeRuntimeVersion',
     'textDeliveryVersion',
     'qualityManagementVersion',
+    'autonomousWorkspaceEditVersion',
     'developmentScope',
     'executorEmployeeId',
     'reviewerEmployeeId',
@@ -106,6 +109,7 @@ export function parseOwnerExecutionInput(raw: unknown): OwnerExecutionPreparatio
     'expiresAt',
     'changeReason',
   ])
+  if (o.autonomousWorkspaceEditVersion !== undefined && (o.autonomousWorkspaceEditVersion !== 1 || o.executionKind !== 'development' || !o.developmentScope || o.qualityManagementVersion !== 1)) throw new Error('Owner自主修改须绑定研发范围与质量委托')
   if (o.qualityManagementVersion !== undefined && (o.qualityManagementVersion !== 1 || o.executionKind === 'controlled' && o.textDeliveryVersion !== 1)) throw new Error('Owner质量管理须绑定本次执行类型支持的完整成果')
   if (o.textDeliveryVersion !== undefined && (o.textDeliveryVersion !== 1 || o.executionKind !== 'controlled')) throw new Error('Owner完整文本交付只支持新版非代码执行')
   if (o.employeeRuntimeVersion !== undefined && o.employeeRuntimeVersion !== 2) throw new Error('Owner逐员工模型协议版本无效')
@@ -169,6 +173,7 @@ export function parseOwnerExecutionInput(raw: unknown): OwnerExecutionPreparatio
     ...(o.employeeRuntimeVersion === 2 ? { employeeRuntimeVersion: 2 as const } : {}),
     ...(o.textDeliveryVersion === 1 ? { textDeliveryVersion: 1 as const } : {}),
     ...(o.qualityManagementVersion === 1 ? { qualityManagementVersion: 1 as const } : {}),
+    ...(o.autonomousWorkspaceEditVersion === 1 ? { autonomousWorkspaceEditVersion: 1 as const } : {}),
     ...(developmentScope === undefined ? {} : { developmentScope }),
     executorEmployeeId: text(o.executorEmployeeId),
     reviewerEmployeeId: text(o.reviewerEmployeeId),
@@ -269,6 +274,13 @@ export function buildOwnerExecutionSource(
     throw new Error('Owner执行准备必须包含所选步骤依赖闭包')
   if (input.expiresAt <= Date.now()) throw new Error('Owner执行准备期限已过期')
   const selectedSteps = plan.proposal.steps.filter((step) => input.selectedStepKeys.includes(step.key))
+  const mixedDelivery = input.executionKind === 'development'
+    && selectedSteps.some(step => step.deliveryKind === 'text')
+    && selectedSteps.every(step => step.deliveryKind !== undefined)
+    && selectedSteps.some(step => step.deliveryKind === 'development')
+    && input.qualityManagementVersion === 1
+  if (!mixedDelivery && selectedSteps.some(step => step.deliveryKind && (step.deliveryKind === 'text' ? 'controlled' : 'development') !== input.executionKind))
+    throw new Error('方案包含不同的文本或研发交付步骤，当前执行安排无法逐步匹配，请重新安排')
   const selectedRoleKeys = [...new Set(selectedSteps.map((step) => step.roleKey))].sort()
   const roleAssignments = input.roleAssignments
   if (roleAssignments && (roleAssignments.length !== selectedRoleKeys.length || roleAssignments.some((item, index) => item.roleKey !== selectedRoleKeys[index])))
@@ -284,18 +296,28 @@ export function buildOwnerExecutionSource(
     ? roleAssignments.map((assignment) => ({ roleKey: assignment.roleKey, employee: getAgentEmployee(assignment.employeeId) }))
     : [{ roleKey: selectedRoleKeys[0]!, employee: getAgentEmployee(input.executorEmployeeId) }]
   const executor = roleEmployees[0]?.employee
-  const canInvokeForExecution = (employee: AgentEmployee | undefined) => Boolean(employee && (employee.executionProfile === input.executionKind || input.executionKind === 'controlled' && ['general', 'development'].includes(employee.executionProfile ?? 'general')))
+  const kindsForRole = (roleKey: string): Array<'controlled' | 'development'> => [...new Set(selectedSteps
+    .filter(step => !roleAssignments || step.roleKey === roleKey)
+    .map(step => mixedDelivery ? step.deliveryKind === 'text' ? 'controlled' as const : 'development' as const : input.executionKind))]
+  const requiredKinds = [...new Set(selectedRoleKeys.flatMap(kindsForRole))]
+  const canInvokeForExecution = (employee: AgentEmployee | undefined, kind: 'controlled' | 'development') => Boolean(employee && (employee.executionProfile === kind || kind === 'controlled' && ['general', 'development'].includes(employee.executionProfile ?? 'general')))
   if (!executor?.enabled || !reviewer?.enabled || input.reviewerEmployeeId === executor.id
-    || roleEmployees.some(({ employee }) => !employee?.enabled || !canInvokeForExecution(employee) || employee.id === reviewer.id)
-    || !canInvokeForExecution(reviewer))
+    || roleEmployees.some(({ roleKey, employee }) => !employee?.enabled || kindsForRole(roleKey).some(kind => !canInvokeForExecution(employee, kind)) || employee.id === reviewer.id)
+    || requiredKinds.some(kind => !canInvokeForExecution(reviewer, kind)))
     throw new Error('Owner执行或评审员工不存在、已停用、模式不符或职责重叠')
   const facts = { getChannel: getChannelById, getWorkspace: getAgentWorkspace }
-  const validate = input.executionKind === 'controlled' ? validateControlledTarget : validateDevelopmentTarget
-  const forValidation = (employee: typeof executor) => input.executionKind === 'controlled' && employee.executionProfile !== 'controlled' ? ownerControlledEmployee(employee) : employee
-  const target = validate(forValidation(executor), input.workspaceId, facts)
-  validate(forValidation(reviewer), input.workspaceId, facts)
-  for (const { employee } of roleEmployees) validate(forValidation(employee!), input.workspaceId, facts)
+  const validate = (employee: AgentEmployee, kind: 'controlled' | 'development') => kind === 'controlled'
+    ? validateControlledTarget(employee.executionProfile === 'controlled' ? employee : ownerControlledEmployee(employee), input.workspaceId, facts)
+    : validateDevelopmentTarget(employee, input.workspaceId, facts)
+  const target = validate(executor, kindsForRole(roleEmployees[0]!.roleKey)[0]!)
+  for (const kind of requiredKinds) validate(reviewer, kind)
+  for (const { employee, roleKey } of roleEmployees) for (const kind of kindsForRole(roleKey)) validate(employee!, kind)
   const compatibleEmployees = [...roleEmployees.map((item) => item.employee!), reviewer]
+  const textRoleKeys = new Set(selectedSteps.filter(step => step.deliveryKind === 'text').map(step => step.roleKey))
+  const textEmployees = input.executionKind === 'development' && textRoleKeys.size
+    ? [...roleEmployees.filter(item => !roleAssignments || textRoleKeys.has(item.roleKey)).map(item => item.employee!), reviewer]
+    : []
+  for (const employee of textEmployees) validate(employee, 'controlled')
   const employeeRuntimes = input.employeeRuntimeVersion === 2 ? [...new Map(compatibleEmployees.map(employee => [employee.id, freezeOwnerEmployeeRuntime(employee)])).values()].sort((a, b) => a.employeeId.localeCompare(b.employeeId)) : undefined
   if (employeeRuntimes?.some(runtime => runtime.runtime !== executor.runtime)) throw new Error('Owner同一执行批次的执行与评审员工必须使用同一受控Runtime')
   if (!employeeRuntimes && compatibleEmployees.some((employee) => employee.channelId !== executor.channelId
@@ -375,7 +397,7 @@ export function buildOwnerExecutionSource(
     }
   })
   const employeeInvocations = [...new Map(compatibleEmployees
-    .filter(employee => input.executionKind === 'controlled' && ['general', 'development'].includes(employee.executionProfile ?? 'general'))
+    .filter(employee => (input.executionKind === 'controlled' || textEmployees.some(textEmployee => textEmployee.id === employee.id)) && ['general', 'development'].includes(employee.executionProfile ?? 'general'))
     .map(employee => [employee.id, { employeeId: employee.id, originalProfile: (employee.executionProfile ?? 'general') as 'general' | 'development', executionProfile: 'controlled' as const, permissionMode: 'safe' as const }])).values()]
     .sort((a, b) => a.employeeId.localeCompare(b.employeeId))
   const ownerBindingProvenance = binding
@@ -409,6 +431,7 @@ export function buildOwnerExecutionSource(
     }),
     ...(input.textDeliveryVersion === 1 ? { textDeliveryVersion: 1 as const } : {}),
     ...(input.qualityManagementVersion === 1 ? { qualityManagementVersion: 1 as const } : {}),
+    ...(input.autonomousWorkspaceEditVersion === 1 ? { autonomousWorkspaceEditVersion: 1 as const } : {}),
     ...(employeeRuntimes ? { employeeRuntimes } : {}),
     ...(employeeInvocations.length ? { employeeInvocations } : {}),
     executor: {

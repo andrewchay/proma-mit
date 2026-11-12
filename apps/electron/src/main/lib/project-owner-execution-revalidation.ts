@@ -69,7 +69,7 @@ function buildRevalidationSource(subject: ProjectOwnerGoalSubject, input: OwnerE
     const roleKey = link.projection.roleKey
     const roleAssignment = v1.roleAssignments?.find((assignment) => assignment.roleKey === roleKey)
     if (v1.roleAssignments && (!roleAssignment || task.assignee?.userId !== `agent-${roleAssignment.employee.id}`)) fail('权威Task负责人与冻结roleKey员工映射不一致')
-    return { taskId: task.id, stepKey: link.stepKey, linkId: link.id, linkKind: link.kind, linkIntegrityHash: link.integrityHash, taskSpecificationHash: link.taskSpecificationHash, status: 'paused' as const, assignee: task.assignee ?? { userId: '', displayName: '' }, ...(roleAssignment ? { executor: { id: roleAssignment.employee.id, name: roleAssignment.employee.name, roleKey, configurationHash: roleAssignment.employee.configurationHash } } : {}), workspaceId: task.workspaceId ?? '', ...(task.developmentScope ? { developmentScope: task.developmentScope } : {}), dependencies }
+    return { taskId: task.id, stepKey: link.stepKey, ...(link.projection.deliveryKind ? { deliveryKind: link.projection.deliveryKind } : {}), linkId: link.id, linkKind: link.kind, linkIntegrityHash: link.integrityHash, taskSpecificationHash: link.taskSpecificationHash, status: 'paused' as const, assignee: task.assignee ?? { userId: '', displayName: '' }, ...(roleAssignment ? { executor: { id: roleAssignment.employee.id, name: roleAssignment.employee.name, roleKey, configurationHash: roleAssignment.employee.configurationHash } } : {}), workspaceId: task.workspaceId ?? '', ...(task.developmentScope ? { developmentScope: task.developmentScope } : {}), dependencies }
   })
   if (ownerExecutionHash(tasks.map(task => task.stepKey).sort()) !== ownerExecutionHash(v1.selectedStepKeys.slice().sort())) fail('步骤与真实任务数量不符，请保留原件核查')
   return {
@@ -87,6 +87,7 @@ function buildRevalidationSource(subject: ProjectOwnerGoalSubject, input: OwnerE
     tasks,
     ...(v1.textDeliveryVersion === 1 ? { textDeliveryVersion: 1 as const } : {}),
     ...(v1.qualityManagementVersion === 1 ? { qualityManagementVersion: 1 as const } : {}),
+    ...(v1.autonomousWorkspaceEditVersion === 1 ? { autonomousWorkspaceEditVersion: 1 as const } : {}),
     ...(v1.employeeRuntimes ? { employeeRuntimes: v1.employeeRuntimes } : {}),
     ...(v1.employeeInvocations ? { employeeInvocations: v1.employeeInvocations } : {}),
     executor: v1.executor,

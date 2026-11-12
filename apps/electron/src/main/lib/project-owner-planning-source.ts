@@ -7,7 +7,7 @@ import { getOwnerCarrierFacts, getOwnerRuntimeBinding, ownerCarrierBindingMatche
 import { assertLocalActorEnabled, getProjectOwnerPlanningContext, getProjectOwnerPlanDraft } from './project-owner-plan-service'
 import { resolveProjectOwnerPlanningRequest, type ProjectOwnerPlanningRequest } from './project-owner-planning-protocol'
 import { resolveOwnerExecutionAssignmentRequest } from './project-owner-execution-assignment-protocol'
-import { ownerAssignmentContextMatchesApprovalTransition, parseOwnerExecutionAssignmentContext } from './project-owner-execution-assignment-context'
+import { ownerAssignmentContextMatchesApprovalTransition, ownerAssignmentContextsEquivalent, parseOwnerExecutionAssignmentContext } from './project-owner-execution-assignment-context'
 import { getCurrentOwnerExecutionAssignmentContext } from './project-owner-execution-assignment-context-service'
 import * as store from './project-sqlite-store'
 export interface OwnerPlanningTaskSource {
@@ -138,7 +138,7 @@ export function resolveOwnerPlanningTask(taskId: string, allowTerminalTask = fal
     const latest = getCurrentOwnerExecutionAssignmentContext({ projectId: link.projectId, ...(link.targetTaskId === undefined ? {} : { taskId: link.targetTaskId }) }, input, previous.teamContractVersion ?? 1)
     const sameContext = assignmentApprovalTransition
       ? ownerAssignmentContextMatchesApprovalTransition(previous, latest.context)
-      : latest.context.contextFingerprint === previous.contextFingerprint && JSON.stringify(latest.context) === JSON.stringify(previous)
+      : ownerAssignmentContextsEquivalent(previous, latest.context)
     if (!sameContext) throw new Error('Owner安排的计划、工作区或团队候选已变化，请重新提案')
   }
   const preparation = store.getProjectDb().prepare('SELECT id FROM controlled_task_preparations WHERE task_id = ?').get(taskId) as { id: string } | undefined

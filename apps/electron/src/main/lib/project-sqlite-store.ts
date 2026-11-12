@@ -1261,6 +1261,26 @@ function migrate(database: SqliteCompat): void {
   )`)
   database.exec('CREATE INDEX IF NOT EXISTS idx_owner_request_reservations_command ON project_owner_execution_request_reservations(command_id)')
   database.exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_owner_request_reservations_body ON project_owner_execution_request_reservations(execution_id, request_evidence_id)')
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_late_completion_reconciliations (
+    command_id TEXT PRIMARY KEY, execution_id TEXT NOT NULL UNIQUE, project_id TEXT NOT NULL, grant_id TEXT NOT NULL,
+    payload TEXT NOT NULL, integrity_hash TEXT NOT NULL CHECK(length(integrity_hash)=64), created_at INTEGER NOT NULL
+  )`)
+  database.exec(`CREATE TRIGGER IF NOT EXISTS project_owner_late_completion_reconciliations_immutable
+    BEFORE UPDATE ON project_owner_late_completion_reconciliations
+    BEGIN SELECT RAISE(ABORT, 'Owner late completion reconciliation is immutable'); END`)
+  database.exec(`CREATE TRIGGER IF NOT EXISTS project_owner_late_completion_reconciliations_no_delete
+    BEFORE DELETE ON project_owner_late_completion_reconciliations
+    BEGIN SELECT RAISE(ABORT, 'Owner late completion reconciliation is immutable'); END`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_late_completion_resumptions (
+    command_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, grant_id TEXT NOT NULL,
+    payload TEXT NOT NULL, integrity_hash TEXT NOT NULL CHECK(length(integrity_hash)=64), created_at INTEGER NOT NULL
+  )`)
+  database.exec(`CREATE TRIGGER IF NOT EXISTS project_owner_late_completion_resumptions_immutable
+    BEFORE UPDATE ON project_owner_late_completion_resumptions
+    BEGIN SELECT RAISE(ABORT, 'Owner late completion resumption is immutable'); END`)
+  database.exec(`CREATE TRIGGER IF NOT EXISTS project_owner_late_completion_resumptions_no_delete
+    BEFORE DELETE ON project_owner_late_completion_resumptions
+    BEGIN SELECT RAISE(ABORT, 'Owner late completion resumption is immutable'); END`)
   database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_preflight_rejections (
     execution_id TEXT PRIMARY KEY, command_id TEXT NOT NULL UNIQUE, project_id TEXT NOT NULL, grant_id TEXT NOT NULL,
     channel_id TEXT NOT NULL, model_id TEXT NOT NULL, provider_type TEXT NOT NULL, provider_protocol TEXT NOT NULL,

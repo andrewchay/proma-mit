@@ -77,6 +77,7 @@ export async function executeBrowserVerificationCommand(input: {
     const result = await runOwnerRuntimeBrowserAssertions({
       workspaceRoot: input.workspaceRoot,
       relativePath: target,
+      resourcePaths: input.targetPaths.filter(path => ['.js', '.mjs', '.css'].includes(extname(path).toLowerCase()) && existsSync(resolve(input.workspaceRoot, path))),
       intents: [],
       timeoutMs: perFileBudget,
       templates,

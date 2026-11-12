@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { OwnerExecutionRevalidationTask } from '@gravitas/shared'
 import { buildElectronMock } from './testing/electron-mock'
 const directory = mkdtempSync(join(tmpdir(), 'owner-launch-')), previous = process.env.PROMA_TEST_CONFIG_DIR
 process.env.PROMA_TEST_CONFIG_DIR = directory
@@ -24,9 +25,23 @@ const revalidation = await import('./project-owner-execution-revalidation')
 const grantIssue = await import('./project-owner-execution-grant-issue')
 const { launchOwnerPreparedExecution } = await import('./project-owner-execution-launch')
 const { getAgentSessionMeta } = await import('./agent-session-manager')
+const { ownerTaskDeliveryKind, ownerTaskHasTextDelivery } = await import('./project-owner-employee-runtime')
 let policy: typeof import('./project-pilot-policy')
 beforeAll(async () => { await store.initProjectDb(); policy = await import('./project-pilot-policy') })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
+test('Given冻结批次含文本和研发步骤 When读取准确任务 Then按步骤选择成果并兼容旧批次', () => {
+  const task: OwnerExecutionRevalidationTask = { taskId: 'task', stepKey: 'step', linkId: 'link', linkKind: 'created', linkIntegrityHash: 'hash', taskSpecificationHash: 'hash', status: 'paused', assignee: { userId: 'employee', displayName: '员工' }, workspaceId: 'workspace', dependencies: [] }
+  const mixed = { executionKind: 'development' as const, tasks: [{ ...task, deliveryKind: 'text' as const }, { ...task, taskId: 'code', deliveryKind: 'development' as const }] }
+  expect(ownerTaskDeliveryKind(mixed, 'task')).toBe('text')
+  expect(ownerTaskHasTextDelivery(mixed, 'task')).toBe(true)
+  expect(ownerTaskDeliveryKind(mixed, 'code')).toBe('development')
+  expect(ownerTaskHasTextDelivery(mixed, 'code')).toBe(false)
+  expect(ownerTaskDeliveryKind({ executionKind: 'development', tasks: [task] }, 'task')).toBe('development')
+  expect(ownerTaskHasTextDelivery({ executionKind: 'controlled', tasks: [task] }, 'task')).toBe(false)
+  expect(ownerTaskHasTextDelivery({ executionKind: 'controlled', tasks: [task], textDeliveryVersion: 1 }, 'task')).toBe(true)
+  expect(() => ownerTaskDeliveryKind(mixed, 'missing')).toThrow('唯一冻结任务')
+  expect(() => ownerTaskDeliveryKind({ ...mixed, tasks: [mixed.tasks[0]!, mixed.tasks[0]!] }, 'task')).toThrow('唯一冻结任务')
+})
 function fixture(profile: 'controlled' | 'general' | 'development' = 'controlled', permissionMode: 'safe' | 'auto' = profile === 'general' || profile === 'development' ? 'auto' : 'safe', mixed = false, textDelivery = false, runtime: 'ai-sdk' | 'pi' = 'ai-sdk', withKnowledge = false) {
   const project = store.createProject({ title: 'Owner最终启动', description: '' })
   const workspace = createAgentWorkspace(`owner-launch-${randomUUID()}`, profile === 'development' ? mkdtempSync(join(directory, 'owner-dev-root-')) : undefined)

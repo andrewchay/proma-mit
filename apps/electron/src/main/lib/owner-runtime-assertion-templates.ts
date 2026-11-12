@@ -4,7 +4,7 @@
  * 职责：提供系统自带的浏览器断言脚本，供受管浏览器在只读打开工作区 HTML 后执行。
  * 边界：
  * - 脚本由应用内置并随版本发布，模型不能生成或修改断言，避免"自己写出必然通过的自测"；
- * - 脚本只做读取与键盘事件模拟，不发起网络请求、不写入工作区文件；
+ * - 脚本使用隔离的浏览器存储和受控输入，不发起网络请求、不写入工作区文件；
  * - 目标结构不存在时返回 skipped 而不是 failed，skipped 不等于通过。
  */
 
@@ -41,6 +41,33 @@ const BOARD_HELPER = `
   })
   const readBoard = () => board ? gridCells(board).map(cell => Number((cell.textContent || '').trim()) || 0) : []
   const readTiles = () => readBoard().filter(value => value > 0)
+`
+
+/** 以可见日期、文本框及按钮的语义识别日记，不依赖某个项目的元素 ID。 */
+const DIARY_HELPER = `
+  const shown = el => !!el && !el.closest('[hidden]') && getComputedStyle(el).display !== 'none' && getComputedStyle(el).visibility !== 'hidden'
+  const dateField = () => [...document.querySelectorAll('input[type="date"]')].find(shown)
+  const button = pattern => [...document.querySelectorAll('button, input[type="button"], input[type="submit"]')].find(el => shown(el) && pattern.test((el.textContent || el.value || el.getAttribute('aria-label') || '').trim()))
+  const setDate = (el, value) => { el.value = value; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })) }
+  const textField = () => [...document.querySelectorAll('textarea')].find(shown)
+  const writeButton = () => button(/撰写|写日记|新建|write|new entry/i)
+  const saveButton = () => button(/保存|save/i)
+  const backButton = () => button(/返回|回顾|取消|back|review|cancel/i)
+  const storedForDate = (date, marker) => {
+    if (!date) return false
+    const visit = (value, depth) => {
+      if (!value || typeof value !== 'object' || depth > 8) return false
+      if (Object.prototype.hasOwnProperty.call(value, date) && JSON.stringify(value[date]).includes(marker)) return true
+      const values = Object.values(value)
+      if (values.includes(date) && JSON.stringify(value).includes(marker)) return true
+      return values.some(item => visit(item, depth + 1))
+    }
+    return Object.keys(localStorage).some(key => {
+      const value = localStorage.getItem(key) || ''
+      if (key.includes(date) && value.includes(marker)) return true
+      try { return visit(JSON.parse(value), 0) } catch { return false }
+    })
+  }
 `
 
 /**
@@ -143,6 +170,150 @@ export const OWNER_RUNTIME_ASSERTION_TEMPLATES: readonly OwnerRuntimeAssertionTe
       const errors = window.__ownerAssertionErrors || []
       if (errors.length > 0) return { passed: false, detail: '脚本错误：' + String(errors[0]).slice(0, 200) }
       return { passed: true, detail: 'body 存在且有 ' + document.body.querySelectorAll('*').length + ' 个元素' }
+    })()`,
+  },
+  {
+    id: 'diary.five-years',
+    title: '五年同日回顾及闰日占位',
+    intentKeywords: ['五年日记', '5年日记', '五年同日', '闰日', '闰年'],
+    script: `(() => {
+      ${DIARY_HELPER}
+      const field = dateField()
+      if (!field) return { skipped: true, detail: '未找到可操作的回顾日期' }
+      if ((field.min && field.min > '2024-02-29') || (field.max && field.max < '2104-02-29')) return { skipped: true, detail: '日期控件的允许范围不包含断言所需的两个闰日' }
+      const inspect = (base, nonLeapIndexes) => {
+        setDate(field, base + '-02-29')
+        const group = [...document.querySelectorAll('body *')].find(el => {
+          const children = [...el.children].filter(shown)
+          return children.length === 5 && children.every((child, index) => (child.textContent || '').includes(String(base - index)))
+        })
+        if (!group) return false
+        const children = [...group.children].filter(shown)
+        return nonLeapIndexes.every(index => /无|不存在|无效|not available|no such|invalid/i.test(children[index].textContent || ''))
+      }
+      const passed = inspect(2024, [1, 2, 3]) && inspect(2104, [1, 2, 3, 4])
+      return { passed, detail: passed ? '两组闰日均显示五年，包含 2100 年的非闰年占位' : '五年顺序或非闰年占位不符合要求' }
+    })()`,
+  },
+  {
+    id: 'diary.history',
+    title: '不同年份的同一天显示正确内容',
+    intentKeywords: ['五年同日', '往年日记', '历史日记', '不同年份'],
+    script: `(() => {
+      ${DIARY_HELPER}
+      const firstDate = '2024-03-01', secondDate = '2023-03-01', firstText = 'Owner历史日记2024', secondText = 'Owner历史日记2023'
+      const put = (date, value) => {
+        const field = dateField()
+        if (!field || (field.min && field.min > date) || (field.max && field.max < date)) return false
+        setDate(field, date)
+        const write = writeButton(); if (!write) return false; write.click()
+        const text = textField(), save = saveButton()
+        if (!text || !save) return false
+        text.value = value; text.dispatchEvent(new Event('input', { bubbles: true })); save.click()
+        if (shown(text)) {
+          const back = backButton(); if (!back) return false
+          const originalConfirm = window.confirm
+          try { window.confirm = () => false; back.click() } finally { window.confirm = originalConfirm }
+        }
+        return !!dateField()
+      }
+      if (!put(firstDate, firstText) || !put(secondDate, secondText)) return { skipped: true, detail: '无法通过可见日记控件保存两个日期' }
+      const field = dateField(); setDate(field, firstDate)
+      const group = [...document.querySelectorAll('body *')].find(el => {
+        const children = [...el.children].filter(shown)
+        return children.length === 5 && children.every((child, index) => (child.textContent || '').includes(String(2024 - index)))
+      })
+      if (!group) return { passed: false, detail: '回顾页没有按顺序显示五个年份区块' }
+      const children = [...group.children].filter(shown)
+      const passed = (children[0].innerText || '').includes(firstText) && (children[1].innerText || '').includes(secondText)
+      return { passed, detail: passed ? '两条同月同日日记分别显示在对应年份' : '不同年份的正文没有显示在对应区块' }
+    })()`,
+  },
+  {
+    id: 'diary.empty-date',
+    title: '空日期有安全回退或明确提示',
+    intentKeywords: ['空日期', '日期为空', '非法日期', '日记日期'],
+    script: `(() => {
+      ${DIARY_HELPER}
+      const field = dateField()
+      if (!field) return { skipped: true, detail: '未找到可操作的回顾日期' }
+      const before = JSON.stringify(Object.keys(localStorage).sort().map(key => [key, localStorage.getItem(key)]))
+      const beforeText = document.body.innerText || ''
+      setDate(field, '')
+      const after = JSON.stringify(Object.keys(localStorage).sort().map(key => [key, localStorage.getItem(key)]))
+      const hasFallback = /^\\d{4}-\\d{2}-\\d{2}$/.test(field.value)
+      const afterText = document.body.innerText || ''
+      const hasNotice = afterText !== beforeText && /请选择.*日期|日期.*(?:无效|不能为空|请选择)|invalid date|select.*date/i.test(afterText)
+      const passed = before === after && (hasFallback || hasNotice)
+      return { passed, detail: passed ? '空日期未写入数据并有回退或提示' : '空日期未安全回退/提示，或意外更改了存储' }
+    })()`,
+  },
+  {
+    id: 'diary.save-reload',
+    title: '日记保存并在刷新后恢复',
+    intentKeywords: ['日记保存', '保存日记', '日记持久化', 'diary'],
+    script: `(() => {
+      ${DIARY_HELPER}
+      const marker = 'Owner验证日记-2024-02-29', phaseKey = '__owner_diary_validation_phase__'
+      const field = dateField()
+      if (!field) return { skipped: true, detail: '未找到可操作的回顾日期' }
+      if ((field.min && field.min > '2024-02-29') || (field.max && field.max < '2024-02-29')) return { skipped: true, detail: '日期控件不允许使用保存验证日期' }
+      setDate(field, '2024-02-29')
+      if (localStorage.getItem(phaseKey) === 'saved') {
+        return { passed: (document.body.innerText || '').includes(marker), detail: '刷新后重新选择该日，检查原文是否出现在回顾页' }
+      }
+      const write = writeButton()
+      if (!write) return { skipped: true, detail: '未找到撰写入口' }
+      write.click()
+      const text = textField(), save = saveButton()
+      if (!text || !save) return { skipped: true, detail: '未找到日记文本框或保存按钮' }
+      text.value = marker; text.dispatchEvent(new Event('input', { bubbles: true })); save.click()
+      const saved = Object.keys(localStorage).some(key => (localStorage.getItem(key) || '').includes(marker))
+      if (!saved) return { passed: false, detail: '保存后未在隔离存储中找到日记正文' }
+      localStorage.setItem(phaseKey, 'saved')
+      return { passed: true, detail: '已保存测试正文，等待刷新复核' }
+    })()`,
+  },
+  {
+    id: 'diary.unsaved-draft',
+    title: '离开编辑页不静默丢失未保存内容',
+    intentKeywords: ['日记草稿', '未保存', '离开确认', 'draft'],
+    script: `(() => {
+      ${DIARY_HELPER}
+      const write = writeButton()
+      if (!write) return { skipped: true, detail: '未找到撰写入口' }
+      write.click()
+      const text = textField(), back = backButton(), field = dateField(), originalDate = field?.value
+      if (!text || !back || !originalDate) return { skipped: true, detail: '未找到编辑框、编辑日期或返回入口' }
+      const marker = 'Owner未保存草稿验证'
+      text.value = marker; text.dispatchEvent(new Event('input', { bubbles: true }))
+      const originalConfirm = window.confirm
+      try { window.confirm = () => false; back.click() } finally { window.confirm = originalConfirm }
+      const preserved = (shown(text) && text.value === marker) || storedForDate(originalDate, marker)
+      return { passed: preserved, detail: preserved ? '取消离开后草稿仍保留，或已保存到隔离存储' : '返回后未保存草稿消失且未保存' }
+    })()`,
+  },
+  {
+    id: 'diary.switch-date',
+    title: '切换日记日期时保护未保存草稿',
+    intentKeywords: ['切换日期', '未保存草稿', '日记草稿'],
+    script: `(() => {
+      ${DIARY_HELPER}
+      const write = writeButton()
+      if (!write) return { skipped: true, detail: '未找到撰写入口' }
+      write.click()
+      const text = textField(), field = dateField()
+      if (!text || !field || !field.value) return { skipped: true, detail: '未找到日记文本框或编辑日期' }
+      const previous = field.value, alternative = previous === '2024-02-29' ? '2024-03-01' : '2024-02-29'
+      if ((field.min && field.min > alternative) || (field.max && field.max < alternative)) return { skipped: true, detail: '日期控件不允许使用切换验证日期' }
+      const marker = 'Owner切换日期草稿验证'
+      text.value = marker; text.dispatchEvent(new Event('input', { bubbles: true }))
+      const originalConfirm = window.confirm
+      try { window.confirm = () => false; setDate(field, alternative) } finally { window.confirm = originalConfirm }
+      const preserved = (shown(text) && text.value === marker && field.value === previous) || storedForDate(previous, marker)
+      const copiedToOtherDate = storedForDate(alternative, marker) || (shown(text) && field.value === alternative && text.value === marker)
+      const passed = preserved && !copiedToOtherDate
+      return { passed, detail: copiedToOtherDate ? '原日期草稿被错误复制到新日期' : passed ? '原日期草稿保留且没有污染新日期' : '切换日期后未保存草稿消失且未保存' }
     })()`,
   },
   {

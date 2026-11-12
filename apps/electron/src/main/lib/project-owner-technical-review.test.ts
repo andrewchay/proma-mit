@@ -1,7 +1,16 @@
 import { expect, test } from 'bun:test'
-import { assertOwnerDevelopmentValidationForVerdict, parseOwnerTechnicalReviewResponse } from './project-owner-technical-review'
+import { assertOwnerDevelopmentValidationForVerdict, parseOwnerTechnicalReviewResponse, restoreVerbatimReviewQuotes } from './project-owner-technical-review'
 
 const criteria = ['接口保持兼容', '回归测试通过']
+
+test('Given评审引用仅有引号排版差异 When唯一匹配成果原文 Then恢复逐字引用并保留其他差异的拒绝', () => {
+  const content = '原文是"示例"，且结果正确。'
+  const receipt = JSON.stringify({ criteria: [{ quote: '原文是“示例”，且结果正确。' }] })
+  expect(JSON.parse(restoreVerbatimReviewQuotes(receipt, content)).criteria[0].quote).toBe(content)
+  expect(restoreVerbatimReviewQuotes(receipt, `${content}\n${content}`)).toBe(receipt)
+  const fabricated = JSON.stringify({ criteria: [{ quote: '原文是“示例”，且结果错误。' }] })
+  expect(restoreVerbatimReviewQuotes(fabricated, content)).toBe(fabricated)
+})
 
 function response(verdict: string, overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
