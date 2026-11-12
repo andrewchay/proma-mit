@@ -141,9 +141,9 @@ export function OnboardingView({ onComplete }: OnboardingViewProps) {
         </div>
       </main>
       <footer className="flex shrink-0 items-center justify-between gap-4 border-t border-border/50 bg-background px-6 py-4 sm:px-10">
-        {stepIndex > 0 && !editingModel ? <Button variant="ghost" onClick={() => setStep(steps[stepIndex - 1].id)}><ArrowLeft size={16} /> 上一步</Button> : <span />}
+        {stepIndex > 0 && !editingModel ? <Button variant="ghost" onClick={() => setStep(steps[stepIndex - 1]?.id ?? step)}><ArrowLeft size={16} /> 上一步</Button> : <span />}
         <div className="flex items-center gap-4">{finishError && <span role="alert" className="text-xs text-destructive">保存失败，请重试。</span>}
-          {!editingModel && (step === 'account' ? <Button onClick={() => void handleFinish()} disabled={finishing}>{finishing ? '正在保存…' : '进入 Gravitas'} <ArrowRight size={16} /></Button> : <Button onClick={() => setStep(steps[stepIndex + 1].id)}>{step === 'welcome' ? '开始设置' : step === 'model' && enabledChannels.length === 0 ? '稍后配置' : step === 'environment' && !shellOk ? '稍后处理' : '继续'} <ArrowRight size={16} /></Button>)}
+          {!editingModel && (step === 'account' ? <Button onClick={() => void handleFinish()} disabled={finishing}>{finishing ? '正在保存…' : '进入 Gravitas'} <ArrowRight size={16} /></Button> : <Button onClick={() => setStep(steps[stepIndex + 1]?.id ?? step)}>{step === 'welcome' ? '开始设置' : step === 'model' && enabledChannels.length === 0 ? '稍后配置' : step === 'environment' && !shellOk ? '稍后处理' : '继续'} <ArrowRight size={16} /></Button>)}
         </div>
       </footer>
       <Sheet open={showTutorial} onOpenChange={setShowTutorial}><SheetContent side="right" className="w-[560px] p-0 sm:max-w-[560px]"><SheetHeader className="border-b px-6 pb-4 pt-6"><SheetTitle className="flex items-center gap-2"><GraduationCap size={18} className="text-primary" />Gravitas 使用教程</SheetTitle></SheetHeader><ScrollArea className="h-[calc(100vh-80px)]"><div className="px-6 py-4"><TutorialViewer /></div></ScrollArea></SheetContent></Sheet>

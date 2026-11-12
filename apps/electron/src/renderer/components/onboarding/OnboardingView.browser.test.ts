@@ -34,10 +34,10 @@ createRoot(document.getElementById('root')).render(<Provider><OnboardingView onC
     await page.getByRole('button', { name: '稍后配置' }).click()
     await page.getByRole('button', { name: '进入 Gravitas' }).click()
     await page.getByRole('alert').waitFor()
-    expect(await page.evaluate('window.completed')).toBe(0)
+    expect(await page.evaluate<number>('window.completed')).toBe(0)
     await page.evaluate('window.failSave = false')
     await page.getByRole('button', { name: '进入 Gravitas' }).click()
     await page.waitForFunction('window.completed === 1')
-    expect(await page.evaluate('window.saved')).toEqual([{ onboardingCompleted: true }])
+    expect(await page.evaluate<Array<{ onboardingCompleted: boolean }>>('window.saved')).toEqual([{ onboardingCompleted: true }])
   } finally { await browser.close(); server.stop(true) }
 }, 30000)
