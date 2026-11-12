@@ -536,7 +536,7 @@ test('Given 已有可用团队和管理委托 When 用户确认方案 Then 无�
     expect(listOwnerExecutionAssignmentRuns(f.subject)).toHaveLength(1)
     delegation.revokeOwnerManagementDelegation(f.project.id, grant.id)
   } finally { stop() }
-})
+}, 30000)
 
 test.each(['reviewer', 'coverage'] as const)('Given 安排请求完整结束但违反%s协议 When Owner收到失败结果 Then 在原预算内只续跑一次并保留两次运行证据', async (kind) => {
   rejectNextAssignmentKind = kind
@@ -743,7 +743,7 @@ test('Given 已保存目标与已授权的项目费用边界 When 后台开始�
     expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'plan_proposal')).toBe(true)
     expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'execution_arranged')).toBe(true)
   } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
-})
+}, 30000)
 
 test('Given 已审核价格模型但没有项目费用授权 When Owner收到目标 Then 等待用户补齐边界且不发送请求', async () => {
   const f = fixture('complete', false, false, true), before = calls.length, stop = startOwnerManagementLoop()

@@ -115,6 +115,7 @@ bun run generate:icons    # 生成应用图标
 
 - `bun install` 安装依赖，`bun run <script>` 运行脚本
 - `bun test` 是 Bun 内置测试运行器，本仓库只用于跑**单个测试文件**；全量必须用 `bun run test`（逐文件独立进程），裸跑全量会因跨文件 mock 污染出现 `Export named 'xxx' not found` 之类假失败
+- Owner 质量动作集成测试因数据和异步调度体量较大，由全量测试脚本按名称中的「恢复」分成两个互补批次，各自独立进程与配置目录；两个批次都必须通过。
 - Bun 自动加载 .env 文件（无需 dotenv）
 - 优先使用 Bun 原生 API：`Bun.file` > `node:fs`，`Bun.$\`command\`` > `execa`
 

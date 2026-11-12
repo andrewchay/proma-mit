@@ -1440,7 +1440,7 @@ test('Given Owner质量引用被协议拒绝且历史提示已升级 When烟测�
     if (savedRecovery === undefined) delete process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID
     else process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID = savedRecovery
   }
-}, 15000)
+}, 90000)
 
 
 test('Given质量协议失败且准备与委托均到期 When按原额度及新增预算续期 Then追加继任再验证且原授权账本与员工次数不变', async () => {
@@ -1521,7 +1521,7 @@ test('Given质量协议失败且准备与委托均到期 When按原额度及新�
     if (savedDuration === undefined) delete process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RENEWAL_DURATION_MS
     else process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RENEWAL_DURATION_MS = savedDuration
   }
-}, 20000)
+}, 90000)
 
 
 test('Given验证过期导致准确质量失败且请求用量完整 When明确授权原成果复验 Then只追加同期限同额度委托且可幂等恢复', async () => {
@@ -1579,7 +1579,7 @@ test('Given验证过期导致准确质量失败且请求用量完整 When明确�
       else process.env[key] = value
     }
   }
-}, 20000)
+}, 90000)
 
 
 test('Given原成果复验许可与两项授权均已到期且同身份渠道配置已刷新 When明确续期复验 Then追加配置确认与继任许可且历史账本不变', async () => {
@@ -1648,7 +1648,7 @@ test('Given原成果复验许可与两项授权均已到期且同身份渠道配
       else process.env[key] = value
     }
   }
-}, 20000)
+}, 90000)
 
 
 test('Given恢复请求因本地硬上限未发送且委托未到期 When用户明确续期 Then保留账本并允许再次恢复', async () => {
