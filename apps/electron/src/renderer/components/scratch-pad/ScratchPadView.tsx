@@ -14,8 +14,8 @@ import Placeholder from '@tiptap/extension-placeholder'
 import CodeBlockLowlight from '@tiptap/extension-code-block-lowlight'
 import { useAtom, useAtomValue } from 'jotai'
 import { FileDown } from 'lucide-react'
-import { scratchPadContentAtom, scratchPadLoadedAtom, tabsAtom, activeTabIdAtom } from '@/atoms/tab-atoms'
-import { currentAgentWorkspaceIdAtom, agentWorkspacesAtom } from '@/atoms/agent-atoms'
+import { scratchPadContentAtom, scratchPadLoadedAtom } from '@/atoms/scratch-pad'
+import { currentAgentWorkspaceIdAtom, agentWorkspacesAtom, currentAgentSessionIdAtom, agentSessionsAtom } from '@/atoms/agent-atoms'
 import {
   DropdownMenu,
   DropdownMenuTrigger,
@@ -90,25 +90,19 @@ export function ScratchPadView(): React.ReactElement {
   // 导出目标上下文
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
-  const tabs = useAtomValue(tabsAtom)
-  const activeTabId = useAtomValue(activeTabIdAtom)
+  // 便签是独立视图，但导出时常需要落到"最近那个 Agent 会话"目录
+  const activeSessionId = useAtomValue(currentAgentSessionIdAtom)
+  const agentSessions = useAtomValue(agentSessionsAtom)
 
   const currentWorkspace = React.useMemo(
     () => workspaces.find((w) => w.id === currentWorkspaceId) ?? null,
     [workspaces, currentWorkspaceId],
   )
 
-  const activeSessionId = React.useMemo(() => {
-    const activeTab = tabs.find((t) => t.id === activeTabId)
-    if (activeTab?.type === 'agent') return activeTab.sessionId
-    const agentTab = [...tabs].reverse().find((t) => t.type === 'agent')
-    return agentTab?.sessionId ?? null
-  }, [tabs, activeTabId])
-
-  const activeSessionTitle = React.useMemo(() => {
-    const agentTab = tabs.find((t) => t.sessionId === activeSessionId && t.type === 'agent')
-    return agentTab?.title ?? null
-  }, [tabs, activeSessionId])
+  const activeSessionTitle = React.useMemo(
+    () => agentSessions.find((s) => s.id === activeSessionId)?.title ?? null,
+    [agentSessions, activeSessionId],
+  )
 
   const makeFilename = React.useCallback(() => {
     const now = new Date()

@@ -37,9 +37,11 @@ export function createApplicationMenu(): Menu {
     {
       label: '文件',
       submenu: [
-        // Cmd+W / Ctrl+W：关闭当前标签页（而非关闭窗口）
+        // Cmd+W / Ctrl+W：先关浮窗，没有浮窗时关闭窗口。
+        // 多标签模型已移除，所以这里不再有"关闭标签页"语义；
+        // 交给渲染层判断是因为设置面板等浮窗需要先关。
         {
-          label: '关闭标签页',
+          label: '关闭窗口',
           accelerator: 'CmdOrCtrl+W',
           click: () => {
             const win = BrowserWindow.getFocusedWindow()

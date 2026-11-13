@@ -1,7 +1,7 @@
 /**
  * AppShell - 应用主布局容器
  *
- * 布局结构：[LeftSidebar 可折叠/可拖宽] | [MainArea: TabBar + TabContent] | [RightSidePanel 可折叠/可拖宽]
+ * 布局结构：[LeftSidebar 可折叠/可拖宽] | [MainArea: 当前会话] | [RightSidePanel 可折叠/可拖宽]
  *
  * MainArea 支持多标签页，Settings 视图为独立覆盖。
  *
@@ -20,7 +20,7 @@ import { AppShellProvider, type AppShellContextType } from '@/contexts/AppShellC
 import { appModeAtom } from '@/atoms/app-mode'
 import { agentSidePanelWidthAtom, currentAgentSessionIdAtom, currentSessionSidePanelOpenAtom } from '@/atoms/agent-atoms'
 import { activeViewAtom } from '@/atoms/active-view'
-import { sidebarCollapsedAtom } from '@/atoms/tab-atoms'
+import { sidebarCollapsedAtom } from '@/atoms/sidebar'
 import { sidebarWidthAtom } from '@/atoms/sidebar-atoms'
 import { WindowControls } from '@/components/WindowControls'
 import { detectIsWindows } from '@/lib/platform'
@@ -186,7 +186,7 @@ export function AppShell({ contextValue }: AppShellProps): React.ReactElement {
             showRightPanel && isPanelOpen ? 'pr-0' : 'pr-2'
           )}
         >
-          {/* 主内容区域（TabBar + TabContent） */}
+          {/* 主内容区域（当前会话 / 工作模块） */}
           <MainArea />
         </div>
 

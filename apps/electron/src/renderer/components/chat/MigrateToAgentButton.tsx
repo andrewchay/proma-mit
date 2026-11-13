@@ -20,9 +20,9 @@ import {
   currentAgentSessionIdAtom,
   currentAgentWorkspaceIdAtom,
 } from '@/atoms/agent-atoms'
-import { tabsAtom, activeTabIdAtom, openTab } from '@/atoms/tab-atoms'
 import { activeViewAtom } from '@/atoms/active-view'
 import { appModeAtom } from '@/atoms/app-mode'
+import { openSessionInStore } from '@/lib/open-session'
 
 interface MigrateToAgentButtonProps {
   /** 当前对话 ID */
@@ -73,17 +73,8 @@ export function MigrateToAgentButton({ conversationId }: MigrateToAgentButtonPro
       store.set(appModeAtom, 'agent')
       store.set(activeViewAtom, 'conversations')
 
-      // 6. 打开 Agent 会话 Tab 并激活
-      const sessionTitle = session.title ?? '新 Agent 会话'
-      const tabs = store.get(tabsAtom)
-      const result = openTab(tabs, {
-        type: 'agent',
-        sessionId: session.id,
-        title: sessionTitle,
-      })
-      store.set(tabsAtom, result.tabs)
-      store.set(activeTabIdAtom, result.activeTabId)
-      store.set(currentAgentSessionIdAtom, session.id)
+      // 6. 切换到该 Agent 会话
+      openSessionInStore(store, { type: 'agent', sessionId: session.id })
 
       // 7. 通知用户
       toast.success('已切换到 Agent 模式', {

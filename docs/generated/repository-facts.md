@@ -10,4 +10,4 @@
 | @gravitas/ui | 0.1.4 |
 | Bun 测试 / Playwright 测试文件 | 832 |
 | Electron 主进程 lib TypeScript 文件 | 1298 |
-| Electron 渲染进程 TypeScript/TSX 文件 | 652 |
+| Electron 渲染进程 TypeScript/TSX 文件 | 647 |

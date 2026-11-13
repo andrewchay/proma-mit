@@ -1,7 +1,7 @@
 /**
  * WelcomeView — 主区域空状态启动器
  *
- * 当没有打开任何标签页时：
+ * 当没有激活的会话时：
  * 1. 优先复用现有会话（打开最近的一个）
  * 2. 没有现有会话时，创建一个 draft 会话（不在侧边栏显示）
  *
@@ -14,7 +14,8 @@ import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { Loader2 } from 'lucide-react'
 import { appModeAtom } from '@/atoms/app-mode'
 import { currentAgentWorkspaceIdAtom, agentSettingsReadyAtom } from '@/atoms/agent-atoms'
-import { tabsAtom, activeTabIdAtom, openTab } from '@/atoms/tab-atoms'
+import { useStore } from 'jotai'
+import { openSessionInStore } from '@/lib/open-session'
 import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
 import { useCreateSession } from '@/hooks/useCreateSession'
 
@@ -23,28 +24,23 @@ export function WelcomeView(): React.ReactElement {
   const currentWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
   const agentSettingsReady = useAtomValue(agentSettingsReadyAtom)
   const draftSessionIds = useAtomValue(draftSessionIdsAtom)
-  const [tabs, setTabs] = useAtom(tabsAtom)
-  const setActiveTabId = useSetAtom(activeTabIdAtom)
+  const store = useStore()
   const { createChat, createAgent } = useCreateSession()
   const initRef = React.useRef<string | null>(null)
 
   // 将高频变化的值收集到 ref 中，避免污染 useEffect 依赖数组（否则 tabs/draftSessionIds
   // 引用变化会导致重复触发，而 createChat/createAgent 每次渲染都是新引用）
   const latestRef = React.useRef({
-    tabs,
     draftSessionIds,
     currentWorkspaceId,
-    setTabs,
-    setActiveTabId,
+    store,
     createChat,
     createAgent,
   })
   latestRef.current = {
-    tabs,
     draftSessionIds,
     currentWorkspaceId,
-    setTabs,
-    setActiveTabId,
+    store,
     createChat,
     createAgent,
   }
@@ -65,10 +61,8 @@ export function WelcomeView(): React.ReactElement {
         // 如果 mode 已切换，丢弃过期回调
         if (initRef.current !== currentMode) return
         const {
-          tabs: currentTabs,
           draftSessionIds: currentDrafts,
-          setTabs: currentSetTabs,
-          setActiveTabId: currentSetActiveTabId,
+          store: currentStore,
           createChat: currentCreateChat,
         } = latestRef.current
 
@@ -77,13 +71,7 @@ export function WelcomeView(): React.ReactElement {
           (c) => !c.archived && !currentDrafts.has(c.id),
         )
         if (existing) {
-          const result = openTab(currentTabs, {
-            type: 'chat',
-            sessionId: existing.id,
-            title: existing.title,
-          })
-          currentSetTabs(result.tabs)
-          currentSetActiveTabId(result.activeTabId)
+          openSessionInStore(currentStore, { type: 'chat', sessionId: existing.id })
           return
         }
         // 2. 检查是否已有 draft 会话，复用而不是创建新的
@@ -91,13 +79,7 @@ export function WelcomeView(): React.ReactElement {
           (c) => !c.archived && currentDrafts.has(c.id),
         )
         if (draftSession) {
-          const result = openTab(currentTabs, {
-            type: 'chat',
-            sessionId: draftSession.id,
-            title: draftSession.title,
-          })
-          currentSetTabs(result.tabs)
-          currentSetActiveTabId(result.activeTabId)
+          openSessionInStore(currentStore, { type: 'chat', sessionId: draftSession.id })
           return
         }
         // 3. 没有任何会话时才创建新的 draft 会话
@@ -108,11 +90,9 @@ export function WelcomeView(): React.ReactElement {
         // 如果 mode 已切换，丢弃过期回调
         if (initRef.current !== currentMode) return
         const {
-          tabs: currentTabs,
           draftSessionIds: currentDrafts,
           currentWorkspaceId: currentWs,
-          setTabs: currentSetTabs,
-          setActiveTabId: currentSetActiveTabId,
+          store: currentStore,
           createAgent: currentCreateAgent,
         } = latestRef.current
 
@@ -122,13 +102,7 @@ export function WelcomeView(): React.ReactElement {
           (s) => !s.archived && s.workspaceId === currentWs && !currentDrafts.has(s.id),
         )
         if (existing) {
-          const result = openTab(currentTabs, {
-            type: 'agent',
-            sessionId: existing.id,
-            title: existing.title,
-          })
-          currentSetTabs(result.tabs)
-          currentSetActiveTabId(result.activeTabId)
+          openSessionInStore(currentStore, { type: 'agent', sessionId: existing.id })
           return
         }
         // 2. 检查是否已有 draft 会话（当前工作区），复用而不是创建新的
@@ -136,13 +110,7 @@ export function WelcomeView(): React.ReactElement {
           (s) => !s.archived && s.workspaceId === currentWs && currentDrafts.has(s.id),
         )
         if (draftSession) {
-          const result = openTab(currentTabs, {
-            type: 'agent',
-            sessionId: draftSession.id,
-            title: draftSession.title,
-          })
-          currentSetTabs(result.tabs)
-          currentSetActiveTabId(result.activeTabId)
+          openSessionInStore(currentStore, { type: 'agent', sessionId: draftSession.id })
           return
         }
         // 3. 没有任何会话时才创建新的 draft 会话
@@ -151,7 +119,7 @@ export function WelcomeView(): React.ReactElement {
     }
   }, [mode, agentSettingsReady])
 
-  // 短暂的过渡状态（通常几十毫秒内就会被 TabContent 替换）
+  // 短暂的过渡状态（通常几十毫秒内就会被会话内容替换）
   return (
     <div className="flex h-full items-center justify-center">
       <Loader2 className="size-5 animate-spin text-muted-foreground/40" />

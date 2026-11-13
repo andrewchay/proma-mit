@@ -29,7 +29,6 @@ import { useStickToBottomContext } from 'use-stick-to-bottom'
 import { formatMessageTime } from '@/components/chat/ChatMessageItem'
 import { getModelLogo, resolveModelDisplayName } from '@/lib/model-logo'
 import { userProfileAtom } from '@/atoms/user-profile'
-import { tabMinimapCacheAtom } from '@/atoms/tab-atoms'
 import { channelsAtom } from '@/atoms/chat-atoms'
 import { hasSavedScrollPosition, ScrollPositionManager } from '@/hooks/useScrollPositionMemory'
 import { cn } from '@/lib/utils'
@@ -474,7 +473,6 @@ function AgentRunningIndicator({ startedAt }: { startedAt?: number }): React.Rea
 
 export const AgentMessages = React.memo(function AgentMessages({ readOnly = false, sessionId, sessionModelId, messagesLoaded, persistedSDKMessages, streaming, streamState, liveMessages, sessionPath, attachedDirs, stoppedByUser, onRetry, onRetryInNewSession, onFork, onRewind, onCompact }: AgentMessagesProps): React.ReactElement {
   const userProfile = useAtomValue(userProfileAtom)
-  const setMinimapCache = useSetAtom(tabMinimapCacheAtom)
   const channels = useAtomValue(channelsAtom)
   /** 淡入控制：切换会话时先隐藏，等布局完成后再显示。 */
   const [ready, setReady] = React.useState(false)
@@ -718,17 +716,6 @@ export const AgentMessages = React.memo(function AgentMessages({ readOnly = fals
     })),
     [allGroups, userProfile.avatar]
   )
-
-  // 同步 minimap 缓存到 Tab 级别（供 Tab hover 预览使用）
-  React.useEffect(() => {
-    if (minimapItems.length > 0) {
-      setMinimapCache((prev) => {
-        const next = new Map(prev)
-        next.set(sessionId, minimapItems)
-        return next
-      })
-    }
-  }, [sessionId, minimapItems, setMinimapCache])
 
   // 所有用户消息的数据 — 供 StickyUserMessage 使用
   const allUserMessagesData = React.useMemo(() => {

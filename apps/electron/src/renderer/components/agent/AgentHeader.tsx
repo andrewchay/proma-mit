@@ -11,7 +11,6 @@ import { Pencil, Check, X, PanelRight, Globe2, Square, Target } from 'lucide-rea
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { agentSessionsAtom, agentSidePanelOpenAtom, workspaceFilesVersionAtom } from '@/atoms/agent-atoms'
-import { tabsAtom, updateTabTitle } from '@/atoms/tab-atoms'
 import { registerShortcut } from '@/lib/shortcut-registry'
 import type { AgentSessionMeta, Goal } from '@gravitas/shared'
 import { SpanWaterfallPanel } from './SpanWaterfallPanel'
@@ -32,7 +31,6 @@ export function AgentHeader({ sessionId }: AgentHeaderProps): React.ReactElement
   const sessions = useAtomValue(agentSessionsAtom)
   const session = sessions.find((s) => s.id === sessionId) ?? null
   const setAgentSessions = useSetAtom(agentSessionsAtom)
-  const setTabs = useSetAtom(tabsAtom)
   const [editing, setEditing] = React.useState(false)
   const [webBridgeStatus, setWebBridgeStatus] = React.useState<WebBridgeStatus>({ active: false, accessibilityAvailable: false })
   const [stoppingWebBridge, setStoppingWebBridge] = React.useState(false)
@@ -96,8 +94,6 @@ export function AgentHeader({ sessionId }: AgentHeaderProps): React.ReactElement
 
     try {
       const updated = await window.electronAPI.updateAgentSessionTitle(session.id, trimmed)
-      // 同步更新标签页标题
-      setTabs((prev) => updateTabTitle(prev, updated.id, updated.title))
       // 同步更新侧边栏会话列表
       setAgentSessions((prev) =>
         prev.map((s) => (s.id === updated.id ? updated : s))
