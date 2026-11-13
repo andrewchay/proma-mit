@@ -59,8 +59,9 @@ import { useGlobalAgentListeners } from './hooks/useGlobalAgentListeners'
 import { OwnerTodoScanController } from './components/projects/OwnerTodoScanPanel'
 import { pollStatusChangedAtom } from './atoms/project-atoms'
 import { useGlobalChatListeners } from './hooks/useGlobalChatListeners'
-import { tabsAtom, activeTabIdAtom, ensureScratchPadTab, scratchPadContentAtom, scratchPadLoadedAtom, SCRATCH_PAD_ID } from './atoms/tab-atoms'
-import type { TabItem } from './atoms/tab-atoms'
+import { scratchPadContentAtom, scratchPadLoadedAtom } from './atoms/scratch-pad'
+import type { PersistedSessionState } from '@/types/settings'
+import { migrateLegacyTabState } from '@/lib/session-state'
 import { chatToolsAtom } from './atoms/chat-tool-atoms'
 import { feishuBotStatesAtom } from './atoms/feishu-atoms'
 import { dingtalkBotStatesAtom } from './atoms/dingtalk-atoms'
@@ -74,7 +75,6 @@ import type { WorkspaceCapabilities } from '@gravitas/shared'
 import { showCapabilityChangeToasts } from './lib/capabilities-toast'
 import { UpdateDialog } from './components/settings/UpdateDialog'
 import { GlobalShortcuts } from './components/shortcuts/GlobalShortcuts'
-import { TabSwitcher } from './components/tabs/TabSwitcher'
 import { htmlToMarkdown, markdownToHtml } from './lib/markdown-rich-text'
 import './styles/globals.css'
 import 'katex/dist/katex.min.css'
@@ -675,119 +675,73 @@ function DingTalkInitializer(): null {
 }
 
 /**
- * 标签页持久化组件
+ * 会话持久化组件
  *
- * 启动时从 settings.tabState 恢复上次打开的标签页；
- * 运行时监听标签页变化，自动保存到 settings.json。
+ * 主区只渲染一个会话，因此只需保存三个标量：模式、Chat 对话 ID、Agent 会话 ID。
+ * 启动时恢复；运行时监听变化防抖写盘；窗口关闭前同步落盘。
+ *
+ * 兼容：旧版本把多标签状态存在 settings.tabState 里（{ tabs, activeTabId }，
+ * 更早还有 splitLayout 分屏结构）。读取时回退解析，取当时激活的那个会话；
+ * 新写入一律使用 lastSession，tabState 不再更新。
  */
 
-/**
- * 旧版（分屏时代）持久化结构——仅用于向后兼容读取迁移。
- * 新版已扁平化为 { tabs, activeTabId }；旧版是 { tabs, splitLayout }。
- */
-interface LegacyTabStateWithSplitLayout {
-  splitLayout?: {
-    focusedPanelIndex?: number
-    panels?: Array<{ activeTabId?: string | null }>
-  }
-}
-
-/** 从旧版 splitLayout 结构中提取原焦点面板的 activeTabId */
-function extractLegacyActiveTabId(tabState: unknown): string | null {
-  if (!tabState || typeof tabState !== 'object') return null
-  const legacy = tabState as LegacyTabStateWithSplitLayout
-  const panels = legacy.splitLayout?.panels
-  if (!Array.isArray(panels) || panels.length === 0) return null
-  const focusedIndex = legacy.splitLayout?.focusedPanelIndex ?? 0
-  return panels[focusedIndex]?.activeTabId ?? panels[0]?.activeTabId ?? null
-}
-
-function TabStatePersistenceInitializer(): null {
+function SessionStatePersistenceInitializer(): null {
   const store = useStore()
   const restoredRef = useRef(false)
 
-  // 启动恢复：读取 settings.tabState + 校验会话有效性
+  // 启动恢复：优先新格式，回退旧 tabState
   useEffect(() => {
     Promise.all([
       window.electronAPI.getSettings(),
       window.electronAPI.listConversations(),
       window.electronAPI.listAgentSessions(),
     ]).then(([settings, conversations, agentSessions]) => {
-      const tabState = settings.tabState
-      if (!tabState?.tabs?.length) {
-        restoredRef.current = true
-        return
-      }
-
-      // 构建有效 sessionId 集合
-      const validSessionIds = new Set([
+      const validSessionIds = new Set<string>([
         ...conversations.map((c) => c.id),
         ...agentSessions.map((s) => s.id),
       ])
 
-      // 过滤 diff 类型 Tab（不持久化），同时过滤掉已被删除的会话
-      const validTabs = tabState.tabs.filter(
-        (t): t is TabItem =>
-          typeof t === 'object' &&
-          t !== null &&
-          'id' in t &&
-          'sessionId' in t &&
-          'type' in t &&
-          'title' in t &&
-          validSessionIds.has(t.sessionId),
-      )
-      if (validTabs.length === 0) {
-        restoredRef.current = true
+      const saved = settings.lastSession
+      const restored: PersistedSessionState | null = saved
+        ? {
+            mode: saved.mode,
+            conversationId: saved.conversationId ?? null,
+            agentSessionId: saved.agentSessionId ?? null,
+          }
+        : migrateLegacyTabState(settings.tabState, validSessionIds)
+
+      if (!restored) return
+
+      // 校验会话仍存在；已被删除则回落欢迎页而不是渲染空白会话
+      if (restored.mode === 'chat') {
+        if (!restored.conversationId || !validSessionIds.has(restored.conversationId)) return
+        store.set(appModeAtom, 'chat')
+        store.set(currentConversationIdAtom, restored.conversationId)
         return
       }
-
-      const validTabIds = new Set(validTabs.map((t) => t.id))
-
-      // 恢复 activeTabId（校验有效性）
-      let restoredActiveTabId: string | null = null
-      if (tabState.activeTabId && validTabIds.has(tabState.activeTabId)) {
-        restoredActiveTabId = tabState.activeTabId
-      } else {
-        // 向后兼容：从旧版 splitLayout 结构中恢复原焦点面板的 activeTabId
-        const legacyId = extractLegacyActiveTabId(tabState)
-        if (legacyId && validTabIds.has(legacyId)) {
-          restoredActiveTabId = legacyId
-        } else {
-          restoredActiveTabId = validTabs[0]?.id ?? null
-        }
+      if (restored.mode === 'agent') {
+        if (!restored.agentSessionId || !validSessionIds.has(restored.agentSessionId)) return
+        store.set(appModeAtom, 'agent')
+        store.set(currentAgentSessionIdAtom, restored.agentSessionId)
+        const session = agentSessions.find((s) => s.id === restored.agentSessionId)
+        if (session?.workspaceId) store.set(currentAgentWorkspaceIdAtom, session.workspaceId)
       }
-
-      store.set(tabsAtom, ensureScratchPadTab(validTabs))
-      store.set(activeTabIdAtom, restoredActiveTabId)
-
-      // 同步 appMode 和 currentSessionId
-      const activeTab = validTabs.find((t) => t.id === restoredActiveTabId)
-      if (activeTab) {
-        store.set(appModeAtom, activeTab.type)
-        if (activeTab.type === 'chat') {
-          store.set(currentConversationIdAtom, activeTab.sessionId)
-        } else {
-          store.set(currentAgentSessionIdAtom, activeTab.sessionId)
-        }
-      }
-
-      console.log(`[TabRestore] 已恢复 ${validTabs.length} 个标签页`)
-    }).catch((err) => console.error('[TabRestore] 恢复标签页失败:', err))
+    }).catch((err) => console.error('[SessionRestore] 恢复会话失败:', err))
       .finally(() => { restoredRef.current = true })
   }, [store])
 
-  // 自动保存：监听 tabsAtom / activeTabIdAtom 变化，防抖写入 settings.json
+  // 自动保存：监听会话状态变化，防抖写入 settings.json
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | null = null
 
+    const currentState = (): PersistedSessionState => ({
+      mode: store.get(appModeAtom),
+      conversationId: store.get(currentConversationIdAtom),
+      agentSessionId: store.get(currentAgentSessionIdAtom),
+    })
+
     const save = (): void => {
-      const tabs = store.get(tabsAtom)
-      const activeTabId = store.get(activeTabIdAtom)
-      // 过滤掉 scratch tab，它由代码注入，不参与 tabState 持久化
-      const persistTabs = tabs.filter((t) => t.id !== SCRATCH_PAD_ID)
-      window.electronAPI.updateSettings({
-        tabState: { tabs: persistTabs, activeTabId },
-      }).catch(console.error)
+      window.electronAPI.updateSettings({ lastSession: currentState() }).catch(console.error)
     }
 
     const debouncedSave = (): void => {
@@ -796,31 +750,26 @@ function TabStatePersistenceInitializer(): null {
       timer = setTimeout(save, 500)
     }
 
-    const unsub1 = store.sub(tabsAtom, debouncedSave)
-    const unsub2 = store.sub(activeTabIdAtom, debouncedSave)
+    const unsubs = [
+      store.sub(appModeAtom, debouncedSave),
+      store.sub(currentConversationIdAtom, debouncedSave),
+      store.sub(currentAgentSessionIdAtom, debouncedSave),
+    ]
 
     // 窗口关闭前立即刷新，避免最后 500ms 内的变更丢失
     const handleBeforeUnload = (): void => {
       if (timer) clearTimeout(timer)
-      // 使用同步 IPC 确保关闭前数据写入磁盘
-      const tabs = store.get(tabsAtom)
-      const activeTabId = store.get(activeTabIdAtom)
-      const persistTabs = tabs.filter((t) => t.id !== SCRATCH_PAD_ID)
-      if (tabs.length > 0 && window.electronAPI.updateSettingsSync) {
-        const ok = window.electronAPI.updateSettingsSync({ tabState: { tabs: persistTabs, activeTabId } })
-        if (!ok) {
-          console.warn('[TabPersist] sync IPC failed, falling back to async save')
-          save()
-        }
-      } else {
+      if (!window.electronAPI.updateSettingsSync) { save(); return }
+      const ok = window.electronAPI.updateSettingsSync({ lastSession: currentState() })
+      if (!ok) {
+        console.warn('[SessionPersist] sync IPC failed, falling back to async save')
         save()
       }
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
 
     return () => {
-      unsub1()
-      unsub2()
+      for (const unsub of unsubs) unsub()
       if (timer) clearTimeout(timer)
       window.removeEventListener('beforeunload', handleBeforeUnload)
     }
@@ -832,43 +781,23 @@ function TabStatePersistenceInitializer(): null {
 /**
  * Scratch Pad 初始化和持久化组件
  *
- * 启动时注入 scratch tab 到 tabsAtom 首位，
  * 从磁盘加载 scratch-pad.md 内容，自动保存到磁盘。
+ * 入口在左侧边栏；是否占据主区由 scratchPadOpenAtom 控制，不影响 appMode。
  */
 function ScratchPadPersistence(): null {
   const store = useStore()
   const loadedRef = useRef(false)
   const saveTimerRef = useRef<ReturnType<typeof setTimeout>>()
 
-  // 启动：加载文件内容、注入 scratch tab、恢复激活状态
+  // 启动：加载文件内容
   useEffect(() => {
     const init = async (): Promise<void> => {
       try {
-        // 加载 scratch-pad.md 内容（磁盘存的是 markdown，转为 HTML 给编辑器用）
-        const [settings, loadedMd] = await Promise.all([
-          window.electronAPI.getSettings(),
-          window.electronAPI.loadScratchPad ? window.electronAPI.loadScratchPad() : Promise.resolve(''),
-        ])
-
-        const loadedHtml = loadedMd ? markdownToHtml(loadedMd) : ''
-        store.set(scratchPadContentAtom, loadedHtml)
+        const loadedMd = window.electronAPI.loadScratchPad
+          ? await window.electronAPI.loadScratchPad()
+          : ''
+        store.set(scratchPadContentAtom, loadedMd ? markdownToHtml(loadedMd) : '')
         store.set(scratchPadLoadedAtom, true)
-
-        // 将 scratch tab 注入首位
-        const currentTabs = store.get(tabsAtom)
-        const newTabs = ensureScratchPadTab(currentTabs)
-
-        // 如果 tabs 数组变了（新增了 scratch tab），写入 store
-        if (newTabs.length > currentTabs.length || newTabs[0]?.id !== currentTabs[0]?.id) {
-          store.set(tabsAtom, newTabs)
-        }
-
-        // 恢复 scratch 激活状态：如果上次关闭时在 scratch 页，则激活它
-        // 不改变 appMode，保留原有的 chat/agent 侧边栏状态
-        if (settings.scratchPadActive) {
-          store.set(activeTabIdAtom, SCRATCH_PAD_ID)
-        }
-
         console.log('[ScratchPad] 初始化完成，已加载内容:', !!loadedMd)
       } catch (err) {
         console.error('[ScratchPad] 初始化失败:', err)
@@ -876,7 +805,6 @@ function ScratchPadPersistence(): null {
         loadedRef.current = true
       }
     }
-
     init()
   }, [store])
 
@@ -884,12 +812,10 @@ function ScratchPadPersistence(): null {
   useEffect(() => {
     const save = (): void => {
       const html = store.get(scratchPadContentAtom)
-      if (window.electronAPI.saveScratchPad) {
-        const md = htmlToMarkdown(html)
-        window.electronAPI.saveScratchPad(md).then((ok) => {
-          if (!ok) console.error('[ScratchPad] 保存失败')
-        }).catch(console.error)
-      }
+      if (!window.electronAPI.saveScratchPad) return
+      window.electronAPI.saveScratchPad(htmlToMarkdown(html)).then((ok) => {
+        if (!ok) console.error('[ScratchPad] 保存失败')
+      }).catch(console.error)
     }
 
     const debouncedSave = (): void => {
@@ -903,10 +829,8 @@ function ScratchPadPersistence(): null {
     // beforeunload 时同步写入
     const handleBeforeUnload = (): void => {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
-      const html = store.get(scratchPadContentAtom)
       if (window.electronAPI.saveScratchPadSync) {
-        const md = htmlToMarkdown(html)
-        window.electronAPI.saveScratchPadSync(md)
+        window.electronAPI.saveScratchPadSync(htmlToMarkdown(store.get(scratchPadContentAtom)))
       }
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
@@ -916,18 +840,6 @@ function ScratchPadPersistence(): null {
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
       window.removeEventListener('beforeunload', handleBeforeUnload)
     }
-  }, [store])
-
-  // 监听 activeTabIdAtom 变化，持久化 scratchPadActive 到 settings
-  useEffect(() => {
-    const unsub = store.sub(activeTabIdAtom, () => {
-      const activeTabId = store.get(activeTabIdAtom)
-      const isScratchActive = activeTabId === SCRATCH_PAD_ID
-      window.electronAPI.updateSettings({
-        scratchPadActive: isScratchActive,
-      }).catch(() => {})
-    })
-    return unsub
   }, [store])
 
   return null
@@ -985,10 +897,9 @@ if (isQuickTaskWindow) {
       <UpdaterInitializer />
       <FeishuInitializer />
       <DingTalkInitializer />
-      <TabStatePersistenceInitializer />
+      <SessionStatePersistenceInitializer />
       <ScratchPadPersistence />
       <GlobalShortcuts />
-      <TabSwitcher />
       <App />
       <UpdateDialog />
       <Toaster position="top-right" />

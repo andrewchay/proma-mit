@@ -17,7 +17,6 @@ import {
   pendingAgentRecommendationAtom,
   queuedChatMessagesAtom,
 } from '@/atoms/chat-atoms'
-import { tabsAtom, updateTabTitle } from '@/atoms/tab-atoms'
 import type { ConversationStreamState } from '@/atoms/chat-atoms'
 import type {
   StreamChunkEvent,
@@ -121,8 +120,6 @@ export function useGlobalChatListeners(): void {
                 store.set(conversationsAtom, (prev) =>
                   prev.map((c) => (c.id === updated.id ? updated : c))
                 )
-                // 同步更新标签页标题
-                store.set(tabsAtom, (prev) => updateTabTitle(prev, event.conversationId, title))
               })
               .catch(console.error)
           }).catch((error) => {
