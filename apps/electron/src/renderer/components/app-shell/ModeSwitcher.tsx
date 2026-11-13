@@ -9,9 +9,9 @@ import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { appModeAtom, type AppMode } from '@/atoms/app-mode'
 import { activeViewAtom } from '@/atoms/active-view'
+import { scratchPadOpenAtom } from '@/atoms/scratch-pad'
 import { conversationsAtom, currentConversationIdAtom } from '@/atoms/chat-atoms'
 import { agentSessionsAtom, currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
-import { tabsAtom } from '@/atoms/tab-atoms'
 import { enabledDevModulesAtom, isViewVisible } from '@/atoms/dev-gate'
 import { useOpenSession } from '@/hooks/useOpenSession'
 import { cn } from '@/lib/utils'
@@ -27,13 +27,13 @@ const MODES: { value: SwitchMode; label: string }[] = [
 export function ModeSwitcher(): React.ReactElement {
   const [mode, setMode] = useAtom(appModeAtom)
   const setActiveView = useSetAtom(activeViewAtom)
+  const setScratchPadOpen = useSetAtom(scratchPadOpenAtom)
   const activeView = useAtomValue(activeViewAtom)
   const { openSession } = useOpenSession()
   const conversations = useAtomValue(conversationsAtom)
   const agentSessions = useAtomValue(agentSessionsAtom)
   const currentConversationId = useAtomValue(currentConversationIdAtom)
   const currentAgentSessionId = useAtomValue(currentAgentSessionIdAtom)
-  const tabs = useAtomValue(tabsAtom)
   const enabledDevModules = useAtomValue(enabledDevModulesAtom)
   const workflowVisible = isViewVisible('workflow', enabledDevModules)
   const visibleModes = MODES.filter(({ value }) => value !== 'workflow' || workflowVisible)
@@ -57,20 +57,16 @@ export function ModeSwitcher(): React.ReactElement {
         return
       }
     }
-    const tab = tabs.find((t) => t.type === targetMode)
-    if (tab) {
-      openSession(targetMode, tab.sessionId, tab.title)
-      return
-    }
     const recent = sessions.find((s) => !s.archived)
     if (recent) {
       openSession(targetMode, recent.id, recent.title)
       return
     }
     setMode(targetMode)
-  }, [openSession, conversations, agentSessions, currentConversationId, currentAgentSessionId, tabs, setMode])
+  }, [openSession, conversations, agentSessions, currentConversationId, currentAgentSessionId, setMode])
 
   const handleSwitch = React.useCallback((target: SwitchMode) => {
+    setScratchPadOpen(false)
     if (target === activeMode) return
     if (target === 'workflow') {
       setActiveView('workflow')
@@ -79,7 +75,7 @@ export function ModeSwitcher(): React.ReactElement {
     // 切到 Agent/Chat 时回到 conversations 视图
     setActiveView('conversations')
     restoreSession(target)
-  }, [activeMode, setActiveView, restoreSession])
+  }, [activeMode, setActiveView, setScratchPadOpen, restoreSession])
 
   return (
     <div className="pt-2 titlebar-drag-region select-none">

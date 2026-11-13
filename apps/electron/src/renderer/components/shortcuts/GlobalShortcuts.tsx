@@ -14,12 +14,8 @@ import { useAtomValue, useSetAtom, useAtom, useStore } from 'jotai'
 import { appModeAtom } from '@/atoms/app-mode'
 import { settingsOpenAtom, channelFormDirtyAtom, settingsCloseRequestedAtom } from '@/atoms/settings-tab'
 import { searchDialogOpenAtom } from '@/atoms/search-atoms'
-import {
-  tabsAtom,
-  activeTabIdAtom,
-  sidebarCollapsedAtom,
-  openTab,
-} from '@/atoms/tab-atoms'
+import { sidebarCollapsedAtom } from '@/atoms/sidebar'
+import { openSessionInStore } from '@/lib/open-session'
 import { shortcutOverridesAtom, sendWithCmdEnterAtom, agentCustomCommandsAtom } from '@/atoms/shortcut-atoms'
 import {
   agentPendingPromptAtom,
@@ -40,9 +36,9 @@ import {
   selectedModelAtom,
 } from '@/atoms/chat-atoms'
 import { activeViewAtom } from '@/atoms/active-view'
+import { scratchPadOpenAtom } from '@/atoms/scratch-pad'
 import { useCreateSession } from '@/hooks/useCreateSession'
 import { useShortcut } from '@/hooks/useShortcut'
-import { useCloseTab } from '@/hooks/useCloseTab'
 import {
   initShortcutRegistry,
   updateShortcutOverrides,
@@ -58,6 +54,7 @@ export function GlobalShortcuts(): null {
   const [appMode, setAppMode] = useAtom(appModeAtom)
   const [settingsOpen, setSettingsOpen] = useAtom(settingsOpenAtom)
   const setActiveView = useSetAtom(activeViewAtom)
+  const setScratchPadOpen = useSetAtom(scratchPadOpenAtom)
   const channelFormDirty = useAtomValue(channelFormDirtyAtom)
   const setSettingsCloseRequested = useSetAtom(settingsCloseRequestedAtom)
   const [searchOpen, setSearchOpen] = useAtom(searchDialogOpenAtom)
@@ -67,13 +64,6 @@ export function GlobalShortcuts(): null {
   const setSendWithCmdEnter = useSetAtom(sendWithCmdEnterAtom)
   const setCustomCommands = useSetAtom(agentCustomCommandsAtom)
   const { createChat, createAgent } = useCreateSession()
-
-  // Tab 管理（用于关闭标签页）
-  const activeTabId = useAtomValue(activeTabIdAtom)
-
-  // 统一关闭逻辑：与 TabBar.handleClose 共用
-  // 含 Agent 子进程 stop + 流式中的确认对话框（修复 Issue #357）
-  const { requestClose } = useCloseTab()
 
   // 初始化：挂载注册表 + 加载用户配置
   useEffect(() => {
@@ -94,10 +84,11 @@ export function GlobalShortcuts(): null {
     updateShortcutOverrides(shortcutOverrides)
   }, [shortcutOverrides])
 
-  // ===== 关闭标签页逻辑 =====
+  // ===== Cmd+W 逻辑 =====
+  // 多标签模型移除后，Cmd+W 由系统菜单 role: 'close' 关闭窗口。
+  // 这里只负责"浮窗优先"：有浮窗/搜索面板打开时先关它们。
 
   const handleCloseTab = useCallback(() => {
-    // 浮窗优先：有浮窗打开时 Cmd+W 先关闭浮窗而非 tab
     if (settingsOpen) {
       // 渠道表单有未保存内容时，通知 SettingsPanel 弹出确认对话框
       if (channelFormDirty) {
@@ -112,9 +103,9 @@ export function GlobalShortcuts(): null {
       return
     }
 
-    if (!activeTabId) return
-    requestClose(activeTabId)
-  }, [settingsOpen, setSettingsOpen, channelFormDirty, setSettingsCloseRequested, searchOpen, setSearchOpen, activeTabId, requestClose])
+    // 没有浮窗时关闭当前窗口（多标签模型已移除）
+    window.close()
+  }, [settingsOpen, setSettingsOpen, channelFormDirty, setSettingsCloseRequested, searchOpen, setSearchOpen])
 
   // 监听菜单 IPC 事件（Cmd+W 被 Electron 菜单拦截后通过 IPC 转发）
   useEffect(() => {
@@ -172,8 +163,8 @@ export function GlobalShortcuts(): null {
   useShortcut(
     'toggle-mode',
     useCallback(
-      () => { if (appMode !== 'scratch') setAppMode(appMode === 'chat' ? 'agent' : 'chat') },
-      [appMode, setAppMode],
+      () => { setScratchPadOpen(false); setAppMode(appMode === 'chat' ? 'agent' : 'chat') },
+      [appMode, setAppMode, setScratchPadOpen],
     ),
   )
 
@@ -273,15 +264,7 @@ export function GlobalShortcuts(): null {
             }
           }
 
-          // 打开新标签页
-          const currentTabs = store.get(tabsAtom)
-          const result = openTab(currentTabs, {
-            type: 'agent',
-            sessionId: meta.id,
-            title: data.text.slice(0, 30),
-          })
-          store.set(tabsAtom, result.tabs)
-          store.set(activeTabIdAtom, result.activeTabId)
+          openSessionInStore(store, { type: 'agent', sessionId: meta.id })
 
           // 设置待发送消息（附件引用已内联到消息文本中）
           store.set(agentPendingPromptAtom, {
@@ -323,15 +306,7 @@ export function GlobalShortcuts(): null {
             }
           }
 
-          // 打开新标签页
-          const currentTabs = store.get(tabsAtom)
-          const tabResult = openTab(currentTabs, {
-            type: 'chat',
-            sessionId: meta.id,
-            title: data.text.slice(0, 30),
-          })
-          store.set(tabsAtom, tabResult.tabs)
-          store.set(activeTabIdAtom, tabResult.activeTabId)
+          openSessionInStore(store, { type: 'chat', sessionId: meta.id })
 
           // 设置待发送消息（含已保存的附件）
           store.set(chatPendingMessageAtom, {
@@ -363,15 +338,11 @@ export function GlobalShortcuts(): null {
         return
       }
 
-      const tabs = store.get(tabsAtom)
-      const activeTabId = store.get(activeTabIdAtom)
-      const activeTab = tabs.find((tab) => tab.id === activeTabId)
       const currentMode = store.get(appModeAtom)
-      const fallbackTarget =
+      const target =
         currentMode === 'agent'
           ? { type: 'agent' as const, sessionId: store.get(currentAgentSessionIdAtom) }
           : { type: 'chat' as const, sessionId: store.get(currentConversationIdAtom) }
-      const target = activeTab ?? fallbackTarget
 
       if (!target.sessionId) return
 
@@ -433,14 +404,7 @@ export function GlobalShortcuts(): null {
           }).catch(console.error)
         }
 
-        const currentTabs = store.get(tabsAtom)
-        const result = openTab(currentTabs, {
-          type: 'agent',
-          sessionId: session.id,
-          title: session.title || data.title,
-        })
-        store.set(tabsAtom, result.tabs)
-        store.set(activeTabIdAtom, result.activeTabId)
+        openSessionInStore(store, { type: 'agent', sessionId: session.id })
       } catch (error) {
         console.error('[菜单栏] 打开 Agent 会话失败:', error)
       }

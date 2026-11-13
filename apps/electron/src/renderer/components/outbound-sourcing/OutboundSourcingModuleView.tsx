@@ -14,7 +14,6 @@ import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { activeViewAtom } from '@/atoms/active-view'
 import { appModeAtom } from '@/atoms/app-mode'
-import { tabsAtom, activeTabIdAtom, openTab } from '@/atoms/tab-atoms'
 import {
   agentSessionsAtom,
   currentAgentSessionIdAtom,
@@ -26,6 +25,7 @@ import { InboxTab } from './InboxTab'
 import { OutboxTab } from './OutboxTab'
 import { OutreachMetricsCard } from './OutreachMetricsCard'
 import { ModuleBackButton } from '@/components/app-shell/ModuleBackButton'
+import { openSessionInStore } from '@/lib/open-session'
 
 const stages = [
   { icon: Search, title: '1. 找买家', text: '输入产品、国家和买家类型，生成搜索计划；再用 Web Bridge 或外部资料补充候选公司。' },
@@ -53,10 +53,7 @@ export function OutboundSourcingModuleView(): React.ReactElement {
       store.set(agentSessionsAtom, (prev) => [meta, ...prev])
       store.set(currentAgentSessionIdAtom, meta.id)
 
-      const currentTabs = store.get(tabsAtom)
-      const result = openTab(currentTabs, { type: 'agent', sessionId: meta.id, title: tabTitle.slice(0, 30) })
-      store.set(tabsAtom, result.tabs)
-      store.set(activeTabIdAtom, result.activeTabId)
+      openSessionInStore(store, { type: 'agent', sessionId: meta.id })
 
       store.set(agentPendingPromptAtom, { sessionId: meta.id, message })
       store.set(appModeAtom, 'agent')

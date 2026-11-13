@@ -228,7 +228,9 @@ export interface AppSettings {
   notificationSoundEnabled?: boolean
   /** 各场景通知音选择 */
   notificationSounds?: NotificationSoundSettings
-  /** 标签页持久化状态（重启恢复） */
+  /** 当前会话持久化状态（重启恢复） */
+  lastSession?: PersistedSessionState
+  /** 旧版多标签持久化状态（只读，用于升级迁移） */
   tabState?: PersistedTabSettings
   /** Agent 思考模式 */
   agentThinking?: ThinkingConfig
@@ -282,7 +284,7 @@ export interface AppSettings {
     expandedPaths: string[]
     scrollTop: number
   }>
-  /** 上次是否在 Scratch Pad 页（用于重启恢复） */
+  /** 旧版 Scratch Pad 激活标记（已由 lastSession.mode === 'scratch' 取代，只读兼容） */
   scratchPadActive?: boolean
   /** 应用图标变体 ID（dock + window icon），'default' 或 logo 变体 id */
   appIconVariant?: string
@@ -391,9 +393,19 @@ export interface MainWindowState {
   isMaximized: boolean
 }
 
-/** 持久化的标签页状态 */
+/** 持久化的会话状态（主区只渲染一个会话） */
+export interface PersistedSessionState {
+  mode: 'chat' | 'agent'
+  conversationId: string | null
+  agentSessionId: string | null
+}
+
+/**
+ * 旧版多标签持久化结构。
+ * 仅保留读取能力用于升级迁移；新版本不再写入。
+ */
 export interface PersistedTabSettings {
-  tabs: import('../renderer/atoms/tab-atoms').TabItem[]
+  tabs: Array<{ id: string; type: string; sessionId: string; title: string; preview?: boolean }>
   activeTabId: string | null
 }
 

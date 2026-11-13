@@ -1,32 +1,36 @@
 import * as React from 'react'
 import { AlertTriangle, RotateCw } from 'lucide-react'
 
-interface TabErrorBoundaryProps {
+interface SessionErrorBoundaryProps {
   sessionId: string
   children: React.ReactNode
 }
 
-interface TabErrorBoundaryState {
+interface SessionErrorBoundaryState {
   hasError: boolean
   errorMessage: string
 }
 
-export class TabErrorBoundary extends React.Component<
-  TabErrorBoundaryProps,
-  TabErrorBoundaryState
+/**
+ * 会话级错误边界：单个会话渲染异常时只影响该会话，不拖垮整个应用。
+ * 父级通过 key={sessionId} 在切换会话时重置错误状态。
+ */
+export class SessionErrorBoundary extends React.Component<
+  SessionErrorBoundaryProps,
+  SessionErrorBoundaryState
 > {
-  constructor(props: TabErrorBoundaryProps) {
+  constructor(props: SessionErrorBoundaryProps) {
     super(props)
     this.state = { hasError: false, errorMessage: '' }
   }
 
-  static getDerivedStateFromError(error: unknown): TabErrorBoundaryState {
+  static getDerivedStateFromError(error: unknown): SessionErrorBoundaryState {
     const msg = error instanceof Error ? error.message : String(error)
     return { hasError: true, errorMessage: msg }
   }
 
   override componentDidCatch(error: unknown, info: React.ErrorInfo): void {
-    console.error('[TabErrorBoundary] 渲染异常:', error, info.componentStack)
+    console.error('[SessionErrorBoundary] 渲染异常:', error, info.componentStack)
   }
 
   private handleReset = (): void => {

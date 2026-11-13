@@ -22,7 +22,6 @@ import { userProfileAtom } from "@/atoms/user-profile"
 import { activeViewAtom } from "@/atoms/active-view"
 import { appModeAtom } from "@/atoms/app-mode"
 import { agentSessionsAtom, currentAgentSessionIdAtom } from "@/atoms/agent-atoms"
-import { activeTabIdAtom, openTab, tabsAtom } from "@/atoms/tab-atoms"
 import type { AgentEmployeeResult, AgentExecutionResult, MemberResult } from '@gravitas/shared'
 import { AgentTeamPanel, AgentExecutionBadge } from './AgentTeamPanel'
 import { ProjectChainPanel } from './ProjectChainPanel'
@@ -46,6 +45,7 @@ import {
   setProjectTaskStatusesAtom,
   pollStatusChangedAtom,
 } from '@/atoms/project-atoms'
+import { openSessionInStore } from '@/lib/open-session'
 
 /**
  * 看板容器：拉取看板数据写入 Jotai（任务表 + 状态定义），
@@ -2761,16 +2761,7 @@ function TaskItem({
       return
     }
     store.set(agentSessionsAtom, sessions)
-    const result = openTab(store.get(tabsAtom), {
-      type: 'agent',
-      sessionId: session.id,
-      title: session.title,
-    })
-    store.set(tabsAtom, result.tabs)
-    store.set(activeTabIdAtom, result.activeTabId)
-    store.set(currentAgentSessionIdAtom, session.id)
-    store.set(appModeAtom, 'agent')
-    store.set(activeViewAtom, 'conversations')
+    openSessionInStore(store, { type: 'agent', sessionId: session.id })
   }
 
   const handleStopAgentExecution = async () => {

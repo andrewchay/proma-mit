@@ -12,7 +12,6 @@ import { Badge } from '@/components/ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { activeViewAtom } from '@/atoms/active-view'
 import { appModeAtom } from '@/atoms/app-mode'
-import { tabsAtom, activeTabIdAtom, openTab } from '@/atoms/tab-atoms'
 import {
   agentSessionsAtom,
   currentAgentSessionIdAtom,
@@ -22,6 +21,7 @@ import {
 } from '@/atoms/agent-atoms'
 import type { OutboundInboxItem } from '@gravitas/shared'
 import { MailboxConfigDialog } from './MailboxConfigDialog'
+import { openSessionInStore } from '@/lib/open-session'
 
 const CATEGORY_LABEL: Record<string, string> = {
   outreach_reply: '外联回信',
@@ -88,10 +88,7 @@ export function InboxTab(): React.ReactElement {
       const meta = await window.electronAPI.createAgentSession(undefined, channelId, workspaceId)
       store.set(agentSessionsAtom, (prev) => [meta, ...prev])
       store.set(currentAgentSessionIdAtom, meta.id)
-      const currentTabs = store.get(tabsAtom)
-      const result = openTab(currentTabs, { type: 'agent', sessionId: meta.id, title: `回复 ${item.fromEmail}`.slice(0, 30) })
-      store.set(tabsAtom, result.tabs)
-      store.set(activeTabIdAtom, result.activeTabId)
+      openSessionInStore(store, { type: 'agent', sessionId: meta.id })
       const message = [
         `请为以下来信起草回复：`,
         `用 sourcing_draft_reply 工具传入：from_email=${item.fromEmail}、subject=${JSON.stringify(item.subject)}、message_id=${JSON.stringify(item.messageId)}。`,
