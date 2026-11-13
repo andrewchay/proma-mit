@@ -9,6 +9,7 @@ import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { appModeAtom, type AppMode } from '@/atoms/app-mode'
 import { activeViewAtom } from '@/atoms/active-view'
+import { scratchPadOpenAtom } from '@/atoms/scratch-pad'
 import { conversationsAtom, currentConversationIdAtom } from '@/atoms/chat-atoms'
 import { agentSessionsAtom, currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
 import { enabledDevModulesAtom, isViewVisible } from '@/atoms/dev-gate'
@@ -26,6 +27,7 @@ const MODES: { value: SwitchMode; label: string }[] = [
 export function ModeSwitcher(): React.ReactElement {
   const [mode, setMode] = useAtom(appModeAtom)
   const setActiveView = useSetAtom(activeViewAtom)
+  const setScratchPadOpen = useSetAtom(scratchPadOpenAtom)
   const activeView = useAtomValue(activeViewAtom)
   const { openSession } = useOpenSession()
   const conversations = useAtomValue(conversationsAtom)
@@ -64,6 +66,7 @@ export function ModeSwitcher(): React.ReactElement {
   }, [openSession, conversations, agentSessions, currentConversationId, currentAgentSessionId, setMode])
 
   const handleSwitch = React.useCallback((target: SwitchMode) => {
+    setScratchPadOpen(false)
     if (target === activeMode) return
     if (target === 'workflow') {
       setActiveView('workflow')
@@ -72,7 +75,7 @@ export function ModeSwitcher(): React.ReactElement {
     // 切到 Agent/Chat 时回到 conversations 视图
     setActiveView('conversations')
     restoreSession(target)
-  }, [activeMode, setActiveView, restoreSession])
+  }, [activeMode, setActiveView, setScratchPadOpen, restoreSession])
 
   return (
     <div className="pt-2 titlebar-drag-region select-none">

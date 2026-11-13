@@ -61,7 +61,9 @@ import { pollStatusChangedAtom } from './atoms/project-atoms'
 import { useGlobalChatListeners } from './hooks/useGlobalChatListeners'
 import { scratchPadContentAtom, scratchPadLoadedAtom } from './atoms/scratch-pad'
 import type { PersistedSessionState } from '@/types/settings'
-import { migrateLegacyTabState } from '@/lib/session-state'
+import { migrateLegacyTabState, sessionRestoreReadyAtom } from '@/lib/session-state'
+import { activeViewAtom } from '@/atoms/active-view'
+import { scratchPadOpenAtom } from '@/atoms/scratch-pad'
 import { chatToolsAtom } from './atoms/chat-tool-atoms'
 import { feishuBotStatesAtom } from './atoms/feishu-atoms'
 import { dingtalkBotStatesAtom } from './atoms/dingtalk-atoms'
@@ -691,11 +693,13 @@ function SessionStatePersistenceInitializer(): null {
 
   // 启动恢复：优先新格式，回退旧 tabState
   useEffect(() => {
+    const initial = { mode: store.get(appModeAtom), chat: store.get(currentConversationIdAtom), agent: store.get(currentAgentSessionIdAtom), view: store.get(activeViewAtom), scratch: store.get(scratchPadOpenAtom) }
     Promise.all([
       window.electronAPI.getSettings(),
       window.electronAPI.listConversations(),
       window.electronAPI.listAgentSessions(),
     ]).then(([settings, conversations, agentSessions]) => {
+      if (store.get(appModeAtom) !== initial.mode || store.get(currentConversationIdAtom) !== initial.chat || store.get(currentAgentSessionIdAtom) !== initial.agent || store.get(activeViewAtom) !== initial.view || store.get(scratchPadOpenAtom) !== initial.scratch) return
       const validSessionIds = new Set<string>([
         ...conversations.map((c) => c.id),
         ...agentSessions.map((s) => s.id),
@@ -712,22 +716,18 @@ function SessionStatePersistenceInitializer(): null {
 
       if (!restored) return
 
-      // 校验会话仍存在；已被删除则回落欢迎页而不是渲染空白会话
-      if (restored.mode === 'chat') {
-        if (!restored.conversationId || !validSessionIds.has(restored.conversationId)) return
-        store.set(appModeAtom, 'chat')
-        store.set(currentConversationIdAtom, restored.conversationId)
-        return
-      }
-      if (restored.mode === 'agent') {
-        if (!restored.agentSessionId || !validSessionIds.has(restored.agentSessionId)) return
+      // 分别恢复两种模式的最近会话；失效的会话不恢复。
+      const conversation = conversations.find((item) => item.id === restored.conversationId)
+      const session = agentSessions.find((item) => item.id === restored.agentSessionId)
+      if (conversation) store.set(currentConversationIdAtom, conversation.id)
+      if (session) store.set(currentAgentSessionIdAtom, session.id)
+      if (restored.mode === 'chat' && conversation) store.set(appModeAtom, 'chat')
+      if (restored.mode === 'agent' && session) {
         store.set(appModeAtom, 'agent')
-        store.set(currentAgentSessionIdAtom, restored.agentSessionId)
-        const session = agentSessions.find((s) => s.id === restored.agentSessionId)
-        if (session?.workspaceId) store.set(currentAgentWorkspaceIdAtom, session.workspaceId)
+        if (session.workspaceId) store.set(currentAgentWorkspaceIdAtom, session.workspaceId)
       }
     }).catch((err) => console.error('[SessionRestore] 恢复会话失败:', err))
-      .finally(() => { restoredRef.current = true })
+      .finally(() => { restoredRef.current = true; store.set(sessionRestoreReadyAtom, true) })
   }, [store])
 
   // 自动保存：监听会话状态变化，防抖写入 settings.json

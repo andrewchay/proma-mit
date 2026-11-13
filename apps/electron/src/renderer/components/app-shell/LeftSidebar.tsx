@@ -950,6 +950,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
   const handleRailModeSwitch = React.useCallback((targetMode: AppMode) => {
     setViewMode('active')
     setActiveView('conversations')
+    setScratchPadOpen(false)
     if (targetMode === mode) return
 
     const isChatMode = targetMode === 'chat'
@@ -982,6 +983,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
     setMode,
     setViewMode,
     setActiveView,
+    setScratchPadOpen,
   ])
 
   /** 打开便签：主区切到 Scratch Pad 视图，侧边栏会话列表保持原样 */

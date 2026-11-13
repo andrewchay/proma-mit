@@ -22,6 +22,8 @@ import { useOpenSession } from './useOpenSession'
 interface CreateSessionOptions {
   /** 标记为草稿会话（不在侧边栏显示，发送首条消息后自动取消） */
   draft?: boolean
+  /** 异步创建完成后，只有调用方仍需要时才切换。 */
+  shouldOpen?: () => boolean
 }
 
 interface CreateSessionActions {
@@ -54,6 +56,10 @@ export function useCreateSession(): CreateSessionActions {
         selectedModel?.modelId,
         selectedModel?.channelId,
       )
+      if (options?.shouldOpen?.() === false) {
+        await window.electronAPI.deleteConversation(meta.id)
+        return undefined
+      }
       setConversations((prev) => [meta, ...prev])
       openSession('chat', meta.id, meta.title)
       setActiveView('conversations')
@@ -78,6 +84,10 @@ export function useCreateSession(): CreateSessionActions {
         agentChannelId || undefined,
         currentWorkspaceId || undefined,
       )
+      if (options?.shouldOpen?.() === false) {
+        await window.electronAPI.deleteAgentSession(meta.id)
+        return undefined
+      }
       setAgentSessions((prev) => [meta, ...prev])
       openSession('agent', meta.id, meta.title)
       setActiveView('conversations')
