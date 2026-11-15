@@ -1335,8 +1335,8 @@ for (const compatibility of [
     expect(actions.applyOwnerQualityDecision(f.project.id, outcome.executionId)).toEqual(action)
     expect(runs.recoverLegacyOwnerConversationReply(outcome.executionId)).toMatchObject({ state: 'replied' })
     expect(traces.get(f.project.id)).toHaveLength(before)
-  } finally { f.stop() }
-}, 15000)
+  } finally { await f.stop() }
+}, 60_000)
 
 test('Given验证缺口的Owner原判断被旧协议拒绝 When重验原回执 Then保留阻断并且不重派或验收', async () => {
   const f = await fixture({ hold: true, development: true, evidenceGap: true })

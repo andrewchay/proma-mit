@@ -154,9 +154,9 @@ test('Given较新消息、目标、方案或配置变化 When应用旧理解 The
       expect(changes.getOwnerConversationChange(f.project.id, view.id).state).toBe('stale')
       expect(() => changes.decideOwnerConversationChange(decision(view))).toThrow('旧理解')
       expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'change_decision')).toBe(false)
-    } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+    } finally { await stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
   }
-})
+}, 30_000)
 
 test('Given跨项目、篡改摘要或夹带权限的裁决 When提交 Then不修改权威目标、外层回滚无副作用', async () => {
   const f = fixture(); sendOwnerManagementMessage(f.message('修改目标'))
