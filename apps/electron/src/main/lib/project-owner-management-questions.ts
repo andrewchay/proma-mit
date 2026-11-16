@@ -94,7 +94,11 @@ export function projectOwnerManagementRunResult(projectId: string, executionId: 
       return
     }
     const action = applyOwnerQualityDecision(projectId, executionId)
-    appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: 'reply', planningTaskId: receipt.planningTaskId, content: `${action.detail}\n判断依据：${action.decision.reason}` })
+    // escalated/blocked 表示Owner把事项交回用户决定，必须写成 attention 才会进入「需要你决定」；
+    // 写成 reply 会让界面显示"暂无待你决定的事项"，用户看不到任何待办，项目静默停住。
+    // accepted/rework_authorized 由系统继续推进，保持 reply 不打扰用户。
+    const needsUserDecision = action.state === 'escalated' || action.state === 'blocked'
+    appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: needsUserDecision ? 'attention' : 'reply', planningTaskId: receipt.planningTaskId, content: `${action.detail}\n判断依据：${action.decision.reason}` })
     return
   }
   if (outcome.state === 'replied' && outcome.reply) {
