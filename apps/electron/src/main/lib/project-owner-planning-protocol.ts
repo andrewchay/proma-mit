@@ -302,7 +302,7 @@ function validateContext(context: ProjectOwnerPlanningContext): void {
 }
 
 /** 此角色描述不创建Owner principal或员工，不授予文件/工具/费用权限。 */
-export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningContext, format: 'legacy' | 'fragment' | 'envelope' = 'envelope', strictOutputHints = true, qualityEnvelope = true, scopedObservationPrompt = true, independentReviewLane = true, explicitQualityQuotes = true, scopedFileChangePrompt = true, requireDeliveryKind = true): ProjectOwnerPlanningRequest {
+export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningContext, format: 'legacy' | 'fragment' | 'envelope' = 'envelope', strictOutputHints = true, qualityEnvelope = true, scopedObservationPrompt = true, independentReviewLane = true, explicitQualityQuotes = true, scopedFileChangePrompt = true, requireDeliveryKind = true, showStructureExample = true): ProjectOwnerPlanningRequest {
   validateContext(context)
   const binding = { projectId: context.goal.goal.projectId,
     ...(context.goal.goal.taskId === undefined ? {} : { taskId: context.goal.goal.taskId }),
@@ -361,6 +361,12 @@ export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningCo
       // 而代码步骤缺构建命令又无法产出运行证据。下游按此区分受控文本与研发执行。
       '每个步骤必须包含deliveryKind，取值只能是"text"或"development"：产出文档、规格、分析、名称方案等纯文本成果用"text"；创建或修改可编译运行的代码、脚本、配置文件用"development"。不得省略。任务标题含“实现”“编码”“源文件”等且成果是代码时用"development"；标题含“需求”“设计”“说明”“文档”“方案”且成果是描述性内容时用"text"。',
     ] : []),
+    ...(requireDeliveryKind && showStructureExample ? [
+      // 紧凑的嵌套写法会让模型把 steps 放到根层（真实事故：steps 与 proposal 同级导致"包含未知字段"）。
+      // 这里给出一份完整响应示例，层级关系一目了然；示例中的占位值须替换为基于来源的判断。
+      '响应只能有一个顶层对象，字段仅 schemaVersion、kind、binding、proposal（或 needs_clarification 的 reason/questions）。steps 必须位于 proposal 内部，不能与 proposal 同级。完整示例为下一行 JSON：',
+      JSON.stringify({ schemaVersion: 1, kind: 'plan_proposal', binding, proposal: { summary: '一句话说明最终交付什么及其用途', assumptions: ['已确认的前提'], risks: ['可能影响交付的风险'], steps: [{ key: 'step-1', title: '步骤标题', outcome: '明确交付物', acceptanceCriteria: ['明确的验收标准'], dependencies: [], roleKey: context.sources.roles[0]!.key, deliveryKind: 'development' }] } }),
+    ] : []),
     '二选一：kind="plan_proposal"，其余字段仅binding与proposal{summary,assumptions:[],risks:[],steps:[{key,title,outcome,acceptanceCriteria:[],dependencies:[],roleKey' + (requireDeliveryKind ? ',deliveryKind:"text"|"development"' : '') + ',sourceReferences?:[{path,line,sha256}]}]}；',
     '或kind="needs_clarification"，其余字段仅binding与reason、questions:[{key,reasonType:"missing_information"|"source_conflict",question,why,options:[],recommended?,sourceReferences?:[{sourceId,quote}]}]。不夹带proposal，options是可空或2–4项的字符串数组（每项为一个可选答案的完整短句，不得使用对象），recommended有选项时必须逐字来自options；source_conflict必须引用2–4个不同来源且原文精确匹配，missing_information不得附sourceReferences。',
     '不输出actor、grant、权限、费用已授权、执行状态或完成状态。计划与澄清均不是授权。',
@@ -416,10 +422,13 @@ export function resolveProjectOwnerPlanningRequest(context: ProjectOwnerPlanning
           for (const independentReviewLane of [true, false]) {
             for (const explicitQualityQuotes of [true, false]) {
               for (const scopedFileChangePrompt of [true, false]) {
-                // requireDeliveryKind=false 还原加入步骤交付类型前的历史提示文本。
+                // requireDeliveryKind=false 还原加入步骤交付类型前的历史提示文本；
+                // showStructureExample=false 还原加入完整结构示例前的文本。
                 for (const requireDeliveryKind of [true, false]) {
-                  const request = buildProjectOwnerPlanningRequest(context, format, strictOutputHints, qualityEnvelope, scopedObservationPrompt, independentReviewLane, explicitQualityQuotes, scopedFileChangePrompt, requireDeliveryKind)
-                  if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) return request
+                  for (const showStructureExample of [true, false]) {
+                    const request = buildProjectOwnerPlanningRequest(context, format, strictOutputHints, qualityEnvelope, scopedObservationPrompt, independentReviewLane, explicitQualityQuotes, scopedFileChangePrompt, requireDeliveryKind, showStructureExample)
+                    if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) return request
+                  }
                 }
               }
             }
