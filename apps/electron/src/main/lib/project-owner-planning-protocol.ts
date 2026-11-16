@@ -402,8 +402,34 @@ export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningCo
     systemPrompt, userPrompt: JSON.stringify({ binding, goal: context.goal.goal, sources, ...(context.conversation ? { conversation: context.conversation } : {}) }) }
 }
 
+// 缓存完整冻结来源与提示指纹；有界缓存不改变历史请求的精确校验。
+const historicalRequestCache = new Map<string, { value: string | null; bytes: number }>()
+const HISTORICAL_REQUEST_CACHE_BYTES = 4 * 1024 * 1024
+let historicalRequestCacheBytes = 0
+
+function cacheHistoricalRequest(key: string, value: string | null): void {
+  const bytes = Buffer.byteLength(key) + (value === null ? 0 : Buffer.byteLength(value))
+  if (bytes > HISTORICAL_REQUEST_CACHE_BYTES) return
+  while (historicalRequestCacheBytes + bytes > HISTORICAL_REQUEST_CACHE_BYTES || historicalRequestCache.size >= 128) {
+    const oldest = historicalRequestCache.keys().next().value
+    if (oldest === undefined) break
+    historicalRequestCacheBytes -= historicalRequestCache.get(oldest)!.bytes
+    historicalRequestCache.delete(oldest)
+  }
+  historicalRequestCache.set(key, { value, bytes })
+  historicalRequestCacheBytes += bytes
+}
+
 /** 历史提示只按完整hash精确识别；既不改旧记录，也不把新提示套到旧付费许可上。 */
 export function resolveProjectOwnerPlanningRequest(context: ProjectOwnerPlanningContext, promptHash: string): ProjectOwnerPlanningRequest {
+  const key = JSON.stringify([context, promptHash])
+  const cached = historicalRequestCache.get(key)
+  if (cached) {
+    historicalRequestCache.delete(key)
+    historicalRequestCache.set(key, cached)
+    if (cached.value === null) throw new Error('Owner冻结提示指纹不属于已知历史格式')
+    return JSON.parse(cached.value) as ProjectOwnerPlanningRequest
+  }
   for (const format of ['envelope', 'fragment', 'legacy'] as const) {
     for (const strictOutputHints of [true, false]) {
       for (const qualityEnvelope of [true, false]) {
@@ -412,7 +438,10 @@ export function resolveProjectOwnerPlanningRequest(context: ProjectOwnerPlanning
             for (const explicitQualityQuotes of [true, false]) {
               for (const scopedFileChangePrompt of [true, false]) {
                 const request = buildProjectOwnerPlanningRequest(context, format, strictOutputHints, qualityEnvelope, scopedObservationPrompt, independentReviewLane, explicitQualityQuotes, scopedFileChangePrompt)
-                if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) return request
+                if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) {
+                  cacheHistoricalRequest(key, JSON.stringify(request))
+                  return request
+                }
               }
             }
           }
@@ -420,6 +449,7 @@ export function resolveProjectOwnerPlanningRequest(context: ProjectOwnerPlanning
       }
     }
   }
+  cacheHistoricalRequest(key, null)
   throw new Error('Owner冻结提示指纹不属于已知历史格式')
 }
 function question(input: unknown, sources: Map<string, string>): ProjectOwnerClarificationQuestion {
