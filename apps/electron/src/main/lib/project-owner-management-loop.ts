@@ -11,7 +11,7 @@ import { onOwnerManagementChanged, onOwnerManagementWake, type OwnerManagementCh
 import { appendOwnerManagementMessage, appendOwnerManagementTrace, consumeOwnerManagementEvent, getOwnerManagementMessage, getOwnerManager, listPendingOwnerManagementEvents, recordOwnerManagementAssignmentRecheck, recordOwnerManagementRenewalRecheck, recordStaleOwnerManagementTrace } from './project-owner-management-store'
 import * as store from './project-sqlite-store'
 import { nextOwnerExecutionObservationDeadline, scanOwnerExecutionObservations } from './project-owner-management-execution'
-import { readOwnerPlanningSnapshot } from './project-owner-planning-source'
+import { OwnerPlanningSourceChangedError, readOwnerPlanningSnapshot } from './project-owner-planning-source'
 import { hasCompleteOwnerManagementDelivery, publishOwnerManagementCompletion } from './project-owner-management-delivery'
 import { onOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
 import { listOwnerExecutionAssignmentRuns } from './project-owner-execution-assignment-service'
@@ -539,6 +539,11 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
             appendOwnerManagementMessage({ projectId, eventId: `delegation-start:${view.delegation!.id}:${link.planning_task_id}`, role: 'assistant', kind: 'management_progress', ...(subject.targetTaskId ? { taskId: subject.targetTaskId } : {}), planningTaskId: link.planning_task_id, content: started.status === 'queued' ? '已在你确认的管理额度内排队，等待可用运行位置。' : started.status === 'completed' ? '本次管理请求已完成，正在整理方案或需要与你商量的问题。' : '已在你确认的管理额度内启动规划。我会继续整理方案，有需要决定的问题会在这里与你商量。' })
           }
         } catch (cause) {
+          // 旧Link来源被替代不是项目级故障，不能阻断新的授权和对话链接。
+          if (cause instanceof OwnerPlanningSourceChangedError) {
+            appendOwnerManagementTrace({ eventId: `owner-source-stale:${link.planning_task_id}`, projectId, ...(subject.targetTaskId ? { taskId: subject.targetTaskId } : {}), phase: subject.purpose === 'owner_execution_assignment' ? 'assignment_run' : 'owner_response', state: 'blocked', createdAt: Date.now(), detailCode: 'authorization_changed' })
+            continue
+          }
           console.warn('[Owner管理] 委托调用需要核对', cause)
           // 提示写入是幂等的，重试不会重复刷屏；但异常必须继续上抛，否则外层退避永远不生效：
           // 这里吞掉异常会让本轮按成功结束并清空失败记录，下一次 30 秒扫描又重来一次。

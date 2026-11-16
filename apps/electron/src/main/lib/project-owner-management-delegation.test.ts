@@ -380,7 +380,7 @@ test('Given历史冻结提示指纹因提示文案升级不属于当前格式 Wh
   await startDelegatedOwnerPlanningTask(f.taskId)
   const execution = store.listAgentExecutionsByEntity('task', f.taskId)[0]!
   const source = resolveOwnerPlanningSession(execution.sessionId!)!
-  const proposal = { schemaVersion: 1, kind: 'plan_proposal', projectId: f.project.id, goalVersion: source.context.goal.goal.goalVersion, contextFingerprint: source.context.fingerprint, proposal: { summary: '可审阅定位建议', assumptions: [], risks: [], steps: [{ key: 'brief', title: '形成建议', outcome: '可审阅建议', acceptanceCriteria: ['说明依据'], dependencies: [], roleKey: source.context.sources.roles[0]!.key }] } }
+  const proposal = { schemaVersion: 1, kind: 'plan_proposal', projectId: f.project.id, goalVersion: source.context.goal.goal.goalVersion, contextFingerprint: source.context.fingerprint, proposal: { summary: '可审阅定位建议', assumptions: [], risks: [], steps: [{ key: 'brief', title: '形成建议', outcome: '可审阅建议', acceptanceCriteria: ['说明依据'], dependencies: [], roleKey: source.context.sources.roles[0]!.key, deliveryKind: 'text' }] } }
   callbacks.get(execution.sessionId!)!.onComplete([], { runtimeResult: {
     type: 'result', subtype: 'success', session_id: execution.sessionId!, finish_reason: 'stop',
     result: JSON.stringify(proposal),

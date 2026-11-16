@@ -151,10 +151,11 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const priorAttention = !latestAttention ? messages.findLast(message => message.role === 'assistant' && message.kind === 'attention') : undefined
   const alertMessage = messages.find(message => message.id === alertMessageId && message.role === 'assistant' && message.kind === 'attention')
   const dismissAttention = () => setAttentionAlerts(previous => { if (previous.get(attentionKey)?.messageId !== alertMessageId) return previous; const next = new Map(previous); next.delete(attentionKey); return next })
-  const latestWorkspaceProposal = latestAssistantMessage?.teamWorkspaceProposal
-    && !workspaceApprovalStates.get(latestAssistantMessage.id)?.approved
-    && !messages.some(message => message.teamWorkspaceApproval?.sourceMessageId === latestAssistantMessage.id)
-    ? latestAssistantMessage : undefined
+  const workspaceProposal = messages.findLast(message => message.role === 'assistant' && message.teamWorkspaceProposal)
+  const latestWorkspaceProposal = workspaceProposal
+    && !workspaceApprovalStates.get(workspaceProposal.id)?.approved
+    && !messages.some(message => message.teamWorkspaceApproval?.sourceMessageId === workspaceProposal.id)
+    ? workspaceProposal : undefined
   const allTraces = editor.view?.trace ?? []
   const assignmentRunIndex = allTraces.findLastIndex(entry => entry.phase === 'assignment_run' && (taskId === undefined || entry.taskId === taskId))
   const latestAssignmentRun = assignmentRunIndex >= 0 ? allTraces[assignmentRunIndex] : undefined

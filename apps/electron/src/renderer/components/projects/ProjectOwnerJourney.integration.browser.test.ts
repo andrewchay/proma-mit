@@ -141,7 +141,7 @@ beforeAll(async () => {
           summary: '在定位建议中补充替代方案与取舍',
           assumptions: [],
           risks: [],
-          steps: [{ key: 'brief', title: '修订定位建议', outcome: '包含定位、替代方案与取舍的建议', acceptanceCriteria: ['说明建议与依据', '比较替代方案并解释取舍'], dependencies: [], roleKey }],
+          steps: [{ key: 'brief', title: '修订定位建议', outcome: '包含定位、替代方案与取舍的建议', acceptanceCriteria: ['说明建议与依据', '比较替代方案并解释取舍'], dependencies: [], roleKey, deliveryKind: 'text' }],
           deliveryFeedbackAssessment: {
             messageId: feedback.messageId,
             artifactHash: feedback.artifactHash,
@@ -161,7 +161,7 @@ beforeAll(async () => {
         schemaVersion: 1,
         kind: 'plan_proposal',
         binding: { projectId: source.link.projectId, goalVersion: source.context.goal.goal.goalVersion, contextFingerprint: source.context.fingerprint },
-        proposal: { summary: '为新项目整理一页可评审的定位建议', assumptions: [], risks: [], steps: [{ key: 'brief', title: '整理定位建议', outcome: '一页定位建议', acceptanceCriteria: ['说明建议与依据'], dependencies: [], roleKey }] },
+        proposal: { summary: '为新项目整理一页可评审的定位建议', assumptions: [], risks: [], steps: [{ key: 'brief', title: '整理定位建议', outcome: '一页定位建议', acceptanceCriteria: ['说明建议与依据'], dependencies: [], roleKey, deliveryKind: 'text' }] },
       }
     } else {
       calls.push(source.link.purpose)
@@ -294,6 +294,7 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
     await page.getByText('项目总模型费用上限为 $15.00', { exact: false }).waitFor().catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
     await confirmScope.waitFor().catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
     await page.getByRole('button', { name: '确认范围，让 Owner 自主推进', exact: true }).click()
+    await page.getByLabel('待查看团队工作区建议').getByRole('button', { name: '查看范围与确认选项' }).click()
     const teamScope = page.getByLabel('团队工作区范围建议').last()
     await teamScope.waitFor()
     await new Promise(resolve => setTimeout(resolve, 100))

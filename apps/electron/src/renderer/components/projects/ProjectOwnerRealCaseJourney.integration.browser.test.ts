@@ -305,6 +305,7 @@ beforeAll(async () => {
             ],
             dependencies: [],
             roleKey,
+            deliveryKind: 'development',
           }],
         }
         : {
@@ -323,6 +324,7 @@ beforeAll(async () => {
             ],
             dependencies: [],
             roleKey,
+            deliveryKind: 'text',
           }],
         }
       result = { schemaVersion: 1, kind: 'plan_proposal', binding: { projectId: source.link.projectId, goalVersion: source.context.goal.goal.goalVersion, contextFingerprint: source.context.fingerprint }, proposal }
@@ -491,6 +493,7 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
     if (await retryScope.isVisible()) await retryScope.click()
     await page.getByText('项目总模型费用上限为 $15.00', { exact: false }).waitFor().catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
     await confirmScope.click()
+    await page.getByLabel('待查看团队工作区建议').getByRole('button', { name: '查看范围与确认选项' }).click()
     const teamScope = page.getByLabel('团队工作区范围建议').last()
     await teamScope.waitFor()
     await new Promise(resolve => setTimeout(resolve, 100))
@@ -500,6 +503,8 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
     await page.getByLabel('Owner方案摘要').getByText(options.proposalSummary, { exact: true }).waitFor().catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
     // 自主管理委托包含方案决策与派工；方案摘要是进度信息，不再要求用户批准普通方案或再次开工。
     expect(calls.slice(callStart)).toContain('owner_planning')
+    for (let attempt = 0; attempt < 400 && (!calls.slice(callStart).includes('owner_execution_assignment') || getProjectOwnerPlanDraft(project.id)?.state !== 'confirmed'); attempt++) await new Promise(resolve => setTimeout(resolve, 50))
+    if (!calls.slice(callStart).includes('owner_execution_assignment')) throw new Error(`安排未启动：${await debug()}`)
     expect(calls.slice(callStart)).toContain('owner_execution_assignment')
     expect(getProjectOwnerPlanDraft(project.id)?.state).toBe('confirmed')
     expect(await page.getByRole('button', { name: '确认方案并开始执行', exact: true }).count()).toBe(0)
