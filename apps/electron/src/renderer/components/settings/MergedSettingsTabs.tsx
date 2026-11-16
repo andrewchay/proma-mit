@@ -19,6 +19,7 @@ import { TutorialViewer } from '../tutorial/TutorialViewer'
 import { ToolSettings } from './ToolSettings'
 import { PromptSettings } from './PromptSettings'
 import { StorageSettings } from './StorageSettings'
+import { PerformanceSettings } from './PerformanceSettings'
 import { MigrationSettings } from './MigrationSettings'
 import { TokenUsageSettings } from './TokenUsageSettings'
 import { TelemetrySettingsPanel } from './TelemetrySettingsPanel'
@@ -87,6 +88,7 @@ export function ChannelsTab(): React.ReactElement {
 export function DataUsageTab(): React.ReactElement {
   return (
     <MergedStack>
+      <PerformanceSettings />
       <StorageSettings />
       <MigrationSettings />
       <TokenUsageSettings />
