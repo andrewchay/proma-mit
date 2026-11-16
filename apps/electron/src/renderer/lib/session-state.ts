@@ -9,7 +9,11 @@
  * 由调用方回落欢迎页而不是抛错。
  */
 
+import { atom } from 'jotai'
 import type { PersistedSessionState } from '@/types/settings'
+
+/** 恢复完成前不自动创建或打开欢迎会话。 */
+export const sessionRestoreReadyAtom = atom(false)
 
 interface LegacyTabItemLike {
   type?: unknown

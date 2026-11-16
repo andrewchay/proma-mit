@@ -572,6 +572,8 @@ async function safeStartCompanionServer(): Promise<void> {
 
 export async function registerIpcHandlers(): Promise<void> {
   console.log('[IPC] 正在注册 IPC 处理器...')
+  const { registerPerformanceMonitor } = await import('./lib/performance-monitor')
+  registerPerformanceMonitor()
 
   // ===== 出海邮件（收发与同步，独立模块） =====
   const { registerOutboundMailIpcHandlers, restoreOutboundMailSchedule } = await import('./lib/outbound-mail/outbound-mail-ipc')

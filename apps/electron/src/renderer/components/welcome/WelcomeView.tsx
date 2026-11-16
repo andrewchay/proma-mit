@@ -16,11 +16,13 @@ import { appModeAtom } from '@/atoms/app-mode'
 import { currentAgentWorkspaceIdAtom, agentSettingsReadyAtom } from '@/atoms/agent-atoms'
 import { useStore } from 'jotai'
 import { openSessionInStore } from '@/lib/open-session'
+import { sessionRestoreReadyAtom } from '@/lib/session-state'
 import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
 import { useCreateSession } from '@/hooks/useCreateSession'
 
 export function WelcomeView(): React.ReactElement {
   const mode = useAtomValue(appModeAtom)
+  const restoreReady = useAtomValue(sessionRestoreReadyAtom)
   const currentWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
   const agentSettingsReady = useAtomValue(agentSettingsReadyAtom)
   const draftSessionIds = useAtomValue(draftSessionIdsAtom)
@@ -46,6 +48,7 @@ export function WelcomeView(): React.ReactElement {
   }
 
   React.useEffect(() => {
+    if (!restoreReady) return
     // 如果已经为当前模式初始化过，则跳过
     if (initRef.current === mode) return
     // Agent 模式需等待 settings 就绪（workspaceId 等异步加载完成）
@@ -53,13 +56,14 @@ export function WelcomeView(): React.ReactElement {
 
     // 标记当前 mode 的请求，用于取消过期的异步回调
     const currentMode = mode
+    let cancelled = false
     initRef.current = mode
 
     // 从后端 IPC 拿最新数据，避免 HMR 导致 atoms 重置为空时重复创建会话
     if (currentMode === 'chat') {
       window.electronAPI.listConversations().then((freshConversations) => {
         // 如果 mode 已切换，丢弃过期回调
-        if (initRef.current !== currentMode) return
+        if (cancelled || initRef.current !== currentMode) return
         const {
           draftSessionIds: currentDrafts,
           store: currentStore,
@@ -83,12 +87,12 @@ export function WelcomeView(): React.ReactElement {
           return
         }
         // 3. 没有任何会话时才创建新的 draft 会话
-        currentCreateChat({ draft: true })
+        currentCreateChat({ draft: true, shouldOpen: () => !cancelled })
       }).catch(console.error)
     } else {
       window.electronAPI.listAgentSessions().then((freshSessions) => {
         // 如果 mode 已切换，丢弃过期回调
-        if (initRef.current !== currentMode) return
+        if (cancelled || initRef.current !== currentMode) return
         const {
           draftSessionIds: currentDrafts,
           currentWorkspaceId: currentWs,
@@ -114,10 +118,11 @@ export function WelcomeView(): React.ReactElement {
           return
         }
         // 3. 没有任何会话时才创建新的 draft 会话
-        currentCreateAgent({ draft: true })
+        currentCreateAgent({ draft: true, shouldOpen: () => !cancelled })
       }).catch(console.error)
     }
-  }, [mode, agentSettingsReady])
+    return () => { cancelled = true; initRef.current = null }
+  }, [mode, agentSettingsReady, restoreReady])
 
   // 短暂的过渡状态（通常几十毫秒内就会被会话内容替换）
   return (

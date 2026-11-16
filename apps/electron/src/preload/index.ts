@@ -328,6 +328,10 @@ export interface PortSkillResult {
  * 暴露给渲染进程的 API 接口定义
  */
 export interface ElectronAPI {
+  openPerformanceDiagnostics: () => Promise<void>
+  saveAutomaticPerformanceSnapshot: (samples: import('../types/performance-monitor').PerformanceSample[], reason: 'main' | 'renderer') => Promise<void>
+  onPerformanceMainStall: (callback: () => void) => () => void
+  savePerformanceSnapshot: (samples: import('../types/performance-monitor').PerformanceSample[]) => Promise<import('../types/performance-monitor').PerformanceSnapshotResult>
   // ===== 运行时相关 =====
 
   /**
@@ -2436,6 +2440,14 @@ interface MigrationExportResult {
  * 实现 ElectronAPI 接口
  */
 const electronAPI: ElectronAPI = {
+  openPerformanceDiagnostics: () => ipcRenderer.invoke('performance-monitor:open-folder'),
+  saveAutomaticPerformanceSnapshot: (samples, reason) => ipcRenderer.invoke('performance-monitor:auto', samples, reason),
+  onPerformanceMainStall: (callback) => {
+    const listener = (): void => callback()
+    ipcRenderer.on('performance-monitor:main-stall', listener)
+    return () => ipcRenderer.removeListener('performance-monitor:main-stall', listener)
+  },
+  savePerformanceSnapshot: (samples) => ipcRenderer.invoke('performance-monitor:save', samples),
   // 运行时
   getRuntimeStatus: () => {
     return ipcRenderer.invoke(IPC_CHANNELS.GET_RUNTIME_STATUS)

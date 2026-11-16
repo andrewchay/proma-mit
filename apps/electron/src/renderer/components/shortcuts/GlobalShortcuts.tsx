@@ -36,6 +36,7 @@ import {
   selectedModelAtom,
 } from '@/atoms/chat-atoms'
 import { activeViewAtom } from '@/atoms/active-view'
+import { scratchPadOpenAtom } from '@/atoms/scratch-pad'
 import { useCreateSession } from '@/hooks/useCreateSession'
 import { useShortcut } from '@/hooks/useShortcut'
 import {
@@ -53,6 +54,7 @@ export function GlobalShortcuts(): null {
   const [appMode, setAppMode] = useAtom(appModeAtom)
   const [settingsOpen, setSettingsOpen] = useAtom(settingsOpenAtom)
   const setActiveView = useSetAtom(activeViewAtom)
+  const setScratchPadOpen = useSetAtom(scratchPadOpenAtom)
   const channelFormDirty = useAtomValue(channelFormDirtyAtom)
   const setSettingsCloseRequested = useSetAtom(settingsCloseRequestedAtom)
   const [searchOpen, setSearchOpen] = useAtom(searchDialogOpenAtom)
@@ -161,8 +163,8 @@ export function GlobalShortcuts(): null {
   useShortcut(
     'toggle-mode',
     useCallback(
-      () => { setAppMode(appMode === 'chat' ? 'agent' : 'chat') },
-      [appMode, setAppMode],
+      () => { setScratchPadOpen(false); setAppMode(appMode === 'chat' ? 'agent' : 'chat') },
+      [appMode, setAppMode, setScratchPadOpen],
     ),
   )
 
