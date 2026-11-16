@@ -11,7 +11,7 @@
 import * as React from 'react'
 import { useAtom, useSetAtom, useAtomValue } from 'jotai'
 import { toast } from 'sonner'
-import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Users, Megaphone, Globe2, Zap, Radio, FlaskConical, ShieldAlert, CircleHelp } from 'lucide-react'
+import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Users, Megaphone, Globe2, Zap, Radio, FlaskConical, ShieldAlert, CircleHelp, StickyNote } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { ModeSwitcher } from './ModeSwitcher'
@@ -58,13 +58,8 @@ import {
 import type { SessionIndicatorStatus } from '@/atoms/agent-atoms'
 import { previewPanelOpenMapAtom, previewFileMapAtom } from '@/atoms/preview-atoms'
 import { clearPreviewCacheForSession } from '@/components/diff/DiffTabContent'
-import {
-  tabsAtom,
-  activeTabIdAtom,
-  sidebarCollapsedAtom,
-  closeTab,
-  updateTabTitle,
-} from '@/atoms/tab-atoms'
+import { sidebarCollapsedAtom } from '@/atoms/sidebar'
+import { scratchPadOpenAtom } from '@/atoms/scratch-pad'
 import { userProfileAtom } from '@/atoms/user-profile'
 import { sidebarViewModeAtom } from '@/atoms/sidebar-atoms'
 import { searchDialogOpenAtom } from '@/atoms/search-atoms'
@@ -74,7 +69,6 @@ import { workingSessionIdsSetAtom } from '@/atoms/working-atoms'
 import { hasEnvironmentIssuesAtom } from '@/atoms/environment'
 import { promptConfigAtom, selectedPromptIdAtom, conversationPromptIdAtom } from '@/atoms/system-prompt-atoms'
 import { useOpenSession } from '@/hooks/useOpenSession'
-import { useSyncActiveTabSideEffects } from '@/hooks/useSyncActiveTabSideEffects'
 import { CollapsedWorkspacePopover } from '@/components/agent/CollapsedWorkspacePopover'
 import { MoveSessionDialog } from '@/components/agent/MoveSessionDialog'
 import { detectIsMac } from '@/lib/platform'
@@ -298,25 +292,25 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
   const [capabilities, setCapabilities] = React.useState<WorkspaceCapabilities | null>(null)
   const _capabilitiesVersion = useAtomValue(workspaceCapabilitiesVersionAtom)
 
-  // Tab 状态
-  const [tabs, setTabs] = useAtom(tabsAtom)
-  const [activeTabId, setActiveTabId] = useAtom(activeTabIdAtom)
+  // 主区只渲染一个会话；删除/归档当前会话时清空指针即可
+  const setCurrentConversationId = useSetAtom(currentConversationIdAtom)
   const [sidebarCollapsed, setSidebarCollapsed] = useAtom(sidebarCollapsedAtom)
+  const [scratchPadOpen, setScratchPadOpen] = useAtom(scratchPadOpenAtom)
   const { openSession, openSessionPreview, openSessionPermanent } = useOpenSession()
-  const syncActiveTabSideEffects = useSyncActiveTabSideEffects()
 
   // 归档 & 搜索状态
   const [viewMode, setViewMode] = useAtom(sidebarViewModeAtom)
   const setSearchDialogOpen = useSetAtom(searchDialogOpenAtom)
 
-  // 当 activeTabId 变化时，自动滚动侧边栏使选中项可见
+  // 当前会话变化时，自动滚动侧边栏使选中项可见
+  const activeSessionId = mode === 'agent' ? currentAgentSessionId : currentConversationId
   React.useEffect(() => {
-    if (!activeTabId) return
+    if (!activeSessionId) return
     requestAnimationFrame(() => {
       const el = document.querySelector('.session-item-selected')
       el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     })
-  }, [activeTabId])
+  }, [activeSessionId])
 
   // per-conversation/session Map atoms（删除时清理）
   const setConvModels = useSetAtom(conversationModelsAtom)
@@ -481,6 +475,15 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
     setPendingDeleteId(id)
   }, [])
 
+  /**
+   * 会话被删除/归档/迁出时，若它正占据主区则清空指针回到欢迎页。
+   * 主区只渲染一个会话，因此这里不需要"切到相邻会话"的兜底。
+   */
+  const clearSessionIfActive = React.useCallback((id: string): void => {
+    if (currentConversationId === id) setCurrentConversationId(null)
+    if (currentAgentSessionId === id) setCurrentAgentSessionId(null)
+  }, [currentConversationId, currentAgentSessionId, setCurrentConversationId, setCurrentAgentSessionId])
+
   /** 重命名对话标题 */
   const handleRename = async (id: string, newTitle: string): Promise<void> => {
     try {
@@ -488,8 +491,6 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
       setConversations((prev) =>
         prev.map((c) => (c.id === updated.id ? updated : c))
       )
-      // 同步更新标签页标题
-      setTabs((prev) => updateTabTitle(prev, id, newTitle))
     } catch (error) {
       console.error('[侧边栏] 重命名对话失败:', error)
     }
@@ -519,21 +520,10 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
       setConversations((prev) =>
         prev.map((c) => (c.id === updated.id ? updated : c))
       )
-      // 归档时自动关闭该对话的标签页，并同步新激活标签的副作用
-      // （appMode、currentXxxId 等），避免文件面板/工具栏等 per-tab
-      // 状态被遗留为旧值或被错误地置 null。
+      // 归档当前会话时清空主区指针并释放该会话的内存状态
       if (updated.archived) {
-        const wasActive = activeTabId === id
-        const tabResult = closeTab(tabs, activeTabId, id)
-        setTabs(tabResult.tabs)
-        setActiveTabId(tabResult.activeTabId)
+        clearSessionIfActive(id)
         cleanupMapAtoms(id)
-        if (wasActive) {
-          const newActiveTab = tabResult.activeTabId
-            ? tabResult.tabs.find((t) => t.id === tabResult.activeTabId) ?? null
-            : null
-          syncActiveTabSideEffects(newActiveTab)
-        }
       }
       toast.success(updated.archived ? '已归档' : '已取消归档')
     } catch (error) {
@@ -545,24 +535,8 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
   const handleConfirmDelete = async (): Promise<void> => {
     if (!pendingDeleteId) return
 
-    // 关闭对应的标签页：setTabs 与 setActiveTabId 成组更新，便于阅读，
-    // 也避免将来在两者之间意外插入 await 导致跨渲染状态不一致。
-    // （React 18 在同一事件回调中会自动批处理多次 setState，所以单次渲染
-    // 的一致性由 React 保证，这里只是保持代码组织清晰。）
-    const wasActive = activeTabId === pendingDeleteId
-    const tabResult = closeTab(tabs, activeTabId, pendingDeleteId)
-    setTabs(tabResult.tabs)
-    setActiveTabId(tabResult.activeTabId)
-
-    // 若关闭的是当前活跃标签，同步新激活标签的副作用（appMode、
-    // currentXxxId、以及右侧文件面板等 per-tab 状态），保持与 TabBar
-    // 关闭逻辑一致，避免删除/归档当前会话后新标签状态缺失。
-    if (wasActive) {
-      const newActiveTab = tabResult.activeTabId
-        ? tabResult.tabs.find((t) => t.id === tabResult.activeTabId) ?? null
-        : null
-      syncActiveTabSideEffects(newActiveTab)
-    }
+    // 删除的若是当前会话，清空主区指针并回到欢迎页
+    clearSessionIfActive(pendingDeleteId)
 
     // 清理 draft 标记（如有）
     setDraftSessionIds((prev: Set<string>) => {
@@ -585,10 +559,6 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
 
     if (mode === 'agent') {
       // Agent 模式：删除 Agent 会话
-      // 注意：当前会话指针（currentAgentSessionId）已由上面的
-      // syncActiveTabSideEffects 在 wasActive 分支同步到新激活标签，
-      // 这里不要再按旧闭包值强制置 null，否则会覆盖新 sessionId，
-      // 导致 RightSidePanel 消失（依赖 currentAgentSessionIdAtom）。
       try {
         await window.electronAPI.deleteAgentSession(pendingDeleteId)
         // 全量刷新确保与后端同步
@@ -699,7 +669,6 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
         prev.map((s) => (s.id === updated.id ? updated : s))
       )
       // 同步更新标签页标题
-      setTabs((prev) => updateTabTitle(prev, id, newTitle))
     } catch (error) {
       console.error('[侧边栏] 重命名 Agent 会话失败:', error)
     }
@@ -765,14 +734,9 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
       setAgentSessions((prev) =>
         prev.map((s) => (s.id === updated.id ? updated : s))
       )
-      // 归档时自动关闭该会话的标签页，并同步新激活标签的副作用，
-      // 否则 RightSidePanel（依赖 currentAgentSessionIdAtom）会因为
-      // 指针被错误置 null 而消失。
+      // 归档当前会话时清空主区指针并释放该会话的内存状态
       if (updated.archived) {
-        const wasActive = activeTabId === id
-        const tabResult = closeTab(tabs, activeTabId, id)
-        setTabs(tabResult.tabs)
-        setActiveTabId(tabResult.activeTabId)
+        clearSessionIfActive(id)
         cleanupMapAtoms(id)
         // 从 Working Done 集合移除
         setWorkingDone((prev) => {
@@ -781,12 +745,6 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
           next.delete(id)
           return next
         })
-        if (wasActive) {
-          const newActiveTab = tabResult.activeTabId
-            ? tabResult.tabs.find((t) => t.id === tabResult.activeTabId) ?? null
-            : null
-          syncActiveTabSideEffects(newActiveTab)
-        }
       }
       toast.success(updated.archived ? '已归档' : '已取消归档')
     } catch (error) {
@@ -806,9 +764,6 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
     )
     // 如果迁移的是当前选中的会话，取消选中并关闭标签页
     if (currentAgentSessionId === updatedSession.id) {
-      const tabResult = closeTab(tabs, activeTabId, updatedSession.id)
-      setTabs(tabResult.tabs)
-      setActiveTabId(tabResult.activeTabId)
       setCurrentAgentSessionId(null)
       // 从 Working Done 集合移除
       setWorkingDone((prev) => {
@@ -995,6 +950,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
   const handleRailModeSwitch = React.useCallback((targetMode: AppMode) => {
     setViewMode('active')
     setActiveView('conversations')
+    setScratchPadOpen(false)
     if (targetMode === mode) return
 
     const isChatMode = targetMode === 'chat'
@@ -1007,12 +963,6 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
         openSession(targetMode, match.id, match.title)
         return
       }
-    }
-
-    const tab = tabs.find((t) => t.type === targetMode)
-    if (tab) {
-      openSession(targetMode, tab.sessionId, tab.title)
-      return
     }
 
     const recent = sessions.find((s) => !s.archived && !draftSessionIds.has(s.id))
@@ -1028,20 +978,26 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
     agentSessions,
     currentConversationId,
     currentAgentSessionId,
-    tabs,
     draftSessionIds,
     openSession,
     setMode,
     setViewMode,
     setActiveView,
+    setScratchPadOpen,
   ])
+
+  /** 打开便签：主区切到 Scratch Pad 视图，侧边栏会话列表保持原样 */
+  const handleOpenScratchPad = React.useCallback(() => {
+    setActiveView('conversations')
+    setScratchPadOpen(true)
+  }, [setActiveView, setScratchPadOpen])
 
   const railRecentItems = React.useMemo(() => {
     if (mode === 'chat') {
       return conversations
         .filter((c) => !c.archived && !draftSessionIds.has(c.id))
         .sort((a, b) => {
-          const activeDelta = Number(b.id === activeTabId) - Number(a.id === activeTabId)
+          const activeDelta = Number(b.id === activeSessionId) - Number(a.id === activeSessionId)
           if (activeDelta !== 0) return activeDelta
           const streamingDelta = Number(streamingIds.has(b.id)) - Number(streamingIds.has(a.id))
           if (streamingDelta !== 0) return streamingDelta
@@ -1055,7 +1011,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
           title: conversation.title,
           type: 'chat' as const,
           initial: getRailInitial(conversation.title),
-          active: conversation.id === activeTabId,
+          active: conversation.id === activeSessionId,
           status: streamingIds.has(conversation.id) ? 'running' as const : 'idle' as const,
           pinned: !!conversation.pinned,
         }))
@@ -1071,7 +1027,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
         const statusA = agentIndicatorMap.get(a.id) ?? (unviewedCompletedSessionIds.has(a.id) ? 'completed' : 'idle')
         const statusB = agentIndicatorMap.get(b.id) ?? (unviewedCompletedSessionIds.has(b.id) ? 'completed' : 'idle')
         const priority = (session: AgentSessionMeta, status: SessionIndicatorStatus): number => {
-          if (session.id === activeTabId) return 0
+          if (session.id === activeSessionId) return 0
           if (status === 'blocked') return 1
           if (status === 'running') return 2
           if (workingSessionIds.has(session.id)) return 3
@@ -1089,7 +1045,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
         title: session.title,
         type: 'agent' as const,
         initial: getRailInitial(session.title),
-        active: session.id === activeTabId,
+        active: session.id === activeSessionId,
         status: agentIndicatorMap.get(session.id) ?? (unviewedCompletedSessionIds.has(session.id) ? 'completed' as const : 'idle' as const),
         pinned: !!session.pinned,
       }))
@@ -1099,7 +1055,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
     agentSessions,
     draftSessionIds,
     currentWorkspaceId,
-    activeTabId,
+    activeSessionId,
     streamingIds,
     agentIndicatorMap,
     unviewedCompletedSessionIds,
@@ -1595,7 +1551,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                   <ConversationItem
                     key={`pinned-${conv.id}`}
                     conversation={conv}
-                    active={conv.id === activeTabId}
+                    active={conv.id === activeSessionId}
                     streaming={streamingIds.has(conv.id)}
                     showPinIcon={false}
                     onSelect={handleSelectConversation}
@@ -1782,8 +1738,8 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                               <div className="flex flex-col gap-px pl-1 border-l-2 border-primary/15 ml-[15px]">
                                 {visibleRoots.map((item) => {
                                   const childCount = item.childSessions.length
-                                  const treeActive = treeContainsSessionId(item, activeTabId)
-                                  const activeChildVisible = item.childSessions.some((child) => child.id === activeTabId)
+                                  const treeActive = treeContainsSessionId(item, activeSessionId)
+                                  const activeChildVisible = item.childSessions.some((child) => child.id === activeSessionId)
                                   const expandedChildren = expandedDelegationParentIds.has(item.session.id)
                                     || (activeChildVisible && !collapsedDelegationParentIds.has(item.session.id))
                                   return (
@@ -1817,7 +1773,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                                             <DelegatedChildSessionItem
                                               key={child.id}
                                               session={child}
-                                              activeSessionId={activeTabId}
+                                              activeSessionId={activeSessionId}
                                               agentIndicatorMap={agentIndicatorMap}
                                               workspaceName={undefined}
                                               onSelect={handleSelectAgentSession}
@@ -1883,7 +1839,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                       <ConversationItem
                         key={conv.id}
                         conversation={conv}
-                        active={conv.id === activeTabId}
+                        active={conv.id === activeSessionId}
                         streaming={streamingIds.has(conv.id)}
                         showPinIcon={!!conv.pinned}
                         onSelect={handleSelectConversation}
@@ -1909,7 +1865,7 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
                       <AgentSessionItem
                         key={session.id}
                         session={session}
-                        active={session.id === activeTabId}
+                        active={session.id === activeSessionId}
                         indicatorStatus={agentIndicatorMap.get(session.id) ?? 'idle'}
                         blockedReason={blockedReasonMap.get(session.id)}
                         isInWorkingSection={workingSessionIds.has(session.id)}
@@ -1965,8 +1921,21 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
         )}
       </div>
 
-      {/* 底部：用户资料 + 设置入口 */}
-      <div className="px-3 pb-3">
+      {/* 底部：便签入口 + 用户资料 + 设置入口 */}
+      <div className="px-3 pb-3 space-y-1">
+        <button
+          type="button"
+          onClick={() => handleOpenScratchPad()}
+          className={cn(
+            'w-full flex items-center gap-3 px-3 py-2 rounded-[10px] transition-colors titlebar-no-drag',
+            scratchPadOpen
+              ? 'bg-foreground/[0.07] text-foreground'
+              : 'text-foreground/70 hover:bg-foreground/[0.04] hover:text-foreground'
+          )}
+        >
+          <StickyNote size={16} className="flex-shrink-0 text-foreground/50" />
+          <span className="flex-1 text-sm truncate text-left">便签</span>
+        </button>
         <button
           onClick={() => setActiveView('settings')}
           className={cn(

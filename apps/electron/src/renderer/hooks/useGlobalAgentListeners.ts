@@ -55,7 +55,6 @@ import {
   DEFAULT_NOTIFICATION_SOUNDS,
 } from '@/atoms/notifications'
 import { appModeAtom } from '@/atoms/app-mode'
-import { tabsAtom, activeTabIdAtom, openTab, updateTabTitle } from '@/atoms/tab-atoms'
 import type { AgentStreamState } from '@/atoms/agent-atoms'
 import { agentDiffUnseenChangesAtom, agentDiffUnseenFilesAtom, agentDiffPanelTabAtom, agentSidePanelOpenAtom } from '@/atoms/agent-atoms'
 import { autoPreviewEnabledAtom, previewPanelOpenMapAtom, previewFileMapAtom } from '@/atoms/preview-atoms'
@@ -66,6 +65,7 @@ import type { AgentStreamEvent, AgentStreamCompletePayload, AgentEvent, AgentStr
 import { createAgentStreamEventBatcher } from '@/lib/agent-stream-event-batcher'
 import { deriveFollowUpSuggestions } from '@/components/agent/follow-up-suggestions'
 import { mergePendingAgentRequestSnapshot } from './pending-agent-request-recovery'
+import { openSessionInStore } from '@/lib/open-session'
 
 /** 触发右侧文件浏览器自动定位的写入类工具集合 */
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Update'])
@@ -354,24 +354,13 @@ export function useGlobalAgentListeners(): void {
     const pendingGitMutateTools = new Map<string, string>()
 
     /** 构建导航到指定会话的回调 */
-    const makeNavigateToSession = (sessionId: string, sessionTitle: string) => () => {
-      const tabs = store.get(tabsAtom)
-      const result = openTab(tabs, { type: 'agent', sessionId, title: sessionTitle })
-      store.set(tabsAtom, result.tabs)
-      store.set(activeTabIdAtom, result.activeTabId)
-      store.set(appModeAtom, 'agent')
-      store.set(currentAgentSessionIdAtom, sessionId)
+    const makeNavigateToSession = (sessionId: string) => () => {
+      openSessionInStore(store, { type: 'agent', sessionId })
       const sessions = store.get(agentSessionsAtom)
       const session = sessions.find((s) => s.id === sessionId)
       if (session?.workspaceId) {
         store.set(currentAgentWorkspaceIdAtom, session.workspaceId)
       }
-    }
-
-    /** 获取会话标题 */
-    const getSessionTitle = (sessionId: string): string => {
-      const sessions = store.get(agentSessionsAtom)
-      return sessions.find((s) => s.id === sessionId)?.title ?? '未命名会话'
     }
 
     /** 发送阻塞通知（带提示音 + 会话导航） */
@@ -1034,8 +1023,6 @@ export function useGlobalAgentListeners(): void {
 
     // ===== 4. 标题更新 =====
     const cleanupTitleUpdated = window.electronAPI.onAgentTitleUpdated(({ sessionId, title }) => {
-      // 先使用事件 payload 立即同步标签页，避免依赖会话列表旧快照比较。
-      store.set(tabsAtom, (tabs) => updateTabTitle(tabs, sessionId, title))
       store.set(agentSessionsAtom, (prev) =>
         prev.map((s) => (s.id === sessionId ? { ...s, title } : s))
       )
@@ -1165,8 +1152,7 @@ export function useGlobalAgentListeners(): void {
     // 系统通知点击 → 导航到对应会话（主进程 Coordinator 统一发通知，点击在此处理）
     const cleanupSystemClicked = window.electronAPI.onSystemNotificationClicked((payload) => {
       if (!payload.sessionId) return
-      const sessionTitle = payload.sessionTitle ?? getSessionTitle(payload.sessionId)
-      makeNavigateToSession(payload.sessionId, sessionTitle)()
+      makeNavigateToSession(payload.sessionId)()
     })
 
     // Agent 发送队列状态订阅：主进程按 FIFO 驱动排队消息执行时同步队列长度，

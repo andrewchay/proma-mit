@@ -14,7 +14,7 @@ import { JudgmentReasonSelect } from './JudgmentReasonSelect'
 import { activeViewAtom } from '@/atoms/active-view'
 import { appModeAtom } from '@/atoms/app-mode'
 import { agentSessionsAtom, currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
-import { activeTabIdAtom, openTab, tabsAtom } from '@/atoms/tab-atoms'
+import { openSessionInStore } from '@/lib/open-session'
 
 type AgentApi = {
   getTaskReview: (taskId: string) => Promise<TaskReviewSummary>
@@ -71,12 +71,7 @@ export function TaskReviewPanel({ taskId, onChanged }: { taskId: string; onChang
     const session = sessions.find((item) => item.id === sessionId)
     if (!session) throw new Error('该 Agent 会话暂不可用')
     store.set(agentSessionsAtom, sessions)
-    const result = openTab(store.get(tabsAtom), { type: 'agent', sessionId, title: session.title })
-    store.set(tabsAtom, result.tabs)
-    store.set(activeTabIdAtom, result.activeTabId)
-    store.set(currentAgentSessionIdAtom, sessionId)
-    store.set(appModeAtom, 'agent')
-    store.set(activeViewAtom, 'conversations')
+    openSessionInStore(store, { type: 'agent', sessionId })
   }, [store])
 
   const load = React.useCallback(async () => {

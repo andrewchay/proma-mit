@@ -12,7 +12,6 @@ import {
   agentSessionIndicatorMapAtom,
   workingDoneSessionIdsAtom,
 } from './agent-atoms'
-import { tabsAtom } from './tab-atoms'
 import { draftSessionIdsAtom } from './draft-session-atoms'
 
 /** Working 区域三组会话 */
@@ -26,7 +25,7 @@ export interface WorkingSessionGroups {
  * 派生 atom：计算 Working 区域的三组会话（跨工作区，不按当前工作区过滤）
  * - todo: blocked（orange，等待用户决策）
  * - running: running（blue，Agent 执行中）
- * - done: 完成且 Tab 仍打开（green / idle），包含手动标记为工作中的会话
+ * - done: 已完成（green / idle），包含手动标记为工作中的会话
  *
  * manualWorking 会话始终纳入工作中，按当前 indicator 分配到对应子组
  */
@@ -34,13 +33,9 @@ export const workingSessionGroupsAtom = atom<WorkingSessionGroups>((get) => {
   const sessions = get(agentSessionsAtom)
   const indicatorMap = get(agentSessionIndicatorMapAtom)
   const doneIds = get(workingDoneSessionIdsAtom)
-  const tabs = get(tabsAtom)
   const draftIds = get(draftSessionIdsAtom)
 
   const sessionMap = new Map(sessions.map((s) => [s.id, s]))
-  const openAgentTabIds = new Set(
-    tabs.filter((t) => t.type === 'agent').map((t) => t.sessionId),
-  )
 
   const todo: AgentSessionMeta[] = []
   const running: AgentSessionMeta[] = []
@@ -58,7 +53,6 @@ export const workingSessionGroupsAtom = atom<WorkingSessionGroups>((get) => {
   // 从 workingDoneSessionIdsAtom 提取 done
   for (const id of doneIds) {
     if (includedIds.has(id)) continue
-    if (!openAgentTabIds.has(id)) continue
     const session = sessionMap.get(id)
     if (!session || draftIds.has(id)) continue
     done.push(session)

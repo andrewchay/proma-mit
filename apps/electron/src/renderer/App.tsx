@@ -8,8 +8,8 @@ import { MigrationImportDialog } from './components/migration/MigrationImportDia
 import { TooltipProvider } from './components/ui/tooltip'
 import { conversationsAtom } from './atoms/chat-atoms'
 import { environmentCheckDialogOpenAtom } from './atoms/environment'
-import { tabsAtom, activeTabIdAtom, openTab } from './atoms/tab-atoms'
 import type { AppShellContextType } from './contexts/AppShellContext'
+import { openSessionInStore } from './lib/open-session'
 
 export default function App(): React.ReactElement {
   const store = useStore()
@@ -47,15 +47,8 @@ export default function App(): React.ReactElement {
         const conversations = store.get(conversationsAtom)
         store.set(conversationsAtom, [meta, ...conversations])
 
-        // 打开对话标签页
-        const tabs = store.get(tabsAtom)
-        const result = openTab(tabs, {
-          type: 'chat',
-          sessionId: meta.id,
-          title: meta.title,
-        })
-        store.set(tabsAtom, result.tabs)
-        store.set(activeTabIdAtom, result.activeTabId)
+        // 切换到该对话
+        openSessionInStore(store, { type: 'chat', sessionId: meta.id })
       }
     } catch (error) {
       console.error('[App] 创建欢迎对话失败:', error)

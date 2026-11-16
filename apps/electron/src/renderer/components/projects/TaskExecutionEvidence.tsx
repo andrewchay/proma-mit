@@ -5,7 +5,7 @@ import type { AgentExecutionResult } from '@gravitas/shared'
 import { activeViewAtom } from '@/atoms/active-view'
 import { appModeAtom } from '@/atoms/app-mode'
 import { agentSessionsAtom, currentAgentSessionIdAtom } from '@/atoms/agent-atoms'
-import { activeTabIdAtom, openTab, tabsAtom } from '@/atoms/tab-atoms'
+import { openSessionInStore } from '@/lib/open-session'
 
 /** 通过项目任务的精确 ID 读取真实执行证据，不把运行终态解释为交付物验收。 */
 export function TaskExecutionEvidence({ taskId }: { taskId: string }): React.ReactElement {
@@ -30,12 +30,7 @@ export function TaskExecutionEvidence({ taskId }: { taskId: string }): React.Rea
     const session = sessions.find((item) => item.id === sessionId)
     if (!session) throw new Error('该 Agent 会话暂不可用')
     store.set(agentSessionsAtom, sessions)
-    const result = openTab(store.get(tabsAtom), { type: 'agent', sessionId, title: session.title })
-    store.set(tabsAtom, result.tabs)
-    store.set(activeTabIdAtom, result.activeTabId)
-    store.set(currentAgentSessionIdAtom, sessionId)
-    store.set(appModeAtom, 'agent')
-    store.set(activeViewAtom, 'conversations')
+    openSessionInStore(store, { type: 'agent', sessionId })
   }
   return (
     <div className="mt-3 text-sm">

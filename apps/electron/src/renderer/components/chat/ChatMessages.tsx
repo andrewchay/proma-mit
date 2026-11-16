@@ -47,7 +47,6 @@ import { ScrollPositionManager } from '@/hooks/useScrollPositionMemory'
 import { useConversationParallelMode } from '@/hooks/useConversationSettings'
 import { getModelLogo } from '@/lib/model-logo'
 import { userProfileAtom } from '@/atoms/user-profile'
-import { tabMinimapCacheAtom } from '@/atoms/tab-atoms'
 import type { ChatMessage, ChatToolActivity } from '@gravitas/shared'
 
 // ===== 滚动到顶部加载更多 =====
@@ -183,7 +182,6 @@ export function ChatMessages({
   onLoadMore,
 }: ChatMessagesProps): React.ReactElement {
   const userProfile = useAtomValue(userProfileAtom)
-  const setMinimapCache = useSetAtom(tabMinimapCacheAtom)
 
   // 平滑流式输出：将高频更新转为逐字渲染
   const { displayedContent: rawSmoothContent } = useSmoothStream({
@@ -301,17 +299,6 @@ export function ChatMessages({
     })),
     [messages, userProfile.avatar]
   )
-
-  // 同步 minimap 缓存到 Tab 级别（供 Tab hover 预览使用）
-  React.useEffect(() => {
-    if (minimapItems.length > 0) {
-      setMinimapCache((prev) => {
-        const next = new Map(prev)
-        next.set(conversationId, minimapItems)
-        return next
-      })
-    }
-  }, [conversationId, minimapItems, setMinimapCache])
 
   // 并排模式
   if (parallelMode) {

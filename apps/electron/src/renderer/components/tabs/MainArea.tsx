@@ -1,25 +1,30 @@
 /**
  * MainArea — 主内容区域
  *
- * 组合 TabBar + TabContent。Agent 模式下若预览面板打开，则在同一个 Panel 内分屏：
- * 顶部一行：左侧 TabBar + 右侧预览顶栏（含文件名、复制按钮）
- * 主体：左侧 TabContent + 右侧预览内容
+ * 主区恒定渲染「当前激活的会话」：由 appMode + currentConversationId /
+ * currentAgentSessionId 决定。没有标签栏，也没有多开模型。
+ *
+ * Agent 模式下若预览面板打开，则在同一个 Panel 内分屏：
+ * 左侧会话内容 + 右侧预览内容。
  */
 
 import * as React from 'react'
 import { useAtomValue, useSetAtom, useAtom } from 'jotai'
-import { tabsAtom, activeTabIdAtom, activeTabAtom } from '@/atoms/tab-atoms'
 import { Panel } from '@/components/app-shell/Panel'
 import { cn } from '@/lib/utils'
 import { SettingsDialog, SettingsModuleView } from '@/components/settings'
 import { WelcomeView } from '@/components/welcome/WelcomeView'
 import { previewPanelOpenMapAtom, previewSplitRatioAtom, previewUsesRightWorkspaceAtom } from '@/atoms/preview-atoms'
 import { PreviewPanel } from '@/components/diff/PreviewPanel'
-import { TabBar } from './TabBar'
-import { TabContent } from './TabContent'
+import { SessionErrorBoundary } from './SessionErrorBoundary'
+import { ChatView } from '@/components/chat'
+import { AgentView } from '@/components/agent'
+import { ScratchPadView } from '@/components/scratch-pad/ScratchPadView'
+import { scratchPadOpenAtom } from '@/atoms/scratch-pad'
 import { activeViewAtom } from '@/atoms/active-view'
-import { sidebarCollapsedAtom } from '@/atoms/tab-atoms'
+import { sidebarCollapsedAtom } from '@/atoms/sidebar'
 import { appModeAtom } from '@/atoms/app-mode'
+import { currentConversationIdAtom } from '@/atoms/chat-atoms'
 import { currentAgentSessionIdAtom, currentSessionSidePanelOpenAtom } from '@/atoms/agent-atoms'
 const WorkflowView = React.lazy(() => import('@/components/workflow/WorkflowView').then((module) => ({ default: module.WorkflowView })))
 const ProactiveCenter = React.lazy(() => import('@/components/proactive/ProactiveCenter').then((module) => ({ default: module.ProactiveCenter })))
@@ -27,21 +32,19 @@ import { WORK_MODULE_VIEWS } from '@/atoms/work-module-registry'
 import { enabledDevModulesAtom, isViewVisible, resolveVisibleView } from '@/atoms/dev-gate'
 
 export function MainArea(): React.ReactElement {
-  const tabs = useAtomValue(tabsAtom)
-  const activeTabId = useAtomValue(activeTabIdAtom)
-  const setActiveTabId = useSetAtom(activeTabIdAtom)
-  const activeTab = useAtomValue(activeTabAtom)
   const activeView = useAtomValue(activeViewAtom)
   const enabledDevModules = useAtomValue(enabledDevModulesAtom)
   const sidebarCollapsed = useAtomValue(sidebarCollapsedAtom)
   const appMode = useAtomValue(appModeAtom)
-  const currentSessionId = useAtomValue(currentAgentSessionIdAtom)
+  const currentConversationId = useAtomValue(currentConversationIdAtom)
+  const currentAgentSessionId = useAtomValue(currentAgentSessionIdAtom)
   const sidePanelOpen = useAtomValue(currentSessionSidePanelOpenAtom)
+  const scratchPadOpen = useAtomValue(scratchPadOpenAtom)
 
   // 左右两侧贴边规则：
   // - 侧边栏展开时主区左侧无间隔，不留左圆角；折叠（rail）时保留圆角
   // - 右侧文件面板打开时主区右侧无间隔，不留右圆角；否则保留圆角（窗口边缘）
-  const rightPanelActive = appMode === 'agent' && !!currentSessionId && sidePanelOpen
+  const rightPanelActive = appMode === 'agent' && !!currentAgentSessionId && sidePanelOpen
   const mainPanelClassName = cn(
     'bg-content-area shadow-xl',
     sidebarCollapsed ? 'rounded-l-2xl' : 'rounded-l-none',
@@ -49,28 +52,23 @@ export function MainArea(): React.ReactElement {
   )
 
   // 工作模块页与对话页的顶层差异：
-  // 对话页的 TabBar 自己声明了拖拽区（titlebar-drag-region），需要点击的 Tab 各自声明
-  // titlebar-no-drag；而 AppShell 还有一个 fixed 的全局 50px 窗口拖拽层，其 hitmask 不受
+  // 对话页顶部需要保持窗口拖拽区，交互元素各自声明 titlebar-no-drag；
+  // 而 AppShell 还有一个 fixed 的全局 50px 窗口拖拽层，其 hitmask 不受
   // z-index 约束（见 AppShell.tsx 中 WindowControls 的注释），会盖住主区顶部 50px。
   // 工作模块页把「返回对话」「子视图切换」放在顶部这一带，若只逐个按钮补 titlebar-no-drag，
   // 新增模块时极易再次漏写（表现为按钮只剩贴着 50px 边界的那几个像素可点）。
   // 因此这里在模块分支整体声明 no-drag：模块页内全是交互内容，不需要从顶栏拖窗。
   const workModulePanelClassName = cn(mainPanelClassName, 'titlebar-no-drag')
 
-  // Tab 内容渲染降级为非紧急：TabBar 立即高亮新 tab，主区域昂贵渲染（含 PreviewPanel 中
-  // DiffTabContent → ProseMirror editor mount + Shiki tokenize）让出主线程，避免点击 tab
-  // 后必须等主区域渲染完才能看到 tab 切换效果
-  const deferredActiveTabId = React.useDeferredValue(activeTabId)
-
   const previewOpenMap = useAtomValue(previewPanelOpenMapAtom)
   const previewUsesRightWorkspace = useAtomValue(previewUsesRightWorkspaceAtom)
   const [splitRatio, setSplitRatio] = useAtom(previewSplitRatioAtom)
   const previewDragging = React.useRef(false)
 
+  const previewSessionId = appMode === 'agent' ? currentAgentSessionId : null
   const previewOpen = !previewUsesRightWorkspace
-    && activeTab?.type === 'agent'
-    && (previewOpenMap.get(activeTab.sessionId) ?? false)
-  const previewSessionId = activeTab?.type === 'agent' ? activeTab.sessionId : null
+    && !!previewSessionId
+    && (previewOpenMap.get(previewSessionId) ?? false)
 
   // 关闭动画状态：当 previewOpen 从 true → false 时，播放退出动画再移除 DOM
   // 在 render 阶段同步派生 closing，避免中间帧出现 flex: 1 1 auto 导致左侧瞬间跳到 100% 宽
@@ -132,15 +130,6 @@ export function MainArea(): React.ReactElement {
     document.addEventListener('mouseup', onMouseUp)
   }, [splitRatio, setSplitRatio])
 
-  React.useEffect(() => {
-    if (tabs.length > 0 && !activeTabId) {
-      const firstTab = tabs[0]
-      if (firstTab) {
-        setActiveTabId(firstTab.id)
-      }
-    }
-  }, [tabs, activeTabId, setActiveTabId])
-
   // 关闭动画期间右侧面板的定位样式（脱离 flex 流，保持原宽度，translateX 向右滑出）
   const closingOverlayStyle: React.CSSProperties | undefined = closing
     ? {
@@ -167,6 +156,26 @@ export function MainArea(): React.ReactElement {
   const proactiveVisible = isViewVisible('proactive', enabledDevModules)
   const WorkModuleComponent = effectiveView in WORK_MODULE_VIEWS ? WORK_MODULE_VIEWS[effectiveView] : null
 
+  /** 当前激活的会话内容；没有任何选中会话时回落欢迎页。 */
+  const renderSession = (): React.ReactElement => {
+    if (scratchPadOpen) return <ScratchPadView />
+    if (appMode === 'chat' && currentConversationId) {
+      return (
+        <SessionErrorBoundary key={currentConversationId} sessionId={currentConversationId}>
+          <ChatView conversationId={currentConversationId} />
+        </SessionErrorBoundary>
+      )
+    }
+    if (appMode === 'agent' && currentAgentSessionId) {
+      return (
+        <SessionErrorBoundary key={currentAgentSessionId} sessionId={currentAgentSessionId}>
+          <AgentView sessionId={currentAgentSessionId} />
+        </SessionErrorBoundary>
+      )
+    }
+    return <WelcomeView />
+  }
+
   return (
     <>
       {effectiveView === 'settings' ? (
@@ -191,7 +200,7 @@ export function MainArea(): React.ReactElement {
         className={mainPanelClassName}
       >
         <div className="flex flex-1 min-h-0 relative overflow-hidden" data-split-container>
-          {/* 左侧：TabBar + TabContent（始终保持在同一 DOM 位置，避免 Tab 切换时 unmount）
+          {/* 左侧：当前会话内容。
               注：宽度变化不用 transition——文字逐帧 reflow 会导致行末字符抖动，
               视觉上像"内容从右向左推送"。让左侧瞬间变宽，由右侧 absolute 滑出动画
               覆盖期内呈现"被剥离"的视觉效果。 */}
@@ -199,14 +208,9 @@ export function MainArea(): React.ReactElement {
             className="flex flex-col min-w-0 h-full"
             style={leftFlexStyle}
           >
-            <TabBar />
-            {tabs.length === 0 ? (
-              <WelcomeView />
-            ) : deferredActiveTabId ? (
-              <div className="flex-1 min-h-0 titlebar-no-drag">
-                <TabContent tabId={deferredActiveTabId} />
-              </div>
-            ) : null}
+            <div className="flex-1 min-h-0 titlebar-no-drag">
+              {renderSession()}
+            </div>
           </div>
 
           {/* 右侧：预览面板。关闭动画期间脱离 flex 流，向右滑出 */}
