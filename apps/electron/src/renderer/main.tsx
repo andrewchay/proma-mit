@@ -61,7 +61,7 @@ import { pollStatusChangedAtom } from './atoms/project-atoms'
 import { useGlobalChatListeners } from './hooks/useGlobalChatListeners'
 import { scratchPadContentAtom, scratchPadLoadedAtom } from './atoms/scratch-pad'
 import type { PersistedSessionState } from '@/types/settings'
-import { migrateLegacyTabState, sessionRestoreReadyAtom } from '@/lib/session-state'
+import { migrateLegacyTabState, persistSessionOnUnload, sessionRestoreFailedAtom, sessionRestoreReadyAtom } from '@/lib/session-state'
 import { activeViewAtom } from '@/atoms/active-view'
 import { scratchPadOpenAtom } from '@/atoms/scratch-pad'
 import { chatToolsAtom } from './atoms/chat-tool-atoms'
@@ -690,6 +690,7 @@ function DingTalkInitializer(): null {
 function SessionStatePersistenceInitializer(): null {
   const store = useStore()
   const restoredRef = useRef(false)
+  const canPersistRef = useRef(false)
 
   // 启动恢复：优先新格式，回退旧 tabState
   useEffect(() => {
@@ -699,7 +700,7 @@ function SessionStatePersistenceInitializer(): null {
       window.electronAPI.listConversations(),
       window.electronAPI.listAgentSessions(),
     ]).then(([settings, conversations, agentSessions]) => {
-      if (store.get(appModeAtom) !== initial.mode || store.get(currentConversationIdAtom) !== initial.chat || store.get(currentAgentSessionIdAtom) !== initial.agent || store.get(activeViewAtom) !== initial.view || store.get(scratchPadOpenAtom) !== initial.scratch) return
+      if (store.get(appModeAtom) !== initial.mode || store.get(currentConversationIdAtom) !== initial.chat || store.get(currentAgentSessionIdAtom) !== initial.agent || store.get(activeViewAtom) !== initial.view || store.get(scratchPadOpenAtom) !== initial.scratch) { canPersistRef.current = true; return }
       const validSessionIds = new Set<string>([
         ...conversations.map((c) => c.id),
         ...agentSessions.map((s) => s.id),
@@ -714,7 +715,7 @@ function SessionStatePersistenceInitializer(): null {
           }
         : migrateLegacyTabState(settings.tabState, validSessionIds)
 
-      if (!restored) return
+      if (!restored) { canPersistRef.current = true; return }
 
       // 分别恢复两种模式的最近会话；失效的会话不恢复。
       const conversation = conversations.find((item) => item.id === restored.conversationId)
@@ -726,8 +727,9 @@ function SessionStatePersistenceInitializer(): null {
         store.set(appModeAtom, 'agent')
         if (session.workspaceId) store.set(currentAgentWorkspaceIdAtom, session.workspaceId)
       }
-    }).catch((err) => console.error('[SessionRestore] 恢复会话失败:', err))
-      .finally(() => { restoredRef.current = true; store.set(sessionRestoreReadyAtom, true) })
+      canPersistRef.current = true
+    }).catch((err) => { console.error('[SessionRestore] 恢复会话失败:', err); store.set(sessionRestoreFailedAtom, true) })
+      .finally(() => { restoredRef.current = true; store.set(sessionRestoreReadyAtom, canPersistRef.current) })
   }, [store])
 
   // 自动保存：监听会话状态变化，防抖写入 settings.json
@@ -746,6 +748,7 @@ function SessionStatePersistenceInitializer(): null {
 
     const debouncedSave = (): void => {
       if (!restoredRef.current) return
+      canPersistRef.current = true
       if (timer) clearTimeout(timer)
       timer = setTimeout(save, 500)
     }
@@ -759,12 +762,7 @@ function SessionStatePersistenceInitializer(): null {
     // 窗口关闭前立即刷新，避免最后 500ms 内的变更丢失
     const handleBeforeUnload = (): void => {
       if (timer) clearTimeout(timer)
-      if (!window.electronAPI.updateSettingsSync) { save(); return }
-      const ok = window.electronAPI.updateSettingsSync({ lastSession: currentState() })
-      if (!ok) {
-        console.warn('[SessionPersist] sync IPC failed, falling back to async save')
-        save()
-      }
+      persistSessionOnUnload(restoredRef.current, canPersistRef.current, currentState(), window.electronAPI.updateSettingsSync, save)
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
 

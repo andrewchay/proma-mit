@@ -56,11 +56,11 @@ export function prepareProjectOwnerGoalBrief(input: unknown): ProjectOwnerGoalBr
   }
 }
 
-function parseStep(input: unknown, roles: ReadonlySet<string>, codeFiles: readonly ProjectOwnerCodeFileMatch[]): ProjectOwnerPlanStep {
+function parseStep(input: unknown, roles: ReadonlySet<string>, codeFiles: readonly ProjectOwnerCodeFileMatch[], requireDeliveryKind: boolean): ProjectOwnerPlanStep {
   const value = record(input, ['key', 'title', 'outcome', 'acceptanceCriteria', 'dependencies', 'roleKey', 'deliveryKind', 'sourceReferences'], '计划步骤')
   const roleKey = text(value.roleKey, 'roleKey', 200)
   if (!roles.has(roleKey)) throw new Error(`计划使用了不可用角色：${roleKey}`)
-  if (value.deliveryKind !== undefined && value.deliveryKind !== 'text' && value.deliveryKind !== 'development') throw new Error('计划步骤交付类型无效')
+  if ((requireDeliveryKind || value.deliveryKind !== undefined) && value.deliveryKind !== 'text' && value.deliveryKind !== 'development') throw new Error('计划步骤交付类型无效')
   let sourceReferences: ProjectOwnerPlanStep['sourceReferences']
   if (value.sourceReferences !== undefined) {
     if (!Array.isArray(value.sourceReferences) || value.sourceReferences.length > 8) throw new Error('计划源码引用无效')
@@ -119,6 +119,7 @@ export function parseProjectOwnerPlanProposal(
   requireCodeReferences = false,
   deliverySources: readonly ProjectOwnerDeliveryContext[] = [],
   expectedDeliveryFeedback?: OwnerPlanningConversationContext['deliveryFeedback'],
+  requireDeliveryKind = false,
 ): ProjectOwnerPlanProposal {
   const value = record(input, ['projectId', 'taskId', 'goalVersion', 'summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment'], '计划提案')
   const projectId = text(value.projectId, 'projectId', 200)
@@ -132,7 +133,7 @@ export function parseProjectOwnerPlanProposal(
   }
   const roles = new Set(availableRoleKeys)
   if (requireCodeReferences && goal.codeSourceAccess === 'bound_workspace' && !codeFiles.length) throw new Error('未检索到代码候选，必须请求澄清，不能提交代码计划')
-  const steps = value.steps.map((step) => parseStep(step, roles, codeFiles))
+  const steps = value.steps.map((step) => parseStep(step, roles, codeFiles, requireDeliveryKind))
   if (requireCodeReferences && codeFiles.length && !steps.some(step => (step.sourceReferences?.length ?? 0) > 0)) throw new Error('代码规划提案必须引用本次检索到的文件和行号')
   validateDependencies(steps)
   let deliveryChangeAssessment: ProjectOwnerDeliveryChangeAssessment | undefined

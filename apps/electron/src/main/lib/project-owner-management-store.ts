@@ -194,6 +194,17 @@ export function recordOwnerManagementManualRecheck(projectId: string, planRevisi
 export function recordOwnerManagementAssignmentRecheck(projectId: string, planRevision: number, delegationId: string, taskId?: string): OwnerManagementEvent {
   return enqueue(projectId, 'assignment_recheck', planRevision, taskId, delegationId)
 }
+/**
+ * 当前授权下尚未走到安排步骤时的恢复重排。
+ *
+ * 授权续期会重新消费 `delegation_confirmed`，但若当时有待处理的用户对话，
+ * 该事件只用于接续对话，安排步骤不会重新进入；此后 conversation 回复也不会回到安排链。
+ * 结果是一次续期被对话消耗完，团队仍未组建。事件 ID 由授权 ID 与方案版本派生，
+ * 重复核对不会重复调用；是否该补排由调用方按授权签发时间判定。
+ */
+export function recordOwnerManagementRenewalRecheck(projectId: string, planRevision: number, delegationId: string, taskId?: string): OwnerManagementEvent {
+  return enqueue(projectId, 'assignment_recheck', planRevision, taskId, `delegation-renewal:${delegationId}`)
+}
 /** 协议拒绝后的唯一受限续跑；来源绑定原Run，事件ID天然幂等。 */
 export function recordOwnerManagementAssignmentProtocolRetry(projectId: string, planRevision: number, executionId: string, taskId?: string): OwnerManagementEvent {
   if (!/^[a-f0-9-]{36}$/.test(executionId)) throw new Error('Owner安排重试来源无效')

@@ -140,7 +140,7 @@ beforeAll(async () => {
       const roleKey = current.context.sources.roles[0]!.key
       const response = { schemaVersion: 1, kind: 'plan_proposal', binding: { projectId: execution.projectId, goalVersion: current.context.goal.goal.goalVersion, contextFingerprint: current.context.fingerprint }, proposal: {
         summary: '在原交付基础上补充用户指定的目标用户分析，并保留原有结论依据', assumptions: [], risks: [],
-        steps: [{ key: 'revise-delivery', title: '按反馈修订定位建议', outcome: '交付补充目标用户分析的新版建议', acceptanceCriteria: feedback?.acceptanceCriteria ?? ['明确目标范围与受众依据'], dependencies: [], roleKey }],
+        steps: [{ key: 'revise-delivery', title: '按反馈修订定位建议', outcome: '交付补充目标用户分析的新版建议', acceptanceCriteria: feedback?.acceptanceCriteria ?? ['明确目标范围与受众依据'], dependencies: [], roleKey, deliveryKind: 'text' }],
         ...(feedback ? { deliveryFeedbackAssessment: { messageId: feedback.messageId, artifactHash: feedback.artifactHash, ...(feedback.stepKey ? { stepKey: feedback.stepKey } : {}), summary: '本次修改针对已验收成果的目标用户分析补充', changes: feedback.acceptanceCriteria.map(criterion => ({ criterion, disposition: 'addressed', proposedChange: '在新版中补充对应分析并保留可核对依据' })), authorizationImpact: 'within_confirmed_boundary', authorizationRationale: '修改仍在原目标和交付边界内；旧执行许可不会沿用，需确认本次方案后再执行' } } : {}),
       } }
       log.push({ role: 'owner_feedback', taskId: current.context.conversation?.tasks[0]?.id ?? '', round: 0, prompt: current.request.userPrompt })
@@ -855,6 +855,22 @@ test('GivenOwner反馈修订方案 WhenRenderer确认Atom经正式IPC启动 Then
     expect(traces.get(f.project.id)!.filter(item => item.role === 'executor')).toHaveLength(priorExecutorRuns + 1)
     expect(actionRows(f.project.id).slice(-1).map(action => action.state)).toEqual(['accepted'])
   } finally { f.stop() }
+}, 15000)
+
+test('Given质量升级待协商 When重复观察产生另一决定 Then保留升级提醒和原质量动作', async () => {
+  const f = await fixture({ escalate: true })
+  try {
+    await until(() => actionRows(f.project.id).some(action => action.state === 'escalated'), f.project.id)
+    const original = actionRows(f.project.id)[0]!
+    const row = store.getProjectDb().prepare('SELECT execution_id FROM project_owner_execution_commands WHERE id=?').get(original.reviewerCommandId) as { execution_id: string }
+    const observations = await import('./project-owner-management-execution')
+    const { recordOwnerManagementObservation } = await import('./project-owner-management-store')
+    const duplicate = observations.readOwnerExecutionObservation(f.project.id, row.execution_id, 'terminal')
+    recordOwnerManagementObservation(f.project.id, goals.getProjectOwnerGoalDraft(f.project.id)!.revision, duplicate.observation, duplicate.taskId, createHash('sha256').update(randomUUID()).digest('hex'))
+    await until(() => managementConversation.getOwnerManagementConversation(f.project.id).messages.filter(message => message.kind === 'attention' && message.content.includes('Owner保留成果并提出需协商事项')).length >= 2, f.project.id)
+    expect(actionRows(f.project.id)).toEqual([original])
+    expect(managementConversation.getOwnerManagementConversation(f.project.id).messages.at(-1)?.kind).toBe('attention')
+  } finally { await f.stop() }
 }, 15000)
 
 test.each([false, true])('Given旧批次因质量问题待协商 When用户回复修订且费用待核对=%s Then依据旧账本决定是否续派', async (unsettled) => {

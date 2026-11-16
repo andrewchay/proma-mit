@@ -18,8 +18,8 @@ function planInput() {
     assumptions: ['现有产品资料可供整理'],
     risks: ['用户研究不足时需澄清'],
     steps: [
-      { key: 'research', title: '梳理资料', outcome: '资料摘要', acceptanceCriteria: ['来源可定位'], dependencies: [], roleKey: 'researcher' },
-      { key: 'positioning', title: '提出定位', outcome: '定位方案', acceptanceCriteria: ['列出推荐及备选'], dependencies: ['research'], roleKey: 'strategist' },
+      { key: 'research', title: '梳理资料', outcome: '资料摘要', acceptanceCriteria: ['来源可定位'], dependencies: [], roleKey: 'researcher', deliveryKind: 'text' as const },
+      { key: 'positioning', title: '提出定位', outcome: '定位方案', acceptanceCriteria: ['列出推荐及备选'], dependencies: ['research'], roleKey: 'strategist', deliveryKind: 'text' as const },
     ],
   }
 }
@@ -61,11 +61,14 @@ describe('Given 人类仅提供非代码项目目标', () => {
 })
 
 describe('Given Owner 提出的结构化计划', () => {
-  test('Then 保留每一步的交付类型，旧方案仍可读取，非法类型被拒绝', () => {
+  test('Then 保留每一步的交付类型，缺失或非法类型被拒绝', () => {
     const input = planInput()
     const mixed = { ...input, steps: input.steps.map((step, index) => ({ ...step, deliveryKind: index === 0 ? 'text' : 'development' })) }
     expect(parse(mixed).steps.map(step => step.deliveryKind)).toEqual(['text', 'development'])
-    expect(parse().steps.every(step => step.deliveryKind === undefined)).toBe(true)
+    // 交付类型曾是可选的，缺失时下游把文档步骤当研发步骤并套上构建命令；
+    // 现在必须显式声明，缺失与非法值同样拒绝。
+    expect(() => parseProjectOwnerPlanProposal({ ...input, steps: [{ ...input.steps[0], deliveryKind: undefined }] }, prepareProjectOwnerGoalBrief(goalInput), ['researcher', 'strategist'], [], false, [], undefined, true)).toThrow('交付类型无效')
+    expect(parse({ ...input, steps: [{ ...input.steps[0], deliveryKind: undefined }] }).steps[0]?.deliveryKind).toBeUndefined()
     expect(() => parse({ ...input, steps: [{ ...input.steps[0], deliveryKind: 'unknown' }] })).toThrow('交付类型无效')
   })
   test('Then 合法依赖计划始终仅为建议，不产生任务/授权/完成事实', () => {

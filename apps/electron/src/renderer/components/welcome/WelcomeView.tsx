@@ -16,13 +16,14 @@ import { appModeAtom } from '@/atoms/app-mode'
 import { currentAgentWorkspaceIdAtom, agentSettingsReadyAtom } from '@/atoms/agent-atoms'
 import { useStore } from 'jotai'
 import { openSessionInStore } from '@/lib/open-session'
-import { sessionRestoreReadyAtom } from '@/lib/session-state'
+import { sessionRestoreFailedAtom, sessionRestoreReadyAtom } from '@/lib/session-state'
 import { draftSessionIdsAtom } from '@/atoms/draft-session-atoms'
 import { useCreateSession } from '@/hooks/useCreateSession'
 
 export function WelcomeView(): React.ReactElement {
   const mode = useAtomValue(appModeAtom)
   const restoreReady = useAtomValue(sessionRestoreReadyAtom)
+  const restoreFailed = useAtomValue(sessionRestoreFailedAtom)
   const currentWorkspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
   const agentSettingsReady = useAtomValue(agentSettingsReadyAtom)
   const draftSessionIds = useAtomValue(draftSessionIdsAtom)
@@ -123,6 +124,8 @@ export function WelcomeView(): React.ReactElement {
     }
     return () => { cancelled = true; initRef.current = null }
   }, [mode, agentSettingsReady, restoreReady])
+
+  if (restoreFailed && !restoreReady) return <div className="flex h-full items-center justify-center text-sm text-muted-foreground">会话恢复失败，请从侧边栏选择会话。</div>
 
   // 短暂的过渡状态（通常几十毫秒内就会被会话内容替换）
   return (

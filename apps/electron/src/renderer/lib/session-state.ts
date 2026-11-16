@@ -14,6 +14,7 @@ import type { PersistedSessionState } from '@/types/settings'
 
 /** 恢复完成前不自动创建或打开欢迎会话。 */
 export const sessionRestoreReadyAtom = atom(false)
+export const sessionRestoreFailedAtom = atom(false)
 
 interface LegacyTabItemLike {
   type?: unknown
@@ -67,4 +68,16 @@ export function migrateLegacyTabState(
     conversationId: active.type === 'chat' ? active.sessionId : null,
     agentSessionId: active.type === 'agent' ? active.sessionId : null,
   }
+}
+
+/** 未完成或失败的恢复不能覆盖上次持久化状态。 */
+export function persistSessionOnUnload(
+  ready: boolean,
+  canPersist: boolean,
+  state: PersistedSessionState,
+  sync: ((updates: { lastSession: PersistedSessionState }) => boolean) | undefined,
+  saveAsync: () => void,
+): void {
+  if (!ready || !canPersist) return
+  if (!sync || !sync({ lastSession: state })) saveAsync()
 }

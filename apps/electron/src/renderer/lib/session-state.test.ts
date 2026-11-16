@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { migrateLegacyTabState } from './session-state'
+import { migrateLegacyTabState, persistSessionOnUnload } from './session-state'
 
 const valid = new Set(['conv-1', 'conv-2', 'sess-1', 'sess-2'])
 
@@ -69,4 +69,21 @@ test('Given 未知标签类型 When 迁移 Then 跳过该标签', () => {
 test('Given chat 类型 When 迁移 Then 只填 conversationId', () => {
   const result = migrateLegacyTabState({ tabs: [{ type: 'chat', sessionId: 'conv-1' }] }, valid)
   expect(result).toEqual({ mode: 'chat', conversationId: 'conv-1', agentSessionId: null })
+})
+
+
+test('Given 恢复未完成或读取失败 When 退出 Then 不覆盖上次会话；恢复完成后同步保存', () => {
+  const state = { mode: 'agent' as const, conversationId: null, agentSessionId: null }
+  const writes: unknown[] = []
+  const sync = (value: unknown): boolean => { writes.push(value); return true }
+  let fallback = 0
+  const save = (): void => { fallback++ }
+  persistSessionOnUnload(false, false, state, sync, save)
+  persistSessionOnUnload(true, false, state, sync, save)
+  expect(writes).toHaveLength(0)
+  expect(fallback).toBe(0)
+  persistSessionOnUnload(true, true, state, sync, save)
+  expect(writes).toEqual([{ lastSession: state }])
+  persistSessionOnUnload(true, true, state, () => false, save)
+  expect(fallback).toBe(1)
 })
