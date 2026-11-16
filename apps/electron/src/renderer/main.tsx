@@ -5,6 +5,9 @@
  */
 
 import React, { useEffect, useMemo, useRef } from 'react'
+import { startPerformanceMonitor, setPerformanceStreaming } from './lib/performance-monitor'
+import { agentStreamingAtom } from './atoms/agent-atoms'
+import { streamingAtom } from './atoms/chat-atoms'
 import ReactDOM from 'react-dom/client'
 import { useSetAtom, useAtomValue, useStore } from 'jotai'
 import App from './App'
@@ -80,6 +83,14 @@ import { GlobalShortcuts } from './components/shortcuts/GlobalShortcuts'
 import { htmlToMarkdown, markdownToHtml } from './lib/markdown-rich-text'
 import './styles/globals.css'
 import 'katex/dist/katex.min.css'
+
+function PerformanceMonitorInitializer(): null {
+  const agent = useAtomValue(agentStreamingAtom)
+  const chat = useAtomValue(streamingAtom)
+  useEffect(() => { startPerformanceMonitor() }, [])
+  useEffect(() => { setPerformanceStreaming(agent || chat) }, [agent, chat])
+  return null
+}
 
 // ===== 窗口类型检测 =====
 const isQuickTaskWindow = new URLSearchParams(window.location.search).get('window') === 'quick-task'
@@ -881,6 +892,7 @@ if (isQuickTaskWindow) {
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
       <ThemeInitializer />
+      <PerformanceMonitorInitializer />
       <DevGateInitializer />
       <AgentSettingsInitializer />
       <NotificationsInitializer />

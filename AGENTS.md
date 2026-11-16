@@ -27,7 +27,7 @@ gravitas/
 │   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.24)
 │   └── ui/         # 共享 UI 组件 (CodeBlock, MermaidBlock) (v0.1.4)
 └── apps/
-    └── electron/   # Electron 桌面应用 (v0.13.562)
+    └── electron/   # Electron 桌面应用 (v0.14.6)
         └── src/
             ├── main/       # 主进程 + 服务层 (main/lib/)
             ├── preload/    # IPC 上下文桥接
@@ -56,7 +56,7 @@ gravitas/
 - **依赖**：`@gravitas/core`、`beautiful-mermaid`、`shiki`、Radix UI
 - **Peer 依赖**：`react@^18.3.0`、`react-dom@^18.3.0`
 
-#### @gravitas/electron (v0.13.562)
+#### @gravitas/electron (v0.14.6)
 - **职责**：Electron 桌面应用主体，集成所有包
 - **关键依赖**：
   - `@anthropic-ai/claude-agent-sdk@0.3.143` - Agent SDK
@@ -200,6 +200,7 @@ bun run generate:icons    # 生成应用图标
 | 服务 | 职责 |
 |------|------|
 | `chat-tools/` | Chat 工具实现目录：内置工具函数 |
+| `performance-monitor.ts` | 本机卡顿诊断：每秒采样主进程事件循环延迟和各进程 CPU / 内存；主窗口渲染端记录输入事件至下一帧、长任务、慢帧和当前会话流式状态，内存缓冲最多 30 秒 / 500 条；主进程延迟或渲染长任务达到 200ms 后延迟 5 秒自动保存，限频 60 秒、最多保留 10 份 JSON 到 Electron userData 的 `performance-diagnostics/`，设置 > 数据与用量可打开目录或手动保存。仅主窗口可调用保存，样本仅保留白名单指标，不记录输入或对话正文；输入计时不包括事件处理前排队，也不证明实际绘制完成 |
 | `workspace-watcher.ts` | 工作区文件监听：本地项目根目录、附加目录监听和界面刷新；启动及唤醒时触发项目变化补扫 |
 | `project-file-changes.ts` | 本地项目文件元数据快照和最近增删改记录（预算内 UTF-8 文本计算摘要，其他按大小、mtime、ctime 判断；唯一摘要匹配提示疑似重命名）；首次建立基线，项目根目录 `.gravitasignore` 可逐行指定额外忽略的相对路径（不支持通配符，最多 256 条），规则变化时重新建立基线并在面板提示可能漏记；自动分析授权与项目目录身份及忽略范围绑定，规则或目录变化、无法核对或旧授权无范围凭据时必须重新开启；扫描失败不覆盖旧基线并在 30 秒后重试，面板显示最近成功扫描时间、本次运行中的错误和目录监听状态；本地读取文本计算摘要但不保存正文；用户可在项目工作空间面板主动查看已绑定工作区的最近记录，用户可按需查看当前文件相对 Git HEAD 的差异（不代表历史事件的精确差异）；用户可将最近 20 条加入 Owner 消息草稿；用户明确开启后可作为系统观察进入 Owner，须通过管理授权和预算门槛，撤销或解绑后不得启动旧请求 |
 | `web-bridge-service.ts` | Web Bridge P0：每会话独立、可见、隔离的受管浏览器；仅允许受限 DOM 操作 |
@@ -297,6 +298,7 @@ bun run generate:icons    # 生成应用图标
 
 | 组件 | 职责 |
 |------|------|
+| `PerformanceMonitorInitializer` | 启动主窗口性能采样，跟踪当前 Agent / Chat 会话是否流式输出 |
 | `ThemeInitializer` | 从主进程加载主题设置、监听系统主题变化、同步到 DOM |
 | `AgentSettingsInitializer` | 加载 Agent 渠道/模型/工作区设置、订阅 MCP/文件变化事件 |
 | `AgentListenersInitializer` | 挂载 `useGlobalAgentListeners`，全局 Agent IPC 监听 |

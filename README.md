@@ -76,6 +76,7 @@ Owner 执行在重启后出现未知状态时，可对迟到终态和逐请求�
 
 ### 可观测与评测
 
+- **本机卡顿诊断**：设置 → 数据与用量 → 卡顿诊断可保存最近约 30 秒的输入至下一帧、渲染长任务、慢帧、流式状态和进程资源指标；渲染长任务或主进程延迟达到 200 毫秒时自动记录，最多保留 10 份。记录不包含输入文字或对话正文，仅保存在本机。
 - **会话运行瀑布图**：Pi runtime 采集 tool / task span，JSONL 按月存储，会话面板可视化 span 瀑布图；任务卡点与 AI 成本进入项目级面板。
 - **Token 统计**：按会话 / 轮 / 工具 / Skill / MCP / 模型维度统计 token 消耗与费用（设置 → Token 统计）。
 - **服务端可观测闭环（P-I～P-IV）**：运行档案 trace_id 闭环 + span 每层 cost、基于 span 树的自然语言 Signals、Agent 自查运行档案、真实 input / output 采样生成评估数据集，形成"追踪 → 评估 → 再追踪"飞轮。
@@ -309,7 +310,7 @@ gravitas/
 
 | 包 | 版本 | 职责 |
 | --- | --- | --- |
-| `@gravitas/electron` | `0.12.113` | Electron 桌面应用 |
+| `@gravitas/electron` | `0.14.6` | Electron 桌面应用 |
 | `@gravitas/shared` | `0.2.29` | 共享类型、IPC 常量、配置和工具 |
 | `@gravitas/core` | `0.2.24` | Provider Adapter、SSE、Shiki 高亮 |
 | `@gravitas/ui` | `0.1.4` | 共享 React UI 组件 |
