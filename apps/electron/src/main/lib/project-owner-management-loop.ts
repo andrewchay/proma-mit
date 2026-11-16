@@ -540,7 +540,11 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
           }
         } catch (cause) {
           console.warn('[Owner管理] 委托调用需要核对', cause)
+          // 提示写入是幂等的，重试不会重复刷屏；但异常必须继续上抛，否则外层退避永远不生效：
+          // 这里吞掉异常会让本轮按成功结束并清空失败记录，下一次 30 秒扫描又重来一次。
+          // 来源快照校验失败这类确定性错误重试不会自愈，只能靠退避拉开间隔。
           appendOwnerManagementMessage({ projectId, eventId: `delegation:${view.delegation!.id}:${link.planning_task_id}`, role: 'assistant', kind: 'attention', content: '管理调用尚未继续，当前来源、额度或运行需要核对。原目标与记录已保留，不会自动重试已发送请求。' })
+          throw cause
         }
         break
       }
