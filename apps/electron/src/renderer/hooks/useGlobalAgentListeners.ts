@@ -977,7 +977,7 @@ export function useGlobalAgentListeners(): void {
             .then((sessions) => {
               store.set(agentSessionsAtom, sessions)
               const completedSession = sessions.find(session => session.id === data.sessionId)
-              if (!completedSession || completedSession.archived) cleanupRetiredAgentSession(store, data.sessionId)
+              if ((!completedSession || completedSession.archived) && store.get(currentAgentSessionIdAtom) !== data.sessionId) cleanupRetiredAgentSession(store, data.sessionId)
               // 从持久化 meta 对齐 stoppedByUser 状态
               store.set(stoppedByUserSessionsAtom, new Set<string>(
                 sessions.filter((s) => s.stoppedByUser).map((s) => s.id)
