@@ -517,6 +517,38 @@ test('Given人员安排已准备但尚未启动 When重复核对授权 Then等�
   } finally { delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
 })
 
+test('Given授权续期只消耗在对话上 When核对管理 Then补一次安排而不是停在对话', async () => {
+  const f = fixture()
+  const { prepareOwnerManagementAssignment } = await import('./project-owner-management-assignment')
+  const first = authorize(f)
+  confirm(f)
+  // 上一轮授权下真的准备过安排（真实链路），续期后它属于旧授权，不应挡住补排。
+  prepareOwnerManagementAssignment({ id: 'first-grant-assignment', projectId: f.project.id, kind: 'delegation_confirmed', sourceId: first.id, sourceRevision: 1, createdAt: Date.now(), consumedAt: null })
+  delegation.revokeOwnerManagementDelegation(f.project.id, first.id)
+  const renewed = authorize(f)
+  try {
+    reconcileOwnerManagement(f.project.id)
+    // 事件会被消费，所以按「库内该来源的事件条数」判断，而不是待处理数。
+    const renewalEvents = () => (store.getProjectDb().prepare("SELECT COUNT(*) AS n FROM project_owner_management_events WHERE project_id = ? AND json_extract(payload, '$.sourceId') = ?")
+      .get(f.project.id, `delegation-renewal:${renewed.id}`) as { n: number }).n
+    expect(renewalEvents()).toBe(1)
+    // 幂等：再次核对不会重复排队。
+    reconcileOwnerManagement(f.project.id)
+    expect(renewalEvents()).toBe(1)
+  } finally { delegation.revokeOwnerManagementDelegation(f.project.id, renewed.id) }
+})
+
+test('Given本次授权已经准备过安排 When核对管理 Then不自动补排以免重复调用', async () => {
+  const f = fixture(), grant = authorize(f)
+  confirm(f)
+  const { prepareOwnerManagementAssignment } = await import('./project-owner-management-assignment')
+  try {
+    prepareOwnerManagementAssignment({ id: 'already-prepared', projectId: f.project.id, kind: 'delegation_confirmed', sourceId: grant.id, sourceRevision: 1, createdAt: Date.now(), consumedAt: null })
+    reconcileOwnerManagement(f.project.id)
+    expect(listPendingOwnerManagementEvents(f.project.id).some(event => event.sourceId === `delegation-renewal:${grant.id}`)).toBe(false)
+  } finally { delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+})
+
 async function until(predicate: () => boolean, diagnostic: () => unknown = () => undefined, attempts = 1000) { for (let i = 0; i < attempts; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)) } throw new Error(`等待自动安排超时${JSON.stringify(diagnostic())}`) }
 
 test('Given 已有可用团队和管理委托 When 用户确认方案 Then 无页面参与自动安排，复用已有员工且不签发执行许可', async () => {
@@ -1257,9 +1289,20 @@ test('Given历史完整安排仅因空代码范围被拒绝 When本地恢复并�
 
 test('Given 失败详情含凭据或换行 When 生成用户原因 Then 脱敏截断且保留可核对信息', async () => {
   const { ownerAssignmentFailureReason } = await import('./project-owner-management-assignment')
-  expect(ownerAssignmentFailureReason('Owner人员安排提案格式无效或夹带未授权字段')).toBe('Owner人员安排提案格式无效或夹带未授权字段')
+  expect(ownerAssignmentFailureReason('Owner人员安排提案格式无效或夹带未授权字段')).toBe('Owner人员安排提案格式无效或夹带未授权字段（模型输出未符合协议格式，可重试一次安排）')
   expect(ownerAssignmentFailureReason('bad Bearer abc123\napi_key=sk-secret123456789')).not.toContain('abc123')
   expect(ownerAssignmentFailureReason('x'.repeat(400)).length).toBe(240)
+})
+
+test('Given 协议拒绝原因 When 生成用户原因 Then 补充可执行的下一步且保留原文', async () => {
+  const { ownerAssignmentFailureReason } = await import('./project-owner-management-assignment')
+  // 原生/命令行项目的典型失败：模型留空验证命令。原文保留，并说明该补什么。
+  const emptyCommands = ownerAssignmentFailureReason('Owner研发验证命令无效')
+  expect(emptyCommands).toContain('Owner研发验证命令无效')
+  expect(emptyCommands).toContain('build:swift')
+  expect(ownerAssignmentFailureReason('Owner绿地研发验证命令与目标文件不匹配')).toContain('扩展名匹配')
+  // 未知原因不猜测，保持原文。
+  expect(ownerAssignmentFailureReason('Owner人员安排缺少工作区')).toBe('Owner人员安排缺少工作区')
 })
 
 test('Given 结构不合规的失败 When 判断可恢复 Then 允许在原预算内重排一次', async () => {

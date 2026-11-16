@@ -218,7 +218,15 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const decisionLabel = waitingMessage?.kind !== 'attention' ? getOwnerWaitingLabel(messages, taskId) : null
   const waitingForDecision = decisionLabel !== null
   const authorizationDecision = ['none', 'expired', 'stale', 'revoked', 'exhausted'].includes(delegation.view?.state ?? '')
-  const needsArrangementRetry = staleAssignment || Boolean(latestAttention?.content.includes('人员安排'))
+  // 已确认方案但当前版本没有任何「提出安排」结论时，重排入口必须可达：
+  // 只按最新消息是否为 attention 判断，会让后续对话回复把入口顶掉，用户看不到任何补救方式。
+  // 已有排队/运行中的安排时等待结果，不提前给出重排入口。
+  const arrangementInFlight = assignmentRuns.some(run => run.executions.some(execution => execution.status === 'queued' || execution.status === 'running'))
+  const arrangementMissing = Boolean(plan.snapshot)
+    && delegation.view?.state === 'active'
+    && !arrangementInFlight
+    && !assignmentRuns.some(run => run.link?.planRevision === plan.snapshot?.revision && run.outcomes?.some(outcome => outcome.state === 'proposed'))
+  const needsArrangementRetry = staleAssignment || Boolean(latestAttention?.content.includes('人员安排')) || arrangementMissing
   const hasOpenQuestions = editor.view?.questions.some(question => question.state === 'open' && question.taskId === taskId)
   const hasPendingChange = editor.view?.changes?.some(change => change.state === 'pending' && change.taskId === taskId)
   const planRisks = plan.snapshot?.proposal.risks ?? []

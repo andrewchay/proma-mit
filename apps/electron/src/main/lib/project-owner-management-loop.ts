@@ -8,7 +8,7 @@ import { getProjectOwnerGoalDraft } from './project-owner-goal-service'
 import { confirmProjectOwnerPlanDraftForOwner, getProjectOwnerPlanDraft, getProjectOwnerPlanningContext } from './project-owner-plan-service'
 import { getOwnerRuntimeBinding, prepareOwnerPlanning, resolveOwnerRuntimeBindingFromDefaults } from './project-owner-runtime-binding'
 import { onOwnerManagementChanged, onOwnerManagementWake, type OwnerManagementChanged } from './project-owner-management-events'
-import { appendOwnerManagementMessage, appendOwnerManagementTrace, consumeOwnerManagementEvent, getOwnerManagementMessage, getOwnerManager, listPendingOwnerManagementEvents, recordOwnerManagementAssignmentRecheck, recordStaleOwnerManagementTrace } from './project-owner-management-store'
+import { appendOwnerManagementMessage, appendOwnerManagementTrace, consumeOwnerManagementEvent, getOwnerManagementMessage, getOwnerManager, listPendingOwnerManagementEvents, recordOwnerManagementAssignmentRecheck, recordOwnerManagementRenewalRecheck, recordStaleOwnerManagementTrace } from './project-owner-management-store'
 import * as store from './project-sqlite-store'
 import { nextOwnerExecutionObservationDeadline, scanOwnerExecutionObservations } from './project-owner-management-execution'
 import { readOwnerPlanningSnapshot } from './project-owner-planning-source'
@@ -92,8 +92,11 @@ function handle(event: OwnerManagementEvent): void {
     const delegation = getOwnerManagementDelegation(event.projectId, event.taskId)
     const protocolRetry = event.sourceId?.startsWith('protocol-retry:') === true
     const manualRetry = event.sourceId?.startsWith('manual-retry:') === true
-    if (!plan || (protocolRetry || manualRetry ? plan.state !== 'confirmed' : plan.state !== 'proposed') || plan.revision !== event.sourceRevision
-      || delegation.state !== 'active' || (protocolRetry ? !delegation.delegation?.autonomousExecution : !manualRetry && delegation.delegation?.id !== event.sourceId)) {
+    // 续期补排：来源带授权ID，同样只接受已确认方案与活跃授权。
+    const renewalRetry = event.sourceId?.startsWith('delegation-renewal:') === true
+    const renewalMatchesDelegation = renewalRetry && event.sourceId === `delegation-renewal:${delegation.delegation?.id}`
+    if (!plan || (protocolRetry || manualRetry || renewalRetry ? plan.state !== 'confirmed' : plan.state !== 'proposed') || plan.revision !== event.sourceRevision
+      || delegation.state !== 'active' || (renewalRetry ? !renewalMatchesDelegation : protocolRetry ? !delegation.delegation?.autonomousExecution : !manualRetry && delegation.delegation?.id !== event.sourceId)) {
       appendOwnerManagementMessage({ projectId: event.projectId, eventId: event.id, ...(event.taskId ? { taskId: event.taskId } : {}), role: 'assistant', kind: 'attention', content: '当前方案或持续管理授权已变化，我已停止使用旧安排条件；请在项目对话中核对最新方案与管理范围。' })
       return
     }
@@ -211,6 +214,7 @@ export function reconcileOwnerManagement(projectId: string): void {
   recoverMissingOwnerDefaultTeams(projectId)
   recoverMissingProposedPlanAssignment(projectId)
   recoverProtocolRejectedOwnerAssignments(projectId)
+  recoverConfirmedPlanRenewalAssignment(projectId)
   if (getOwnerManager(projectId)?.status === 'active') {
     try { publishOwnerManagementCompletion(projectId) }
     catch (cause) { console.warn('[Owner管理] 最终成果尚未完成核验，保留原成果并等待下次对账', projectId, cause) }
@@ -316,6 +320,55 @@ function recoverMissingProposedPlanAssignment(projectId: string): void {
     if (recovery.consumed_at === null) continue
     const response = store.getProjectDb().prepare('SELECT 1 FROM project_owner_management_messages WHERE project_id = ? AND event_id = ? LIMIT 1').get(projectId, recovery.id)
     if (!response) appendOwnerManagementMessage({ projectId, eventId: `assignment-recheck-incomplete:${recovery.id}`, ...(taskId ? { taskId } : {}), role: 'assistant', kind: 'attention', content: '我已暂停：这份待审方案没有生成可核对的团队安排结果。原方案和授权记录仍保留；为避免重复请求，我没有自动重试。请在这里告诉我是否调整结果范围或项目可用团队。' })
+  }
+}
+
+/**
+ * 授权续期后补回安排步骤。
+ *
+ * `delegation_confirmed` 在有未启动用户对话时只接续对话，安排步骤不会重新进入；
+ * 随后的 conversation 回复走 owner_planning，也不会回到安排链。于是续期额度被对话消耗完，
+ * 团队仍未组建（真实用例：绿地原生项目续期后只产生两条 planning，零安排运行）。
+ *
+ * 判定基准是**当前授权的签发时间**，不是「当前方案版本有没有结论」：
+ * 真实事故里同一方案版本下已存在两条失败结论，但它们属于上一个已过期的授权，
+ * 按版本判断会把续期后的补排一起挡掉。只有当前授权签发后的失败才由
+ * 协议续跑或用户手动重排处理，自动路径不重复调用。
+ */
+function recoverConfirmedPlanRenewalAssignment(projectId: string): void {
+  if (getOwnerManager(projectId)?.status !== 'active') return
+  const subjects = store.getProjectDb().prepare('SELECT DISTINCT subject_key FROM project_owner_revisions WHERE project_id = ?').all(projectId) as { subject_key: string }[]
+  for (const { subject_key: key } of subjects) {
+    const taskId = key === 'project' ? undefined : key.startsWith('task:') ? key.slice(5) : null
+    if (taskId === null) continue
+    const plan = getProjectOwnerPlanDraft(projectId, taskId)
+    const view = getOwnerManagementDelegation(projectId, taskId)
+    if (plan?.state !== 'confirmed' || view.state !== 'active' || !view.delegation) continue
+    if (hasActiveOwnerManagementRequest(view.delegation.id)) continue
+    if (hasCompleteOwnerManagementDelivery(projectId, taskId, plan)) continue
+    const assignments = listOwnerExecutionAssignmentRuns({ projectId, ...(taskId ? { taskId } : {}) })
+    // 当前授权签发后只要准备过安排就交给既有链路：成功、失败、待启动都有各自处理，
+    // 自动补排只负责「这次授权完全没走到安排步骤」这一种情况。
+    const attempted = assignments.some(run => run.link.createdAt >= view.delegation!.issuedAt)
+    if (attempted) continue
+    // 已有排队/运行中的安排 Run 时等待结果，不重复准备。
+    if (assignments.some(run => run.executions.some(execution => execution.status === 'queued' || execution.status === 'running'))) continue
+    // 已经提示过阻塞（能力不足/工作区建议/配置缺失）时不重复推进。
+    const blocked = store.getProjectDb().prepare("SELECT 1 FROM project_owner_management_events e JOIN project_owner_management_messages m ON m.event_id = e.id WHERE e.project_id = ? AND json_extract(e.payload, '$.kind') = 'delegation_confirmed' AND json_extract(e.payload, '$.sourceId') = ? AND json_extract(e.payload, '$.taskId') IS ? AND json_extract(m.payload, '$.kind') IN ('attention', 'configuration_required', 'clarification') LIMIT 1")
+      .get(projectId, view.delegation.id, taskId ?? null)
+    if (blocked) continue
+    // 只排队一次；事件 ID 由授权与方案版本派生，重复核对不会重复调用。
+    const queued = store.getProjectDb().prepare("SELECT id, consumed_at FROM project_owner_management_events WHERE project_id = ? AND json_extract(payload, '$.kind') = 'assignment_recheck' AND json_extract(payload, '$.taskId') IS ? AND json_extract(payload, '$.sourceRevision') = ? AND json_extract(payload, '$.sourceId') = ? ORDER BY rowid DESC LIMIT 1")
+      .get(projectId, taskId ?? null, plan.revision, `delegation-renewal:${view.delegation.id}`) as { id: string; consumed_at: number | null } | undefined
+    if (!queued) {
+      recordOwnerManagementRenewalRecheck(projectId, plan.revision, view.delegation.id, taskId)
+      break
+    }
+    if (queued.consumed_at === null) continue
+    // 已消费却没有产生任何安排运行，说明补排没有落地；明确告知而不是静默重试。
+    const responded = store.getProjectDb().prepare('SELECT 1 FROM project_owner_management_messages WHERE project_id = ? AND event_id = ? LIMIT 1').get(projectId, queued.id)
+    if (!responded) appendOwnerManagementMessage({ projectId, eventId: `renewal-recheck-incomplete:${queued.id}`, ...(taskId ? { taskId } : {}), role: 'assistant', kind: 'attention', content: '续期后我尝试恢复团队安排，但这份已确认方案没有生成可核对的安排结果。原方案和授权仍保留；为避免重复请求，我没有自动重试。请在这里告诉我是否调整结果范围或项目可用团队。' })
+    break
   }
 }
 
