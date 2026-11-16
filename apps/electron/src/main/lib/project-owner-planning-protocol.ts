@@ -302,7 +302,7 @@ function validateContext(context: ProjectOwnerPlanningContext): void {
 }
 
 /** 此角色描述不创建Owner principal或员工，不授予文件/工具/费用权限。 */
-export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningContext, format: 'legacy' | 'fragment' | 'envelope' = 'envelope', strictOutputHints = true, qualityEnvelope = true, scopedObservationPrompt = true, independentReviewLane = true, explicitQualityQuotes = true, scopedFileChangePrompt = true): ProjectOwnerPlanningRequest {
+export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningContext, format: 'legacy' | 'fragment' | 'envelope' = 'envelope', strictOutputHints = true, qualityEnvelope = true, scopedObservationPrompt = true, independentReviewLane = true, explicitQualityQuotes = true, scopedFileChangePrompt = true, requireDeliveryKind = true): ProjectOwnerPlanningRequest {
   validateContext(context)
   const binding = { projectId: context.goal.goal.projectId,
     ...(context.goal.goal.taskId === undefined ? {} : { taskId: context.goal.goal.taskId }),
@@ -356,7 +356,12 @@ export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningCo
       JSON.stringify({ schemaVersion: 1, kind: 'plan_proposal', binding, proposal: { summary: '改动建议摘要', assumptions: [], risks: [], steps: [{ key: 'revision', title: '修订交付', outcome: '可评审的修订建议', acceptanceCriteria: ['逐项说明改动'], dependencies: [], roleKey: context.sources.roles[0]!.key }], deliveryChangeAssessment: { summary: '相对原成果的改动建议', commands: context.sources.delivery.map(item => ({ commandId: item.commandId, changes: item.acceptanceCriteria.map(criterion => ({ criterion, disposition: 'still_open', proposedChange: '尚未实施的改动建议' })), authorizationImpact: 'new_grant_required', authorizationRationale: '新计划不沿用旧授权' })) } } }),
       'commands必须逐命令覆盖来源中的commandId；changes须逐字按原顺序覆盖该命令全部冻结验收标准。disposition只能为addressed、still_open或not_applicable；authorizationImpact只能为unchanged、additional_confirmation、new_grant_required或cannot_determine。proposedChange是建议，不得表述成已实施。',
     ] : []),
-    '二选一：kind="plan_proposal"，其余字段仅binding与proposal{summary,assumptions:[],risks:[],steps:[{key,title,outcome,acceptanceCriteria:[],dependencies:[],roleKey,sourceReferences?:[{path,line,sha256}]}]}；',
+    ...(requireDeliveryKind ? [
+      // 每个步骤都必须声明自己的成果类型：文档步骤带构建命令会被员工当成代码任务处理，
+      // 而代码步骤缺构建命令又无法产出运行证据。下游按此区分受控文本与研发执行。
+      '每个步骤必须包含deliveryKind，取值只能是"text"或"development"：产出文档、规格、分析、名称方案等纯文本成果用"text"；创建或修改可编译运行的代码、脚本、配置文件用"development"。不得省略。任务标题含“实现”“编码”“源文件”等且成果是代码时用"development"；标题含“需求”“设计”“说明”“文档”“方案”且成果是描述性内容时用"text"。',
+    ] : []),
+    '二选一：kind="plan_proposal"，其余字段仅binding与proposal{summary,assumptions:[],risks:[],steps:[{key,title,outcome,acceptanceCriteria:[],dependencies:[],roleKey' + (requireDeliveryKind ? ',deliveryKind:"text"|"development"' : '') + ',sourceReferences?:[{path,line,sha256}]}]}；',
     '或kind="needs_clarification"，其余字段仅binding与reason、questions:[{key,reasonType:"missing_information"|"source_conflict",question,why,options:[],recommended?,sourceReferences?:[{sourceId,quote}]}]。不夹带proposal，options是可空或2–4项的字符串数组（每项为一个可选答案的完整短句，不得使用对象），recommended有选项时必须逐字来自options；source_conflict必须引用2–4个不同来源且原文精确匹配，missing_information不得附sourceReferences。',
     '不输出actor、grant、权限、费用已授权、执行状态或完成状态。计划与澄清均不是授权。',
     ...(context.conversation ? [
@@ -411,8 +416,11 @@ export function resolveProjectOwnerPlanningRequest(context: ProjectOwnerPlanning
           for (const independentReviewLane of [true, false]) {
             for (const explicitQualityQuotes of [true, false]) {
               for (const scopedFileChangePrompt of [true, false]) {
-                const request = buildProjectOwnerPlanningRequest(context, format, strictOutputHints, qualityEnvelope, scopedObservationPrompt, independentReviewLane, explicitQualityQuotes, scopedFileChangePrompt)
-                if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) return request
+                // requireDeliveryKind=false 还原加入步骤交付类型前的历史提示文本。
+                for (const requireDeliveryKind of [true, false]) {
+                  const request = buildProjectOwnerPlanningRequest(context, format, strictOutputHints, qualityEnvelope, scopedObservationPrompt, independentReviewLane, explicitQualityQuotes, scopedFileChangePrompt, requireDeliveryKind)
+                  if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) return request
+                }
               }
             }
           }

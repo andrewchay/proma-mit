@@ -14,7 +14,7 @@ function context(taskId?: string): ProjectOwnerPlanningContext {
 function proposal(c: ProjectOwnerPlanningContext) {
   return { schemaVersion: 1, kind: 'plan_proposal', projectId: c.goal.goal.projectId, ...(c.goal.goal.taskId ? { taskId: c.goal.goal.taskId } : {}),
     goalVersion: c.goal.goal.goalVersion, contextFingerprint: c.fingerprint,
-    proposal: { summary: '形成定位简报', assumptions: ['受众待验证'], risks: [], steps: [{ key: 'brief', title: '需求整理', outcome: '需求简报', acceptanceCriteria: ['范围明确'], dependencies: [], roleKey: 'requirements-analyst' }] } }
+    proposal: { summary: '形成定位简报', assumptions: ['受众待验证'], risks: [], steps: [{ key: 'brief', title: '需求整理', outcome: '需求简报', acceptanceCriteria: ['范围明确'], dependencies: [], roleKey: 'requirements-analyst', deliveryKind: 'text' as const }] } }
 }
 
 test('Given 已存目标与资料快照 When 构建规划请求 Then data-only、不索路径、未调用模型或创建授权', async () => {
