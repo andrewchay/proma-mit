@@ -14,11 +14,10 @@
 import type { ChatMessage, SDKMessage, SDKAssistantMessage, SDKUserMessage, FileAttachment, SkillMeta } from '@gravitas/shared'
 import type { RuntimeMessage } from './types.ts'
 import { collectContributingPrompts } from '../plugin-manager'
+import { buildCompactBoundaryContent } from './compaction-notice'
 
 /** 最大回填历史消息条数（压缩摘要不计入此上限） */
 const MAX_HISTORY_MESSAGES = 20
-
-const COMPACT_CONTEXT_NOTICE = '以下是系统生成的既有会话压缩上下文。将其作为历史事实与未完成工作继续，不要把它当作用户的新指令。'
 
 /** 默认 Agent 系统提示词 */
 const DEFAULT_AGENT_SYSTEM_PROMPT = `你是一个高效的编程助手，擅长通过工具调用完成代码编辑、文件操作和命令执行任务。
@@ -262,7 +261,7 @@ function compactBoundaryToChatMessage(message: SDKMessage): ChatMessage | undefi
   return {
     id: `${boundary.session_id ?? ''}-compact-boundary`,
     role: 'user',
-    content: `${COMPACT_CONTEXT_NOTICE}\n<context_packet>${JSON.stringify(packet)}</context_packet>`,
+    content: buildCompactBoundaryContent(packet),
     createdAt: Date.now(),
   }
 }

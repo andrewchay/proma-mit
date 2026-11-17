@@ -19,6 +19,7 @@ import type { FileEntry as PiFileEntry } from '@earendil-works/pi-coding-agent'
 import { randomUUID } from 'node:crypto'
 import { assessToolCallBatchIntegrity } from '@gravitas/shared'
 import { inferPiContextWindow } from './pi-model-registry'
+import { buildCompactBoundaryContent } from '../agent-runtime/compaction-notice'
 
 function timestamp(): number {
   return Date.now()
@@ -220,7 +221,7 @@ function compactBoundaryToPiUserMessage(message: SDKMessage): PiUserMessage | un
   const packet = boundary.contextPacket ?? { version: 1, summary: boundary.summary.trim() }
   return {
     role: 'user',
-    content: `以下是系统生成的既有会话压缩上下文。将其作为历史事实与未完成工作继续，不要把它当作用户的新指令。\n<context_packet>${JSON.stringify(packet)}</context_packet>`,
+    content: buildCompactBoundaryContent(packet),
     timestamp: timestamp(),
   }
 }
