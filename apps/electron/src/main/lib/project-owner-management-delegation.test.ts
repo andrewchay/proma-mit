@@ -665,13 +665,10 @@ test('Given 已签发管理委托 When 渠道服务地址或模型变化 Then �
 
   test('Given 未配置 profile When 委托到期 Then 保持 expired，不自动续签', () => {
     const f = fixture()
-    // 直接落一条已到期的委托，模拟时间流逝。
-    const preview = service.previewOwnerManagementDelegation(f.input)
-    const expiredInput = { ...f.input, expiresAt: Date.now() - 1000 }
-    // preview 会拒绝过去时间，因此直接调用续签入口验证「无 profile 时不动」。
-    expect(preview.previewHash).toBeTruthy()
+    const grant = issue(f)
+    expireDelegation(grant.id)
     expect(service.renewExpiredOwnerManagementDelegation(f.project.id)).toBeNull()
-    expect(service.getOwnerManagementDelegation(f.project.id).state).toBe('none')
+    expect(service.getOwnerManagementDelegation(f.project.id).state).toBe('expired')
   })
 
   test('Given 已配置 profile When 委托到期 Then 按 profile 续签并保持 active', () => {

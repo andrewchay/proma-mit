@@ -81,7 +81,6 @@ export function ProjectOwnerExecutionConversation({ projectId, taskId, ownerConv
     window.addEventListener('focus', refresh)
     const off = window.electronAPI?.paa?.project?.onOwnerManagementChanged?.(change => { if (change.projectId === projectId) refresh() })
     return () => { window.removeEventListener('focus', refresh); off?.() }
-    // biome-ignore lint/correctness/useExhaustiveDependencies: refresh 由各 load setter 组合，仅随主体变化重建。
   }, [load, loadAssignments, loadGrant, loadCommandProgress, subject, projectId])
   const busy = e.loading || e.previewing || e.saving || assignments.loading || assignments.preparing || delivery.loading || delivery.saving || Boolean(delivery.stage)
   const patch = (value: OwnerExecutionEdit) => edit({ subject, patch: value })
