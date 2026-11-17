@@ -9,6 +9,17 @@ export interface ContextCompactionAuditInput {
   trigger: 'automatic' | 'manual' | 'overflow_recovery' | 'native'
   packetVersion?: number
   estimatedTokensAfter?: number
+  /** 视图层截断（非压缩）时记录丢弃条数 */
+  viewTruncation?: {
+    droppedMessages: number
+    droppedTokens: number
+    reason: 'max_history_messages'
+  }
+  /** 已判定需要压缩但无早期消息可压（保留目标不小于历史总量） */
+  compactionSkipped?: {
+    estimatedHistoryTokens: number
+    targetKeepTokens: number
+  }
 }
 
 export function appendContextCompactionAudit(input: ContextCompactionAuditInput): void {
