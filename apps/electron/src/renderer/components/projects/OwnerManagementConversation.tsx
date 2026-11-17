@@ -25,6 +25,8 @@ import { ownerDiscussionTimeline, type OwnerDiscussionEntry } from './owner-disc
 import { getOwnerDispatchEditor, getOwnerDispatchEvents, loadOwnerDispatchEventsAtom, ownerDispatchControlsAtom, ownerDispatchEventsAtom } from '../../atoms/owner-dispatch-control-atoms'
 import { WebChangeObservationCard } from './WebChangeObservationCard'
 import { getOwnerWaitingLabel, getOwnerWaitingMessage, hasCompletedOwnerDelivery, isOwnerWaitingForUser } from './project-owner-progress-state'
+import { deriveOwnerExecutionAttention } from './project-owner-execution-attention'
+import { OwnerExecutionBlockerNotice } from './OwnerExecutionBlockerNotice'
 import { getOwnerCommandProgress, loadOwnerCommandProgressAtom, ownerCommandProgressAtom } from '@/atoms/owner-command-progress-atoms'
 import { getOwnerGrantEditor, loadOwnerGrantAtom, loadOwnerGrantHistoryAtom, ownerGrantEditorsAtom } from '@/atoms/project-owner-execution-grant-atoms'
 import { CornerDownLeft } from 'lucide-react'
@@ -220,6 +222,14 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const decisionLabel = waitingMessage?.kind !== 'attention' ? getOwnerWaitingLabel(messages, taskId) : null
   const waitingForDecision = decisionLabel !== null
   const authorizationDecision = ['none', 'expired', 'stale', 'revoked', 'exhausted'].includes(delegation.view?.state ?? '')
+  // 执行阻塞与执行区共用同一份推导：两处各自判断会出现“这里说暂无事项、那里说已阻塞”。
+  const executionAttention = deriveOwnerExecutionAttention({
+    grantState: grant.grant?.state,
+    scheduleState: usage.schedule?.state,
+    nextAction: usage.schedule?.nextAction,
+    commands: usage.commands,
+    completed: Boolean(grant.grant?.dispatchMode === 'autonomous' && hasCompletedOwnerDelivery(messages, usage.commands, taskId, plan.snapshot?.planVersion, grant.grant?.grantId)),
+  })
   // 已确认方案但当前版本没有任何「提出安排」结论时，重排入口必须可达：
   // 只按最新消息是否为 attention 判断，会让后续对话回复把入口顶掉，用户看不到任何补救方式。
   // 已有排队/运行中的安排时等待结果，不提前给出重排入口。
@@ -277,7 +287,8 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const currentStatus = editor.loading && !editor.view ? '正在读取项目状态'
     : editor.error ? '项目状态读取失败，需要重新读取'
       : pendingAction ? '员工操作等待你的逐次确认'
-        : latestAttention ? 'Owner 提出需要关注的事项'
+        : executionAttention ? executionAttention.title
+          : latestAttention ? 'Owner 提出需要关注的事项'
           : blockedReviews.length > 0 ? '成果质量决定被阻断，需要核对'
           : delegation.view?.state === 'attention' ? '项目管理需要核对'
           : delegation.view?.state === 'stale' ? '项目授权范围已变化，需重新核对'
@@ -388,7 +399,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
         <section className="min-w-0 space-y-4 rounded-xl bg-card p-5 shadow-sm ring-1 ring-border/40 sm:p-6" aria-label="需要你决定">
           <h4 className="text-base font-semibold">需要你决定</h4>
           {pendingDeliveredItem && pendingDeliveredReference && <OwnerDeliveredDecisionCard subject={subject} item={pendingDeliveredItem} reference={pendingDeliveredReference} acceptanceBlocker={acceptanceBlocker} onOpen={() => selectDelivery(pendingDeliveredReference)} />}
-          {!editor.loading && editor.view && !pendingAction && !latestWorkspaceProposal && !needsArrangementRetry && !authorizationDecision && !waitingForDecision && !hasOpenQuestions && !hasPendingChange && !acceptanceSchedule && !pendingDeliveredItem
+          {!editor.loading && editor.view && !pendingAction && !latestWorkspaceProposal && !needsArrangementRetry && !authorizationDecision && !waitingForDecision && !hasOpenQuestions && !hasPendingChange && !acceptanceSchedule && !pendingDeliveredItem && !executionAttention
             && <p className="text-sm text-muted-foreground">暂无待你决定的事项。</p>}
           {acceptanceSchedule && <OwnerAcceptanceCard projectId={projectId} schedule={acceptanceSchedule} commands={usage.commands} onChanged={() => { void refreshCommandProgress(subject) }} feedbackDisabled={composer.sending || Boolean(composer.pending || composer.deliveryReference || composer.deliveryReviewDecision) || !editor.view?.manager} feedbackCapacity={Math.max(0, 3700 - composer.text.length)} onDiscuss={(delivery, excerpt, intent) => { const context = `交付「${delivery.title}」版本 ${delivery.version}（记录 ${delivery.id}）${excerpt ? `，${intent === 'question' ? '想询问' : '希望修改'}：\n“${excerpt}”` : '：'}\n`; const text = `${composer.text}${composer.text.trim() ? '\n\n' : ''}${context}`; if (text.length > 4000) return; edit({ subject, text }); focusReplyComposer() }} />}
           {acceptanceSchedule && (composer.deliveryReference || composer.deliveryReviewDecision) && <p className="text-xs text-muted-foreground">对话草稿已关联另一成果。请先发送或取消该关联，再对这个交付点选反馈。</p>}
@@ -400,6 +411,22 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
               && <a href={`#${planDetailsId}`} className="text-primary underline underline-offset-4">查看方案与确认项</a>}
             {waitingMessage?.kind === 'configuration_required' && children && <a href={`#${settingsId}`} className="text-primary underline underline-offset-4">查看项目配置</a>}
           </div>}
+          {executionAttention && <OwnerExecutionBlockerNotice
+            attention={executionAttention}
+            onOpenEvidence={() => revealDiscussionTarget('owner-project-progress')}
+            onRecheckWorkspace={() => {
+              const executionId = executionAttention.recheckExecutionId
+              if (!executionId) return
+              void window.electronAPI.paa.project.recheckOwnerDevelopmentWorkspace({ ...subject, executionId })
+                .then(result => {
+                  if (!result.ok) throw new Error(result.error.message)
+                  if (result.value.state !== 'clean') return
+                  void load(projectId)
+                  void refreshCommandProgress(subject)
+                })
+                .catch(() => { /* 失败时保留原提示，不静默假装已解决 */ })
+            }}
+          />}
           {authorizationDecision && children && <div className="space-y-2"><p className="text-sm font-medium">{delegation.view?.state === 'none' ? '确认项目预算与管理范围' : '项目管理授权需要核对'}</p>{children}</div>}
           {pendingAction && <section aria-label="员工动作需要你逐次审批" className="space-y-3 rounded-xl bg-amber-500/10 p-3">
             <p className="text-sm leading-6">员工执行已暂停，等待你核对下面的准确操作。Owner不能代签；在对话中讨论不等于批准。一次确认仅适用于本次参数，不扩大预算或范围。</p>

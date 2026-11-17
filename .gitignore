@@ -80,3 +80,6 @@ tools/match3-assertion-check/driver.cjs
 
 # 清理脚本每次运行都会追加，属本地执行记录，不入版本控制。
 cleanup-gravitas.log
+
+# 逆向分析中间产物（REA 解包/提取脚本输出），体积大且可复现
+.tmp/

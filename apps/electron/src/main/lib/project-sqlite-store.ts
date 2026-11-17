@@ -287,6 +287,10 @@ export async function initProjectDb(): Promise<void> {
       const database = new (loadNativeSqlite())(dbPath)
       database.pragma('journal_mode = WAL')
       database.pragma('synchronous = NORMAL')
+      // 并发写退避：主进程与外部工具（备份、诊断脚本）可能同时打开同一个 paa.db。
+      // 不设 busy_timeout 时，WAL 下的写锁竞争会立刻抛 SQLITE_BUSY，
+      // 而 Owner 链路是 fail-first，表现为随机的「写失败」而不是等待重试。
+      database.pragma('busy_timeout = 5000')
       backupDatabaseFile(database, dbPath)
       const store = new NativeSqliteCompat(database)
       migrate(store)
@@ -577,6 +581,11 @@ function migrate(database: SqliteCompat): void {
     CREATE TABLE IF NOT EXISTS project_owner_management_claims (
       task_id TEXT PRIMARY KEY, delegation_id TEXT NOT NULL, execution_id TEXT NOT NULL UNIQUE,
       payload TEXT NOT NULL, integrity_hash TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS project_owner_manager_profiles (
+      project_id TEXT NOT NULL, revision INTEGER NOT NULL CHECK (revision > 0),
+      payload TEXT NOT NULL, integrity_hash TEXT NOT NULL,
+      PRIMARY KEY (project_id, revision)
     );
     CREATE TABLE IF NOT EXISTS project_owner_revisions (
       project_id TEXT NOT NULL,
@@ -1385,6 +1394,11 @@ function migrate(database: SqliteCompat): void {
     payload TEXT NOT NULL, integrity_hash TEXT NOT NULL, created_at INTEGER NOT NULL
   )`)
   database.exec('CREATE INDEX IF NOT EXISTS idx_owner_terminal_evidence_project ON project_owner_execution_terminal_evidence(project_id)')
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_batch_supersessions (
+    id TEXT PRIMARY KEY, project_id TEXT NOT NULL, previous_materialization_id TEXT NOT NULL,
+    next_materialization_id TEXT NOT NULL, payload TEXT NOT NULL, integrity_hash TEXT NOT NULL, created_at INTEGER NOT NULL
+  )`)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_owner_batch_supersessions_project ON project_owner_execution_batch_supersessions(project_id)')
   database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_start_intents (
     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, task_id TEXT, payload TEXT NOT NULL,
     integrity_hash TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','completed')),

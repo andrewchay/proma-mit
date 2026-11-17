@@ -12,6 +12,10 @@
 
 import type { AgentSessionMeta, AskUserRequest, PermissionRequest } from '@gravitas/shared'
 import type { CompanionHistoryEntry } from './companion-history'
+import type { AgentAutomationEvent, DispatchOutcome } from './event-router-service'
+
+/** 外部事件 hook 的路由结果；由 createCompanionApi 转成 HTTP 状态码 */
+export type CompanionHookDispatch = (event: AgentAutomationEvent) => Promise<DispatchOutcome[]>
 
 export interface CompanionApiDeps {
   verifyPairingCode(code: string): boolean
@@ -39,6 +43,11 @@ export interface CompanionApiDeps {
   subscribePush(subscription: unknown): boolean
   /** 按 endpoint 移除推送订阅 */
   unsubscribePush(endpoint: string): boolean
+  /**
+   * 外部事件入口：把归一化事件交给 Agent 自动化路由器。
+   * 缺省装配真实 eventRouter；测试注入 fake。
+   */
+  dispatchAutomationEvent(event: AgentAutomationEvent): Promise<DispatchOutcome[]>
 }
 
 /** 请求体（配对码 / 消息文本 / 权限行为 / AskUser 答案 / 推送订阅）；alwaysAllow 会被强制覆盖为 false，仅用于验证覆盖行为 */
@@ -50,6 +59,10 @@ export interface CompanionApiBody {
   answers?: Record<string, string>
   subscription?: unknown
   endpoint?: string
+  /** 外部事件 hook：目标项目 / 可选任务 / 一句话摘要 */
+  projectId?: string
+  taskId?: string
+  summary?: string
 }
 
 /** 未知路由返回 null，由传输层决定 404 */
@@ -70,6 +83,46 @@ function pathId(pathname: string): string {
   return decodeURIComponent(pathname.split('/')[3] ?? '')
 }
 
+/**
+ * 外部事件 hook：把一次 HTTP 请求归一为 AgentAutomationEvent 交给路由器。
+ *
+ * 状态码语义：
+ * - 200 至少一条规则执行成功；
+ * - 202 事件已接收但没有规则处理（未配置触发的部署不应报错）；
+ * - 502 全部规则执行失败——让外部系统重试，而不是静默丢事件。
+ */
+async function handleOwnerGoalHook(
+  deps: CompanionApiDeps,
+  projectId: string,
+  body: CompanionApiBody | undefined,
+): Promise<Response> {
+  const taskId = typeof body?.taskId === 'string' && body.taskId.trim() ? body.taskId.trim() : undefined
+  const summary = typeof body?.summary === 'string' && body.summary.trim()
+    ? body.summary.trim()
+    : `外部事件触发 Owner 管理（项目 ${projectId}）`
+
+  const event: AgentAutomationEvent = {
+    source: 'webhook',
+    type: 'owner-goal',
+    target: projectId,
+    summary,
+    // 带 taskId 时按任务去重，避免同一任务的并发外部事件重复唤醒。
+    ...(taskId ? { dedupeKey: `webhook:owner-goal:${projectId}:${taskId}` } : {}),
+    payload: { projectId, ...(taskId ? { taskId } : {}) },
+  }
+
+  const outcomes = await deps.dispatchAutomationEvent(event)
+  await deps.appendAudit({ action: 'hook_owner_goal', detail: projectId })
+
+  if (outcomes.length > 0 && outcomes.every((o) => o.status === 'failed')) {
+    return json({ error: '事件处理失败', outcomes }, 502)
+  }
+  if (outcomes.length === 0 || outcomes.every((o) => o.status === 'no_rule')) {
+    return json({ ok: true, outcomes }, 202)
+  }
+  return json({ ok: true, outcomes })
+}
+
 export function createCompanionApi(deps: CompanionApiDeps): CompanionApiHandler {
   return async (method, pathname, body, _query, token) => {
     // ---- 配对接口不需要 token ----
@@ -86,6 +139,13 @@ export function createCompanionApi(deps: CompanionApiDeps): CompanionApiHandler 
 
     // ---- 其余接口一律要求 Bearer token ----
     if (!deps.verifyToken(token)) return json({ error: '未认证' }, 401)
+
+    // ---- 外部事件入口（webhook）----
+    if (method === 'POST' && pathname === '/api/hooks/owner-goal') {
+      const projectId = typeof body?.projectId === 'string' ? body.projectId.trim() : ''
+      if (!projectId) return json({ error: 'projectId 不能为空' }, 400)
+      return handleOwnerGoalHook(deps, projectId, body)
+    }
 
     // ---- 只读接口 ----
     if (method === 'GET' && pathname === '/api/sessions') {

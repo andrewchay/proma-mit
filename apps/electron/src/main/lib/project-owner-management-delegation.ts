@@ -9,7 +9,7 @@ export function ownerPlanningOutputCeiling(modelId: string, provider: string): 8
 
 /** 有界管理委托：复用Owner零工具出口，永久占用每次保守上界；无退款或未知状态自动重试。 */
 import { createHash, randomUUID } from 'node:crypto'
-import type { OwnerManagementAttentionCheck, OwnerManagementDelegation, OwnerManagementDelegationInput, OwnerManagementDelegationPreview, OwnerManagementDelegationView } from '@gravitas/shared'
+import type { OwnerManagementAttentionCheck, OwnerManagementDelegation, OwnerManagementDelegationInput, OwnerManagementDelegationPreview, OwnerManagementDelegationView, OwnerManagerProfile } from '@gravitas/shared'
 import { decideAttentionCarryover } from './project-owner-attention-carryover-policy'
 import { getAgentProviderProtocol } from '@gravitas/shared'
 import * as store from './project-sqlite-store'
@@ -383,6 +383,123 @@ export function revokeOwnerManagementDelegation(projectId: string, id: string): 
   const delegation = read<OwnerManagementDelegation>(row)
   store.getProjectDb().prepare('UPDATE project_owner_management_delegations SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?').run(Date.now(), id)
   return getOwnerManagementDelegation(projectId, delegation.taskId)
+}
+
+// ===== 长期 Owner profile =====
+
+/** 单次续签窗口的时长上限，与 `previewOwnerManagementDelegation` 的七天约束保持一致。 */
+const PROFILE_MAX_EXPIRES_IN_HOURS = 7 * 24
+
+export function getOwnerManagerProfile(projectId: string): OwnerManagerProfile | null {
+  const row = store.getProjectDb()
+    .prepare('SELECT payload, integrity_hash FROM project_owner_manager_profiles WHERE project_id = ? ORDER BY revision DESC LIMIT 1')
+    .get(projectId) as Row | undefined
+  if (!row) return null
+  const value = read<OwnerManagerProfile>(row)
+  if (value.schemaVersion !== 1 || value.projectId !== projectId) throw new Error('Owner profile 主体不一致')
+  return value
+}
+
+/**
+ * 保存（或更新）项目的长期 Owner profile。
+ *
+ * `expectedRevision` 为 0 表示新建；否则必须与当前 revision 一致，防止并发覆盖。
+ * profile 只保存额度与期限模板——指令、技能、权限等仍是运行时绑定的事实，
+ * 不在这里复制，避免出现「profile 说一套、绑定做一套」的双份真相。
+ */
+export function saveOwnerManagerProfile(
+  projectId: string,
+  expectedRevision: number,
+  input: { maxCostMicros: number; maxRequests: number; expiresInHours: number },
+): OwnerManagerProfile {
+  assertLocalActorEnabled()
+  if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) throw new Error('Owner profile 版本无效')
+  if (!Number.isSafeInteger(input.maxCostMicros) || input.maxCostMicros < 1 || input.maxCostMicros > 100_000_000) throw new Error('Owner profile 费用上限无效')
+  if (!Number.isSafeInteger(input.maxRequests) || input.maxRequests < 1) throw new Error('Owner profile 请求次数上限无效')
+  if (!Number.isSafeInteger(input.expiresInHours) || input.expiresInHours < 1 || input.expiresInHours > PROFILE_MAX_EXPIRES_IN_HOURS) {
+    throw new Error(`Owner profile 期限须在 1 至 ${PROFILE_MAX_EXPIRES_IN_HOURS} 小时之间`)
+  }
+  const db = store.getProjectDb()
+  let result: OwnerManagerProfile | undefined
+  db.transaction(() => {
+    const current = getOwnerManagerProfile(projectId)
+    const currentRevision = current?.revision ?? 0
+    if (currentRevision !== expectedRevision) throw new Error('Owner profile 已更新，请重新读取')
+    const now = Date.now()
+    const next: OwnerManagerProfile = {
+      schemaVersion: 1, projectId, revision: currentRevision + 1,
+      maxCostMicros: input.maxCostMicros, maxRequests: input.maxRequests, expiresInHours: input.expiresInHours,
+      createdAt: current?.createdAt ?? now, updatedAt: now,
+    }
+    db.prepare('INSERT INTO project_owner_manager_profiles (project_id, revision, payload, integrity_hash) VALUES (?, ?, ?, ?)')
+      .run(projectId, next.revision, JSON.stringify(next), hash(next))
+    result = next
+  })()
+  if (!result) throw new Error('Owner profile 没有产生结果')
+  return result
+}
+
+export function deleteOwnerManagerProfile(projectId: string, expectedRevision: number): void {
+  assertLocalActorEnabled()
+  const current = getOwnerManagerProfile(projectId)
+  if (!current || current.revision !== expectedRevision) throw new Error('Owner profile 已更新，请重新读取')
+  // 逻辑删除：写一条墓碑记录，保留审计连续性（不物理删除历史 revision）。
+  const tombstone: OwnerManagerProfile = { ...current, revision: current.revision + 1, expiresInHours: 0, updatedAt: Date.now() }
+  store.getProjectDb().prepare('INSERT INTO project_owner_manager_profiles (project_id, revision, payload, integrity_hash) VALUES (?, ?, ?, ?)')
+    .run(projectId, tombstone.revision, JSON.stringify(tombstone), hash(tombstone))
+}
+
+/**
+ * 在委托到期后按 profile 自动续签。
+ *
+ * 设计约束（每一条都对应一个安全属性）：
+ * - **只续已到期**：未到期、已撤销、配置漂移、额度耗尽都不续签，返回 null 让调用方走原路径。
+ * - **不抬高生命周期预算**：额度和次数取自 profile，而累计花费由 `historicalUsage` 全量统计；
+ *   续签只是开一个新窗口，不会让「已花掉的钱」回退。
+ * - **配置漂移硬拒绝**：续签前重跑完整 `previewOwnerManagementDelegation`（内含 `scope` 校验），
+ *   任何一项配置变化都会抛错——自动续签绝不能掩盖漂移。
+ * - **无 profile 不续签**：没有配置长期 profile 的项目行为完全不变。
+ */
+export function renewExpiredOwnerManagementDelegation(projectId: string, taskId?: string): OwnerManagementDelegation | null {
+  assertLocalActorEnabled()
+  const profile = getOwnerManagerProfile(projectId)
+  // 逻辑删除的墓碑（expiresInHours=0）视同未配置。
+  if (!profile || profile.expiresInHours < 1) return null
+
+  const current = latest(projectId, taskId)
+  if (!current) return null
+  // 只有「自然到期」可以自动续签；撤销与漂移必须人工处理。
+  if (current.row.revoked_at !== null) return null
+  if (current.delegation.expiresAt > Date.now()) return null
+
+  // 重跑完整校验：配置漂移会在这里抛错，从而阻止续签。
+  let preview: OwnerManagementDelegationPreview
+  try {
+    assertCurrent(current.delegation)
+    preview = previewOwnerManagementDelegation({
+      projectId,
+      ...(taskId ? { taskId } : {}),
+      requestId: randomUUID(),
+      maxRequests: profile.maxRequests,
+      maxCostMicros: profile.maxCostMicros,
+      expiresAt: Date.now() + profile.expiresInHours * 3600000,
+      ...(current.delegation.autonomousExecution ? { autonomousExecution: true as const } : {}),
+      ...(current.delegation.autonomousWorkspaceEditVersion === 1 ? { autonomousWorkspaceEditVersion: 1 as const } : {}),
+    })
+  } catch {
+    // 漂移/额度不足等：保持 expired，交由人工重新确认。
+    return null
+  }
+  return confirmOwnerManagementDelegation({ input: {
+    projectId,
+    ...(taskId ? { taskId } : {}),
+    requestId: preview.requestId,
+    maxRequests: profile.maxRequests,
+    maxCostMicros: profile.maxCostMicros,
+    expiresAt: preview.expiresAt,
+    ...(current.delegation.autonomousExecution ? { autonomousExecution: true as const } : {}),
+    ...(current.delegation.autonomousWorkspaceEditVersion === 1 ? { autonomousWorkspaceEditVersion: 1 as const } : {}),
+  }, previewHash: preview.previewHash })
 }
 export function getOwnerManagementClaim(taskId: string): Claim | null {
   const row = store.getProjectDb().prepare('SELECT payload, integrity_hash FROM project_owner_management_claims WHERE task_id = ?').get(taskId) as Row | undefined

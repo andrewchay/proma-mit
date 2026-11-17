@@ -210,6 +210,13 @@ export interface OwnerManagementApi {
   confirmOwnerManagementDelegation: (request: { input: OwnerManagementDelegationInput; previewHash: string }) => Promise<ProjectOwnerGoalResult<OwnerManagementDelegation>>
   getOwnerManagementDelegation: (request: { projectId: string; taskId?: string }) => Promise<ProjectOwnerGoalResult<OwnerManagementDelegationView>>
   revokeOwnerManagementDelegation: (request: { projectId: string; delegationId: string }) => Promise<ProjectOwnerGoalResult<OwnerManagementDelegationView>>
+  getOwnerManagerProfile: (request: { projectId: string }) => Promise<ProjectOwnerGoalResult<OwnerManagerProfile | null>>
+  saveOwnerManagerProfile: (request: {
+    projectId: string
+    expectedRevision: number
+    input: { maxCostMicros: number; maxRequests: number; expiresInHours: number }
+  }) => Promise<ProjectOwnerGoalResult<OwnerManagerProfile>>
+  deleteOwnerManagerProfile: (request: { projectId: string; expectedRevision: number }) => Promise<ProjectOwnerGoalResult<null>>
   onOwnerManagementChanged: (callback: (change: { projectId: string; messageId?: string }) => void) => () => void
   answerOwnerManagementQuestion: (request: AnswerOwnerManagementQuestionRequest) => Promise<ProjectOwnerGoalResult<ProjectOwnerGoalDraft>>
   getOwnerManagement: (request: { projectId: string }) => Promise<ProjectOwnerGoalResult<OwnerManagementView>>
@@ -348,6 +355,30 @@ export interface OwnerExecutionObservation {
   requestsSent?: number
   review?: { verdict: string; summary: string; findings: string[] }
 }
+/**
+ * 长期 Owner profile：把「一次委托的额度与期限」固化成可复用的配置。
+ *
+ * 与委托的关系：profile 只是**续签模板**，不改变授权的产生方式。
+ * 每次续签仍会重新走 `previewOwnerManagementDelegation` 完整校验（配置内容哈希、
+ * 目标血缘、预算上界），profile 里的值一旦与当前配置不符就会拒绝续签。
+ *
+ * 安全边界：profile 的 `maxCostMicros` 是**单次续签窗口**的额度，不是生命周期总额。
+ * 累计花费始终由 `historicalUsage` 按项目全量统计，因此续签不会凭空放大可用预算。
+ */
+export interface OwnerManagerProfile {
+  schemaVersion: 1
+  projectId: string
+  revision: number
+  /** 单次续签窗口的费用上限（micros）；受项目总预算与 Owner 占比上限双重约束 */
+  maxCostMicros: number
+  /** 单次续签窗口的管理请求次数上限 */
+  maxRequests: number
+  /** 每次续签授予的有效时长（小时），受 7 天上限约束 */
+  expiresInHours: number
+  createdAt: number
+  updatedAt: number
+}
+
 export interface OwnerManagementDelegation extends OwnerManagementDelegationPreview {
   id: string
   issuedAt: number

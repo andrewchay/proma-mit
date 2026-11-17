@@ -14,13 +14,16 @@ import {
 } from './project-owner-execution-source'
 import { listOwnerExecutionCommands, previewOwnerExecutionCommandAck, reserveAndQueueOwnerCommand } from './project-owner-execution-command'
 import { dispatchOwnerCommandExecution } from './project-owner-execution-dispatcher'
-import { cancelQueuedOwnerCommand } from './project-owner-execution-stop'
+import { cancelQueuedOwnerCommand, recoverUnclaimedOwnerCommandPreparations } from './project-owner-execution-stop'
 import { confirmOwnerPreflightReconciliation, previewOwnerPreflightReconciliation } from './project-owner-execution-preflight-reconciliation'
 import { assertLocalActorEnabled } from './project-owner-plan-service'
 import { getOwnerAutonomousScheduleStatus } from './project-owner-autonomous-scheduler'
 import { getOwnerDispatchControl, listOwnerDispatchControlEvents, setOwnerDispatchPaused } from './project-owner-dispatch-control'
 import { listOwnerExecutionAssignmentRuns, prepareOwnerExecutionAssignment } from './project-owner-execution-assignment-service'
 import { resumeOwnerExecutionStartIntent, saveOwnerExecutionStartIntent } from './project-owner-execution-start-intent'
+import { inspectDevelopmentWorkspaceBlocker } from './development-workspace-blocker'
+import { getAgentSessionMeta } from './agent-session-manager'
+import { getAgentWorkspace } from './agent-workspace-manager'
 import * as store from './project-sqlite-store'
 interface Registrar {
   handle: (channel: string, handler: (event: unknown, request: unknown) => unknown) => void
@@ -49,6 +52,26 @@ export function registerProjectOwnerExecutionIpcHandlers(ipc: Registrar): void {
     if (typeof value.intentId !== 'string' || !value.intentId.trim()) throw new Error('Owner启动确认意图ID无效')
     const subject = parseOwnerExecutionSubject({ projectId: value.projectId, ...(value.taskId === undefined ? {} : { taskId: value.taskId }) })
     return resumeOwnerExecutionStartIntent(value.intentId, subject)
+  }))
+  ipc.handle(PROJECT_IPC_CHANNELS.RECHECK_OWNER_DEVELOPMENT_WORKSPACE, (_, request) => result(() => {
+    const value = ownerExecutionObject(request, ['projectId', 'taskId', 'executionId'])
+    if (typeof value.executionId !== 'string' || !value.executionId.trim()) throw new Error('执行ID无效')
+    const subject = parseOwnerExecutionSubject({ projectId: value.projectId, ...(value.taskId === undefined ? {} : { taskId: value.taskId }) })
+    const execution = store.getAgentExecution(value.executionId)
+    if (!execution || execution.projectId !== subject.projectId) throw new Error('执行不属于当前项目')
+    const meta = getAgentSessionMeta(execution.sessionId)
+    const workspace = meta?.workspaceId ? getAgentWorkspace(meta.workspaceId) : undefined
+    if (!workspace?.rootPath) throw new Error('执行工作区已失效，无法重新核对')
+    const blocker = inspectDevelopmentWorkspaceBlocker(workspace.rootPath, workspace.id, workspace.name)
+    if (blocker.kind === 'ready') {
+      // 只恢复「从未认领」的排队准备；已认领或已有会话的执行仍需人工核对，不在这里重放。
+      recoverUnclaimedOwnerCommandPreparations(Date.now(), execution.id)
+      return { state: 'clean' as const }
+    }
+    if (blocker.kind === 'not_git_root') {
+      return { state: 'blocked' as const, blocker: { kind: blocker.kind, detail: blocker.detail, trackedFiles: [], untrackedFiles: [], remedy: '请把工作区指向 Git 仓库根目录后重试。' } }
+    }
+    return { state: 'blocked' as const, blocker: { kind: blocker.kind, detail: blocker.detail, trackedFiles: blocker.trackedFiles, untrackedFiles: blocker.untrackedFiles, remedy: blocker.remedy } }
   }))
   for (const [channel, operation] of [
     [PROJECT_IPC_CHANNELS.GET_OWNER_EXECUTION_PREPARATION, getOwnerExecutionPreparation],

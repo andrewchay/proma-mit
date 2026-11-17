@@ -16,7 +16,9 @@ test('Given所有说法与事实组合 When穷举检查 Then只有无事实支�
   const factSpace: OwnerClaimFacts[] = []
   for (const pendingEvents of [0, 1, 2]) {
     for (const runningExecutions of [0, 1]) {
-      for (const awaitingUserDecisions of [0, 1]) factSpace.push({ pendingEvents, runningExecutions, awaitingUserDecisions })
+      for (const queuedCommands of [0, 1]) {
+        for (const awaitingUserDecisions of [0, 1]) factSpace.push({ pendingEvents, runningExecutions, queuedCommands, awaitingUserDecisions })
+      }
     }
   }
   const messageSpace: OwnerClaimMessage[][] = [[], ...CLAIMS.map((content, index) => [{ role: 'assistant', kind: 'management_progress', content, createdAt: index }])]
@@ -24,29 +26,29 @@ test('Given所有说法与事实组合 When穷举检查 Then只有无事实支�
   for (const facts of factSpace) {
     for (const messages of messageSpace) {
       const violations = findOwnerClaimViolations(messages, facts)
-      const hasBackgroundWork = facts.pendingEvents > 0 || facts.runningExecutions > 0
+      const hasBackgroundWork = facts.pendingEvents > 0 || facts.runningExecutions > 0 || facts.queuedCommands > 0
       const expected = !hasBackgroundWork && messages.some(message => claimsBackgroundWork(message.content))
       expect({ facts, count: violations.length }).toEqual({ facts, count: expected ? messages.filter(message => claimsBackgroundWork(message.content)).length : 0 })
       checked++
     }
   }
-  // 12 组事实 × 6 组消息：穷举覆盖而不是抽样。
-  expect(checked).toBe(72)
+  // 24 组事实 × 6 组消息：穷举覆盖而不是抽样。
+  expect(checked).toBe(144)
 })
 
 test('Given等待用户决定 When检查说法 Then不把用户待决当成后台处理事实', () => {
-  const facts: OwnerClaimFacts = { pendingEvents: 0, runningExecutions: 0, awaitingUserDecisions: 1 }
+  const facts: OwnerClaimFacts = { pendingEvents: 0, runningExecutions: 0, queuedCommands: 0, awaitingUserDecisions: 1 }
   const violations = findOwnerClaimViolations([{ role: 'assistant', kind: 'management_progress', content: CLAIM_ONLY[0]!, createdAt: 1 }], facts)
   expect(violations).toHaveLength(1)
 })
 
 test('Given用户自己的话包含同样说法 When检查 Then不判Owner编造', () => {
-  const facts: OwnerClaimFacts = { pendingEvents: 0, runningExecutions: 0, awaitingUserDecisions: 0 }
+  const facts: OwnerClaimFacts = { pendingEvents: 0, runningExecutions: 0, queuedCommands: 0, awaitingUserDecisions: 0 }
   const violations = findOwnerClaimViolations([{ role: 'user', kind: 'goal', content: CLAIM_ONLY[0]!, createdAt: 1 }], facts)
   expect(violations).toHaveLength(0)
 })
 
-const NO_FACTS: OwnerClaimFacts = { pendingEvents: 0, runningExecutions: 0, awaitingUserDecisions: 0 }
+const NO_FACTS: OwnerClaimFacts = { pendingEvents: 0, runningExecutions: 0, queuedCommands: 0, awaitingUserDecisions: 0 }
 
 test('Given没有后台事实 When剔除无依据说法 Then保留可核对部分并给出中性与替代说明', () => {
   const result = stripUnsupportedClaims('方案已经确认。我正在内部复查原因，稍后会自动继续。资料范围未变。', NO_FACTS)
@@ -62,8 +64,27 @@ test('Given整段都是无依据说法 When剔除 Then用中性事实替代而�
 
 test('Given确有排队事实 When检查说法 Then不剔除也不改写', () => {
   const content = '我正在按已确认方案推进团队安排。'
-  const result = stripUnsupportedClaims(content, { pendingEvents: 1, runningExecutions: 0, awaitingUserDecisions: 0 })
+  const result = stripUnsupportedClaims(content, { pendingEvents: 1, runningExecutions: 0, queuedCommands: 0, awaitingUserDecisions: 0 })
   expect(result).toEqual({ content, removed: [] })
+})
+
+test('Given只有排队命令 When检查将来时承诺 Then不判编造', () => {
+  const facts: OwnerClaimFacts = { pendingEvents: 0, runningExecutions: 0, queuedCommands: 1, awaitingUserDecisions: 0 }
+  const content = '我将在后台重新安排剩余步骤。'
+  expect(claimsBackgroundWork(content)).toBe(true)
+  expect(findOwnerClaimViolations([{ role: 'assistant', kind: 'management_progress', content, createdAt: 1 }], facts)).toHaveLength(0)
+  expect(stripUnsupportedClaims(content, facts)).toEqual({ content, removed: [] })
+})
+
+test('Given没有任何事实 When检查将来时承诺 Then判为无依据说法并剔除', () => {
+  const content = '我会马上派发下一步。'
+  expect(findOwnerClaimViolations([{ role: 'assistant', kind: 'management_progress', content, createdAt: 1 }], NO_FACTS)).toHaveLength(1)
+  expect(stripUnsupportedClaims(content, NO_FACTS).removed).toHaveLength(1)
+})
+
+test('Given只有等待用户决定 When检查将来时承诺 Then仍判无依据', () => {
+  const facts: OwnerClaimFacts = { pendingEvents: 0, runningExecutions: 0, queuedCommands: 0, awaitingUserDecisions: 1 }
+  expect(findOwnerClaimViolations([{ role: 'assistant', kind: 'management_progress', content: '我将立即执行剩余步骤。', createdAt: 1 }], facts)).toHaveLength(1)
 })
 
 test('Given普通说明或已结算说明 When检查 Then不误删', () => {

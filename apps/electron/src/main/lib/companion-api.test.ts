@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createCompanionApi, type CompanionApiDeps } from './companion-api'
+import { EventRouter, writeEventRules, type AgentAutomationEvent, type DispatchOutcome } from './event-router-service'
 
 /**
  * Companion API 纯路由表测试：依赖全部注入 fake，不依赖真实主进程服务。
@@ -27,6 +31,7 @@ function makeDeps(overrides: Partial<CompanionApiDeps> = {}): CompanionApiDeps {
     getVapidPublicKey: () => 'vapid-public-key',
     subscribePush: () => true,
     unsubscribePush: () => true,
+    dispatchAutomationEvent: async () => [{ ruleName: '', status: 'no_rule' }],
     ...overrides,
   }
 }
@@ -188,5 +193,107 @@ describe('companion-api 路由兜底', () => {
     const api = createCompanionApi(makeDeps())
     const res = await api('GET', '/api/unknown', undefined, new URLSearchParams(), 'good-token')
     expect(res).toBeNull()
+  })
+})
+
+describe('companion-api 外部事件 hook', () => {
+  function hookDeps(overrides: Partial<CompanionApiDeps> = {}): CompanionApiDeps {
+    return makeDeps({ dispatchAutomationEvent: async () => [{ ruleName: '唤醒', status: 'matched' }], ...overrides })
+  }
+
+  test('无 token 时拒绝（不泄露 trigger 是否存在）', async () => {
+    const api = createCompanionApi(hookDeps())
+    const res = await api('POST', '/api/hooks/owner-goal', { projectId: 'p-1' }, new URLSearchParams())
+    expect(res!.status).toBe(401)
+  })
+
+  test('合法请求构造事件并交给路由器，返回各 outcome', async () => {
+    const dispatched: AgentAutomationEvent[] = []
+    const api = createCompanionApi(hookDeps({
+      dispatchAutomationEvent: async (event) => {
+        dispatched.push(event)
+        return [{ ruleName: '唤醒', status: 'matched' }]
+      },
+    }))
+
+    const res = await api(
+      'POST', '/api/hooks/owner-goal',
+      { projectId: 'p-1', taskId: 't-1', summary: 'PR #42 已合并' },
+      new URLSearchParams(), 'good-token',
+    )
+
+    expect(res!.status).toBe(200)
+    expect(dispatched).toHaveLength(1)
+    expect(dispatched[0]?.source).toBe('webhook')
+    expect(dispatched[0]?.type).toBe('owner-goal')
+    expect(dispatched[0]?.target).toBe('p-1')
+    expect(dispatched[0]?.summary).toBe('PR #42 已合并')
+    expect(dispatched[0]?.payload).toEqual({ projectId: 'p-1', taskId: 't-1' })
+  })
+
+  test('缺 projectId 返回 400', async () => {
+    const api = createCompanionApi(hookDeps())
+    const res = await api('POST', '/api/hooks/owner-goal', { summary: 'x' }, new URLSearchParams(), 'good-token')
+    expect(res!.status).toBe(400)
+  })
+
+  test('summary 缺省时用 projectId 兜底（不产生空摘要）', async () => {
+    const dispatched: AgentAutomationEvent[] = []
+    const api = createCompanionApi(hookDeps({
+      dispatchAutomationEvent: async (event) => { dispatched.push(event); return [] },
+    }))
+    await api('POST', '/api/hooks/owner-goal', { projectId: 'p-9' }, new URLSearchParams(), 'good-token')
+    expect(dispatched[0]?.summary).toContain('p-9')
+  })
+
+  test('全部规则都失败时返回 502（让调用方重试）', async () => {
+    const api = createCompanionApi(hookDeps({
+      dispatchAutomationEvent: async () => [{ ruleName: '唤醒', status: 'failed' }],
+    }))
+    const res = await api('POST', '/api/hooks/owner-goal', { projectId: 'p-1' }, new URLSearchParams(), 'good-token')
+    expect(res!.status).toBe(502)
+  })
+
+  test('无规则命中时返回 202（事件已接收但无处理方）', async () => {
+    const api = createCompanionApi(hookDeps({
+      dispatchAutomationEvent: async () => [{ ruleName: '', status: 'no_rule' }],
+    }))
+    const res = await api('POST', '/api/hooks/owner-goal', { projectId: 'p-1' }, new URLSearchParams(), 'good-token')
+    expect(res!.status).toBe(202)
+  })
+
+  test('调用成功写审计 hook_owner_goal', async () => {
+    const audits: string[] = []
+    const api = createCompanionApi(hookDeps({
+      appendAudit: async (input) => { audits.push(input.action) },
+    }))
+    await api('POST', '/api/hooks/owner-goal', { projectId: 'p-1' }, new URLSearchParams(), 'good-token')
+    expect(audits).toEqual(['hook_owner_goal'])
+  })
+
+  test('端到端：同一 webhook 在去重窗口内重放，第二次为 duplicate 且不唤醒', async () => {
+    const wakes: string[] = []
+    let rulesPath = ''
+    const dir = mkdtempSync(join(tmpdir(), 'hook-e2e-'))
+    try {
+      rulesPath = join(dir, 'event-rules.json')
+      writeEventRules(
+        [{ name: '唤醒', when: { source: 'webhook', types: ['owner-goal'] }, to: { kind: 'owner-goal', projectId: 'p-1' } }],
+        rulesPath,
+      )
+      const router = new EventRouter(undefined, async (input) => { wakes.push(input.projectId); return true })
+      router.setRulesPath(rulesPath)
+      const api = createCompanionApi(makeDeps({ dispatchAutomationEvent: (event) => router.dispatch(event) }))
+
+      const first = await api('POST', '/api/hooks/owner-goal', { projectId: 'p-1', taskId: 't-1' }, new URLSearchParams(), 'good-token')
+      const second = await api('POST', '/api/hooks/owner-goal', { projectId: 'p-1', taskId: 't-1' }, new URLSearchParams(), 'good-token')
+
+      expect(first!.status).toBe(200)
+      expect(((await first!.json()) as { outcomes: DispatchOutcome[] }).outcomes[0]?.status).toBe('matched')
+      expect(((await second!.json()) as { outcomes: DispatchOutcome[] }).outcomes[0]?.status).toBe('duplicate')
+      expect(wakes).toEqual(['p-1'])
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

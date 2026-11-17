@@ -1,7 +1,7 @@
 import { ownerAssignmentFailureReason } from './project-owner-failure-reason'
 import { captureOwnerTextDelivery } from './project-owner-text-delivery'
 import { requestOwnerManagementWake } from './project-owner-management-events'
-import { appendOwnerManagementMessage, recordOwnerManagementTeamChanged } from './project-owner-management-store'
+import { appendOwnerManagementMessage, getOwnerManager, recordOwnerManagementTeamChanged } from './project-owner-management-store'
 import { ownerTaskDeliveryKind, readOwnerCommandFrozenSource, readOwnerCommandRuntime } from './project-owner-employee-runtime'
 import { resolveOwnerEmployeeInvocation } from './project-owner-employee-invocation'
 import { awaitOwnerRequestSettlements } from './project-owner-execution-request-exit'
@@ -39,7 +39,7 @@ import { buildDevelopmentInstructions, validateDevelopmentTarget } from './agent
 import { getDevelopmentEmployeeStandard, type DevelopmentEmployeeStandardSnapshot } from './agent-development-standard'
 import { validateControlledConfiguration, validateControlledTarget } from './agent-controlled-context'
 import { assertControlledPreparedExecution, claimControlledPreparedExecution, requiresControlledStart } from './controlled-project-task-service'
-import { createDevelopmentWorktree, resolveDevelopmentWorktree, captureDevelopmentEvidence } from './agent-development-worktree'
+import { createDevelopmentWorktree, resolveDevelopmentWorktree, captureDevelopmentEvidence, DevelopmentWorkspaceBlockedError } from './agent-development-worktree'
 import { getProjectChain } from './project-chain-service'
 import { getPilotPolicy } from './project-pilot-policy'
 import { getActivePilotGrant } from './project-pilot-grant-issue'
@@ -79,6 +79,7 @@ import { recordOwnerTechnicalReviewEvidence } from './project-owner-technical-re
 import { ownerExecutionHash } from './project-owner-execution-hash'
 import { hydrateOwnerDevelopmentReviewerPrompt, ownerDevelopmentArtifactReferenceFromPrompt, readOwnerDevelopmentArtifactForReview, seedOwnerDevelopmentRework, seedOwnerDevelopmentDependencies } from './project-owner-development-artifact'
 import { prepareOwnerTargetDirectories } from './project-owner-safe-directory'
+import { resolveMixedBatchHandoffTarget, seedFailedDevelopmentWorktree } from './project-owner-development-recovery'
 import type { PilotUsageEvidence } from './project-pilot-budget-ledger'
 import { updateTask, getTask, updateExecutionSubTask } from './project-service'
 import { getSettings } from './settings-service'
@@ -765,6 +766,50 @@ export async function dispatchTaskToAgentIfIdle(task: Task): Promise<{ taskId: s
   return dispatchTaskToAgent(task)
 }
 
+/**
+ * 混合批次恢复：把同一 step 上一次失败的 worktree 改动接到新 worktree。
+ * 没有可交接的失败现场时静默返回（新 worktree 保持干净）；核验失败时抛错，
+ * 由调用方按「认领前准备失败」处理，绝不静默丢弃半成品。
+ */
+async function seedMixedBatchFailure(
+  projectId: string,
+  commandId: string,
+  workspace: NonNullable<ReturnType<typeof getAgentWorkspace>>,
+  targetWorktreePath: string,
+  targetSessionDirectory: string,
+): Promise<void> {
+  if (!workspace.rootPath) return
+  // 冻结来源同时提供 step 关联与文件范围，只解析一次（内含整份来源的完整性重算）。
+  const { source, taskId } = readOwnerCommandFrozenSource(commandId)
+  const target = resolveMixedBatchHandoffTarget({
+    projectId, taskId, currentWorkspace: workspace,
+    lookupSessionWorkspaceId: sessionId => getAgentSessionMeta(sessionId)?.workspaceId,
+    lookupWorkspace: workspaceId => getAgentWorkspace(workspaceId),
+    resolveSessionDirectory: getAgentSessionWorkspacePath,
+  })
+  if (!target) return
+  const scope = source.tasks.find(item => item.taskId === taskId)?.developmentScope
+  if (!scope) throw new Error('Owner研发执行缺少冻结文件范围')
+  const snapshot = await seedFailedDevelopmentWorktree({
+    repository: workspace.rootPath,
+    failedWorktreePath: target.failedWorktreePath,
+    failedSessionDirectory: target.failedSessionDirectory,
+    failedExecutionId: target.failedExecutionId,
+    workspaceId: workspace.id,
+    targetWorktreePath,
+    targetSessionDirectory,
+    scope,
+  })
+  if (snapshot) {
+    store.recordProjectActivity({
+      projectId, entityType: 'task', entityId: taskId, action: 'owner_development_handoff',
+      actor: 'system:owner-runtime',
+      summary: `已接续上次失败工作树（执行 ${target.failedExecutionId.slice(0, 8)}）的 ${snapshot.files.length} 个文件改动，未丢弃半成品。`,
+      payload: { commandId, failedExecutionId: target.failedExecutionId, contentHash: snapshot.contentHash, files: snapshot.files.map(file => file.path) },
+    })
+  }
+}
+
 /** 尝试启动一个 queued 执行：同项目并发未超限时才启动 */
 export async function tryStartExecution(executionId: string): Promise<boolean> {
   const execution = store.getAgentExecution(executionId)
@@ -1005,12 +1050,14 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
       if (previous && !previousPath) throw new Error('上次研发 worktree 绑定缺失，不能在主仓库或新基线上静默返工')
       const worktree = previousPath ? { path: previousPath, continuedFromExecutionId: previous!.id } : createDevelopmentWorktree(workspace.rootPath!, sessionDirectory, executionId)
       if (ownerExecution?.role === 'executor') {
-        const continuedFrom = await seedOwnerDevelopmentRework(ownerExecution.commandId, worktree.path)
-          ?? await seedOwnerDevelopmentDependencies(ownerExecution.commandId, worktree.path)
-        if (continuedFrom) Object.assign(worktree, { continuedFromExecutionId: continuedFrom })
         const { source: frozen, taskId } = readOwnerCommandFrozenSource(ownerExecution.commandId)
         const scope = frozen.tasks.find(item => item.taskId === taskId)?.developmentScope
         if (!scope) throw new Error('Owner研发执行缺少冻结文件范围')
+        // 返工/依赖交接优先：它们已经携带准确的上游成果。
+        const continuedFrom = await seedOwnerDevelopmentRework(ownerExecution.commandId, worktree.path)
+          ?? await seedOwnerDevelopmentDependencies(ownerExecution.commandId, worktree.path)
+        if (continuedFrom) Object.assign(worktree, { continuedFromExecutionId: continuedFrom })
+        else await seedMixedBatchFailure(execution.projectId, ownerExecution.commandId, workspace, worktree.path, sessionDirectory)
         prepareOwnerTargetDirectories(worktree.path, scope.targetPaths, scope.allowedPaths)
       }
       const taskPrompt = ownerExecution || execution.developmentStandardId ? execution.prompt : buildAgentTaskPrompt(task!, employee)
@@ -1021,10 +1068,34 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
     console.error('[AgentEmployee] 创建会话失败:', error)
     const message = error instanceof Error ? error.message : '创建 Agent 会话失败'
     if (ownerExecution) {
+      // 阻塞项在事务外补工作区身份：createDevelopmentWorktree 只拿到仓库路径，不知道工作区名。
+      const workspace = workspaceId ? getAgentWorkspace(workspaceId) : undefined
+      const workspaceBlocker = error instanceof DevelopmentWorkspaceBlockedError
+        ? { ...error.blocker, workspaceId: workspace?.id ?? error.blocker.workspaceId, workspaceName: workspace?.name ?? '' }
+        : undefined
       store.getProjectDb().transaction(() => {
         store.updateAgentExecution(executionId, { error: `Owner认领前准备失败：${message}；准备成果已保留，暂停重复派发` })
         store.getProjectDb().prepare("UPDATE project_owner_execution_commands SET state='needs_reconcile',updated_at=? WHERE id=? AND execution_id=? AND state='queued'").run(Date.now(),ownerExecution.commandId,executionId)
-        store.recordProjectActivity({projectId:execution.projectId,entityType:'task',entityId:execution.entityId,action:'owner_prestart_blocked',actor:'system:owner-runtime',summary:'Owner认领前准备失败，保留准备成果与费用预留，暂停重复派发。',payload:{commandId:ownerExecution.commandId,executionId,reason:message}})
+        store.recordProjectActivity({
+          projectId: execution.projectId, entityType: 'task', entityId: execution.entityId,
+          action: 'owner_prestart_blocked', actor: 'system:owner-runtime',
+          summary: workspaceBlocker
+            ? `研发工作区阻止启动：${workspaceBlocker.detail}。${workspaceBlocker.remedy}`
+            : 'Owner认领前准备失败，保留准备成果与费用预留，暂停重复派发。',
+          payload: { commandId: ownerExecution.commandId, executionId, reason: message, ...(workspaceBlocker ? { workspaceBlocker } : {}) },
+        })
+        // 管理主体不存在时静默跳过：提示是辅助信息，不能因此回滚执行错误与 needs_reconcile 状态。
+        if (workspaceBlocker && getOwnerManager(execution.projectId)) {
+          // 让用户在 Owner 对话里直接看到阻塞原因与文件清单，而不是只留在活动流。
+          appendOwnerManagementMessage({
+            projectId: execution.projectId,
+            eventId: `owner-development-blocked:${executionId}`,
+            role: 'assistant',
+            kind: 'attention',
+            ...(execution.entityId ? { taskId: execution.entityId } : {}),
+            content: `研发工作区「${workspaceBlocker.workspaceName || workspaceBlocker.workspaceId}」阻止了启动。\n\n${workspaceBlocker.detail}\n\n已跟踪文件：${workspaceBlocker.trackedFiles.length ? workspaceBlocker.trackedFiles.join('、') : '无'}\n未跟踪文件：${workspaceBlocker.untrackedFiles.length ? workspaceBlocker.untrackedFiles.join('、') : '无'}\n\n${workspaceBlocker.remedy}`,
+          })
+        }
       })()
     }
     else if (execution.pilotCommandId) store.updateAgentExecution(executionId, { error: `Pilot 启动准备失败：${message}` })

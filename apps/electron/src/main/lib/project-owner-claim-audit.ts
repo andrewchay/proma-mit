@@ -10,6 +10,8 @@ export interface OwnerClaimFacts {
   pendingEvents: number
   /** 当前状态为 running 的 Owner 命令执行数。 */
   runningExecutions: number
+  /** 已排队但尚未启动的 Owner 命令数；这是“已安排”的事实依据。 */
+  queuedCommands: number
   /** 等待用户决定的员工交互数；这不是“后台处理”，不入账。 */
   awaitingUserDecisions: number
 }
@@ -26,6 +28,9 @@ const BACKGROUND_CLAIM_PATTERNS: RegExp[] = [
   /(?:正在|已在)(?:后台|内部)?(?:核查|复查|核对|处理|推进|整理)/,
   /后台(?:继续)?(?:核查|复查|处理|推进|整理)/,
   /稍后(?:会)?自动(?:继续|处理|重试)/,
+  // 将来时承诺同样是说法：没有排队或运行事实时，“我将重新安排”只是空话。
+  /(?:我)?(?:会|将|马上|立即)(?:在后台)?(?:重新)?(?:安排|派发|启动|执行|推进)/,
+  /(?:已|正在)(?:在后台)?(?:安排|派发)/,
 ]
 
 export function claimsBackgroundWork(content: string): boolean {
@@ -34,7 +39,8 @@ export function claimsBackgroundWork(content: string): boolean {
 
 /** 按句子剔除没有事实支撑的后台说法；保留原意中可核对的部分。 */
 export function stripUnsupportedClaims(content: string, facts: OwnerClaimFacts): { content: string; removed: string[] } {
-  if (facts.pendingEvents > 0 || facts.runningExecutions > 0) return { content, removed: [] }
+  const hasBackgroundWork = facts.pendingEvents > 0 || facts.runningExecutions > 0 || facts.queuedCommands > 0
+  if (hasBackgroundWork) return { content, removed: [] }
   const sentences = content.split(/(?<=[。！？!?\n])/).map(item => item.trim()).filter(Boolean)
   const removed: string[] = []
   const kept = sentences.filter(sentence => {
@@ -49,7 +55,7 @@ export function stripUnsupportedClaims(content: string, facts: OwnerClaimFacts):
 
 /** 返回违反“说法对应事实”的消息；空数组表示当前可见说法都有事实支撑。 */
 export function findOwnerClaimViolations(messages: ReadonlyArray<OwnerClaimMessage>, facts: OwnerClaimFacts): OwnerClaimMessage[] {
-  const hasBackgroundWork = facts.pendingEvents > 0 || facts.runningExecutions > 0
+  const hasBackgroundWork = facts.pendingEvents > 0 || facts.runningExecutions > 0 || facts.queuedCommands > 0
   if (hasBackgroundWork) return []
   return messages.filter(message => message.role !== 'user' && claimsBackgroundWork(message.content))
 }
@@ -67,6 +73,7 @@ export function readOwnerClaimFacts(projectId: string): OwnerClaimFacts {
     pendingEvents: (db.prepare(`SELECT COUNT(*) AS count FROM project_owner_management_events WHERE project_id=? AND consumed_at IS NULL
       AND json_extract(payload,'$.kind') IN (${BACKGROUND_EVENT_KINDS.map(() => '?').join(',')})`).get(projectId, ...BACKGROUND_EVENT_KINDS) as { count: number }).count,
     runningExecutions: (db.prepare("SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE project_id=? AND state='running'").get(projectId) as { count: number }).count,
+    queuedCommands: (db.prepare("SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE project_id=? AND state='queued'").get(projectId) as { count: number }).count,
     awaitingUserDecisions: (db.prepare(`SELECT COUNT(*) AS count FROM project_owner_employee_interactions
       WHERE project_id=? AND json_extract(payload,'$.state') IN ('discussing_user','pending_user')`).get(projectId) as { count: number }).count,
   }

@@ -14,6 +14,7 @@ import {
   defaultEventRulesFile,
   type AgentAutomationEvent,
   type WorkflowEventExecutor,
+  type OwnerGoalWakeExecutor,
 } from './event-router-service'
 
 function makeEvent(overrides: Partial<AgentAutomationEvent> = {}): AgentAutomationEvent {
@@ -187,10 +188,18 @@ describe('事件路由器', () => {
     expect(outcomes).toEqual([{ ruleName: '', status: 'no_rule' }])
   })
 
+  test('默认模板包含可发现的 owner-goal 样例（默认停用）', () => {
+    const ownerGoalRules = defaultEventRulesFile().rules.filter((rule) => rule.to.kind === 'owner-goal')
+    expect(ownerGoalRules).toHaveLength(1)
+    expect(ownerGoalRules[0]?.enabled).toBe(false)
+    expect(ownerGoalRules[0]?.when).toEqual({ source: 'webhook', types: ['owner-goal'] })
+  })
+
   test('规则文件读写往返 + 损坏文件按空规则处理', () => {
     const rules = defaultEventRulesFile().rules
     writeEventRules(rules, rulesPath)
-    expect(readEventRules(rulesPath)).toHaveLength(1)
+    // 往返语义：读回的内容与写入一致（不断言模板规则条数，避免模板演进误伤）
+    expect(readEventRules(rulesPath)).toEqual(rules)
     expect(existsSync(rulesPath)).toBe(true)
 
     writeFileSync(rulesPath, '{oops', 'utf-8')
@@ -218,5 +227,65 @@ describe('事件路由器', () => {
     const outcomes = await router.dispatch(makeEvent({ type: 'x' }))
     expect(outcomes).toHaveLength(2)
     expect(outcomes.every((o) => o.status === 'matched')).toBe(true)
+  })
+})
+
+describe('owner-goal 目标', () => {
+  let dir: string
+  let rulesPath: string
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'event-router-owner-'))
+    rulesPath = join(dir, 'event-rules.json')
+  })
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  function makeRouter(wake?: OwnerGoalWakeExecutor): EventRouter {
+    const router = new EventRouter(undefined, wake)
+    router.setRulesPath(rulesPath)
+    return router
+  }
+
+  test('validateEventRule 接受合法 owner-goal，拒绝空 projectId', () => {
+    expect(validateEventRule({ name: 'x', when: {}, to: { kind: 'owner-goal', projectId: 'p-1' } })).toEqual([])
+    expect(validateEventRule({ name: 'x', when: {}, to: { kind: 'owner-goal', projectId: 'p-1', taskId: 't-1' } })).toEqual([])
+    expect(validateEventRule({ name: 'x', when: {}, to: { kind: 'owner-goal', projectId: '' } })).toContain('to.projectId 不能为空')
+    expect(validateEventRule({ name: 'x', when: {}, to: { kind: 'owner-goal', projectId: 'p', taskId: '' } })).toContain('to.taskId 不能为空字符串')
+  })
+
+  test('规则命中 owner-goal：把 projectId/taskId 交给唤醒执行器', async () => {
+    const calls: Array<{ projectId: string; taskId?: string }> = []
+    const router = makeRouter(async (input) => { calls.push(input); return true })
+    writeEventRules(
+      [{ name: '唤醒', when: { types: ['issue.updated'] }, to: { kind: 'owner-goal', projectId: 'p-1', taskId: 't-1' } }],
+      rulesPath,
+    )
+
+    const outcomes = await router.dispatch(makeEvent({ type: 'issue.updated' }))
+
+    expect(calls).toEqual([{ projectId: 'p-1', taskId: 't-1' }])
+    expect(outcomes).toEqual([{ ruleName: '唤醒', status: 'matched', detail: expect.stringContaining('Owner') as unknown as string }])
+  })
+
+  test('唤醒执行器返回 false 时 outcome 为 failed', async () => {
+    const router = makeRouter(async () => false)
+    writeEventRules([{ name: '唤醒', when: { types: ['x'] }, to: { kind: 'owner-goal', projectId: 'p-1' } }], rulesPath)
+
+    const outcomes = await router.dispatch(makeEvent({ type: 'x' }))
+
+    expect(outcomes[0]?.status).toBe('failed')
+  })
+
+  test('唤醒执行器抛错时 outcome 为 failed 且不冒泡', async () => {
+    const router = makeRouter(async () => { throw new Error('数据库被锁') })
+    writeEventRules([{ name: '唤醒', when: { types: ['x'] }, to: { kind: 'owner-goal', projectId: 'p-1' } }], rulesPath)
+
+    const outcomes = await router.dispatch(makeEvent({ type: 'x' }))
+
+    expect(outcomes[0]?.status).toBe('failed')
+    expect(outcomes[0]?.detail).toContain('数据库被锁')
   })
 })
