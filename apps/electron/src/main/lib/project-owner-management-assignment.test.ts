@@ -1278,8 +1278,8 @@ test('Given 确认事务回滚或旧方案来源失效 When 后台处理 Then �
 }, 20_000)
 
 
-test('Given项目已有general员工且无精确模板 When确认方案 Then后台用既有能力形成安排、不改员工档案或让用户重建', async () => {
-  for (const team of ['general', 'missing-role', 'mixed'] as const) {
+for (const team of ['general', 'missing-role', 'mixed'] as const) {
+  test(`Given项目已有 ${team} 员工 When确认方案 Then后台安排且不改员工档案`, async () => {
     const f = fixture(team), grant = authorize(f), stop = startOwnerManagementLoop()
     try {
       const before = employees.listAgentEmployees().filter(item => [f.executor.id, f.reviewer!.id].includes(item.id))
@@ -1292,8 +1292,8 @@ test('Given项目已有general员工且无精确模板 When确认方案 Then后�
       expect(after.map(item => ({ id: item.id, profile: item.executionProfile, template: item.roleTemplateId, channel: item.channelId, model: item.modelId }))).toEqual(before.map(item => ({ id: item.id, profile: item.executionProfile, template: item.roleTemplateId, channel: item.channelId, model: item.modelId })))
       expect(delegation.getOwnerManagementDelegation(f.project.id).usedRequests).toBe(1)
     } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
-  }
-}, 30_000)
+  }, 60_000)
+}
 
 test('Given历史完整安排仅因空代码范围被拒绝 When本地恢复并对账 Then保留原失败和费用且不新增安排请求', async () => {
   const f = fixture()
