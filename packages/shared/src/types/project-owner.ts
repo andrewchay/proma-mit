@@ -1076,6 +1076,28 @@ export interface OwnerExecutionCommandView {
   ackFingerprint: string
   createdAt: number
   updatedAt: number
+  /** 终态证据；旧命令可能没有。 */
+  terminalEvidence?: OwnerTerminalEvidence
+}
+
+/** Owner命令终态证据：只含本地回执与脱敏摘要，不含正文、参数或凭据。 */
+export interface OwnerTerminalEvidence {
+  schemaVersion: 1
+  executionId: string
+  commandId: string
+  role: 'executor' | 'reviewer'
+  executionStatus: string
+  /** Provider 原始终止原因；只来自 Runtime 回执。 */
+  provider: { subtype: string | null; finishReason: string | null; requestId: string | null; responseId: string | null } | null
+  /** 归一化原因；用于界面文案与恢复判定。 */
+  reason: 'provider_stop' | 'output_limit' | 'tool_call_incomplete' | 'runtime_error' | 'stopped_by_user' | 'no_output' | 'unknown'
+  /** 脱敏后的简短说明（≤300 字符）。 */
+  detail: string
+  tools: { calls: number; results: number; lastToolName: string | null; lastResultStatus: 'ok' | 'error' | 'missing' | null; incompleteBatch: boolean }
+  cost: { state: 'settled' | 'unknown'; actualCostMicros: number | null; requestCount: number }
+  /** 研发执行的工作树现场；非研发或不可核验时为 null。 */
+  development: { worktreePath: string | null; baseCommit: string | null; changedFiles: string[]; untrackedFiles: string[] } | null
+  capturedAt: number
 }
 
 /** 本机保存的完整文本成果；正文来自准确Executor最终回复，不是外部事实验证。 */
