@@ -1,8 +1,10 @@
 import { afterAll, beforeAll, expect, mock, test } from 'bun:test'
 import { randomUUID } from 'node:crypto'
+import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
 import { build } from 'esbuild'
 import { chromium } from '@playwright/test'
@@ -95,7 +97,7 @@ const FDE_PDF_PAGES = [
 ]
 const FDE_CITED_FACTS = ['S1 feeding error prevention', '4-week baseline', '10-week pilot', '3.08M', '2.58M', '36 months', '3:4:2:1', 'S2 batch traceability']
 
-/** fake 员工交付的单文件网页2048（真实可运行的完整逻辑，作为文本成果）。 */
+/** fake 研发员工交付的单文件网页2048（包含可运行的游戏逻辑）。 */
 const GAME_HTML = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"><title>2048</title>
@@ -201,8 +203,39 @@ restart()
 </body>
 </html>`
 
+function gameEvidence(criterion: string): string {
+  if (criterion.includes('4×4')) return 'const SIZE = 4'
+  if (criterion.includes('判负')) return 'if (!canMove()) over = true'
+  if (criterion.includes('最高分')) return 'localStorage.setItem(bestKey, String(best))'
+  if (criterion.includes('离线')) return '<!DOCTYPE html>'
+  if (criterion.includes('测试验证')) return 'const merged = slideRow([2, 2, 4, 4])'
+  throw new Error(`未知游戏验收标准：${criterion}`)
+}
+
 beforeAll(async () => {
+  const native = join(root, 'apps/electron/resources/owner-safe-directory/owner_safe_directory.node')
+  if (existsSync(chromium.executablePath()) && !existsSync(native)) execFileSync('bun', ['run', 'build:owner-safe-directory'], { cwd: join(root, 'apps/electron') })
   await database.initProjectDb()
+  const verifier = await import('../../../main/lib/owner-runtime-browser-verifier')
+  verifier.setOwnerRuntimeBrowserRunner(async input => {
+    const startedAt = performance.now()
+    const verifierBrowser = await chromium.launch({ headless: true })
+    const context = await verifierBrowser.newContext()
+    const page = await context.newPage()
+    const errors: string[] = []
+    page.on('pageerror', error => errors.push(error.message))
+    page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
+    await page.route('**/*', route => route.request().url().startsWith('file:') ? route.continue() : route.abort())
+    try {
+      await page.goto(pathToFileURL(input.filePath).href, { timeout: input.timeoutMs })
+      const checks = []
+      for (const template of input.templates) {
+        const result = await page.evaluate((script: string) => (0, eval)(script) as { passed: boolean; detail: string }, template.script)
+        checks.push({ id: template.id, title: template.title, status: result.passed && errors.length === 0 ? 'passed' as const : 'failed' as const, detail: errors[0] ?? result.detail })
+      }
+      return { checks, durationMs: Math.round(performance.now() - startedAt), timedOut: false, relativePath: input.filePath }
+    } finally { await context.close(); await verifierBrowser.close() }
+  })
   setHeadlessAgentRunner(async (input, handlers) => {
     const execution = database.getAgentExecutionBySessionId(input.sessionId)
     if (execution?.ownerCommandId) {
@@ -217,7 +250,22 @@ beforeAll(async () => {
       const fetch = createControlledProviderFetch(input.sessionId, () => ({ runtime: 'ai-sdk', cwd: getAgentWorkspaceCwd(workspace, input.sessionId), modelId: input.modelId!, permissionMode: 'safe' }), transport)
       await fetch('https://example.invalid/v1/chat/completions', { method: 'POST', body: JSON.stringify({ model: input.modelId, max_tokens: 100, messages: [{ role: 'user', content: input.userMessage }] }) })
       let content: string
-      if (command.role === 'reviewer') {
+      const frozen = (await import('../../../main/lib/project-owner-employee-runtime')).readOwnerCommandFrozenSource(execution.ownerCommandId)
+      const development = (await import('../../../main/lib/project-owner-employee-runtime')).ownerTaskDeliveryKind(frozen.source, frozen.taskId) === 'development'
+      if (development && command.role === 'executor') {
+        const { bindTestToolContext } = await import('../../../main/lib/testing/bound-tool-context')
+        const { executeWriteTool } = await import('../../../main/lib/agent-runtime/tool-impls/write-tool')
+        const cwd = getAgentWorkspaceCwd(workspace, input.sessionId)
+        const written = await executeWriteTool({ file_path: 'index.html', content: GAME_HTML }, bindTestToolContext({ cwd, sessionId: input.sessionId, ownerWorkspaceWrite: true }))
+        if (written.isError) throw new Error(written.content)
+      }
+      if (command.role === 'reviewer' && development) {
+        const artifact = (await import('../../../main/lib/project-owner-development-artifact')).ownerDevelopmentArtifactFromPrompt(input.userMessage)
+        if (!artifact) throw new Error('fake Reviewer 缺少研发快照')
+        const step = database.getProjectDb().prepare('SELECT payload FROM project_owner_task_step_links WHERE task_id=?').get(execution.entityId) as { payload: string }
+        const acceptanceCriteria = (JSON.parse(step.payload) as { projection: { acceptanceCriteria: string[] } }).projection.acceptanceCriteria
+        content = JSON.stringify({ schemaVersion: 3, artifactHash: artifact.contentHash, verdict: 'approved', summary: '核对代码快照及浏览器验证', criteria: acceptanceCriteria.map(criterion => ({ criterion, status: 'met', evidence: '代码快照中包含对应实现', quote: gameEvidence(criterion) })), findings: [], blockerReason: null })
+      } else if (command.role === 'reviewer') {
         const { assertOwnerReviewerTextDelivery } = await import('../../../main/lib/project-owner-text-delivery')
         const artifact = assertOwnerReviewerTextDelivery(execution.ownerCommandId)
         const step = database.getProjectDb().prepare('SELECT payload FROM project_owner_task_step_links WHERE task_id=?').get(execution.entityId) as { payload: string }
@@ -253,12 +301,15 @@ beforeAll(async () => {
     claimOwnerPlanningProviderRequest(input.sessionId, body, new URL('https://example.invalid/v1/chat/completions'))
     const objective: string = source.context.goal.goal.objective
     let result: Record<string, unknown>
-    if (source.context.conversation?.deliveryReview?.qualityDecisionVersion === 1 && source.context.conversation.deliveryReview.artifact && source.context.conversation.executionObservation) {
+    if (source.context.conversation?.deliveryReview?.qualityDecisionVersion === 1 && (source.context.conversation.deliveryReview.artifact || source.context.conversation.deliveryReview.developmentArtifact) && source.context.conversation.executionObservation) {
       calls.push('owner_quality')
-      const artifact = source.context.conversation.deliveryReview.artifact
+      const artifact = source.context.conversation.deliveryReview.artifact ?? source.context.conversation.deliveryReview.developmentArtifact!
+      const artifactHash = 'contentSha256' in artifact ? artifact.contentSha256 : artifact.contentHash
+      const development = 'contentHash' in artifact
       const review = source.context.conversation.deliveryReview.review
       // 质量决定的每条引用必须是完整成果内的真实原文摘录（≤1000字符），与生产协议一致。
       const quoteFor = (criterion: string): string => {
+        if (development) return gameEvidence(criterion)
         const anchor = criterion.includes('页码') ? '（第1页）' : criterion.includes('离线') ? '完全离线、无网络请求' : criterion.includes('随机生成') ? '每步随机生成2或4' : criterion.includes('判负') ? '无路可走判负' : criterion.includes('最高分') ? '得分与最高分（localStorage）展示，可重新开始' : criterion.includes('测试验证') ? '文件内置合并、随机生成与判负的自测断言并已通过' : criterion.includes('阶段划分') ? '先测量、再双轨、最后演练' : criterion.includes('客户配合') ? '先检查暂停条件再检查达标' : criterion.includes('数字') ? '未引入外部检索或推测' : criterion.includes('内部讨论') ? 'FDE 落地要点' : '目标已收到'
         const index = artifact.content.indexOf(anchor)
         if (index < 0) throw new Error(`fake 质量决定找不到标准锚点原文：${anchor}`)
@@ -272,7 +323,7 @@ beforeAll(async () => {
         message: '成果与独立检查已完成核对，正在记录验收结果。',
         decision: {
           reviewerCommandId: source.context.conversation.executionObservation.commandId,
-          artifactHash: artifact.contentSha256,
+          artifactHash,
           verdict: 'accept',
           reason: '已按完整成果、验收标准与独立评审核对',
           criteria: (review ?? { criteria: [] }).criteria.map(item => ({ criterion: item.criterion, status: 'met', evidence: '成果与独立评审均包含对应依据', quote: quoteFor(item.criterion) })),
@@ -305,6 +356,7 @@ beforeAll(async () => {
             ],
             dependencies: [],
             roleKey,
+            deliveryKind: 'development',
           }],
         }
         : {
@@ -323,6 +375,7 @@ beforeAll(async () => {
             ],
             dependencies: [],
             roleKey,
+            deliveryKind: 'text',
           }],
         }
       result = { schemaVersion: 1, kind: 'plan_proposal', binding: { projectId: source.link.projectId, goalVersion: source.context.goal.goal.goalVersion, contextFingerprint: source.context.fingerprint }, proposal }
@@ -343,8 +396,9 @@ beforeAll(async () => {
         scopeReason: '按确认后的结果范围组织执行',
         workspaceId,
         workspaceReason: '使用用户刚确认纳入项目范围的团队工作区',
-        executionKind: 'controlled',
-        executionKindReason: '本次交付不需要修改代码',
+        executionKind: objective.includes('2048') ? 'development' : 'controlled',
+        executionKindReason: objective.includes('2048') ? '交付可运行网页' : '本次交付不需要修改代码',
+        ...(objective.includes('2048') ? { developmentScope: { targetPaths: ['index.html'], allowedPaths: ['index.html'], verificationCommands: ['browser:html.loads'], reason: '验证网页可打开' } } : {}),
         assignments: context.steps.map(item => ({ roleKey: item.roleKey, employeeId: executor.id, reason: '现有员工能力适配本步骤' })),
         reviewerEmployeeId: reviewer.id,
         reviewerReason: '由另一位员工独立检查成果',
@@ -355,6 +409,7 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
+  ;(await import('../../../main/lib/owner-runtime-browser-verifier')).setOwnerRuntimeBrowserRunner(null)
   await journeyBrowser?.close()
   employees.stopAgentEmployeeHeartbeat()
   database.closeProjectDb()
@@ -377,15 +432,21 @@ async function runRealCaseJourney(options: JourneyOptions): Promise<void> {
   const employeeStart = employeeCalls.length
   windowStart = { calls: callStart, employees: employeeStart }
   const project = createProject({ title: `真实案例隔离项目-${randomUUID().slice(0, 6)}`, description: '' })
+  const isDevelopment = options.objective.includes('2048')
+  const repo = isDevelopment ? mkdtempSync(join(directory, 'game-repo-')) : undefined
+  if (repo) {
+    execFileSync('git', ['init', '-q', repo])
+    execFileSync('git', ['-C', repo, '-c', 'user.name=Test', '-c', 'user.email=test@example.invalid', 'commit', '-q', '--allow-empty', '-m', 'baseline'])
+  }
   const workspace = createAgentWorkspace(`owner-real-case-${randomUUID()}`)
-  const teamWorkspace = createAgentWorkspace(`owner-team-case-${randomUUID()}`)
+  const teamWorkspace = createAgentWorkspace(`owner-team-case-${randomUUID()}`, repo)
   bindWorkspaceToProject(project.id, workspace.id)
   const channel = createChannel({ name: 'Owner real case fake', provider: 'openai', baseUrl: 'https://example.invalid/v1', apiKey: 'fake-only', enabled: true, models: [{ id: 'deepseek-flash', name: '隔离模型', enabled: true }] })
   const owner = employees.createAgentEmployee({ name: 'Owner', role: '项目管理者', description: '真实案例旅程Owner载体', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId: 'deepseek-flash', workspaceIds: [workspace.id] })
   // 载体工作区预置一名不参与方案岗位的助理：默认建队守卫生效，Owner走"建议纳入团队工作区→用户确认"路径。
   employees.createAgentEmployee({ name: '项目助理', role: '项目助理', description: '载体工作区常驻助理，不承担本次方案岗位', executionProfile: 'general', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId: 'deepseek-flash', workspaceIds: [workspace.id] })
   for (const [name, roleTemplateId] of [['需求分析师', 'requirements-analyst'], ['独立检查', 'delivery-verifier']] as const) {
-    employees.createAgentEmployee({ name, role: name, roleTemplateId, description: '真实案例隔离员工', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId: 'deepseek-flash', workspaceIds: [teamWorkspace.id] })
+    employees.createAgentEmployee({ name, role: name, roleTemplateId, description: '真实案例隔离员工', executionProfile: isDevelopment ? 'development' : 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId: 'deepseek-flash', workspaceIds: [teamWorkspace.id] })
   }
   saveProjectOwnerGoalDraft(project.id, 0, { objective: options.objective })
   saveOwnerRuntimeBinding(project.id, 0, { ownerName: 'Owner', carrierId: owner.id, workspaceId: workspace.id, changeReason: '真实案例隔离旅程' })
@@ -402,6 +463,9 @@ async function runRealCaseJourney(options: JourneyOptions): Promise<void> {
   const scheduler = await import('../../../main/lib/project-owner-autonomous-scheduler')
   const scheduleEvents = await import('../../../main/lib/project-owner-autonomous-scheduler-events')
   const stopWake = scheduleEvents.onOwnerAutonomousScheduleWake(projectId => { if (projectId === project.id) void scheduler.runOwnerAutonomousSchedule(projectId) })
+  const { onOwnerManagementChanged } = await import('../../../main/lib/project-owner-management-events')
+  let changeRevision = 0
+  const stopChanges = onOwnerManagementChanged(change => { if (change.projectId === project.id) changeRevision++ })
   const stopManagement = startOwnerManagementLoop()
   const apiNames = new Map<string, string>([
     ['getOwnerGoalDraft', PROJECT_IPC_CHANNELS.GET_OWNER_GOAL_DRAFT], ['saveOwnerGoalDraft', PROJECT_IPC_CHANNELS.SAVE_OWNER_GOAL_DRAFT],
@@ -424,12 +488,13 @@ const projectId=${JSON.stringify(project.id)},channels=${JSON.stringify(Object.f
 const invoke=(name,payload)=>fetch('/invoke',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({name,payload})}).then(response=>response.json());
 const projectApi=Object.fromEntries(Object.entries(channels).map(([name,channel])=>[name,payload=>invoke(channel,payload)]));
 window.electronAPI={getSettings:async()=>({}),listChannels:async()=>invoke('listChannels'),listAgentWorkspaces:async()=>invoke('listAgentWorkspaces'),createAgentWorkspace:async name=>invoke('createAgentWorkspace',{name}),paa:{project:projectApi,projectWorkspace:{listByProject:async id=>invoke('listProjectWorkspaceBindings',{projectId:id}),bind:async(projectId,workspaceId)=>invoke('bindWorkspaceToProject',{projectId,workspaceId})},agentEmployees:{list:async()=>invoke('listEmployees'),create:async input=>invoke('createEmployee',{input}),getControlledTaskStartPreview:async taskId=>invoke('getControlledTaskStartPreview',{taskId}),startControlledTask:async input=>invoke('startControlledTask',input)}}};
-projectApi.onOwnerManagementChanged=callback=>{let seen=new Set();const timer=setInterval(async()=>{const response=await projectApi.getOwnerManagement({projectId});if(!response.ok)return;for(const message of response.value.messages){if(seen.has(message.id))continue;seen.add(message.id);callback({projectId,messageId:message.id})}},100);return()=>clearInterval(timer)};
+projectApi.onOwnerManagementChanged=callback=>{let seen=0;const timer=setInterval(async()=>{const revision=await fetch('/events').then(response=>response.json());if(revision>seen){seen=revision;callback({projectId})}},100);return()=>clearInterval(timer)};
 createRoot(document.getElementById('root')).render(<Provider store={createStore()}><ProjectOwnerConversation projectId=${JSON.stringify(project.id)}/></Provider>);
 `)
   const handlers = new Map(ipcHandlers)
   const server = Bun.serve({ hostname: '127.0.0.1', port: 0, async fetch(request) {
     const url = new URL(request.url)
+    if (url.pathname === '/events') return Response.json(changeRevision)
     if (url.pathname !== '/invoke') return new Response('<html><body><div id="root"></div><script src="/entry.js"></script></body></html>', { headers: { 'Content-Type': 'text/html' } })
     const body = await request.json() as { name: string; payload?: unknown }
     bridgeCalls.push(body.name)
@@ -456,8 +521,9 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
   page.setDefaultTimeout(10000)
   const errors: string[] = []
   page.on('pageerror', error => errors.push(error.message))
+  page.on('crash', () => errors.push('页面进程崩溃'))
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()) })
-  const debug = async () => JSON.stringify({ calls: calls.slice(windowStart.calls), employeeCalls: employeeCalls.slice(windowStart.employees), body: (await page.locator('body').innerText()).slice(-8000), planState: getProjectOwnerPlanDraft(project.id)?.state, ownerMessages: getOwnerManagementConversation(project.id).messages.slice(-6), errors }, null, 2)
+  const debug = async () => JSON.stringify({ calls: calls.slice(windowStart.calls), employeeCalls: employeeCalls.slice(windowStart.employees), url: page.url(), closed: page.isClosed(), body: (await page.locator('body').innerText({ timeout: 500 }).catch(() => '<页面不可读>')).slice(-8000), planState: getProjectOwnerPlanDraft(project.id)?.state, ownerMessages: getOwnerManagementConversation(project.id).messages.slice(-6), errors }, null, 2)
   const runHtml = async (html: string): Promise<{ cellCount: number; tileCount: number; bestScore: string; errors: string[] }> => {
     const gameServer = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response(html, { headers: { 'Content-Type': 'text/html; charset=utf-8' } }) })
     const errorStart = errors.length
@@ -491,6 +557,7 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
     if (await retryScope.isVisible()) await retryScope.click()
     await page.getByText('项目总模型费用上限为 $15.00', { exact: false }).waitFor().catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
     await confirmScope.click()
+    await page.getByLabel('待查看团队工作区建议').getByRole('button', { name: '查看范围与确认选项' }).click()
     const teamScope = page.getByLabel('团队工作区范围建议').last()
     await teamScope.waitFor()
     await new Promise(resolve => setTimeout(resolve, 100))
@@ -500,6 +567,8 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
     await page.getByLabel('Owner方案摘要').getByText(options.proposalSummary, { exact: true }).waitFor().catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
     // 自主管理委托包含方案决策与派工；方案摘要是进度信息，不再要求用户批准普通方案或再次开工。
     expect(calls.slice(callStart)).toContain('owner_planning')
+    for (let attempt = 0; attempt < 400 && (!calls.slice(callStart).includes('owner_execution_assignment') || getProjectOwnerPlanDraft(project.id)?.state !== 'confirmed'); attempt++) await new Promise(resolve => setTimeout(resolve, 50))
+    if (!calls.slice(callStart).includes('owner_execution_assignment')) throw new Error(`安排未启动：${await debug()}`)
     expect(calls.slice(callStart)).toContain('owner_execution_assignment')
     expect(getProjectOwnerPlanDraft(project.id)?.state).toBe('confirmed')
     expect(await page.getByRole('button', { name: '确认方案并开始执行', exact: true }).count()).toBe(0)
@@ -527,6 +596,7 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
     server.stop(true)
     stopManagement()
     stopWake()
+    stopChanges()
     // 一个案例结束后停用其管理主体，避免下一案例的全局团队变化唤醒旧项目。
     const managementStore = await import('../../../main/lib/project-owner-management-store')
     const manager = managementStore.getOwnerManager(project.id)
@@ -549,8 +619,10 @@ browserTest('Given两个定稿真实案例 When逐一确认范围 Then Owner分�
       expect(deliveryContent).toContain('localStorage')
       expect(deliveryContent).not.toContain('http://127.0.0.1')
       const delivery = JSON.parse(deliveryContent) as { delivery: { items: Array<{ content: string }> } }
-      const htmlContent = delivery.delivery.items.find(item => item.content.includes('<!DOCTYPE html>'))?.content
-      const html = htmlContent?.match(/```html\n([\s\S]*?)\n```/)?.[1]
+      const snapshotText = delivery.delivery.items.find(item => item.content.includes('<!DOCTYPE html>'))?.content
+      expect(snapshotText).toBeDefined()
+      const snapshot = JSON.parse(snapshotText!) as { files: Array<{ file: { path: string }; newContent: string | null }> }
+      const html = snapshot.files.find(item => item.file.path === 'index.html')?.newContent
       expect(html).toBeDefined()
       const game = await runHtml(html!)
       expect(game.cellCount).toBe(16)

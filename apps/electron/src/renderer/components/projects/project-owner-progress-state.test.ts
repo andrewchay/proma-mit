@@ -37,6 +37,15 @@ test('Given Owner等待用户处理 When 显示对话进度 Then 标签说明具
   expect(getOwnerWaitingLabel([message('management_progress')])).toBeNull()
 })
 
+test('Given Owner把质量决定升级为需人工协商 When 显示项目进度 Then 必须提示等待用户', () => {
+  // 质量决定 escalated 时主进程写 attention；写成 reply 会让界面显示"暂无待你决定的事项"，
+  // 用户看不到任何待办，项目静默停住（真实事故：名称查重无法核验，Owner 提出需协商）。
+  expect(isOwnerWaitingForUser([message('attention')])).toBe(true)
+  expect(getOwnerWaitingLabel([message('attention')])).not.toBeNull()
+  // 对照：普通 reply 不应被当成待办，否则每次回应都会误报。
+  expect(isOwnerWaitingForUser([message('reply')])).toBe(false)
+})
+
 test('Given 同一项目的不同任务有不同状态 When 加载某个任务进度 Then 只使用该任务自己的Owner消息', () => {
   const messages = [message('attention', 'assistant', 'task-a'), message('management_progress', 'assistant', 'task-b')]
   expect(isOwnerWaitingForUser(messages, 'task-a')).toBe(true)

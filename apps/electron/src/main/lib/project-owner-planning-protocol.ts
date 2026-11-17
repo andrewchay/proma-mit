@@ -302,7 +302,7 @@ function validateContext(context: ProjectOwnerPlanningContext): void {
 }
 
 /** 此角色描述不创建Owner principal或员工，不授予文件/工具/费用权限。 */
-export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningContext, format: 'legacy' | 'fragment' | 'envelope' = 'envelope', strictOutputHints = true, qualityEnvelope = true, scopedObservationPrompt = true, independentReviewLane = true, explicitQualityQuotes = true, scopedFileChangePrompt = true): ProjectOwnerPlanningRequest {
+export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningContext, format: 'legacy' | 'fragment' | 'envelope' = 'envelope', strictOutputHints = true, qualityEnvelope = true, scopedObservationPrompt = true, independentReviewLane = true, explicitQualityQuotes = true, scopedFileChangePrompt = true, requireDeliveryKind = true, showStructureExample = true, correctStepExamples = true): ProjectOwnerPlanningRequest {
   validateContext(context)
   const binding = { projectId: context.goal.goal.projectId,
     ...(context.goal.goal.taskId === undefined ? {} : { taskId: context.goal.goal.taskId }),
@@ -330,7 +330,7 @@ export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningCo
     '每个澄清问题必须标注reasonType：普通决定性信息不足用missing_information；不同来源的事实冲突用source_conflict。若是source_conflict，不得自行选择优先级或合并；必须包含sourceReferences，逐项提供本次JSON中实际存在的sourceId和原文quote，至少引用两个不同来源。可引用goal.objective、goal.constraints[i]、goal.acceptanceCriteria[i]、project.title/description、task.title/description及本次code.files[i].excerpts[j]。',
     '不要求用户先拆完任务、提供内部ID或文件路径。代码目标也不默认要求用户手填路径；未实际检索不得伪造代码定位。',
     ...(strictOutputHints ? [
-      `严格输出可由JSON.parse解析的JSON。每个对象属性名后必须使用冒号；字符串使用双引号；acceptanceCriteria与dependencies必须是数组。步骤格式示例：${JSON.stringify({ key: 'step-1', title: '步骤标题', outcome: '明确交付物', acceptanceCriteria: ['明确的验收标准'], dependencies: [], roleKey: context.sources.roles[0]!.key })}`,
+      `严格输出可由JSON.parse解析的JSON。每个对象属性名后必须使用冒号；字符串使用双引号；acceptanceCriteria与dependencies必须是数组。步骤格式示例：${JSON.stringify({ key: 'step-1', title: '步骤标题', outcome: '明确交付物', acceptanceCriteria: ['明确的验收标准'], dependencies: [], roleKey: context.sources.roles[0]!.key, ...(requireDeliveryKind && correctStepExamples ? { deliveryKind: 'text' } : {}) })}`,
       `roleKey只能逐字使用本次资料roles数组中已有的key，不得自行发明岗位名或将岗位名称当作key。可用key：${JSON.stringify(context.sources.roles.map(role => role.key))}`,
     ] : []),
     ...(context.conversation?.deliveredArtifacts ? [
@@ -353,10 +353,21 @@ export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningCo
     ] : []),
     ...(context.sources.delivery && format === 'envelope' ? [
       '由于本次包含交付反馈，下一行是完整响应结构示例，示例建议须替换为基于来源的判断。deliveryChangeAssessment只能位于proposal内部，不能放在根层。authorizationImpact和authorizationRationale属于commands中的命令对象，与changes同级，不能放进changes项。',
-      JSON.stringify({ schemaVersion: 1, kind: 'plan_proposal', binding, proposal: { summary: '改动建议摘要', assumptions: [], risks: [], steps: [{ key: 'revision', title: '修订交付', outcome: '可评审的修订建议', acceptanceCriteria: ['逐项说明改动'], dependencies: [], roleKey: context.sources.roles[0]!.key }], deliveryChangeAssessment: { summary: '相对原成果的改动建议', commands: context.sources.delivery.map(item => ({ commandId: item.commandId, changes: item.acceptanceCriteria.map(criterion => ({ criterion, disposition: 'still_open', proposedChange: '尚未实施的改动建议' })), authorizationImpact: 'new_grant_required', authorizationRationale: '新计划不沿用旧授权' })) } } }),
+      JSON.stringify({ schemaVersion: 1, kind: 'plan_proposal', binding, proposal: { summary: '改动建议摘要', assumptions: [], risks: [], steps: [{ key: 'revision', title: '修订交付', outcome: '可评审的修订建议', acceptanceCriteria: ['逐项说明改动'], dependencies: [], roleKey: context.sources.roles[0]!.key, ...(requireDeliveryKind && correctStepExamples ? { deliveryKind: 'text' } : {}) }], deliveryChangeAssessment: { summary: '相对原成果的改动建议', commands: context.sources.delivery.map(item => ({ commandId: item.commandId, changes: item.acceptanceCriteria.map(criterion => ({ criterion, disposition: 'still_open', proposedChange: '尚未实施的改动建议' })), authorizationImpact: 'new_grant_required', authorizationRationale: '新计划不沿用旧授权' })) } } }),
       'commands必须逐命令覆盖来源中的commandId；changes须逐字按原顺序覆盖该命令全部冻结验收标准。disposition只能为addressed、still_open或not_applicable；authorizationImpact只能为unchanged、additional_confirmation、new_grant_required或cannot_determine。proposedChange是建议，不得表述成已实施。',
     ] : []),
-    '二选一：kind="plan_proposal"，其余字段仅binding与proposal{summary,assumptions:[],risks:[],steps:[{key,title,outcome,acceptanceCriteria:[],dependencies:[],roleKey,sourceReferences?:[{path,line,sha256}]}]}；',
+    ...(requireDeliveryKind ? [
+      // 每个步骤都必须声明自己的成果类型：文档步骤带构建命令会被员工当成代码任务处理，
+      // 而代码步骤缺构建命令又无法产出运行证据。下游按此区分受控文本与研发执行。
+      '每个步骤必须包含deliveryKind，取值只能是"text"或"development"：产出文档、规格、分析、名称方案等纯文本成果用"text"；创建或修改可编译运行的代码、脚本、配置文件用"development"。不得省略。任务标题含“实现”“编码”“源文件”等且成果是代码时用"development"；标题含“需求”“设计”“说明”“文档”“方案”且成果是描述性内容时用"text"。',
+    ] : []),
+    ...(requireDeliveryKind && showStructureExample ? [
+      // 紧凑的嵌套写法会让模型把 steps 放到根层（真实事故：steps 与 proposal 同级导致"包含未知字段"）。
+      // 这里给出一份完整响应示例，层级关系一目了然；示例中的占位值须替换为基于来源的判断。
+      '响应只能有一个顶层对象，字段仅 schemaVersion、kind、binding、proposal（或 needs_clarification 的 reason/questions）。steps 必须位于 proposal 内部，不能与 proposal 同级。完整示例为下一行 JSON：',
+      JSON.stringify({ schemaVersion: 1, kind: 'plan_proposal', binding, proposal: { summary: '一句话说明最终交付什么及其用途', assumptions: ['已确认的前提'], risks: ['可能影响交付的风险'], steps: [{ key: 'step-1', title: '步骤标题', outcome: '明确交付物', acceptanceCriteria: ['明确的验收标准'], dependencies: [], roleKey: context.sources.roles[0]!.key, deliveryKind: 'development' }] } }),
+    ] : []),
+    '二选一：kind="plan_proposal"，其余字段仅binding与proposal{summary,assumptions:[],risks:[],steps:[{key,title,outcome,acceptanceCriteria:[],dependencies:[],roleKey' + (requireDeliveryKind ? ',deliveryKind:"text"|"development"' : '') + ',sourceReferences?:[{path,line,sha256}]}]}；',
     '或kind="needs_clarification"，其余字段仅binding与reason、questions:[{key,reasonType:"missing_information"|"source_conflict",question,why,options:[],recommended?,sourceReferences?:[{sourceId,quote}]}]。不夹带proposal，options是可空或2–4项的字符串数组（每项为一个可选答案的完整短句，不得使用对象），recommended有选项时必须逐字来自options；source_conflict必须引用2–4个不同来源且原文精确匹配，missing_information不得附sourceReferences。',
     '不输出actor、grant、权限、费用已授权、执行状态或完成状态。计划与澄清均不是授权。',
     ...(context.conversation ? [
@@ -437,10 +448,18 @@ export function resolveProjectOwnerPlanningRequest(context: ProjectOwnerPlanning
           for (const independentReviewLane of [true, false]) {
             for (const explicitQualityQuotes of [true, false]) {
               for (const scopedFileChangePrompt of [true, false]) {
-                const request = buildProjectOwnerPlanningRequest(context, format, strictOutputHints, qualityEnvelope, scopedObservationPrompt, independentReviewLane, explicitQualityQuotes, scopedFileChangePrompt)
-                if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) {
-                  cacheHistoricalRequest(key, JSON.stringify(request))
-                  return request
+                // requireDeliveryKind=false 还原加入步骤交付类型前的历史提示文本；
+                // showStructureExample=false 还原加入完整结构示例前的文本。
+                for (const requireDeliveryKind of [true, false]) {
+                  for (const showStructureExample of [true, false]) {
+                    for (const correctStepExamples of [true, false]) {
+                      const request = buildProjectOwnerPlanningRequest(context, format, strictOutputHints, qualityEnvelope, scopedObservationPrompt, independentReviewLane, explicitQualityQuotes, scopedFileChangePrompt, requireDeliveryKind, showStructureExample, correctStepExamples)
+                      if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) {
+                        cacheHistoricalRequest(key, JSON.stringify(request))
+                        return request
+                      }
+                    }
+                  }
                 }
               }
             }
@@ -480,7 +499,7 @@ function question(input: unknown, sources: Map<string, string>): ProjectOwnerCla
 }
 
 /** 仅与捕获的快照比较；真实调用/保存仍须向权威服务重新核验当前版本。 */
-export function parseProjectOwnerPlanningResponse(input: unknown, context: ProjectOwnerPlanningContext, validationTime = Date.now()): ProjectOwnerPlanningResponse {
+export function parseProjectOwnerPlanningResponse(input: unknown, context: ProjectOwnerPlanningContext, validationTime = Date.now(), requireDeliveryKind = true): ProjectOwnerPlanningResponse {
   validateContext(context)
   let parsed: unknown = input
   if (typeof input === 'string') {
@@ -593,7 +612,7 @@ export function parseProjectOwnerPlanningResponse(input: unknown, context: Proje
     const proposal = record(raw.proposal, ['summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment'])
     return { kind: 'plan_proposal', ...binding,
         proposal: parseProjectOwnerPlanProposal({ ...proposal, projectId: binding.projectId,
-        ...(binding.taskId === undefined ? {} : { taskId: binding.taskId }), goalVersion: binding.goalVersion }, context.goal.goal, context.sources.roles.map((role) => role.key), context.sources.code?.files ?? [], true, context.sources.delivery ?? [], context.conversation?.deliveryFeedback) }
+        ...(binding.taskId === undefined ? {} : { taskId: binding.taskId }), goalVersion: binding.goalVersion }, context.goal.goal, context.sources.roles.map((role) => role.key), context.sources.code?.files ?? [], true, context.sources.delivery ?? [], context.conversation?.deliveryFeedback, requireDeliveryKind) }
   }
   if (raw.kind === 'needs_clarification') {
     record(raw, ['schemaVersion', 'kind', 'projectId', 'taskId', 'goalVersion', 'contextFingerprint', 'reason', 'questions'])

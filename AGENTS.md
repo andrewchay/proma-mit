@@ -27,7 +27,7 @@ gravitas/
 │   ├── core/       # AI Provider 适配器、代码高亮服务 (v0.2.24)
 │   └── ui/         # 共享 UI 组件 (CodeBlock, MermaidBlock) (v0.1.4)
 └── apps/
-    └── electron/   # Electron 桌面应用 (v0.14.6)
+    └── electron/   # Electron 桌面应用 (v0.14.8)
         └── src/
             ├── main/       # 主进程 + 服务层 (main/lib/)
             ├── preload/    # IPC 上下文桥接
@@ -56,7 +56,7 @@ gravitas/
 - **依赖**：`@gravitas/core`、`beautiful-mermaid`、`shiki`、Radix UI
 - **Peer 依赖**：`react@^18.3.0`、`react-dom@^18.3.0`
 
-#### @gravitas/electron (v0.14.6)
+#### @gravitas/electron (v0.14.8)
 - **职责**：Electron 桌面应用主体，集成所有包
 - **关键依赖**：
   - `@anthropic-ai/claude-agent-sdk@0.3.143` - Agent SDK
@@ -293,6 +293,8 @@ bun run generate:icons    # 生成应用图标
 |------|------|
 | `useGlobalAgentListeners` | 全局 Agent IPC 监听器，在 `main.tsx` 顶层挂载，使用 `useStore()` 直接操作 atoms。处理流式事件、完成/错误、标题更新、权限请求、AskUser 请求，永不随组件卸载销毁 |
 | `useBackgroundTasks` | 后台任务管理（Agent/Shell 任务的增删改查），按 sessionId 隔离 |
+
+会话恢复完成前关闭窗口不会用空状态覆盖历史选择；删除或归档 Agent 会话时释放已结束会话的流式和附件缓存，运行中的会话等终态后再清理。Owner 新模型规划必须声明步骤交付类型，历史方案和手工编辑继续兼容；续期补排必须核验当前授权、方案与已有运行，质量升级按持久化评审状态显示协商入口。
 
 ### 渲染进程初始化组件（`renderer/main.tsx`）
 

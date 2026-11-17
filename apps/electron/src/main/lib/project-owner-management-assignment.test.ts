@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, mock, spyOn, test } from 'bun:test'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -41,6 +41,7 @@ let failBusinessProjectId: string | null = null
 let reviseConversationProjectId: string | null = null
 let mixedRecoveryProjectId: string | null = null
 let legacyUntypedRecoveryProjectId: string | null = null
+let legacyParserForRecovery: { mockRestore(): void } | null = null
 beforeAll(async () => {
   await store.initProjectDb()
   // 排队、来源与最终单发送准入使用产品实现；runner/HTTP和模型回答是隔离替身。
@@ -121,7 +122,18 @@ beforeAll(async () => {
       handlers.onComplete([message])
       return
     }
-    const source = resolveOwnerPlanningSession(input.sessionId)!
+    let source = resolveOwnerPlanningSession(input.sessionId)!
+    if (source.link.purpose === 'owner_planning' && source.context.conversation && mixedRecoveryProjectId === source.link.projectId
+      && legacyUntypedRecoveryProjectId === source.link.projectId && !source.link.requestId.startsWith('historical-conflict-replan:')) {
+      const { buildProjectOwnerPlanningRequest } = await import('./project-owner-planning-protocol')
+      const request = buildProjectOwnerPlanningRequest(source.context, 'envelope', true, true, true, true, true, true, false)
+      const db = store.getProjectDb()
+      const row = db.prepare('SELECT payload FROM project_owner_planning_links WHERE planning_task_id = ?').get(source.link.planningTaskId) as { payload: string }
+      const payload = JSON.parse(row.payload) as Record<string, unknown>
+      payload.promptHash = createHash('sha256').update(JSON.stringify(request)).digest('hex')
+      db.prepare('UPDATE project_owner_planning_links SET payload = ? WHERE planning_task_id = ?').run(JSON.stringify(payload), source.link.planningTaskId)
+      source = resolveOwnerPlanningSession(input.sessionId)!
+    }
     const conversation = source.context.conversation
     const delivery = conversation?.deliveryReview
     const observation = conversation?.executionObservation
@@ -156,11 +168,12 @@ beforeAll(async () => {
       return
     }
     if (source.link.purpose === 'owner_planning') {
+      if (source.link.requestId.startsWith('historical-conflict-replan:')) { legacyParserForRecovery?.mockRestore(); legacyParserForRecovery = null }
       calls.push({ projectId: source.link.projectId, purpose: source.link.purpose, candidates: [] })
       const roleKey = source.context.sources.roles.find(role => role.key === 'requirements-analyst')?.key ?? source.context.sources.roles[0]!.key
       const recoveringMixed = conversation && mixedRecoveryProjectId === source.link.projectId
       const legacyUntyped = recoveringMixed && legacyUntypedRecoveryProjectId === source.link.projectId && !source.link.requestId.startsWith('historical-conflict-replan:')
-      const proposal = { schemaVersion: 1, kind: 'plan_proposal', binding: { projectId: source.link.projectId, goalVersion: source.context.goal.goal.goalVersion, contextFingerprint: source.context.fingerprint }, proposal: { summary: conversation && reviseConversationProjectId === source.link.projectId ? '继续完成定位简报' : '按目标形成定位简报', assumptions: [], risks: [], steps: [{ key: 'brief', title: '分析需求', outcome: '定位简报', acceptanceCriteria: ['证据和取舍明确'], dependencies: [], roleKey, ...(conversation && reviseConversationProjectId === source.link.projectId && !legacyUntyped ? { deliveryKind: 'text' as const } : {}) }, ...(recoveringMixed ? [{ key: 'build', title: '实现页面', outcome: '日记页面', acceptanceCriteria: ['页面可打开'], dependencies: ['brief'], roleKey, ...(!legacyUntyped ? { deliveryKind: 'development' as const } : {}) }] : [])] } }
+      const proposal = { schemaVersion: 1, kind: 'plan_proposal', binding: { projectId: source.link.projectId, goalVersion: source.context.goal.goal.goalVersion, contextFingerprint: source.context.fingerprint }, proposal: { summary: conversation && reviseConversationProjectId === source.link.projectId ? '继续完成定位简报' : '按目标形成定位简报', assumptions: [], risks: [], steps: [{ key: 'brief', title: '分析需求', outcome: '定位简报', acceptanceCriteria: ['证据和取舍明确'], dependencies: [], roleKey, ...(!legacyUntyped ? { deliveryKind: 'text' as const } : {}) }, ...(recoveringMixed ? [{ key: 'build', title: '实现页面', outcome: '日记页面', acceptanceCriteria: ['页面可打开'], dependencies: ['brief'], roleKey, ...(!legacyUntyped ? { deliveryKind: 'development' as const } : {}) }] : [])] } }
       claimProviderRequest()
       const gate = nextOwnerPlanningResponseGate
       if (gate) {
@@ -215,8 +228,20 @@ function fixture(team: 'complete' | 'missing-reviewer' | 'missing-role' | 'gener
   if (saveGoal) saveProjectOwnerGoalDraft(project.id, 0, { objective: '形成定位建议' }, taskId)
   saveOwnerRuntimeBinding(project.id, 0, { ownerName: 'Owner', carrierId: owner.id, workspaceId: workspace.id, changeReason: '隔离测试' })
   const context = saveGoal ? plans.getProjectOwnerPlanningContext(project.id, taskId) : null
-  const plan = savePlan && context ? plans.saveProjectOwnerPlanDraft(project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '定位研究', assumptions: [], risks: [], steps: [{ key: 'brief', title: '分析需求', outcome: '定位简报', acceptanceCriteria: ['证据和取舍明确'], dependencies: [], roleKey: 'requirements-analyst' }], changeReason: '创建可审核方案' }, taskId) : null
+  const plan = savePlan && context ? plans.saveProjectOwnerPlanDraft(project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '定位研究', assumptions: [], risks: [], steps: [{ key: 'brief', title: '分析需求', outcome: '定位简报', acceptanceCriteria: ['证据和取舍明确'], dependencies: [], roleKey: 'requirements-analyst', deliveryKind: 'text' }], changeReason: '创建可审核方案' }, taskId) : null
   return { project, workspace, teamWorkspace, owner, executor, reviewer, taskId, subject, plan, repo }
+}
+/** 用旧版解析行为生成历史记录；仅测试期间启用，不改变新请求的生产协议。 */
+async function installLegacyPlanParser(projectId: string) {
+  const planning = await import('./project-owner-planning')
+  const original = planning.parseProjectOwnerPlanProposal
+  const parser = spyOn(planning, 'parseProjectOwnerPlanProposal').mockImplementation((...args) => {
+    const input = args[0] as { projectId?: string; steps?: Array<{ deliveryKind?: string }> }
+    if (input.projectId === projectId && input.steps?.some(step => step.deliveryKind === undefined)) args[7] = false
+    return original(...args)
+  })
+  legacyParserForRecovery = parser
+  return parser
 }
 function confirm(f: ReturnType<typeof fixture>) { return plans.confirmProjectOwnerPlanDraft(f.project.id, 1, 1, f.taskId) }
 function authorize(f: ReturnType<typeof fixture>, autonomousExecution = false, maxRequests = 3, maxCostMicros = 10_000_000) {
@@ -293,6 +318,7 @@ test.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('Give
   })
   const stopSchedule = onOwnerAutonomousScheduleWake(id => { if (id === f.project.id) void scheduler.runOwnerAutonomousSchedule(id) })
   const stop = startOwnerManagementLoop()
+  const legacyParser = await installLegacyPlanParser(f.project.id)
   try {
     const db = store.getProjectDb()
     await until(() => Boolean(db.prepare("SELECT 1 FROM project_owner_execution_commands c JOIN agent_executions e ON e.id=c.execution_id WHERE c.project_id=? AND c.state='settled' AND e.status='failed'").get(f.project.id)))
@@ -312,6 +338,7 @@ test.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('Give
     expect(db.prepare('SELECT state FROM project_owner_execution_grants WHERE id=?').get(original.id)).toEqual({ state: 'paused' })
     expect(db.prepare('SELECT COUNT(*) AS n FROM project_owner_execution_commands WHERE grant_id=?').get(original.id)).toEqual({ n: 1 })
   } finally {
+    legacyParser.mockRestore(); legacyParserForRecovery = null
     failBusinessProjectId = null; reviseConversationProjectId = null; mixedRecoveryProjectId = null; legacyUntypedRecoveryProjectId = null
     await stop()
     stopSchedule()
@@ -327,6 +354,7 @@ test('Given 旧批次费用未知或已成功 When 对话要求继续 Then 保�
     reviseConversationProjectId = f.project.id
     authorize(f, true, 6, 20_000_000)
     const stop = startOwnerManagementLoop()
+    const legacyParser = await installLegacyPlanParser(f.project.id)
     try {
       const db = store.getProjectDb()
       await until(() => Boolean(db.prepare("SELECT 1 FROM project_owner_execution_commands c JOIN agent_executions e ON e.id=c.execution_id WHERE c.project_id=? AND c.state='settled' AND e.status='failed'").get(f.project.id)))
@@ -348,6 +376,7 @@ test('Given 旧批次费用未知或已成功 When 对话要求继续 Then 保�
       expect(db.prepare('SELECT COUNT(*) AS n FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id)).toEqual({ n: 1 })
       expect(db.prepare('SELECT COUNT(*) AS n FROM project_owner_task_materializations WHERE project_id=?').get(f.project.id)).toEqual({ n: 1 })
     } finally {
+      legacyParser.mockRestore(); legacyParserForRecovery = null
       failBusinessProjectId = null
       reviseConversationProjectId = null
       mixedRecoveryProjectId = null
@@ -448,7 +477,7 @@ test('Given多次更换Owner载体且没有业务员工 When准备默认团队 T
 })
 test('Given旧Owner记录导致已确认方案缺员且事件已消费 When重启后台管理 Then自动补齐并执行评审交付而不要求再次授权', async () => {
   const f = ownerHistoryFixture(), context = plans.getProjectOwnerPlanningContext(f.project.id)
-  plans.saveProjectOwnerPlanDraft(f.project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '定位研究', assumptions: [], risks: [], steps: [{ key: 'brief', title: '分析需求', outcome: '定位简报', acceptanceCriteria: ['证据和取舍明确'], dependencies: [], roleKey: 'requirements-analyst' }], changeReason: '复现已确认方案' })
+  plans.saveProjectOwnerPlanDraft(f.project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '定位研究', assumptions: [], risks: [], steps: [{ key: 'brief', title: '分析需求', outcome: '定位简报', acceptanceCriteria: ['证据和取舍明确'], dependencies: [], roleKey: 'requirements-analyst', deliveryKind: 'text' }], changeReason: '复现已确认方案' })
   confirm(f)
   const grant = authorize(f, true)
   for (const event of listPendingOwnerManagementEvents(f.project.id)) consumeOwnerManagementEvent(event)
@@ -514,6 +543,38 @@ test('Given人员安排已准备但尚未启动 When重复核对授权 Then等�
     expect(runs).toHaveLength(1)
     expect(runs[0]!.executions).toHaveLength(0)
     expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'attention' && item.content.includes('已结束且没有可展示的安排结论'))).toBe(false)
+  } finally { delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+})
+
+test('Given授权续期只消耗在对话上 When核对管理 Then补一次安排而不是停在对话', async () => {
+  const f = fixture()
+  const { prepareOwnerManagementAssignment } = await import('./project-owner-management-assignment')
+  const first = authorize(f)
+  confirm(f)
+  // 上一轮授权下真的准备过安排（真实链路），续期后它属于旧授权，不应挡住补排。
+  prepareOwnerManagementAssignment({ id: 'first-grant-assignment', projectId: f.project.id, kind: 'delegation_confirmed', sourceId: first.id, sourceRevision: 1, createdAt: Date.now(), consumedAt: null })
+  delegation.revokeOwnerManagementDelegation(f.project.id, first.id)
+  const renewed = authorize(f)
+  try {
+    reconcileOwnerManagement(f.project.id)
+    // 事件会被消费，所以按「库内该来源的事件条数」判断，而不是待处理数。
+    const renewalEvents = () => (store.getProjectDb().prepare("SELECT COUNT(*) AS n FROM project_owner_management_events WHERE project_id = ? AND json_extract(payload, '$.sourceId') = ?")
+      .get(f.project.id, `delegation-renewal:${renewed.id}`) as { n: number }).n
+    expect(renewalEvents()).toBe(1)
+    // 幂等：再次核对不会重复排队。
+    reconcileOwnerManagement(f.project.id)
+    expect(renewalEvents()).toBe(1)
+  } finally { delegation.revokeOwnerManagementDelegation(f.project.id, renewed.id) }
+})
+
+test('Given本次授权已经准备过安排 When核对管理 Then不自动补排以免重复调用', async () => {
+  const f = fixture(), grant = authorize(f)
+  confirm(f)
+  const { prepareOwnerManagementAssignment } = await import('./project-owner-management-assignment')
+  try {
+    prepareOwnerManagementAssignment({ id: 'already-prepared', projectId: f.project.id, kind: 'delegation_confirmed', sourceId: grant.id, sourceRevision: 1, createdAt: Date.now(), consumedAt: null })
+    reconcileOwnerManagement(f.project.id)
+    expect(listPendingOwnerManagementEvents(f.project.id).some(event => event.sourceId === `delegation-renewal:${grant.id}`)).toBe(false)
   } finally { delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
 })
 
@@ -1024,8 +1085,8 @@ test('Given 旧启动意图按方案顺序选择了executor When岗位冻结按r
     expectedContextFingerprint: context.fingerprint,
     summary: '按不同顺序完成两项成果', assumptions: [], risks: [],
     steps: [
-      { key: 'visual', title: '先完成视觉', outcome: '视觉说明', acceptanceCriteria: ['布局清晰'], dependencies: [], roleKey: 'visual-designer' },
-      { key: 'requirements', title: '再完成需求', outcome: '需求说明', acceptanceCriteria: ['规则清楚'], dependencies: ['visual'], roleKey: 'requirements-analyst' },
+      { key: 'visual', title: '先完成视觉', outcome: '视觉说明', acceptanceCriteria: ['布局清晰'], dependencies: [], roleKey: 'visual-designer', deliveryKind: 'text' },
+      { key: 'requirements', title: '再完成需求', outcome: '需求说明', acceptanceCriteria: ['规则清楚'], dependencies: ['visual'], roleKey: 'requirements-analyst', deliveryKind: 'text' },
     ],
     changeReason: '覆盖方案顺序与稳定岗位排序不同的旧启动意图',
   })
@@ -1257,9 +1318,20 @@ test('Given历史完整安排仅因空代码范围被拒绝 When本地恢复并�
 
 test('Given 失败详情含凭据或换行 When 生成用户原因 Then 脱敏截断且保留可核对信息', async () => {
   const { ownerAssignmentFailureReason } = await import('./project-owner-management-assignment')
-  expect(ownerAssignmentFailureReason('Owner人员安排提案格式无效或夹带未授权字段')).toBe('Owner人员安排提案格式无效或夹带未授权字段')
+  expect(ownerAssignmentFailureReason('Owner人员安排提案格式无效或夹带未授权字段')).toBe('Owner人员安排提案格式无效或夹带未授权字段（模型输出未符合协议格式，可重试一次安排）')
   expect(ownerAssignmentFailureReason('bad Bearer abc123\napi_key=sk-secret123456789')).not.toContain('abc123')
   expect(ownerAssignmentFailureReason('x'.repeat(400)).length).toBe(240)
+})
+
+test('Given 协议拒绝原因 When 生成用户原因 Then 补充可执行的下一步且保留原文', async () => {
+  const { ownerAssignmentFailureReason } = await import('./project-owner-management-assignment')
+  // 原生/命令行项目的典型失败：模型留空验证命令。原文保留，并说明该补什么。
+  const emptyCommands = ownerAssignmentFailureReason('Owner研发验证命令无效')
+  expect(emptyCommands).toContain('Owner研发验证命令无效')
+  expect(emptyCommands).toContain('build:swift')
+  expect(ownerAssignmentFailureReason('Owner绿地研发验证命令与目标文件不匹配')).toContain('扩展名匹配')
+  // 未知原因不猜测，保持原文。
+  expect(ownerAssignmentFailureReason('Owner人员安排缺少工作区')).toBe('Owner人员安排缺少工作区')
 })
 
 test('Given 结构不合规的失败 When 判断可恢复 Then 允许在原预算内重排一次', async () => {

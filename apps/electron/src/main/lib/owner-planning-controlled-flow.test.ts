@@ -95,7 +95,7 @@ registry.setHeadlessAgentRunner(async (input, callbacks) => {
 })
 test('Given 已批准费用与冻结Owner准备 When 真实start/claim→Worker/Orchestrator/Adapter/SDK Then 最终只发一请求，生成可审Plan且不派工', async () => {
   const f=prepared(), snapshot=source.readOwnerPlanningSnapshot(f.link.planningTaskId)!
-  responseText=JSON.stringify({schemaVersion:1,kind:'plan_proposal',projectId:f.project.id,goalVersion:1,contextFingerprint:f.link.contextFingerprint,proposal:{summary:'完整离线链定位提案',assumptions:[],risks:[],steps:[{key:'brief',title:'定位研究',outcome:'定位简报',acceptanceCriteria:['范围明确'],dependencies:[],roleKey:snapshot.context.sources.roles[0]!.key}]}})
+  responseText=JSON.stringify({schemaVersion:1,kind:'plan_proposal',projectId:f.project.id,goalVersion:1,contextFingerprint:f.link.contextFingerprint,proposal:{summary:'完整离线链定位提案',assumptions:[],risks:[],steps:[{key:'brief',title:'定位研究',outcome:'定位简报',acceptanceCriteria:['范围明确'],dependencies:[],roleKey:snapshot.context.sources.roles[0]!.key,deliveryKind:'text'}]}})
   const preview=controlled.getControlledTaskStartPreview(f.link.planningTaskId)
   await expect(controlled.startControlledTask({taskId:f.link.planningTaskId,previewHash:preview.previewHash,acknowledgeModelCosts:false})).rejects.toThrow('费用')
   expect(bodies).toHaveLength(0)
@@ -107,7 +107,7 @@ test('Given 已批准费用与冻结Owner准备 When 真实start/claim→Worker/
 
 function proposal(f: ReturnType<typeof prepared>) {
   const snapshot=source.readOwnerPlanningSnapshot(f.link.planningTaskId)!
-  return {schemaVersion:1,kind:'plan_proposal',projectId:f.project.id,goalVersion:snapshot.link.goalVersion,contextFingerprint:f.link.contextFingerprint,proposal:{summary:'真实单请求提案',assumptions:[],risks:[],steps:[{key:'brief',title:'定位研究',outcome:'定位简报',acceptanceCriteria:['范围明确'],dependencies:[],roleKey:snapshot.context.sources.roles[0]!.key}]}}
+  return {schemaVersion:1,kind:'plan_proposal',projectId:f.project.id,goalVersion:snapshot.link.goalVersion,contextFingerprint:f.link.contextFingerprint,proposal:{summary:'真实单请求提案',assumptions:[],risks:[],steps:[{key:'brief',title:'定位研究',outcome:'定位简报',acceptanceCriteria:['范围明确'],dependencies:[],roleKey:snapshot.context.sources.roles[0]!.key,deliveryKind:'text'}]}}
 }
 async function start(f: ReturnType<typeof prepared>) {
   const preview=controlled.getControlledTaskStartPreview(f.link.planningTaskId)
@@ -145,7 +145,7 @@ test('Given 非代码定位项目目标 When 离线规划发现关键受众未�
   const next = { ...f, link: nextLink }
   const nextSnapshot = source.readOwnerPlanningSnapshot(nextLink.planningTaskId)!
   const roleKey = nextSnapshot.context.sources.roles[0]!.key
-  responseText = JSON.stringify({ schemaVersion: 1, kind: 'plan_proposal', projectId: f.project.id, goalVersion: nextSnapshot.link.goalVersion, contextFingerprint: nextSnapshot.context.fingerprint, proposal: { summary: '面向新客户的定位研究与提案', assumptions: ['优先面向新客户'], risks: ['未经授权的外部市场资料不纳入本次规划'], steps: [{ key: 'evidence', title: '整理授权范围内的受众与产品证据', outcome: '形成证据摘要', acceptanceCriteria: ['结论均可由项目资料复核'], dependencies: [], roleKey }, { key: 'positioning', title: '形成产品定位备选并比较风险', outcome: '输出可审阅定位方案', acceptanceCriteria: ['给出价值主张、适用受众和风险'], dependencies: ['evidence'], roleKey }] } })
+  responseText = JSON.stringify({ schemaVersion: 1, kind: 'plan_proposal', projectId: f.project.id, goalVersion: nextSnapshot.link.goalVersion, contextFingerprint: nextSnapshot.context.fingerprint, proposal: { summary: '面向新客户的定位研究与提案', assumptions: ['优先面向新客户'], risks: ['未经授权的外部市场资料不纳入本次规划'], steps: [{ key: 'evidence', title: '整理授权范围内的受众与产品证据', outcome: '形成证据摘要', acceptanceCriteria: ['结论均可由项目资料复核'], dependencies: [], roleKey, deliveryKind: 'text' }, { key: 'positioning', title: '形成产品定位备选并比较风险', outcome: '输出可审阅定位方案', acceptanceCriteria: ['给出价值主张、适用受众和风险'], dependencies: ['evidence'], roleKey, deliveryKind: 'text' }] } })
   const nextPreview = controlled.getControlledTaskStartPreview(nextLink.planningTaskId)
   await expect(controlled.startControlledTask({ taskId: nextLink.planningTaskId, previewHash: nextPreview.previewHash, acknowledgeModelCosts: false })).rejects.toThrow('费用')
   expect(bodies).toHaveLength(1)
@@ -164,7 +164,7 @@ test('Given 单任务代码目标仅描述预期行为 When fake-only规划 Then
   expect(snapshot.request.userPrompt).toContain('修复负数量报价，保留正常行为')
   expect(snapshot.request.userPrompt).not.toContain('PROJECT_GOAL_MUST_NOT_LEAK_TO_TASK')
   const roleKey = snapshot.context.sources.roles[0]!.key
-  responseText = JSON.stringify({ schemaVersion: 1, kind: 'plan_proposal', projectId: f.project.id, taskId: f.targetTask.id, goalVersion: snapshot.link.goalVersion, contextFingerprint: snapshot.context.fingerprint, proposal: { summary: '提出代码定位与回归验证方案', assumptions: ['报价计算应拒绝负数量并保持正数行为'], risks: ['本次规划未读取仓库文件；目标文件与当前实现尚待源码核验'], steps: [{ key: 'locate', title: '定位数量校验与报价路径', outcome: '给出候选修改范围', acceptanceCriteria: ['源码审阅后确认实际入口'], dependencies: [], roleKey }, { key: 'regression', title: '补充负数量回归验证', outcome: '验证负数拒绝且正常报价不变', acceptanceCriteria: ['负数量路径失败', '正常正数报价保持'], dependencies: ['locate'], roleKey }] } })
+  responseText = JSON.stringify({ schemaVersion: 1, kind: 'plan_proposal', projectId: f.project.id, taskId: f.targetTask.id, goalVersion: snapshot.link.goalVersion, contextFingerprint: snapshot.context.fingerprint, proposal: { summary: '提出代码定位与回归验证方案', assumptions: ['报价计算应拒绝负数量并保持正数行为'], risks: ['本次规划未读取仓库文件；目标文件与当前实现尚待源码核验'], steps: [{ key: 'locate', title: '定位数量校验与报价路径', outcome: '给出候选修改范围', acceptanceCriteria: ['源码审阅后确认实际入口'], dependencies: [], roleKey, deliveryKind: 'text' }, { key: 'regression', title: '补充负数量回归验证', outcome: '验证负数拒绝且正常报价不变', acceptanceCriteria: ['负数量路径失败', '正常正数报价保持'], dependencies: ['locate'], roleKey, deliveryKind: 'development' }] } })
   const before = store.getTask(f.targetTask.id)
   const started = await start(f)
   await settle()

@@ -66,6 +66,7 @@ import { createAgentStreamEventBatcher } from '@/lib/agent-stream-event-batcher'
 import { deriveFollowUpSuggestions } from '@/components/agent/follow-up-suggestions'
 import { mergePendingAgentRequestSnapshot } from './pending-agent-request-recovery'
 import { openSessionInStore } from '@/lib/open-session'
+import { cleanupRetiredAgentSession } from '@/lib/retired-agent-session'
 
 /** 触发右侧文件浏览器自动定位的写入类工具集合 */
 const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Update'])
@@ -975,6 +976,8 @@ export function useGlobalAgentListeners(): void {
             .listAgentSessions()
             .then((sessions) => {
               store.set(agentSessionsAtom, sessions)
+              const completedSession = sessions.find(session => session.id === data.sessionId)
+              if ((!completedSession || completedSession.archived) && store.get(currentAgentSessionIdAtom) !== data.sessionId) cleanupRetiredAgentSession(store, data.sessionId)
               // 从持久化 meta 对齐 stoppedByUser 状态
               store.set(stoppedByUserSessionsAtom, new Set<string>(
                 sessions.filter((s) => s.stoppedByUser).map((s) => s.id)

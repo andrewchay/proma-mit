@@ -136,6 +136,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const loadedMessage = useRef('')
   const [clock, setClock] = useState(Date.now())
   const reviewHistory = editor.view?.reviewHistory?.filter(round => taskId === undefined || round.taskId === taskId) ?? []
+  const escalatedReviews = reviewHistory.filter((round, index) => round.businessTaskId && round.qualityState === 'escalated' && reviewHistory.findIndex(item => item.businessTaskId === round.businessTaskId) === index)
   const blockedReviews = reviewHistory.filter((round, index) => round.businessTaskId && round.qualityState === 'blocked' && reviewHistory.findIndex(item => item.businessTaskId === round.businessTaskId) === index)
   const messages = editor.view?.messages.filter(message => message.taskId === taskId && message.kind !== 'goal') ?? []
   const timeline = ownerDiscussionTimeline(messages, plan.history, plan.snapshot, grant.history, grant.grant, dispatchEvents.events)
@@ -150,10 +151,11 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const priorAttention = !latestAttention ? messages.findLast(message => message.role === 'assistant' && message.kind === 'attention') : undefined
   const alertMessage = messages.find(message => message.id === alertMessageId && message.role === 'assistant' && message.kind === 'attention')
   const dismissAttention = () => setAttentionAlerts(previous => { if (previous.get(attentionKey)?.messageId !== alertMessageId) return previous; const next = new Map(previous); next.delete(attentionKey); return next })
-  const latestWorkspaceProposal = latestAssistantMessage?.teamWorkspaceProposal
-    && !workspaceApprovalStates.get(latestAssistantMessage.id)?.approved
-    && !messages.some(message => message.teamWorkspaceApproval?.sourceMessageId === latestAssistantMessage.id)
-    ? latestAssistantMessage : undefined
+  const workspaceProposal = messages.findLast(message => message.role === 'assistant' && message.teamWorkspaceProposal)
+  const latestWorkspaceProposal = workspaceProposal
+    && !workspaceApprovalStates.get(workspaceProposal.id)?.approved
+    && !messages.some(message => message.teamWorkspaceApproval?.sourceMessageId === workspaceProposal.id)
+    ? workspaceProposal : undefined
   const allTraces = editor.view?.trace ?? []
   const assignmentRunIndex = allTraces.findLastIndex(entry => entry.phase === 'assignment_run' && (taskId === undefined || entry.taskId === taskId))
   const latestAssignmentRun = assignmentRunIndex >= 0 ? allTraces[assignmentRunIndex] : undefined
@@ -218,7 +220,15 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const decisionLabel = waitingMessage?.kind !== 'attention' ? getOwnerWaitingLabel(messages, taskId) : null
   const waitingForDecision = decisionLabel !== null
   const authorizationDecision = ['none', 'expired', 'stale', 'revoked', 'exhausted'].includes(delegation.view?.state ?? '')
-  const needsArrangementRetry = staleAssignment || Boolean(latestAttention?.content.includes('人员安排'))
+  // 已确认方案但当前版本没有任何「提出安排」结论时，重排入口必须可达：
+  // 只按最新消息是否为 attention 判断，会让后续对话回复把入口顶掉，用户看不到任何补救方式。
+  // 已有排队/运行中的安排时等待结果，不提前给出重排入口。
+  const arrangementInFlight = assignmentRuns.some(run => run.executions.some(execution => execution.status === 'queued' || execution.status === 'running'))
+  const arrangementMissing = Boolean(plan.snapshot)
+    && delegation.view?.state === 'active'
+    && !arrangementInFlight
+    && !assignmentRuns.some(run => run.link?.planRevision === plan.snapshot?.revision && run.outcomes?.some(outcome => outcome.state === 'proposed'))
+  const needsArrangementRetry = staleAssignment || Boolean(latestAttention?.content.includes('人员安排')) || arrangementMissing
   const hasOpenQuestions = editor.view?.questions.some(question => question.state === 'open' && question.taskId === taskId)
   const hasPendingChange = editor.view?.changes?.some(change => change.state === 'pending' && change.taskId === taskId)
   const planRisks = plan.snapshot?.proposal.risks ?? []
@@ -276,7 +286,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
               : authorizationDecision && editor.view?.manager ? '项目管理授权需要确认'
               : evidenceBlocker ? '成果验证证据需要核对'
               : awaitingBusinessAcceptance ? '成果等待人工业务验收'
-              : waitingForDecision || hasOpenQuestions || hasPendingChange ? 'Owner 正在等待你的决定'
+              : waitingForDecision || escalatedReviews.length > 0 || hasOpenQuestions || hasPendingChange ? 'Owner 正在等待你的决定'
                 : ownerProcessing ? 'Owner 正在处理项目工作'
                   : grant.grant?.dispatchMode === 'autonomous' && hasCompletedOwnerDelivery(messages, usage.commands, taskId, plan.snapshot?.planVersion, grant.grant.grantId) ? '本轮成果已交付'
                   : assignmentTrace ? ownerTraceStatus(assignmentTrace)
@@ -382,6 +392,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
             && <p className="text-sm text-muted-foreground">暂无待你决定的事项。</p>}
           {acceptanceSchedule && <OwnerAcceptanceCard projectId={projectId} schedule={acceptanceSchedule} commands={usage.commands} onChanged={() => { void refreshCommandProgress(subject) }} feedbackDisabled={composer.sending || Boolean(composer.pending || composer.deliveryReference || composer.deliveryReviewDecision) || !editor.view?.manager} feedbackCapacity={Math.max(0, 3700 - composer.text.length)} onDiscuss={(delivery, excerpt, intent) => { const context = `交付「${delivery.title}」版本 ${delivery.version}（记录 ${delivery.id}）${excerpt ? `，${intent === 'question' ? '想询问' : '希望修改'}：\n“${excerpt}”` : '：'}\n`; const text = `${composer.text}${composer.text.trim() ? '\n\n' : ''}${context}`; if (text.length > 4000) return; edit({ subject, text }); focusReplyComposer() }} />}
           {acceptanceSchedule && (composer.deliveryReference || composer.deliveryReviewDecision) && <p className="text-xs text-muted-foreground">对话草稿已关联另一成果。请先发送或取消该关联，再对这个交付点选反馈。</p>}
+          {escalatedReviews.map(round => <div key={round.id} className="space-y-2 rounded-lg bg-amber-500/10 p-3 text-sm" aria-label="质量决定需协商"><p className="font-medium">{round.title} · 需要你决定</p><p className="whitespace-pre-wrap break-words">{round.steps.find(step => step.label === 'Owner 决定')?.detail ?? '请与 Owner 协商未解决的质量事项。'}</p><button type="button" className="text-primary underline" onClick={focusReplyComposer}>回复 Owner</button></div>)}
           {waitingForDecision && <div className="flex flex-wrap items-center gap-3 rounded-lg bg-amber-500/10 p-3 text-sm">
             <p>{decisionLabel}</p>
             {waitingMessage?.kind === 'clarification' && !hasOpenQuestions && <button type="button" className="text-primary underline underline-offset-4" onClick={focusReplyComposer}>回复 Owner</button>}

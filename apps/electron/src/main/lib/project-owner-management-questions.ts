@@ -90,11 +90,15 @@ export function projectOwnerManagementRunResult(projectId: string, executionId: 
       && observation?.role === 'reviewer' && prior.projectId === projectId && prior.grantId === observation.grantId
       && prior.taskId === observation.businessTaskId && prior.reviewerCommandId === outcome.qualityDecision.reviewerCommandId
       && prior.artifactHash === outcome.qualityDecision.artifactHash && Number.isSafeInteger(receipt.usage?.inputTokens) && Number.isSafeInteger(receipt.usage?.outputTokens)) {
-      appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: prior.state === 'blocked' ? 'attention' : 'reply', planningTaskId: receipt.planningTaskId, content: prior.state === 'blocked' ? '此前该成果的质量决定仍被阻断；重复结果未应用，原阻断和恢复条件保留。' : '此前已对该成果和独立评审作出质量决定；重复结果未应用，原记录保留。' })
+      appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: prior.state === 'blocked' || prior.state === 'escalated' ? 'attention' : 'reply', planningTaskId: receipt.planningTaskId, content: prior.state === 'blocked' ? '此前该成果的质量决定仍被阻断；重复结果未应用，原阻断和恢复条件保留。' : prior.state === 'escalated' ? `${prior.detail}\n判断依据：${prior.decision.reason}` : '此前已对该成果和独立评审作出质量决定；重复结果未应用，原记录保留。' })
       return
     }
     const action = applyOwnerQualityDecision(projectId, executionId)
-    appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: 'reply', planningTaskId: receipt.planningTaskId, content: `${action.detail}\n判断依据：${action.decision.reason}` })
+    // escalated/blocked 表示Owner把事项交回用户决定，必须写成 attention 才会进入「需要你决定」；
+    // 写成 reply 会让界面显示"暂无待你决定的事项"，用户看不到任何待办，项目静默停住。
+    // accepted/rework_authorized 由系统继续推进，保持 reply 不打扰用户。
+    const needsUserDecision = action.state === 'escalated' || action.state === 'blocked'
+    appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: needsUserDecision ? 'attention' : 'reply', planningTaskId: receipt.planningTaskId, content: `${action.detail}\n判断依据：${action.decision.reason}` })
     return
   }
   if (outcome.state === 'replied' && outcome.reply) {

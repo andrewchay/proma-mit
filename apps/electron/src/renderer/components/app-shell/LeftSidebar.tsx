@@ -9,7 +9,8 @@
  */
 
 import * as React from 'react'
-import { useAtom, useSetAtom, useAtomValue } from 'jotai'
+import { useAtom, useSetAtom, useAtomValue, useStore } from 'jotai'
+import { cleanupRetiredAgentSession } from '@/lib/retired-agent-session'
 import { toast } from 'sonner'
 import { Star, StarOff, Settings, Plus, Trash2, Pencil, ChevronDown, ChevronRight, PanelLeftClose, PanelLeftOpen, ArrowRightLeft, Search, Archive, ArchiveRestore, ArrowLeft, Hammer, Bot, MessageSquare, MoreHorizontal, Workflow, FolderOpen, FolderPlus, Users, Megaphone, Globe2, Zap, Radio, FlaskConical, ShieldAlert, CircleHelp, StickyNote } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -165,6 +166,7 @@ function SidebarWindowDragStrip({ height }: { height: number }): React.ReactElem
 }
 
 export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): React.ReactElement {
+  const store = useStore()
   const [activeView, setActiveView] = useAtom(activeViewAtom)
   const ownerNotices = useAtomValue(ownerConversationNoticesAtom)
   const navigateToOwner = useSetAtom(ownerConversationNavigationAtom)
@@ -348,7 +350,8 @@ export function LeftSidebar({ width, resizing = false }: LeftSidebarProps): Reac
     setSessionChannelMap(deleteKey)
     setSessionModelMap(deleteKey)
     clearPreviewCacheForSession(id)
-  }, [setConvModels, setConvContextLength, setConvThinking, setConvParallel, setConvPromptId, setPreviewPanelOpen, setPreviewFile, setDiffPanelTab, setDiffRefreshVersion, setDiffUnseen, setDiffUnseenFiles, setSessionChannelMap, setSessionModelMap])
+    cleanupRetiredAgentSession(store, id)
+  }, [store, setConvModels, setConvContextLength, setConvThinking, setConvParallel, setConvPromptId, setPreviewPanelOpen, setPreviewFile, setDiffPanelTab, setDiffRefreshVersion, setDiffUnseen, setDiffUnseenFiles, setSessionChannelMap, setSessionModelMap])
 
   const currentWorkspaceSlug = React.useMemo(() => {
     if (!currentWorkspaceId) return null

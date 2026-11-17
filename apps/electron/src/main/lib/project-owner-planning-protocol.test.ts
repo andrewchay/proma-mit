@@ -14,7 +14,7 @@ function context(taskId?: string): ProjectOwnerPlanningContext {
 function proposal(c: ProjectOwnerPlanningContext) {
   return { schemaVersion: 1, kind: 'plan_proposal', projectId: c.goal.goal.projectId, ...(c.goal.goal.taskId ? { taskId: c.goal.goal.taskId } : {}),
     goalVersion: c.goal.goal.goalVersion, contextFingerprint: c.fingerprint,
-    proposal: { summary: '形成定位简报', assumptions: ['受众待验证'], risks: [], steps: [{ key: 'brief', title: '需求整理', outcome: '需求简报', acceptanceCriteria: ['范围明确'], dependencies: [], roleKey: 'requirements-analyst' }] } }
+    proposal: { summary: '形成定位简报', assumptions: ['受众待验证'], risks: [], steps: [{ key: 'brief', title: '需求整理', outcome: '需求简报', acceptanceCriteria: ['范围明确'], dependencies: [], roleKey: 'requirements-analyst', deliveryKind: 'text' as const }] } }
 }
 
 test('Given 已存目标与资料快照 When 构建规划请求 Then data-only、不索路径、未调用模型或创建授权', async () => {
@@ -166,6 +166,10 @@ test('Given 命令绑定交付反馈 When 构建新规划请求 Then 携带冻�
   const example = JSON.parse(request.systemPrompt.split('\n').find(line => line.startsWith('{"schemaVersion":'))!)
   expect(example).not.toHaveProperty('deliveryChangeAssessment')
   expect(protocol.parseProjectOwnerPlanningResponse(example, c).kind).toBe('plan_proposal')
+  expect(example.proposal.steps[0].deliveryKind).toBe('text')
+  const historical = protocol.buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, false)
+  const historicalHash = createHash('sha256').update(JSON.stringify(historical)).digest('hex')
+  expect(protocol.resolveProjectOwnerPlanningRequest(c, historicalHash)).toEqual(historical)
   expect(example.proposal.deliveryChangeAssessment.commands[0]).toMatchObject({ authorizationImpact: 'new_grant_required', authorizationRationale: '新计划不沿用旧授权' })
   expect(example.proposal.deliveryChangeAssessment.commands[0].changes[0]).not.toHaveProperty('authorizationImpact')
   expect(request.systemPrompt).toContain('与changes同级')
