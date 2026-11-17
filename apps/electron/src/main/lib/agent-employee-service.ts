@@ -26,8 +26,12 @@ import { resolveOwnerPlanningTask, type OwnerPlanningTaskSource } from './projec
  * - 心跳检查（60s）：isAgentSessionActive 探测会话存活 + 超时中止 + stale 回退可重试
  */
 
+import { execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { isRetiredAgentRuntime, type OwnerExecutionCommandRole } from '@gravitas/shared'
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { isRetiredAgentRuntime, type OwnerExecutionCommandRole, type OwnerTerminalEvidence } from '@gravitas/shared'
+import { classifyOwnerTerminalEvidence, writeOwnerTerminalEvidence } from './project-owner-terminal-evidence'
 import { getAgentWorkspace } from './agent-workspace-manager'
 import { getAgentSessionWorkspacePath } from './config-paths'
 import { getChannelById } from './channel-manager'
@@ -1391,7 +1395,7 @@ export function isOwnerCommandFinalizing(commandId: string): boolean {
 }
 
 /** Owner终态回调串行化；重复Runtime事件共享同一次冻结和结算。 */
-function handleOwnerCommandRunCallback(execution: AgentExecution, messages: AgentMessage[] | undefined, stopped: boolean, error?: string): boolean {
+function handleOwnerCommandRunCallback(execution: AgentExecution, messages: AgentMessage[] | undefined, stopped: boolean, error?: string, runtimeResult?: SDKResultMessage): boolean {
   const commandId = execution.ownerCommandId
   if (!commandId) return false
   const fingerprint = ownerExecutionHash({
@@ -1403,7 +1407,7 @@ function handleOwnerCommandRunCallback(execution: AgentExecution, messages: Agen
     if (pendingFingerprint !== fingerprint) conflictingOwnerCommandCallbacks.add(commandId)
     return true
   }
-  const pending = finalizeOwnerCommandRunCallback(execution, messages, stopped, error)
+  const pending = finalizeOwnerCommandRunCallback(execution, messages, stopped, error, runtimeResult)
   pendingOwnerCommandCallbacks.set(commandId, fingerprint)
   void pending.catch((cause: unknown) => {
     const now = Date.now()
@@ -1418,8 +1422,30 @@ function handleOwnerCommandRunCallback(execution: AgentExecution, messages: Agen
   return true
 }
 
+/** 只读取已绑定 worktree 的现场；任何核验失败都退化为 null，不阻断终态。 */
+function readOwnerDevelopmentSnapshotState(execution: AgentExecution, executor: boolean): OwnerTerminalEvidence['development'] {
+  if (!executor || !execution.sessionId) return null
+  try {
+    const meta = getAgentSessionMeta(execution.sessionId)
+    const workspace = meta?.workspaceId ? getAgentWorkspace(meta.workspaceId) : undefined
+    if (!workspace?.rootPath) return null
+    const sessionDirectory = getAgentSessionWorkspacePath(workspace.slug, execution.sessionId)
+    const worktreePath = resolveDevelopmentWorktree(workspace.rootPath, sessionDirectory)
+    if (!worktreePath) return null
+    const binding = JSON.parse(readFileSync(join(sessionDirectory, 'development-worktree.json'), 'utf8')) as { baseCommit?: unknown }
+    const baseCommit = typeof binding.baseCommit === 'string' && /^[a-f0-9]{40,64}$/.test(binding.baseCommit) ? binding.baseCommit : null
+    const status = execFileSync('git', ['-C', worktreePath, 'status', '--porcelain=v1', '--untracked-files=all'], { encoding: 'utf8', timeout: 30_000 }).split('\n').filter(Boolean)
+    return {
+      worktreePath,
+      baseCommit,
+      changedFiles: status.filter(line => !line.startsWith('?? ')).map(line => line.slice(3)).slice(0, 50),
+      untrackedFiles: status.filter(line => line.startsWith('?? ')).map(line => line.slice(3)).slice(0, 50),
+    }
+  } catch { return null }
+}
+
 /** Owner业务execution终态只结Owner请求账本；绝不走普通任务完成、DoD、交付或学习回写。 */
-async function finalizeOwnerCommandRunCallback(execution: AgentExecution, messages: AgentMessage[] | undefined, stopped: boolean, error?: string): Promise<boolean> {
+async function finalizeOwnerCommandRunCallback(execution: AgentExecution, messages: AgentMessage[] | undefined, stopped: boolean, error?: string, runtimeResult?: SDKResultMessage): Promise<boolean> {
   const commandId = execution.ownerCommandId
   if (!commandId) return false
   if (execution.status !== 'running') return true
@@ -1484,6 +1510,24 @@ async function finalizeOwnerCommandRunCallback(execution: AgentExecution, messag
         const frozen = database.prepare('UPDATE project_owner_execution_commands SET text_delivery_hash=? WHERE id=? AND execution_id=? AND text_delivery_hash IS NULL').run(textDeliveryHash, commandId, execution.id)
         if (frozen.changes !== 1) throw new Error('完整文本成果摘要已存在，拒绝改写')
       }
+      writeOwnerTerminalEvidence(execution.projectId, classifyOwnerTerminalEvidence({
+        executionId: execution.id,
+        commandId,
+        role: command.role as 'executor' | 'reviewer',
+        executionStatus: nextStatus,
+        stopped,
+        runtimeResult: runtimeResult ?? null,
+        messages: messages ?? [],
+        error: error ?? '',
+        cost: {
+          state: usage.source === 'unknown' ? 'unknown' : 'settled',
+          actualCostMicros: usage.source === 'unknown' ? null : usage.costMicros,
+          requestCount: rows.length,
+        },
+        development: readOwnerDevelopmentSnapshotState(execution, command.role === 'executor'),
+        // 必须复用本轮已经确定的 completedAt，不能重新取 Date.now()。
+        capturedAt: completedAt,
+      }))
       settleOwnerCommandUsage(commandId, usage, completedAt, { deferSchedulerWake: true })
       if (command.role === 'reviewer') {
         try {
@@ -1546,7 +1590,8 @@ function handleExecutionComplete(
   const execution = store.getAgentExecution(executionId)
   if (!execution) return
   if (execution.ownerCommandId && handleOwnerCommandRunCallback(execution, messages, stoppedByUser,
-    runtimeResult && runtimeResult.subtype !== 'success' ? `Owner模型未完整结束（${runtimeResult.subtype}），过程说明不能作为成果` : undefined)) return
+    runtimeResult && runtimeResult.subtype !== 'success' ? `Owner模型未完整结束（${runtimeResult.subtype}），过程说明不能作为成果` : undefined,
+    runtimeResult)) return
   if (quarantineOwnerBusinessExecution(execution)) return
   if (handleOwnerRunCallback(execution, runtimeSource, runtimeResult, stoppedByUser)) return
   if (execution.status !== 'running') return
@@ -1710,7 +1755,7 @@ function handleExecutionError(
 ): void {
   const execution = store.getAgentExecution(executionId)
   if (!execution) return
-  if (execution.ownerCommandId && handleOwnerCommandRunCallback(execution, undefined, false, error)) return
+  if (execution.ownerCommandId && handleOwnerCommandRunCallback(execution, undefined, false, error, runtimeResult)) return
   if (quarantineOwnerBusinessExecution(execution)) return
   if (handleOwnerRunCallback(execution, runtimeSource, runtimeResult, false, error)) return
   if (execution.status === 'completed' || execution.status === 'cancelled' || execution.status === 'failed' || execution.status === 'stale') return

@@ -1380,6 +1380,11 @@ function migrate(database: SqliteCompat): void {
     revision INTEGER NOT NULL, request_id TEXT NOT NULL, payload TEXT NOT NULL,
     integrity_hash TEXT NOT NULL, UNIQUE(project_id, revision), UNIQUE(project_id, request_id)
   )`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_terminal_evidence (
+    command_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, execution_id TEXT NOT NULL,
+    payload TEXT NOT NULL, integrity_hash TEXT NOT NULL, created_at INTEGER NOT NULL
+  )`)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_owner_terminal_evidence_project ON project_owner_execution_terminal_evidence(project_id)')
   database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_start_intents (
     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, task_id TEXT, payload TEXT NOT NULL,
     integrity_hash TEXT NOT NULL, state TEXT NOT NULL CHECK(state IN ('pending','completed')),
