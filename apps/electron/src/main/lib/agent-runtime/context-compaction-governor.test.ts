@@ -86,9 +86,8 @@ describe('ContextGovernor P2', () => {
     const history = [toolResultMessage('x'.repeat(900_000), 'tool-huge')]
     expect(resolveAdaptiveKeepRecent({
       historyMessages: history,
-      inputBudgetTokens: 216_000,
+      targetKeepTokens: 25_600,
       desiredKeepRecent: 20,
-      currentPrompt: '继续',
     })).toBe(0)
   })
 })

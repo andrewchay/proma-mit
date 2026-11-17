@@ -89,6 +89,9 @@ const {
   SUMMARY_SOURCE_MAX_CHARS,
   truncateSummarySource,
   resolveAdaptiveCompactionTimeout,
+  resolveAdaptiveKeepRecent,
+  resolveAutoCompactionTrigger,
+  resolveKeepRecentTokenTarget,
 } = await import('./context-compaction')
 const { getContextCompactionMetrics } = await import('../context-compaction-audit-service')
 
@@ -211,7 +214,7 @@ describe('上下文压缩（Proma / AI SDK）', () => {
   test('maybeAutoCompact：超过阈值时压缩并持久化 boundary', async () => {
     // 写入内存会话历史（compactSDKMessages 内存版会读它），隔离真实文件 I/O
     const sessionId = 's2'
-    const history = makeHistory(65)
+    const history = makeHistory(400)
     inMemorySdk.set(sessionId, history)
 
     const result = await maybeAutoCompact({
@@ -232,21 +235,23 @@ describe('上下文压缩（Proma / AI SDK）', () => {
 
     // 持久化（内存版）：应为 boundary + 最近 20 条
     const persisted = inMemorySdk.get(sessionId) ?? []
-    expect(persisted.length).toBe(DEFAULT_KEEP_RECENT_MESSAGES + 1)
+    // 保留窗口由 token 目标决定，不再是固定条数
+    expect(persisted.length).toBeGreaterThan(1)
+    expect(persisted.length).toBeLessThanOrEqual(DEFAULT_KEEP_RECENT_MESSAGES + 1)
     const boundary = persisted[0] as { type?: string; subtype?: string; summary?: string; contextPacket?: import('@gravitas/shared').ContextPacket }
     expect(boundary?.type).toBe('system')
     expect(boundary?.subtype).toBe('compact_boundary')
     expect(boundary?.summary).toContain('用户偏好 TypeScript')
     expect(boundary?.contextPacket).toEqual({ version: 1, summary: '用户偏好 TypeScript，正在开发 Gravitas。', facts: ['用户偏好 TypeScript。'], decisions: ['使用 ContextPacket v1。'], openTasks: ['完成 P3。'], importantFiles: ['context-compaction.ts'], toolState: ['无外部写入。'] })
     // 最近消息仍在
-    expect(JSON.stringify(persisted[persisted.length - 1])).toContain('消息 64')
+    expect(JSON.stringify(persisted[persisted.length - 1])).toContain('消息 399')
     // result.history 与持久化一致
     expect(result.history.length).toBe(persisted.length)
   })
 
   test('自动压缩会写入不含摘要正文的本机审计指标', async () => {
     const sessionId = 's-auto-audit'
-    const history = makeHistory(65)
+    const history = makeHistory(400)
     inMemorySdk.set(sessionId, history)
 
     await maybeAutoCompact({
@@ -267,6 +272,65 @@ describe('上下文压缩（Proma / AI SDK）', () => {
     })
   })
 
+  test('保留窗口按窗口 20% 的 token 预算选取，而非固定 20 条', () => {
+    const history = makeHistory(400)
+    const trigger = resolveAutoCompactionTrigger({
+      historyMessages: history,
+      provider: 'deepseek',
+      modelId: 'm',
+      contextWindowOverride: 128_000,
+    })
+    // 128k × 20% = 25,600；低水位 57,200，取小者
+    expect(trigger.targetKeepTokens).toBe(25_600)
+    expect(trigger.contextWindow).toBe(128_000)
+
+    const keep = resolveAdaptiveKeepRecent({
+      historyMessages: history,
+      targetKeepTokens: trigger.targetKeepTokens,
+    })
+    expect(keep).toBeGreaterThan(20)
+    expect(keep).toBeLessThan(history.length)
+  })
+
+  test('历史总量小于保留目标时保留全部条数（压缩应跳过）', () => {
+    const history = makeHistory(5)
+    const keep = resolveAdaptiveKeepRecent({
+      historyMessages: history,
+      targetKeepTokens: 25_600,
+    })
+    expect(keep).toBe(5)
+  })
+
+  test('工具结果裁剪的保护边界独立于保留窗口硬顶', async () => {
+    // 回归：曾把两者共用 DEFAULT_KEEP_RECENT_MESSAGES，硬顶放宽到 200 后
+    // 20 余条历史全部进入保护范围，超大工具结果不再被裁剪。
+    const hugeToolResult: SDKMessage = {
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'old-tool', content: 'x'.repeat(900_000) }] },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage
+    const history = [hugeToolResult, ...makeHistory(21)]
+    inMemorySdk.set('s-prune-decoupled', history)
+
+    const result = await maybeAutoCompact({
+      sessionId: 's-prune-decoupled',
+      provider: 'kimi-coding',
+      apiKey: 'k',
+      baseUrl: 'http://mock',
+      model: 'kimi-for-coding',
+      historyMessages: history,
+    })
+
+    expect(result).toMatchObject({ compacted: false, pruned: true })
+  })
+
+  test('保留目标不超过低水位', () => {
+    // 极小窗口下 20% 仍低于低水位，两者都不应产出负值
+    expect(resolveKeepRecentTokenTarget(8_192, 5_632)).toBe(1_638)
+    // 低水位更小时取低水位
+    expect(resolveKeepRecentTokenTarget(1_000_000, 1_000)).toBe(650)
+  })
+
   test('maybeAutoCompact：早期文本过小不压缩', async () => {
     const tiny: SDKMessage[] = [
       { type: 'user', message: { content: [{ type: 'text', text: 'hi' }] }, parent_tool_use_id: null } as unknown as SDKMessage,
@@ -282,8 +346,25 @@ describe('上下文压缩（Proma / AI SDK）', () => {
     expect(result.compacted).toBe(false)
   })
 
+  test('Given 少于200条但内容超出保留预算 When 手动压缩 Then 早期内容进入摘要', async () => {
+    const history = makeHistory(8)
+    history[0] = { type: 'user', message: { content: [{ type: 'text', text: '重要早期内容'.repeat(5000) }] }, parent_tool_use_id: null } as unknown as SDKMessage
+    inMemorySdk.set('manual-large', history)
+    const result = await compactSessionNow({ sessionId: 'manual-large', provider: 'deepseek', apiKey: 'k', baseUrl: 'http://mock', model: 'm', contextWindowOverride: 8192, historyMessages: history })
+    expect(result.compacted).toBe(true)
+    expect(capturedSummaryPrompt).toContain('重要早期内容')
+    expect(result.history.length).toBeLessThan(history.length + 1)
+  })
+
+  test('Given 摘要后视图超出预算 When 压缩 Then 拒绝提交且不丢失未摘要消息', async () => {
+    const history = makeHistory(60)
+    inMemorySdk.set('budget-fail', history)
+    await expect(compactSessionNow({ sessionId: 'budget-fail', provider: 'deepseek', apiKey: 'k', baseUrl: 'http://mock', model: 'm', historyMessages: history, keepRecent: 20, targetInputTokens: 1 })).rejects.toThrow('超出目标 token 预算')
+    expect(inMemorySdk.get('budget-fail')).toEqual(history)
+  })
+
   test('compactSessionNow：摘要请求超时会发出 timed_out 终止态并拒绝', async () => {
-    const history = makeHistory(65)
+    const history = makeHistory(400)
     const lifecycle: string[] = []
     summaryStreamMode = 'hang'
 
@@ -311,7 +392,7 @@ describe('上下文压缩（Proma / AI SDK）', () => {
       apiKey: 'k',
       baseUrl: 'http://mock',
       model: 'm',
-      historyMessages: makeHistory(65),
+      historyMessages: makeHistory(400),
       signal: controller.signal,
       onLifecycle: (event) => lifecycle.push(event.status),
     })
@@ -323,7 +404,7 @@ describe('上下文压缩（Proma / AI SDK）', () => {
   })
 
   test('compactSessionNow：无效摘要会发出 failed 终止态且不改写历史', async () => {
-    const history = makeHistory(65)
+    const history = makeHistory(400)
     const lifecycle: string[] = []
     summaryStreamMode = 'invalid'
 
@@ -342,7 +423,7 @@ describe('上下文压缩（Proma / AI SDK）', () => {
   })
 
   test('compactSessionNow：压缩落盘失败会发出 failed 终止态', async () => {
-    const history = makeHistory(65)
+    const history = makeHistory(400)
     const lifecycle: string[] = []
     compactPersistenceMode = 'fail'
 
@@ -451,7 +532,7 @@ describe('上下文压缩（Proma / AI SDK）', () => {
   test('maybeAutoCompact：用户主动中止时不降级，向上传播 AbortError', async () => {
     const controller = new AbortController()
     summaryStreamMode = 'abort-aware'
-    const history = makeHistory(65)
+    const history = makeHistory(400)
     inMemorySdk.set('s-abort-degrade', history)
 
     const running = maybeAutoCompact({

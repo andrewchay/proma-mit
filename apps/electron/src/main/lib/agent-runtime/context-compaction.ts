@@ -22,8 +22,14 @@ import { estimateTokenCount } from '../agent-tool-token-estimator'
 
 export const COMPACT_CONTEXT_TOOL_NAME = 'CompactContext'
 
-/** 压缩时保留的最近消息条数（与 prompt-builder 的 MAX_HISTORY_MESSAGES 对齐） */
-export const DEFAULT_KEEP_RECENT_MESSAGES = 20
+/** 保留窗口的条数硬顶，仅用于防死循环；真实目标由 token 预算决定。 */
+export const DEFAULT_KEEP_RECENT_MESSAGES = 200
+
+/** 工具结果裁剪时保护的最近消息条数，与保留窗口硬顶解耦。 */
+export const DEFAULT_PRUNE_PROTECTED_MESSAGES = 20
+
+/** 保留窗口占模型上下文窗口的比例。 */
+export const KEEP_RECENT_WINDOW_RATIO = 0.20
 
 /** 为下一轮响应预留的输出 token，避免把已报告输入压到窗口边缘。 */
 export const DEFAULT_CONTEXT_OUTPUT_RESERVE_TOKENS = 32_000
@@ -150,6 +156,20 @@ export interface AutoCompactionTrigger {
   source: 'reported_usage' | 'estimated_payload'
   estimatedInputTokens: number
   inputBudgetTokens: number
+  /** 模型上下文窗口，供保留窗口按比例计算。 */
+  contextWindow: number
+  /** 保留窗口的 token 目标：窗口比例与低水位取小者。 */
+  targetKeepTokens: number
+}
+
+/**
+ * 保留窗口的 token 目标。
+ *
+ * 取「窗口 20%」与「低水位」的较小者：低水位是既有硬上限，
+ * 超过它会让压缩后立刻再次超预算。
+ */
+export function resolveKeepRecentTokenTarget(contextWindow: number, inputBudgetTokens: number): number {
+  return Math.max(0, Math.floor(Math.min(contextWindow * KEEP_RECENT_WINDOW_RATIO, inputBudgetTokens * COMPACTION_LOW_WATER_RATIO)))
 }
 
 /**
@@ -210,6 +230,8 @@ export function resolveAutoCompactionTrigger(options: {
     source: reportedTokens !== undefined && reportedTokens >= estimatedInputTokens ? 'reported_usage' : 'estimated_payload',
     estimatedInputTokens,
     inputBudgetTokens: budget.inputBudgetTokens,
+    contextWindow: capability.contextWindow,
+    targetKeepTokens: resolveKeepRecentTokenTarget(capability.contextWindow, budget.inputBudgetTokens),
   }
 }
 
@@ -233,28 +255,23 @@ export function estimateOutgoingContextTokens(input: {
   return estimateTokenCount(payload) + 256 + input.historyMessages.length * 12
 }
 
-/** 按低水位预算选择可保留的最近消息数量；超大单项会被纳入摘要而不是强行保留。 */
+/**
+ * 按 token 目标选择可保留的最近消息数量。
+ *
+ * 从最新往回累加，直到达到 targetKeepTokens 或触碰条数硬顶。
+ * 历史总量本身小于目标时返回全部条数——调用方据此跳过压缩。
+ */
 export function resolveAdaptiveKeepRecent(input: {
   historyMessages: SDKMessage[]
-  inputBudgetTokens: number
+  targetKeepTokens: number
   desiredKeepRecent?: number
-  currentPrompt?: string
-  systemPrompt?: string
-  tools?: ContextBudgetTool[]
 }): number {
-  const desired = Math.max(0, Math.min(input.desiredKeepRecent ?? DEFAULT_KEEP_RECENT_MESSAGES, input.historyMessages.length))
-  const staticTokens = estimateOutgoingContextTokens({
-    historyMessages: [],
-    currentPrompt: input.currentPrompt,
-    systemPrompt: input.systemPrompt,
-    tools: input.tools,
-  })
-  const historyBudget = Math.max(0, Math.floor(input.inputBudgetTokens * COMPACTION_LOW_WATER_RATIO) - staticTokens)
+  const hardCap = Math.max(0, Math.min(input.desiredKeepRecent ?? DEFAULT_KEEP_RECENT_MESSAGES, input.historyMessages.length))
+  const target = Math.max(0, input.targetKeepTokens)
   let selected = 0
-  for (let index = input.historyMessages.length - 1; index >= 0 && selected < desired; index--) {
-    const candidate = input.historyMessages.slice(index)
-    const candidateTokens = estimateOutgoingContextTokens({ historyMessages: candidate })
-    if (candidateTokens > historyBudget) break
+  for (let index = input.historyMessages.length - 1; index >= 0 && selected < hardCap; index--) {
+    const candidateTokens = estimateOutgoingContextTokens({ historyMessages: input.historyMessages.slice(index) })
+    if (candidateTokens > target) break
     selected += 1
   }
   return selected
@@ -273,7 +290,7 @@ export function pruneOldToolResults(
   historyMessages: SDKMessage[],
   options: { keepRecentMessages?: number; thresholdChars?: number } = {},
 ): ToolResultPruningResult {
-  const keepRecentMessages = options.keepRecentMessages ?? DEFAULT_KEEP_RECENT_MESSAGES
+  const keepRecentMessages = options.keepRecentMessages ?? DEFAULT_PRUNE_PROTECTED_MESSAGES
   const thresholdChars = options.thresholdChars ?? TOOL_RESULT_PRUNE_THRESHOLD_CHARS
   const protectedStart = Math.max(0, historyMessages.length - keepRecentMessages)
   let prunedResults = 0
@@ -400,13 +417,32 @@ function findLatestContextPacket(messages: SDKMessage[]): ContextPacket | undefi
  */
 export async function compactSessionNow(options: ContextCompactionOptions): Promise<ContextCompactionResult> {
   const { sessionId, historyMessages } = options
-  let keepRecent = options.keepRecent ?? DEFAULT_KEEP_RECENT_MESSAGES
+  const trigger = resolveAutoCompactionTrigger({ ...options, modelId: options.model })
+  const keepRecent = options.keepRecent ?? resolveAdaptiveKeepRecent({
+    historyMessages,
+    targetKeepTokens: trigger.targetKeepTokens,
+    desiredKeepRecent: Math.min(DEFAULT_KEEP_RECENT_MESSAGES, Math.max(0, historyMessages.length - 1)),
+  })
   options.onLifecycle?.({ status: 'started' })
   const earlyCount = Math.max(0, historyMessages.length - keepRecent)
   const earlyMessages = historyMessages.slice(0, earlyCount)
 
   if (earlyCount <= 0) {
     options.onLifecycle?.({ status: 'noop', message: '当前上下文较小，暂时无需压缩。' })
+    // 已判定需要压缩却无早期消息可压：把静默空转变成可诊断事实。
+    try {
+      if (options.audit) {
+        appendContextCompactionAudit({
+          ...options.audit,
+          compactionSkipped: {
+            estimatedHistoryTokens: estimateOutgoingContextTokens({ historyMessages }),
+            targetKeepTokens: options.targetInputTokens ?? 0,
+          },
+        })
+      }
+    } catch (error) {
+      console.warn('[上下文压缩] 写入跳过审计失败:', error)
+    }
     return { compacted: false, history: historyMessages }
   }
   if (sdkMessagesToCompactText(earlyMessages).trim().length < MIN_SUMMARY_SOURCE_CHARS) {
@@ -416,7 +452,7 @@ export async function compactSessionNow(options: ContextCompactionOptions): Prom
 
   let packet: ContextPacket | undefined
   try {
-    packet = await summarizeHistoryWithDeadline(options)
+    packet = await summarizeHistoryWithDeadline({ ...options, keepRecent })
   } catch (error) {
     const aborted = options.signal?.aborted === true || (error instanceof Error && error.name === 'AbortError')
     const timedOut = error instanceof ContextCompactionTimeoutError
@@ -431,34 +467,16 @@ export async function compactSessionNow(options: ContextCompactionOptions): Prom
   }
 
   if (options.targetInputTokens !== undefined) {
-    while (keepRecent > 0) {
-      const projectedHistory = [{
-        type: 'system',
-        subtype: 'compact_boundary',
-        session_id: sessionId,
-        summary: packet.summary,
-        contextPacket: packet,
-      } as unknown as SDKMessage, ...historyMessages.slice(historyMessages.length - keepRecent)]
-      const projectedTokens = estimateOutgoingContextTokens({
-        historyMessages: projectedHistory,
-        currentPrompt: options.currentPrompt,
-        systemPrompt: options.systemPrompt,
-        tools: options.tools,
-      })
-      if (projectedTokens <= options.targetInputTokens) break
-      keepRecent -= 1
-    }
-    const boundaryOnlyTokens = estimateOutgoingContextTokens({
-      historyMessages: [{ type: 'system', subtype: 'compact_boundary', session_id: sessionId, summary: packet.summary, contextPacket: packet } as unknown as SDKMessage],
-      currentPrompt: options.currentPrompt,
-      systemPrompt: options.systemPrompt,
-      tools: options.tools,
+    const projectedTokens = estimateOutgoingContextTokens({
+      historyMessages: [{ type: 'system', subtype: 'compact_boundary', session_id: sessionId, summary: packet.summary, contextPacket: packet } as unknown as SDKMessage, ...historyMessages.slice(historyMessages.length - keepRecent)],
+      currentPrompt: options.currentPrompt, systemPrompt: options.systemPrompt, tools: options.tools,
     })
-    if (boundaryOnlyTokens > options.targetInputTokens) {
-      const error = new Error('压缩后的 ContextPacket 仍超出目标 token 预算，已拒绝提交。')
+    if (projectedTokens > options.targetInputTokens) {
+      const error = new Error('压缩后的上下文仍超出目标 token 预算，已拒绝提交。')
       options.onLifecycle?.({ status: 'failed', message: error.message })
       throw error
     }
+
   }
 
   let history: SDKMessage[]
@@ -577,11 +595,8 @@ export async function maybeAutoCompact(options: ContextCompactionOptions): Promi
   }
   const adaptiveKeepRecent = resolveAdaptiveKeepRecent({
     historyMessages: pruning.history,
-    inputBudgetTokens: trigger.inputBudgetTokens,
+    targetKeepTokens: trigger.targetKeepTokens,
     desiredKeepRecent: keepRecent,
-    currentPrompt: options.currentPrompt,
-    systemPrompt: options.systemPrompt,
-    tools: options.tools,
   })
   try {
     return await compactSessionNow({

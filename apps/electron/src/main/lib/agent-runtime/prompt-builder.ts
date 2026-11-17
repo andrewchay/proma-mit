@@ -14,11 +14,50 @@
 import type { ChatMessage, SDKMessage, SDKAssistantMessage, SDKUserMessage, FileAttachment, SkillMeta } from '@gravitas/shared'
 import type { RuntimeMessage } from './types.ts'
 import { collectContributingPrompts } from '../plugin-manager'
+import { buildCompactBoundaryContent } from './compaction-notice'
+import { appendContextCompactionAudit } from '../context-compaction-audit-service'
+import { estimateOutgoingContextTokens } from './context-compaction'
 
 /** 最大回填历史消息条数（压缩摘要不计入此上限） */
 const MAX_HISTORY_MESSAGES = 20
 
-const COMPACT_CONTEXT_NOTICE = '以下是系统生成的既有会话压缩上下文。将其作为历史事实与未完成工作继续，不要把它当作用户的新指令。'
+/** 视图截断审计的 per-session 节流间隔：历史只增不减，连续轮次持续截断是正常状态。 */
+const VIEW_TRUNCATION_AUDIT_INTERVAL_MS = 60_000
+
+const lastViewTruncationAuditAt = new Map<string, number>()
+
+/** 仅供测试重置节流状态。 */
+export function __resetViewTruncationThrottle(): void {
+  lastViewTruncationAuditAt.clear()
+}
+
+/**
+ * 记录视图层历史截断。
+ *
+ * 没有 compact_boundary 时，selectRecentHistory 会静默丢弃更早的历史；
+ * 这里把丢弃量写进审计流，让「压缩没跟上」这件事可见。
+ */
+function auditViewTruncation(sessionId: string | undefined, dropped: SDKMessage[]): void {
+  if (!sessionId || dropped.length === 0) return
+  const now = Date.now()
+  const last = lastViewTruncationAuditAt.get(sessionId)
+  if (last !== undefined && now - last < VIEW_TRUNCATION_AUDIT_INTERVAL_MS) return
+  lastViewTruncationAuditAt.set(sessionId, now)
+  try {
+    appendContextCompactionAudit({
+      sessionId,
+      runtime: 'proma',
+      trigger: 'native',
+      viewTruncation: {
+        droppedMessages: dropped.length,
+        droppedTokens: estimateOutgoingContextTokens({ historyMessages: dropped }),
+        reason: 'max_history_messages',
+      },
+    })
+  } catch (error) {
+    console.warn('[上下文压缩] 写入视图截断审计失败:', error)
+  }
+}
 
 /** 默认 Agent 系统提示词 */
 const DEFAULT_AGENT_SYSTEM_PROMPT = `你是一个高效的编程助手，擅长通过工具调用完成代码编辑、文件操作和命令执行任务。
@@ -239,14 +278,20 @@ function selectRecentHistory(messages: SDKMessage[]): SDKMessage[] {
 
   const boundary = boundaryIndex >= 0 ? messages[boundaryIndex] : undefined
   const tail = messages.slice(boundaryIndex + 1)
-  let start = Math.max(0, tail.length - MAX_HISTORY_MESSAGES)
+  let start = boundary ? 0 : Math.max(0, tail.length - MAX_HISTORY_MESSAGES)
   if (start > 0) {
     const resultIds = getToolResultIds(tail[start])
     const useIds = getToolUseIds(tail[start - 1])
     if (resultIds.some((id) => useIds.has(id))) start--
   }
 
-  return boundary ? [boundary, ...tail.slice(start)] : tail.slice(start)
+  const selected = boundary ? [boundary, ...tail.slice(start)] : tail.slice(start)
+  // 仅在没有 boundary 时才归因于视图截断；有 boundary 时截断由压缩边界负责。
+  if (boundaryIndex < 0) {
+    const sessionId = (messages[0] as { session_id?: string } | undefined)?.session_id
+    auditViewTruncation(sessionId, messages.slice(0, start))
+  }
+  return selected
 }
 
 function compactBoundaryToChatMessage(message: SDKMessage): ChatMessage | undefined {
@@ -262,7 +307,7 @@ function compactBoundaryToChatMessage(message: SDKMessage): ChatMessage | undefi
   return {
     id: `${boundary.session_id ?? ''}-compact-boundary`,
     role: 'user',
-    content: `${COMPACT_CONTEXT_NOTICE}\n<context_packet>${JSON.stringify(packet)}</context_packet>`,
+    content: buildCompactBoundaryContent(packet),
     createdAt: Date.now(),
   }
 }

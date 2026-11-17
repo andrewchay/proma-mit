@@ -13,7 +13,7 @@ isolateSteWritingHostDependencies()
 const tempDir = mkdtempSync(join(tmpdir(), 'runtime-prompt-'))
 const originalConfigDir = process.env.PROMA_TEST_CONFIG_DIR
 process.env.PROMA_TEST_CONFIG_DIR = tempDir
-const { buildAgentSystemPrompt, sdkMessagesToChatMessages } = await import('./prompt-builder')
+const { buildAgentSystemPrompt, sdkMessagesToChatMessages, __resetViewTruncationThrottle } = await import('./prompt-builder')
 afterAll(() => {
   rmSync(tempDir, { recursive: true, force: true })
   if (originalConfigDir === undefined) delete process.env.PROMA_TEST_CONFIG_DIR
@@ -216,5 +216,71 @@ describe('buildAgentSystemPrompt 注入 available_skills', () => {
   test('given 无 skillContext 时不注入 available_skills', () => {
     const prompt = buildAgentSystemPrompt(undefined, '/tmp/workspace')
     expect(prompt).not.toContain('<available_skills>')
+  })
+})
+
+describe('视图层历史截断审计', () => {
+  function makeHistory(count: number, sessionId: string): SDKMessage[] {
+    return Array.from({ length: count }, (_, i) => ({
+      type: i % 2 === 0 ? 'user' : 'assistant',
+      message: { content: [{ type: 'text', text: `消息 ${i}` }] },
+      parent_tool_use_id: null,
+      session_id: sessionId,
+      uuid: `m-${i}`,
+    } as SDKMessage))
+  }
+
+  async function readAuditEvents(): Promise<Array<Record<string, unknown>>> {
+    const { readFile } = await import('node:fs/promises')
+    try {
+      const raw = await readFile(join(tempDir, 'context-compaction-audit', 'events.jsonl'), 'utf8')
+      return raw.split('\n').filter((line) => line.trim()).map((line) => JSON.parse(line) as Record<string, unknown>)
+    } catch {
+      return []
+    }
+  }
+
+  test('无 boundary 且超限时记录丢弃条数', async () => {
+    __resetViewTruncationThrottle()
+    const before = (await readAuditEvents()).length
+    sdkMessagesToChatMessages(makeHistory(100, 'view-1'))
+    const events = await readAuditEvents()
+    expect(events.length).toBe(before + 1)
+    const truncation = events[events.length - 1]?.viewTruncation as { droppedMessages: number; reason: string } | undefined
+    // 100 条历史只保留最近 MAX_HISTORY_MESSAGES(20) 条
+    expect(truncation?.droppedMessages).toBe(80)
+    expect(truncation?.reason).toBe('max_history_messages')
+  })
+
+  test('同一 session 60 秒内只记录一次', async () => {
+    __resetViewTruncationThrottle()
+    const before = (await readAuditEvents()).length
+    sdkMessagesToChatMessages(makeHistory(100, 'view-2'))
+    sdkMessagesToChatMessages(makeHistory(100, 'view-2'))
+    sdkMessagesToChatMessages(makeHistory(100, 'view-2'))
+    expect((await readAuditEvents()).length).toBe(before + 1)
+  })
+
+  test('历史未超限时不记录', async () => {
+    __resetViewTruncationThrottle()
+    const before = (await readAuditEvents()).length
+    sdkMessagesToChatMessages(makeHistory(5, 'view-3'))
+    expect((await readAuditEvents()).length).toBe(before)
+  })
+
+  test('存在 compact_boundary 时保留摘要之后全部历史且不记录截断', async () => {
+    __resetViewTruncationThrottle()
+    const before = (await readAuditEvents()).length
+    const history = makeHistory(100, 'view-4')
+    history[0] = {
+      type: 'system',
+      subtype: 'compact_boundary',
+      session_id: 'view-4',
+      summary: '交接摘要',
+    } as unknown as SDKMessage
+    const result = sdkMessagesToChatMessages(history)
+    expect(result).toHaveLength(100)
+    expect(result[1]?.content).toContain("消息 1")
+    expect((await readAuditEvents()).length).toBe(before)
   })
 })

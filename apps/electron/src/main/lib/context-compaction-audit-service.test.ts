@@ -32,4 +32,33 @@ describe('上下文压缩审计', () => {
       latestAt: expect.any(String),
     })
   })
+
+  test('记录视图截断与压缩跳过，且不影响既有聚合维度', async () => {
+    appendContextCompactionAudit({
+      sessionId: 'session-view',
+      runtime: 'pi',
+      trigger: 'native',
+      viewTruncation: {
+        droppedMessages: 37,
+        droppedTokens: 12000,
+        reason: 'max_history_messages',
+      },
+    })
+    appendContextCompactionAudit({
+      sessionId: 'session-skip',
+      runtime: 'pi',
+      trigger: 'automatic',
+      compactionSkipped: {
+        estimatedHistoryTokens: 8969,
+        targetKeepTokens: 25600,
+      },
+    })
+
+    const metrics = await getContextCompactionMetrics()
+    expect(metrics.total).toBe(3)
+    expect(metrics.byRuntime).toEqual([
+      { key: 'pi', count: 2 },
+      { key: 'proma', count: 1 },
+    ])
+  })
 })
