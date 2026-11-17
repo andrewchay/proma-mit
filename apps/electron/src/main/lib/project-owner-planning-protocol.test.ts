@@ -394,3 +394,18 @@ test('员工问题决定绑定准确修订，普通讨论不改目标，权限�
   c.conversation.employeeInteractions![0]!.kind = 'permission'
   expect(() => protocol.parseProjectOwnerPlanningResponse(response, c)).toThrow('人工权限审批')
 })
+
+test('Given已核对的历史提示 When重复读取或来源变化 Then缓存不共享可变结果且仍校验完整来源', async () => {
+  const protocol = await import('./project-owner-planning-protocol')
+  const original = context()
+  const request = protocol.buildProjectOwnerPlanningRequest(original, 'legacy', false)
+  const hash = createHash('sha256').update(JSON.stringify(request)).digest('hex')
+  const first = protocol.resolveProjectOwnerPlanningRequest(original, hash)
+  first.systemPrompt = '篡改返回值'
+  expect(protocol.resolveProjectOwnerPlanningRequest(original, hash)).toEqual(request)
+  const changed = structuredClone(original)
+  changed.goal.goal.objective = '来源内容已变化'
+  expect(() => protocol.resolveProjectOwnerPlanningRequest(changed, hash)).toThrow('来源指纹不匹配')
+  expect(() => protocol.resolveProjectOwnerPlanningRequest(changed, hash)).toThrow('来源指纹不匹配')
+  expect(protocol.resolveProjectOwnerPlanningRequest(original, hash)).toEqual(request)
+})
