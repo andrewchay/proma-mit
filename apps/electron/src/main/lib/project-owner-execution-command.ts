@@ -1,12 +1,13 @@
 import { readOwnerQualityAction, readOwnerQualityActionByExecution, readOwnerQualityArtifact } from './project-owner-quality-actions'
 import { ownerTaskDeliveryKind, ownerTaskHasTextDelivery, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { readOwnerTextDelivery } from './project-owner-text-delivery'
+import { readOwnerTerminalEvidence } from './project-owner-terminal-evidence'
 import { ownerDevelopmentArtifactReference } from './project-owner-development-artifact'
 import type { OwnerTextDelivery, ProjectOwnerGoalBrief } from '@gravitas/shared'
 import { ownerEmployeeConfigurationHash } from './project-owner-execution-source'
 /** Owner命令账本API（Stage B）：ack→reserve/queue；运行仅由独立显式dispatcher触发。 */
 import { randomUUID } from 'node:crypto'
-import type { OwnerExecutionCommandAckPreview, OwnerExecutionCommandRole, OwnerExecutionCommandView, OwnerExecutionRoleBudgetCap, ProjectOwnerGoalSubject } from '@gravitas/shared'
+import type { OwnerExecutionCommandAckPreview, OwnerExecutionCommandRole, OwnerExecutionCommandView, OwnerExecutionRoleBudgetCap, OwnerTerminalEvidence, ProjectOwnerGoalSubject } from '@gravitas/shared'
 import type { Task } from './project-types'
 import * as store from './project-sqlite-store'
 import { assertLocalActorEnabled, getProjectOwnerPlanningContext } from './project-owner-plan-service'
@@ -494,6 +495,13 @@ export function listOwnerExecutionCommands(rawSubject: unknown): OwnerExecutionC
       findings: review.findings,
       blockerReason: review.blockerReason,
     } : undefined
+    // command_id 是主键、每行唯一，不需要缓存；证据损坏时降级为不展示，不能拖垮整表。
+    let terminalEvidence: OwnerTerminalEvidence | undefined
+    try { terminalEvidence = readOwnerTerminalEvidence(row.command_id) ?? undefined }
+    catch (cause) {
+      // 证据是附加展示信息，损坏时降级而不是让整个命令列表不可用。
+      console.warn(`[Owner命令] 终端证据无法核验，已降级展示: ${row.command_id}`, cause instanceof Error ? cause.message : cause)
+    }
     return {
       commandId: row.command_id,
       grantId: row.grant_id,
@@ -512,6 +520,7 @@ export function listOwnerExecutionCommands(rawSubject: unknown): OwnerExecutionC
       ...(actionApprovals.has(row.command_id) ? { actionApprovals: actionApprovals.get(row.command_id)! } : {}),
       acceptanceCriteria: stepLink.projection.acceptanceCriteria,
       ...(technicalReview ? { technicalReview } : {}),
+      ...(terminalEvidence ? { terminalEvidence } : {}),
       reservedCostMicros: row.reserved_cost_micros,
       actualCostMicros: row.actual_cost_micros,
       grantAuthorization,

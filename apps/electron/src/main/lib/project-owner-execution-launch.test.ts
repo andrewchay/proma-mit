@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, expect, mock, test } from 'bun:test'
+import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { OwnerExecutionRevalidationTask } from '@gravitas/shared'
@@ -42,9 +43,19 @@ test('Given冻结批次含文本和研发步骤 When读取准确任务 Then按�
   expect(() => ownerTaskDeliveryKind(mixed, 'missing')).toThrow('唯一冻结任务')
   expect(() => ownerTaskDeliveryKind({ ...mixed, tasks: [mixed.tasks[0]!, mixed.tasks[0]!] }, 'task')).toThrow('唯一冻结任务')
 })
-function fixture(profile: 'controlled' | 'general' | 'development' = 'controlled', permissionMode: 'safe' | 'auto' = profile === 'general' || profile === 'development' ? 'auto' : 'safe', mixed = false, textDelivery = false, runtime: 'ai-sdk' | 'pi' = 'ai-sdk', withKnowledge = false) {
+/** 真实 git 仓库：worktree 需要可核验的 HEAD 基线。 */
+function gitRepository(): string {
+  const repo = mkdtempSync(join(directory, 'owner-dev-repo-'))
+  execFileSync('git', ['init', '-q'], { cwd: repo })
+  writeFileSync(join(repo, 'README.md'), '# 研发基线\n')
+  execFileSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', 'add', '.'], { cwd: repo })
+  execFileSync('git', ['-c', 'user.email=t@example.com', '-c', 'user.name=t', 'commit', '-q', '-m', 'init'], { cwd: repo })
+  return realpathSync(repo)
+}
+function fixture(profile: 'controlled' | 'general' | 'development' = 'controlled', permissionMode: 'safe' | 'auto' = profile === 'general' || profile === 'development' ? 'auto' : 'safe', mixed = false, textDelivery = false, runtime: 'ai-sdk' | 'pi' = 'ai-sdk', withKnowledge = false, development = false) {
   const project = store.createProject({ title: 'Owner最终启动', description: '' })
-  const workspace = createAgentWorkspace(`owner-launch-${randomUUID()}`, profile === 'development' ? mkdtempSync(join(directory, 'owner-dev-root-')) : undefined)
+  const repo = development ? gitRepository() : undefined
+  const workspace = createAgentWorkspace(`owner-launch-${randomUUID()}`, repo ?? (profile === 'development' ? mkdtempSync(join(directory, 'owner-dev-root-')) : undefined))
   bindWorkspaceToProject(project.id, workspace.id)
   const modelId = 'glm-5.3-flash'
   const channel = createChannel({ name: 'fake', provider: runtime === 'pi' ? 'zhipu' : 'openai', baseUrl: 'https://example.invalid', apiKey: 'fake', enabled: true, models: [{ id: modelId, name: modelId, enabled: true }] })
@@ -78,11 +89,11 @@ function fixture(profile: 'controlled' | 'general' | 'development' = 'controlled
   plans.saveProjectOwnerPlanDraft(project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '计划', assumptions: [], risks: [], steps, changeReason: '建立' })
   plans.confirmProjectOwnerPlanDraft(project.id, 1, 1)
   const subject = { projectId: project.id }
-  const preparationInput = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: ['brief'], executionKind: 'controlled' as const, ...(mixed || runtime === 'pi' ? { employeeRuntimeVersion: 2 as const } : {}), ...(textDelivery ? { textDeliveryVersion: 1 as const } : {}), executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id, roleAssignments: [{ roleKey: steps[0]!.roleKey, employeeId: executor.id }], workspaceId: workspace.id, knowledgeSourceIds, maxCostMicros: 1000000, maxRuns: 4, maxRework: 1, expiresAt: Date.now() + 3600000, changeReason: '准备' }
+  const preparationInput = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: ['brief'], executionKind: (development ? 'development' : 'controlled') as 'development' | 'controlled', ...(development ? { developmentScope: { workspaceId: workspace.id, targetPaths: ['index.html'], allowedPaths: ['index.html', 'README.md'], verificationCommands: ['git status'] } } : {}), ...(mixed || runtime === 'pi' ? { employeeRuntimeVersion: 2 as const } : {}), ...(!development && textDelivery ? { textDeliveryVersion: 1 as const } : {}), executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id, roleAssignments: [{ roleKey: steps[0]!.roleKey, employeeId: executor.id }], workspaceId: workspace.id, knowledgeSourceIds, maxCostMicros: 1000000, maxRuns: 4, maxRework: 1, expiresAt: Date.now() + 3600000, changeReason: '准备' }
   const pv = prep.previewOwnerExecutionPreparation(subject, preparationInput), preparation = prep.saveOwnerExecutionPreparation(subject, preparationInput, pv.previewFingerprint)
   const input = { requestId: randomUUID(), expectedMaterializationRevision: 0, expectedPreparationId: preparation.id, expectedPreparationRevision: preparation.revision, expectedPreparationHash: preparation.integrityHash, expectedPolicyRevision: preparation.policyRevision }
   const preview = materialization.previewOwnerTaskMaterialization(subject, input)
-  return { project, subject, preparation, workspace, channel, reviewerChannel, executor, reviewer, knowledgeSourceIds, extraKnowledgeSourceId, request: { ...subject, input, previewFingerprint: preview.previewFingerprint } }
+  return { project, subject, preparation, workspace, channel, reviewerChannel, executor, reviewer, knowledgeSourceIds, extraKnowledgeSourceId, repo, request: { ...subject, input, previewFingerprint: preview.previewFingerprint } }
 }
 function adapters() {
   const calls = { schedules: 0 }
@@ -413,7 +424,13 @@ async function textDeliveryRun(options: { rework?: boolean; oversized?: boolean;
       const content = command.role === 'executor' ? `${'A'.repeat(options.oversized ? artifacts.OWNER_TEXT_DELIVERY_MAX_BYTES : 24000)}\n超出摘要位置的明确范围依据：${command.rework_ordinal ? '修订版' : '首版'}。`
         : JSON.stringify({ schemaVersion: 2, artifactHash: artifact!.contentSha256, verdict: changes ? 'changes_requested' : 'approved', summary: changes ? '需补齐范围依据' : '全文检查的合成评审', criteria: [{ criterion: '范围', status: changes ? 'not_met' : 'met', evidence: changes ? '范围依据不充分' : '引用正文范围依据', quote: changes ? null : '超出摘要位置的明确范围依据' }], findings: changes ? [{ severity: 'medium', description: '范围论据不够', requestedChange: '补齐范围依据并交付完整修订正文' }] : [], blockerReason: null })
       calls.push({ role: command.role, ordinal: command.rework_ordinal, content, ...(artifact ? { artifactHash: artifact.contentSha256 } : {}) })
-      const finish = () => callbacks.onComplete([{ id: randomUUID(), role: 'assistant', content, createdAt: Date.now() }], options.truncated ? { runtimeResult: { type: 'result', subtype: 'error_during_execution', finish_reason: 'length' } as unknown as import('@gravitas/shared').SDKResultMessage } : undefined)
+      // 真实 Runtime 的 Owner 终态总会带一条 result 回执；成功路径也不能省略，否则证据只能归为 unknown。
+      const finish = () => callbacks.onComplete([{ id: randomUUID(), role: 'assistant', content, createdAt: Date.now() }], {
+        runtimeResult: (options.truncated
+          ? { type: 'result', subtype: 'error_during_execution', finish_reason: 'length', usage: { input_tokens: 1, output_tokens: 2 } }
+          : { type: 'result', subtype: 'success', finish_reason: 'stop', usage: { input_tokens: 1, output_tokens: 2 },
+            toolCallBatchIntegrity: { version: 1, complete: true, reasons: [], unexecutedMandatory: false } }) as unknown as import('@gravitas/shared').SDKResultMessage,
+      })
       if (command.role === 'reviewer' && options.holdReviewer) pendingReviews.push(finish)
       else finish()
     } catch (cause) { callbacks.onError(String(cause)) }
@@ -736,4 +753,90 @@ test('Given运行中员工问题 WhenOwner在同一对话定案 Then仅原Promis
     } finally { signal.abort() }
   } })
   expect(answered).toBe(true)
+})
+
+test('Given研发执行被截断 When读取命令视图 Then带可核对的终端证据与工作树现场', async () => {
+  const r = await textDeliveryRun({ truncated: true, profile: 'development' })
+  const commands = (await import('./project-owner-execution-command')).listOwnerExecutionCommands(r.f.subject)
+  const evidence = commands[0]?.terminalEvidence
+  expect(evidence).toBeDefined()
+  expect(evidence).toMatchObject({
+    reason: 'output_limit',
+    provider: { subtype: 'error_during_execution', finishReason: 'length' },
+    cost: { state: 'settled' },
+  })
+  expect(evidence!.executionId).toBe(commands[0]!.executionId!)
+})
+
+test('Given正常完成的文本执行 When读取命令视图 Then证据原因为completed且不写工作树现场', async () => {
+  const r = await textDeliveryRun({ profile: 'general' })
+  await r.advance()
+  const commands = (await import('./project-owner-execution-command')).listOwnerExecutionCommands(r.f.subject)
+  const evidence = commands[0]?.terminalEvidence
+  expect(evidence).toBeDefined()
+  expect(evidence!.reason).toBe('completed')
+  expect(evidence!.development).toBeNull()
+})
+
+test('Given同一命令终态回调重复触发 When再次写入 Then不抛错且证据不变', async () => {
+  const r = await textDeliveryRun({ truncated: true, profile: 'development' })
+  const command = (await import('./project-owner-execution-command')).listOwnerExecutionCommands(r.f.subject)[0]!
+  const before = command.terminalEvidence
+  expect(before).toBeDefined()
+  // 重复读取不应产生新证据，也不应因哈希不一致而抛错。
+  const again = (await import('./project-owner-execution-command')).listOwnerExecutionCommands(r.f.subject)[0]!
+  expect(again.terminalEvidence).toEqual(before)
+})
+
+test('Given研发执行真的创建了worktree When终态写入证据 Then包含基线commit与文件现场', async () => {
+  const f = fixture('development', 'auto', false, false, 'ai-sdk', false, true), a = adapters()
+  expect(f.repo).toBeDefined()
+  const repo = f.repo!
+  const scheduler = await import('./project-owner-autonomous-scheduler')
+  const registry = await import('./agent-headless-runner-registry')
+  const boundary = await import('./controlled-provider-boundary')
+  const { getAgentWorkspaceCwd } = await import('./agent-workspace-manager')
+  const worktrees: string[] = []
+  const finished: Promise<void>[] = []
+  registry.setHeadlessAgentRunner(async (input, callbacks) => {
+    let finish!: () => void
+    finished.push(new Promise<void>(resolve => { finish = resolve }))
+    callbacks.onRuntimeStarted?.()
+    try {
+      const execution = store.getAgentExecutionBySessionId(input.sessionId)!
+      const command = store.getProjectDb().prepare('SELECT role FROM project_owner_execution_commands WHERE id=?').get(execution.ownerCommandId!) as { role: 'executor' | 'reviewer' }
+      const cwd = getAgentWorkspaceCwd(f.workspace, input.sessionId)
+      // 研发档必须真的落在会话独立 worktree 上，而不是主仓库。
+      expect(cwd).not.toBe(repo)
+      worktrees.push(cwd)
+      if (command.role !== 'executor') { callbacks.onError('评审替身结束；本用例只核对执行侧工作树现场'); return }
+      const transport = Object.assign(async () => new Response(JSON.stringify({ choices: [], usage: { prompt_tokens: 2, completion_tokens: 3 } }), { headers: { 'content-type': 'application/json' } }), { preconnect: () => {} }) as typeof globalThis.fetch
+      const fetcher = boundary.createControlledProviderFetch(input.sessionId, () => ({ runtime: 'ai-sdk', cwd, modelId: input.modelId!, permissionMode: 'safe' }), transport)
+      await fetcher(`${getChannelById(input.channelId)!.baseUrl!.replace(/\/+$/, '')}/chat/completions`, { method: 'POST', body: JSON.stringify({ model: input.modelId, max_tokens: 100, messages: [{ role: 'user', content: input.userMessage }] }) })
+      // 在 worktree 里同时制造一条已跟踪改动和一条未跟踪新增。
+      writeFileSync(join(cwd, 'README.md'), '# 研发基线\n\n执行者改写了基线说明。\n')
+      writeFileSync(join(cwd, 'index.html'), '<!doctype html><html><body>可玩页面</body></html>\n')
+      callbacks.onComplete([{ id: randomUUID(), role: 'assistant', content: '已按范围交付 index.html 与说明更新。', createdAt: Date.now() }], {
+        runtimeResult: { type: 'result', subtype: 'success', finish_reason: 'stop', usage: { input_tokens: 1, output_tokens: 2 } } as unknown as import('@gravitas/shared').SDKResultMessage,
+      })
+    } catch (cause) { callbacks.onError(String(cause)) }
+    finally { finish() }
+  })
+  const dependencies = { ...a.dependencies, schedule: async (id: string) => { await scheduler.runOwnerAutonomousSchedule(id) } }
+  await launchOwnerPreparedExecution(f.request, dependencies)
+  await finished[0]
+  await waitForOwnerProjectSettled(f.project.id)
+  const command = (await import('./project-owner-execution-command')).listOwnerExecutionCommands(f.subject).find(item => item.role === 'executor')!
+  const development = command.terminalEvidence?.development
+  expect(development).not.toBeNull()
+  expect(development!.worktreePath).toBe(realpathSync(worktrees[0]!))
+  expect(existsSync(development!.worktreePath!)).toBe(true)
+  // worktree 是仓库的子目录之外的新目录，不能等于主仓库根。
+  expect(development!.worktreePath).not.toBe(repo)
+  expect(development!.baseCommit).toMatch(/^[a-f0-9]{40,64}$/)
+  expect(development!.baseCommit).toBe(execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim())
+  expect(development!.changedFiles).toEqual(['README.md'])
+  expect(development!.untrackedFiles).toEqual(['index.html'])
+  // 主仓库保持干净：改动只在会话 worktree 内。
+  expect(execFileSync('git', ['-C', repo, 'status', '--porcelain'], { encoding: 'utf8' }).trim()).toBe('')
 })

@@ -1090,8 +1090,8 @@ export interface OwnerTerminalEvidence {
   /** Provider 原始终止原因；只来自 Runtime 回执。 */
   provider: { subtype: string | null; finishReason: string | null; requestId: string | null; responseId: string | null } | null
   /** 归一化原因；用于界面文案与恢复判定。 */
-  reason: 'provider_stop' | 'output_limit' | 'tool_call_incomplete' | 'runtime_error' | 'stopped_by_user' | 'no_output' | 'unknown'
-  /** 脱敏后的简短说明（≤300 字符）。 */
+  reason: 'completed' | 'provider_stop' | 'output_limit' | 'tool_call_incomplete' | 'runtime_error' | 'stopped_by_user' | 'no_output' | 'unknown'
+  /** 脱敏后的简短说明（长度受 `MAX_DETAIL_LENGTH` 限制）。 */
   detail: string
   tools: { calls: number; results: number; lastToolName: string | null; lastResultStatus: 'ok' | 'error' | 'missing' | null; incompleteBatch: boolean }
   cost: { state: 'settled' | 'unknown'; actualCostMicros: number | null; requestCount: number }
