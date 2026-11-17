@@ -145,6 +145,7 @@ import { initAutoUpdater, cleanupUpdater } from './lib/updater/auto-updater'
 import { rescanProjectRoots, startWorkspaceWatcher, stopWorkspaceWatcher } from './lib/workspace-watcher'
 import { startChatToolsWatcher, stopChatToolsWatcher } from './lib/chat-tools-watcher'
 import { getIsQuitting, setQuitting } from './lib/app-lifecycle'
+import { resolveWindowCloseAction } from './lib/window-close-policy'
 import { registerBridge, startAllBridges, stopAllBridges } from './lib/bridge-registry'
 import { feishuBridgeManager } from './lib/feishu-bridge-manager'
 import { getFeishuMultiBotConfig } from './lib/feishu-config'
@@ -415,23 +416,23 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
-  // macOS: 点击关闭按钮时隐藏窗口+应用，而不是退出
-  // 同时隐藏应用（类似 Cmd+H），确保点击 Dock 图标时 macOS 能正确触发 activate 事件
-  if (process.platform === 'darwin') {
-    mainWindow.on('close', (event) => {
-      if (!getIsQuitting()) {
-        // 隐藏前先刷新挂起的窗口状态保存
-        if (windowStateSaveTimer) {
-          clearTimeout(windowStateSaveTimer)
-          windowStateSaveTimer = null
-        }
-        saveMainWindowState()
-        event.preventDefault()
-        mainWindow?.hide()
-        app.hide()
-      }
-    })
-  }
+  // 点击关闭按钮时隐藏到托盘而不是退出：Owner 管理回路、autonomous scheduler、
+  // 外部事件触发都跑在主进程里，窗口一关就退出等于把后台能力一起停掉。
+  // 真正的退出走 before-quit 置位的 isQuitting（Cmd+Q / 菜单退出 / 系统关机）。
+  // 各平台行为一致，避免「macOS 能常驻、Windows 一关就没」的分裂。
+  mainWindow.on('close', (event) => {
+    if (resolveWindowCloseAction({ isQuitting: getIsQuitting() }) === 'allow-close') return
+    // 隐藏前先刷新挂起的窗口状态保存
+    if (windowStateSaveTimer) {
+      clearTimeout(windowStateSaveTimer)
+      windowStateSaveTimer = null
+    }
+    saveMainWindowState()
+    event.preventDefault()
+    mainWindow?.hide()
+    // macOS 需额外隐藏应用，确保点击 Dock 图标时能触发 activate 事件。
+    if (process.platform === 'darwin') app.hide()
+  })
 
   mainWindow.on('closed', () => {
     mainWindow = null
@@ -797,11 +798,10 @@ async function handleBootstrapFailure(err: unknown): Promise<void> {
 }
 
 app.on('window-all-closed', () => {
-  // 非 macOS：关闭所有窗口时退出应用
-  // macOS：保持应用运行（可通过 tray 或 Dock 重新打开）
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
+  // 关窗已被 close 处理器拦成「隐藏到托盘」，这里只处理窗口真的被销毁的情况
+  // （例如渲染进程崩溃）。此时保持常驻，用户可从托盘菜单重新打开；
+  // 真正退出仍走 before-quit 置位的 isQuitting。
+  if (resolveWindowCloseAction({ isQuitting: getIsQuitting() }) === 'allow-close') app.quit()
 })
 
 let stopPilotBackgroundReconcile: (() => void) | null = null

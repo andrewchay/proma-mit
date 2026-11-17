@@ -2,6 +2,7 @@
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { inspectDevelopmentWorkspaceBlocker, type DevelopmentWorkspaceBlocker } from './development-workspace-blocker'
 import { writeJsonFileAtomic } from './safe-file'
 
 interface DevelopmentWorktree {
@@ -22,11 +23,21 @@ function commonDirectory(repository: string): string {
   return realpathSync(resolve(repository, git(repository, 'rev-parse', '--git-common-dir')))
 }
 
+/** 研发工作区脏改动导致的阻塞；携带结构化阻塞项供上层展示与重新核对。 */
+export class DevelopmentWorkspaceBlockedError extends Error {
+  constructor(readonly blocker: Extract<DevelopmentWorkspaceBlocker, { kind: 'dirty_worktree' }>) {
+    super('仓库存在未提交改动，请先保存当前迭代，再派发研发任务；不会自动提交或丢弃变更')
+    this.name = 'DevelopmentWorkspaceBlockedError'
+  }
+}
+
 export function createDevelopmentWorktree(repository: string, sessionDirectory: string, executionId: string): DevelopmentWorktree {
   if (!/^[a-zA-Z0-9-]+$/.test(executionId)) throw new Error('无效的研发执行 ID')
   const root = realpathSync(repository)
   if (realpathSync(git(root, 'rev-parse', '--show-toplevel')) !== root) throw new Error('工作区必须指向 Git 仓库根目录')
-  if (git(root, 'status', '--porcelain', '--untracked-files=all')) throw new Error('仓库存在未提交改动，请先保存当前迭代，再派发研发任务；不会自动提交或丢弃变更')
+  const blocker = inspectDevelopmentWorkspaceBlocker(root, 'workspace', root)
+  if (blocker.kind === 'dirty_worktree') throw new DevelopmentWorkspaceBlockedError(blocker)
+  if (blocker.kind === 'not_git_root') throw new Error(blocker.detail)
   mkdirSync(sessionDirectory, { recursive: true })
   if (existsSync(join(sessionDirectory, BINDING_FILE))) throw new Error('此会话已绑定研发 worktree，不能覆盖')
   const worktree: DevelopmentWorktree = {

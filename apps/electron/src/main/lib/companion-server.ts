@@ -202,6 +202,8 @@ async function buildRealDeps(): Promise<CompanionApiDeps> {
     getVapidPublicKey: () => ensureVapidKeys().publicKey,
     subscribePush: (subscription) => addPushSubscription(subscription),
     unsubscribePush: (endpoint) => removePushSubscription(endpoint),
+    // 懒加载：event-router 顶层会连带引入 workflow 服务，避免启动期副作用。
+    dispatchAutomationEvent: async (event) => (await import('./event-router-service')).eventRouter.dispatch(event),
   }
 }
 

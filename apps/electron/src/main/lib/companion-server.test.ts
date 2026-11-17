@@ -52,6 +52,7 @@ function makeFakeDeps(overrides: Partial<CompanionApiDeps> = {}): CompanionApiDe
     getVapidPublicKey: () => 'test-vapid-public-key',
     subscribePush: () => true,
     unsubscribePush: () => true,
+    dispatchAutomationEvent: async () => [{ ruleName: '', status: 'no_rule' }],
     ...overrides,
   }
 }

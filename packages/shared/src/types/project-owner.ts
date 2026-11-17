@@ -1147,6 +1147,10 @@ export interface OwnerExecutionAutonomousScheduleStatus {
 export interface OwnerDispatchControl { projectId: string; grantId: string; paused: boolean; revision: number; updatedAt: number | null }
 export interface OwnerDispatchControlEvent { projectId: string; grantId: string; paused: boolean; revision: number; createdAt: number }
 export interface SetOwnerDispatchControlRequest { projectId: string; grantId: string; paused: boolean; expectedRevision: number }
+/** 「重新核对研发工作区」的结果：仅反映此刻的只读检查，不代表已恢复执行。 */
+export type OwnerDevelopmentWorkspaceRecheck =
+  | { state: 'clean' }
+  | { state: 'blocked'; blocker: { kind: string; detail: string; trackedFiles: string[]; untrackedFiles: string[]; remedy: string } }
 export interface ProjectOwnerExecutionCommandApi {
   getOwnerAutonomousScheduleStatus: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerExecutionAutonomousScheduleStatus>>
   getOwnerDispatchControl: (request: { projectId: string; grantId: string }) => Promise<ProjectOwnerGoalResult<OwnerDispatchControl>>
@@ -1159,6 +1163,8 @@ export interface ProjectOwnerExecutionCommandApi {
   cancelQueuedOwnerExecutionCommand: (request: { commandId: string }) => Promise<ProjectOwnerGoalResult<{ commandId: string }>>
   previewOwnerPreflightReconciliation: (request: OwnerPreflightReconciliationPreviewRequest) => Promise<ProjectOwnerGoalResult<OwnerPreflightReconciliationPreview>>
   confirmOwnerPreflightReconciliation: (request: ConfirmOwnerPreflightReconciliationRequest) => Promise<ProjectOwnerGoalResult<OwnerPreflightReconciliationResult>>
+  /** 重新核对研发工作区；清理后调用可恢复「从未认领」的排队准备。 */
+  recheckOwnerDevelopmentWorkspace: (request: ProjectOwnerGoalSubject & { executionId: string }) => Promise<ProjectOwnerGoalResult<OwnerDevelopmentWorkspaceRecheck>>
 }
 
 /** 用户在Owner结果卡确认后，主进程复验并一次完成授权与调度。 */

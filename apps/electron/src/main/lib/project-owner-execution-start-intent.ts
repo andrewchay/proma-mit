@@ -15,6 +15,7 @@ import { getOwnerPlanningRunReceipt } from './project-owner-planning-run-service
 import { readOwnerPlanningSnapshot } from './project-owner-planning-source'
 import { readOwnerQualityActionByExecution } from './project-owner-quality-actions'
 import { settleOwnerCommandUsage } from './project-owner-execution-settlement'
+import { planMixedBatchSupersession, recordMixedBatchSupersession, type MixedBatchSupersessionPlan } from './project-owner-mixed-batch-recovery'
 import type { PilotUsageEvidence } from './project-pilot-budget-ledger'
 
 interface IntentRow { id: string; project_id: string; task_id: string | null; payload: string; integrity_hash: string; state: string; grant_id: string | null; created_at: number; recovery_status: string }
@@ -468,8 +469,17 @@ export function resumeOwnerExecutionStartIntent(intentId: string, expectedSubjec
       throw new Error('启动确认对应方案未能核实；执行已停止')
     const materializationView = getOwnerTaskMaterialization(subject)
     const previousMaterialization = materializationView.materialization
-    const replacingPreviousBatch = Boolean(previousMaterialization && previousMaterialization.input.requestId !== `owner-start:${intent.intentId}`
-      && (supersedeDeliveredFeedbackBatch(subject, plan, previousMaterialization.id) || supersedePreviousGoalBatch(subject, plan, previousMaterialization) || supersedeEscalatedBatch(subject, plan, previousMaterialization) || supersedeFailedBatch(subject, plan, previousMaterialization, intent.input.executionKind === 'development')))
+    // 混合批次：只暂停旧授权并记录现场，关联记录等新批次材料化成功后再写。
+    let mixedPlan: MixedBatchSupersessionPlan | null = null
+    if (previousMaterialization && previousMaterialization.input.requestId !== `owner-start:${intent.intentId}`) {
+      try { mixedPlan = planMixedBatchSupersession(subject, previousMaterialization.id) }
+      catch (cause) { console.warn('[Owner执行] 混合批次接替条件不满足，保留原记录', subject.projectId, cause instanceof Error ? cause.message : cause) }
+    }
+    const replacingPreviousBatch = Boolean(previousMaterialization && (mixedPlan || (
+      supersedeDeliveredFeedbackBatch(subject, plan, previousMaterialization.id)
+      || supersedePreviousGoalBatch(subject, plan, previousMaterialization)
+      || supersedeEscalatedBatch(subject, plan, previousMaterialization)
+      || supersedeFailedBatch(subject, plan, previousMaterialization, intent.input.executionKind === 'development'))))
     const input = getConfirmedPreparationInput(intent, plan)
     const preparationView = getOwnerExecutionPreparation(subject)
     let preparation = preparationView.preparation
@@ -507,6 +517,7 @@ export function resumeOwnerExecutionStartIntent(intentId: string, expectedSubjec
       const preview = previewOwnerTaskMaterialization(subject, materialInput)
       materialization = materializeOwnerTasks(subject, materialInput, preview.previewFingerprint)
     }
+    if (mixedPlan && materialization) recordMixedBatchSupersession(subject, mixedPlan, materialization.id)
     const grant = await dependencies.launch({ ...subject, input: materialization.input, previewFingerprint: materialization.preview.previewFingerprint })
     completeOwnerExecutionStartIntent({ ...subject, intentId, grantId: grant.grantId })
     // 确认后必须立刻在同一次对话出现可见回应，否则界面只显示空白，像被中断。

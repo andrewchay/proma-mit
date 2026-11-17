@@ -22,6 +22,12 @@ import type { WorkflowRun } from '@gravitas/shared'
 /** 执行目标函数签名（依赖注入点，测试可替换；缺省转发 Workflow 事件触发） */
 export type WorkflowEventExecutor = (eventName: string, payload: Record<string, unknown>) => Promise<WorkflowRun[]>
 
+/**
+ * Owner 目标唤醒执行器（依赖注入点，测试可替换；缺省懒加载 project-owner-management-loop）。
+ * 返回 false 表示没有可唤醒的回路（例如主进程未启动管理循环）。
+ */
+export type OwnerGoalWakeExecutor = (input: { projectId: string; taskId?: string }) => Promise<boolean>
+
 // ===== 事件与规则类型 =====
 
 /** 归一化后的自动化事件（对齐中台的「从哪来 / 什么类型 / 对象是谁 / 一句话摘要 / 回链」） */
@@ -44,10 +50,12 @@ export interface AgentAutomationEvent {
   payload?: Record<string, unknown>
 }
 
-/** 规则执行目标。v1：workflow-event / log；session 直启为预留形态。 */
+/** 规则执行目标。v1：workflow-event / log / owner-goal；session 直启为预留形态。 */
 export type EventRouteTarget =
   | { kind: 'workflow-event'; eventName: string }
   | { kind: 'log' }
+  /** 唤醒项目 Owner 管理回路（外部事件触发，见 docs/reverse-engineering-your-dot-autoworking.md 阶段 1） */
+  | { kind: 'owner-goal'; projectId: string; taskId?: string }
 
 /** 通知策略：needed=仅失败时打扰（默认）；always=成功也通知；silent=从不 */
 export type EventTellPolicy = 'needed' | 'always' | 'silent'
@@ -117,6 +125,9 @@ export function validateEventRule(rule: EventRouteRule): string[] {
     errors.push('规则缺少 to')
   } else if (rule.to.kind === 'workflow-event') {
     if (!rule.to.eventName?.trim()) errors.push('to.eventName 不能为空')
+  } else if (rule.to.kind === 'owner-goal') {
+    if (!rule.to.projectId?.trim()) errors.push('to.projectId 不能为空')
+    if (rule.to.taskId !== undefined && !rule.to.taskId.trim()) errors.push('to.taskId 不能为空字符串')
   } else if (rule.to.kind !== 'log') {
     errors.push(`不支持的 to.kind: ${(rule.to as { kind?: string }).kind}`)
   }
@@ -161,6 +172,16 @@ export function defaultEventRulesFile(): EventRulesFile {
         tell: 'silent',
         enabled: false,
       },
+      {
+        name: '示例：外部事件唤醒 Owner 管理（默认停用）',
+        // 外部系统 POST /api/hooks/owner-goal 时归一化为 source=webhook / type=owner-goal
+        when: { source: 'webhook', types: ['owner-goal'] },
+        to: { kind: 'owner-goal', projectId: '替换为你的项目 ID' },
+        group: 'owner-goal',
+        parallel: 1,
+        tell: 'needed',
+        enabled: false,
+      },
     ],
   }
 }
@@ -187,11 +208,14 @@ export class EventRouter {
   private notifyHandler?: (message: EventNotifyMessage) => void
   /** workflow-event 执行器（缺省懒加载 workflow-event-service，避免测试期连带重依赖） */
   private workflowExecutor?: WorkflowEventExecutor
+  /** owner-goal 唤醒执行器（缺省懒加载 project-owner-management-loop） */
+  private ownerGoalExecutor?: OwnerGoalWakeExecutor
   /** 规则文件路径覆盖（测试注入临时路径；缺省读全局 event-rules.json） */
   private rulesPathOverride?: string
 
-  constructor(workflowExecutor?: WorkflowEventExecutor) {
+  constructor(workflowExecutor?: WorkflowEventExecutor, ownerGoalExecutor?: OwnerGoalWakeExecutor) {
     this.workflowExecutor = workflowExecutor
+    this.ownerGoalExecutor = ownerGoalExecutor
   }
 
   /** 测试辅助：覆盖规则文件路径 */
@@ -203,6 +227,20 @@ export class EventRouter {
     if (this.workflowExecutor) return this.workflowExecutor(eventName, payload)
     const { triggerWorkflowEvent } = await import('./workflow-event-service')
     return triggerWorkflowEvent(eventName, payload)
+  }
+
+  /**
+   * 唤醒 Owner 管理回路。
+   * 缺省实现懒加载相关模块——它们顶层会 import 项目存储，避免测试期连带重依赖。
+   * 循环未启动时唤醒是无操作，必须返回 false 让调用方看到失败，而不是伪装成功。
+   */
+  private async executeOwnerGoal(input: { projectId: string; taskId?: string }): Promise<boolean> {
+    if (this.ownerGoalExecutor) return this.ownerGoalExecutor(input)
+    const loop = await import('./project-owner-management-loop')
+    if (!loop.isOwnerManagementLoopRunning()) return false
+    const { requestOwnerManagementWake } = await import('./project-owner-management-events')
+    requestOwnerManagementWake(input.projectId)
+    return true
   }
 
   /** 注册通知回调（IM Bridge 连接后调用） */
@@ -309,6 +347,13 @@ export class EventRouter {
         console.log(`[EventRouter] 规则「${rule.name}」记录事件: ${event.source}/${event.type} ${event.summary}`)
         this.notify(rule, true, `规则「${rule.name}」：事件已记录`)
         return { ruleName: rule.name, status: 'matched', detail: '已记录' }
+      }
+      if (rule.to.kind === 'owner-goal') {
+        const woke = await this.executeOwnerGoal({ projectId: rule.to.projectId, ...(rule.to.taskId ? { taskId: rule.to.taskId } : {}) })
+        if (!woke) return { ruleName: rule.name, status: 'failed', detail: 'Owner 管理循环未运行，无法唤醒' }
+        const detail = `已唤醒 Owner 管理回路（项目 ${rule.to.projectId}${rule.to.taskId ? ` / 任务 ${rule.to.taskId}` : ''}）`
+        this.notify(rule, true, `规则「${rule.name}」：${detail}`)
+        return { ruleName: rule.name, status: 'matched', detail }
       }
       return { ruleName: rule.name, status: 'unsupported_target', detail: '未知执行目标 kind' }
     } catch (error) {

@@ -1992,6 +1992,7 @@ export interface ElectronAPI {
       launchOwnerPreparedExecution: import('@gravitas/shared').ProjectOwnerExecutionLaunchApi['launchOwnerPreparedExecution']
       saveOwnerExecutionStartIntent: import('@gravitas/shared').ProjectOwnerExecutionLaunchApi['saveOwnerExecutionStartIntent']
       resumeOwnerExecutionStartIntent: import('@gravitas/shared').ProjectOwnerExecutionLaunchApi['resumeOwnerExecutionStartIntent']
+      recheckOwnerDevelopmentWorkspace: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['recheckOwnerDevelopmentWorkspace']
       getOwnerExecutionPreparation: import('@gravitas/shared').ProjectOwnerExecutionPreparationApi['getOwnerExecutionPreparation']
       listOwnerExecutionPreparationHistory: import('@gravitas/shared').ProjectOwnerExecutionPreparationApi['listOwnerExecutionPreparationHistory']
       previewOwnerExecutionPreparation: import('@gravitas/shared').ProjectOwnerExecutionPreparationApi['previewOwnerExecutionPreparation']
@@ -2041,6 +2042,9 @@ export interface ElectronAPI {
       confirmOwnerManagementDelegation: import('@gravitas/shared').OwnerManagementApi['confirmOwnerManagementDelegation']
       getOwnerManagementDelegation: import('@gravitas/shared').OwnerManagementApi['getOwnerManagementDelegation']
       revokeOwnerManagementDelegation: import('@gravitas/shared').OwnerManagementApi['revokeOwnerManagementDelegation']
+      getOwnerManagerProfile: import('@gravitas/shared').OwnerManagementApi['getOwnerManagerProfile']
+      saveOwnerManagerProfile: import('@gravitas/shared').OwnerManagementApi['saveOwnerManagerProfile']
+      deleteOwnerManagerProfile: import('@gravitas/shared').OwnerManagementApi['deleteOwnerManagerProfile']
       getOwnerManagement: import('@gravitas/shared').OwnerManagementApi['getOwnerManagement']
       previewOwnerDesignSystemInstall: import('@gravitas/shared').OwnerManagementApi['previewOwnerDesignSystemInstall']
       installOwnerDesignSystem: import('@gravitas/shared').OwnerManagementApi['installOwnerDesignSystem']
@@ -4834,6 +4838,7 @@ const electronAPI: ElectronAPI = {
       launchOwnerPreparedExecution: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LAUNCH_OWNER_PREPARED_EXECUTION, request),
       saveOwnerExecutionStartIntent: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_OWNER_EXECUTION_START_INTENT, request),
       resumeOwnerExecutionStartIntent: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.RESUME_OWNER_EXECUTION_START_INTENT, request),
+      recheckOwnerDevelopmentWorkspace: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.RECHECK_OWNER_DEVELOPMENT_WORKSPACE, request),
       getOwnerExecutionPreparation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_EXECUTION_PREPARATION, request),
       listOwnerExecutionPreparationHistory: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_PREPARATION_HISTORY, request),
       previewOwnerExecutionPreparation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_PREPARATION, request),
@@ -4887,6 +4892,9 @@ const electronAPI: ElectronAPI = {
       confirmOwnerManagementDelegation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.CONFIRM_OWNER_MANAGEMENT_DELEGATION, request),
       getOwnerManagementDelegation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_MANAGEMENT_DELEGATION, request),
       revokeOwnerManagementDelegation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.REVOKE_OWNER_MANAGEMENT_DELEGATION, request),
+      getOwnerManagerProfile: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_MANAGER_PROFILE, request),
+      saveOwnerManagerProfile: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_OWNER_MANAGER_PROFILE, request),
+      deleteOwnerManagerProfile: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.DELETE_OWNER_MANAGER_PROFILE, request),
       getOwnerManagement: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_MANAGEMENT, request),
       previewOwnerDesignSystemInstall: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.PREVIEW_OWNER_DESIGN_SYSTEM_INSTALL, request),
       installOwnerDesignSystem: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.INSTALL_OWNER_DESIGN_SYSTEM, request),

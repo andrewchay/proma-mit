@@ -656,3 +656,92 @@ browserTest('Given两个定稿真实案例 When逐一确认范围 Then Owner分�
     },
   })
 }, 180000)
+
+/**
+ * 执行失败时的 Owner 面板：阻塞提示与「暂无待你决定」必须互斥。
+ *
+ * 这里用真实 `ProjectOwnerConversation` 组件 + 生产形状的失败命令视图
+ * （`OwnerExecutionCommandView.state='settled'` + `executionStatus='failed'` + `terminalEvidence`），
+ * 不伪造业务链路：失败命令与终端证据的形状与 `listOwnerExecutionCommands` 返回值一致。
+ *
+ * 回归背景：证据原先只在两处渲染——`DeliveryResultCard`（门禁是 `executionStatus === 'completed'`，
+ * 失败命令永远进不去）和 `ProjectOwnerExecutionCommandPanel`（只在 `!conversational` 分支挂载）。
+ * 因此阻塞提示承诺的「查看失败证据」点了没有内容。现在由
+ * `ProjectOwnerConversationProgress` 的「执行终止证据」区块统一渲染所有终态命令的证据。
+ */
+browserTest('Given执行失败 When打开Owner面板 Then不出现“暂无待你决定”且展示执行阻塞与终止证据', async () => {
+  const projectId = 'mixed-batch-failed-panel'
+  const entry = join(directory, `entry-failed-${projectId}.tsx`)
+  const bundleFile = join(directory, `entry-failed-${projectId}.js`)
+  const subject = { projectId }
+  const goal = { schemaVersion: 1, revision: 1, state: 'draft', actor: 'local-user', savedAt: 1, goal: { ...subject, goalVersion: 1, objective: '交付规格与实现', constraints: [], acceptanceCriteria: [] } }
+  const plan = {
+    ...subject, schemaVersion: 1, revision: 2, planVersion: 1, goalRevision: 1, goalVersion: 1, state: 'confirmed', actor: 'local-user', origin: 'manual', savedAt: 1, changeReason: '已确认',
+    contextFingerprint: 'ctx', planFingerprint: 'plan', sources: { project: { id: projectId, title: '项目', description: '' }, roles: [] },
+    proposal: { ...subject, goalVersion: 1, mode: 'proposal_only', summary: '先定规格，再实现', assumptions: [], risks: [], steps: [] },
+  }
+  const expiresAt = Date.now() + 3_600_000
+  const grant = { ...subject, grantId: 'grant-failed', state: 'paused', dispatchMode: 'autonomous', budget: { maxCostMicros: 1_000_000, maxRuns: 8, maxRework: 1, expiresAt } }
+  // 规格步骤已验收、研发步骤失败的混合批次：与真实命令视图字段一一对应。
+  const failedCommand = {
+    commandId: 'command-delivery', grantId: grant.grantId, taskId: 'task-delivery', taskTitle: '实现页面', employeeId: 'employee-executor',
+    role: 'executor', reworkOrdinal: 0, state: 'settled', executionId: 'execution-delivery', executionStatus: 'failed',
+    acceptanceCriteria: ['页面可打开'], reservedCostMicros: 2, actualCostMicros: 2, ackFingerprint: 'a'.repeat(64), createdAt: 1, updatedAt: 2,
+    grantAuthorization: { grantState: 'paused', dispatchMode: 'autonomous', maxCostMicros: 1_000_000, maxRuns: 8, maxRework: 1, expiresAt, roleBudgetCaps: [] },
+    terminalEvidence: {
+      schemaVersion: 1, executionId: 'execution-delivery', commandId: 'command-delivery', role: 'executor', executionStatus: 'failed',
+      provider: { subtype: 'error_during_execution', finishReason: 'other', requestId: null, responseId: null },
+      reason: 'provider_stop', detail: '服务商提前结束响应', tools: { calls: 0, results: 0, lastToolName: null, lastResultStatus: null, incompleteBatch: false },
+      cost: { state: 'settled', actualCostMicros: 2, requestCount: 1 }, development: null, capturedAt: 3,
+    },
+  }
+  writeFileSync(entry, `
+import React from 'react';import {createRoot} from 'react-dom/client';import {Provider,createStore} from 'jotai';
+import {ProjectOwnerConversation} from ${JSON.stringify(join(renderer, 'components/projects/ProjectOwnerConversation.tsx'))};
+import {ownerGoalEditorsAtom,getOwnerGoalEditor} from ${JSON.stringify(join(renderer, 'atoms/project-owner-goal-atoms.ts'))};
+import {ownerPlanEditorsAtom,getOwnerPlanEditor} from ${JSON.stringify(join(renderer, 'atoms/project-owner-plan-atoms.ts'))};
+import {ownerDelegationEditorsAtom,getOwnerDelegationEditor} from ${JSON.stringify(join(renderer, 'atoms/owner-management-delegation-atoms.ts'))};
+const subject=${JSON.stringify(subject)},key=JSON.stringify([subject.projectId,null]),ok=value=>({ok:true,value});
+const goal=${JSON.stringify(goal)},plan=${JSON.stringify(plan)},grant=${JSON.stringify(grant)},failedCommand=${JSON.stringify(failedCommand)};
+const delegationView={delegation:{id:'delegation-1',projectId:subject.projectId,maxCostMicros:5_000_000,expiresAt:${expiresAt}},state:'active',usedRequests:1,reservedCostMicros:1000,detail:'active'};
+window.electronAPI={getSettings:async()=>({}),listChannels:async()=>ok([]),listAgentWorkspaces:async()=>ok([]),listAgentSessions:async()=>ok([]),
+  paa:{project:{
+    getOwnerGoalDraft:async()=>ok(goal),saveOwnerGoalDraft:async()=>ok(goal),
+    getOwnerManagement:async()=>ok({manager:{schemaVersion:1,projectId:subject.projectId,ownerId:'owner',conversationId:'conversation',revision:1,status:'active',createdAt:1,updatedAt:1},messages:[],questions:[],pendingEvents:0,trace:[],changes:[]}),
+    onOwnerManagementChanged:()=>()=>{},getOwnerManagementDelegation:async()=>ok(delegationView),
+    getOwnerPlanDraft:async()=>ok(plan),getOwnerPlanningContext:async()=>ok({goal,sources:plan.sources,fingerprint:'ctx'}),listOwnerPlanHistory:async()=>ok([]),
+    getOwnerExecutionGrant:async()=>ok(grant),listOwnerExecutionGrantHistory:async()=>ok([]),
+    getOwnerExecutionRevalidation:async()=>ok({status:'current',revalidation:null,blockers:[]}),listOwnerExecutionRevalidationHistory:async()=>ok([]),
+    listOwnerExecutionCommands:async()=>ok([failedCommand]),
+    getOwnerAutonomousScheduleStatus:async()=>ok({projectId:subject.projectId,grantId:grant.grantId,state:'paused',reservedCostMicros:0,committedCostMicros:2,runReservations:1,reason:'研发执行失败，停止自动续派'}),
+    listOwnerDispatchControlEvents:async()=>ok([]),getOwnerDispatchControl:async()=>ok({projectId:subject.projectId,grantId:grant.grantId,paused:false,revision:0,updatedAt:1}),
+    getOwnerExecutionPreparation:async()=>ok({revision:0,preparation:null,status:'none',blockers:[],choices:{employees:[],workspaces:[],workspaceCapabilities:[],knowledgeSources:[]}}),
+    listOwnerExecutionAssignmentRuns:async()=>ok([])}}};
+const store=createStore();
+store.set(ownerGoalEditorsAtom,new Map([[key,{...getOwnerGoalEditor(new Map(),subject),loaded:true,snapshot:goal}]]));
+store.set(ownerPlanEditorsAtom,new Map([[key,{...getOwnerPlanEditor(new Map(),subject),loaded:true,snapshot:plan,context:{goal,sources:plan.sources,fingerprint:'ctx'}}]]));
+store.set(ownerDelegationEditorsAtom,new Map([[key,{...getOwnerDelegationEditor(new Map(),subject),view:delegationView}]]));
+createRoot(document.getElementById('root')).render(<Provider store={store}><ProjectOwnerConversation projectId=${JSON.stringify(projectId)}/></Provider>);
+`)
+  await build({ entryPoints: [entry], outfile: bundleFile, bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.png': 'dataurl' }, absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
+  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('<html><body><div id="root"></div><script src="/entry.js"></script></body></html>', { headers: { 'Content-Type': 'text/html' } }), routes: { '/entry.js': () => new Response(Bun.file(bundleFile)) } })
+  const browser = await chromium.launch({ headless: true })
+  const page = await browser.newPage({ viewport: { width: 1200, height: 1600 } })
+  page.setDefaultTimeout(10_000)
+  try {
+    await page.goto(`http://127.0.0.1:${server.port}`)
+    await page.getByLabel('执行阻塞').waitFor()
+    // 1. 有阻塞项时不能同时显示「暂无待你决定」，否则用户会以为没有待办。
+    expect(await page.getByText('暂无待你决定的事项', { exact: false }).count()).toBe(0)
+    // 2. 执行阻塞必须可见，并给出可操作项。
+    expect(await page.getByLabel('执行阻塞').count()).toBe(1)
+    expect(await page.getByLabel('执行阻塞').innerText()).toContain('实现页面')
+    // 3. 点「查看失败证据」后应能看到失败命令的终止证据。
+    await page.getByRole('button', { name: '查看失败证据' }).click()
+    await page.waitForTimeout(500)
+    expect(await page.getByLabel('执行终止证据').count()).toBeGreaterThan(0)
+  } finally {
+    await browser.close()
+    server.stop(true)
+  }
+}, 60_000)

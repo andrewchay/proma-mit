@@ -6,9 +6,11 @@ import { editOwnerMessageAtom, getOwnerManagementEditor, getOwnerMessageComposer
 import { getOwnerWaitingMessage, hasCompletedOwnerDelivery } from './project-owner-progress-state'
 import { getOwnerPlanEditor, ownerPlanEditorsAtom } from '../../atoms/project-owner-plan-atoms'
 import { OwnerEmployeeMonitor } from './OwnerEmployeeMonitor'
+import { OwnerExecutionTerminalEvidence } from './OwnerExecutionTerminalEvidence'
 import { AgentExecutionStopButton } from './AgentExecutionStopButton'
 import { getOwnerGrantEditor, ownerGrantEditorsAtom } from '../../atoms/project-owner-execution-grant-atoms'
 import { getOwnerDispatchEditor, loadOwnerDispatchControlAtom, ownerDispatchControlsAtom, setOwnerDispatchControlAtom } from '../../atoms/owner-dispatch-control-atoms'
+import { selectEvidenceCommands } from './project-owner-evidence-selector'
 const button = 'rounded-xl bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50'
 type ContinueDeliveryResult = 'ready' | 'busy' | 'too_long' | 'unlinked'
 function isExecutionStatus(value: string | null): value is AgentExecutionResult['status'] {
@@ -132,6 +134,7 @@ export function ProjectOwnerConversationProgress({ subject }: { subject: Project
     const commands = progress.commands.filter(command => command.executionId).sort((left, right) => right.updatedAt - left.updatedAt)
     return [...commands.filter(command => command.executionStatus === 'queued' || command.executionStatus === 'running'), ...commands.filter(command => command.executionStatus !== 'queued' && command.executionStatus !== 'running').slice(0, 6)]
   }, [progress.commands])
+  const evidenceCommands = useMemo(() => selectEvidenceCommands(progress.commands), [progress.commands])
   const feedbackToOwner = (command: OwnerExecutionCommandView): void => {
     const current = getOwnerMessageComposer(store.get(ownerMessageComposersAtom), subject)
     if (current.sending || current.pending) { setFeedbackStatus('Owner消息正在发送或等待确认，请先处理原消息。'); return }
@@ -174,6 +177,14 @@ export function ProjectOwnerConversationProgress({ subject }: { subject: Project
       {feedbackStatus && <p role="status" className="text-xs text-muted-foreground">{feedbackStatus}</p>}
     </section>}
     {completed.map(command => <DeliveryResultCard key={command.commandId} command={command} deliveryReference={acceptedDeliveryReference(conversation?.messages ?? [], command, subject)} onContinue={onContinue} />)}
-    {!waitingMessage && !completed.length && !hasCurrentRun && progress.loaded && progress.schedule?.state === 'manual' && <p className="text-sm text-muted-foreground">工作尚未开始；Owner 会在必要确认完成后继续。</p>}
+    {evidenceCommands.length > 0 && <section className="space-y-2" aria-label="执行终止证据">
+      <h5 className="text-sm font-medium">执行终止证据</h5>
+      <p className="text-xs text-muted-foreground">每次执行结束时的服务商终止原因、工具调用与费用状态；用于核对失败原因，不代表已确认账单。</p>
+      {evidenceCommands.map(command => <article key={command.commandId} className="space-y-1">
+        <p className="text-xs font-medium">{command.taskTitle} · {command.role === 'reviewer' ? '独立评审' : '执行员工'} · {command.executionStatus ?? command.state}</p>
+        <OwnerExecutionTerminalEvidence evidence={command.terminalEvidence!} />
+      </article>)}
+    </section>}
+    {!waitingMessage && !completed.length && !hasCurrentRun && evidenceCommands.length === 0 && progress.loaded && progress.schedule?.state === 'manual' && <p className="text-sm text-muted-foreground">工作尚未开始；Owner 会在必要确认完成后继续。</p>}
   </section>
 }

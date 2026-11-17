@@ -3,6 +3,7 @@ import { atom, useAtom, useAtomValue, useSetAtom } from 'jotai'
 import type { OwnerExecutionCommandAckPreview, OwnerExecutionCommandRole, OwnerExecutionCommandView, OwnerExecutionNextAction, OwnerExecutionRevalidationRecord, OwnerExecutionGrant, OwnerPreflightReconciliationPreview, ProjectOwnerExecutionCommandApi, ProjectOwnerGoalSubject } from '@gravitas/shared'
 import { AgentExecutionStopButton } from './AgentExecutionStopButton'
 import { ProjectOwnerPreflightReconciliationConfirm } from './ProjectOwnerPreflightReconciliationConfirm'
+import { OwnerExecutionTerminalEvidence } from './OwnerExecutionTerminalEvidence'
 import { addOwnerDeliveryFeedbackToGoalAtom, type OwnerDeliveryFeedbackResult } from './project-owner-delivery-feedback'
 import { deriveOwnerRecoveryGuidance } from './project-owner-recovery-guidance'
 import { loadOwnerGrantAtom } from '../../atoms/project-owner-execution-grant-atoms'
@@ -77,6 +78,7 @@ export function OwnerExecutionReviewDetails({ command, onSubmitFeedback }: {
           ? <pre className="mt-1 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-background p-2 text-xs">{command.executionResultSummary}</pre>
           : <p className="mt-1 text-xs text-muted-foreground">当前没有可核验的命令执行回报。</p>}
       </div>
+      {command.terminalEvidence && <OwnerExecutionTerminalEvidence evidence={command.terminalEvidence} />}
       {command.technicalReview && <section className="space-y-2 rounded bg-background p-2">
         <div>
           <h5 className="font-medium">结构化技术评审：{command.technicalReview.verdict}</h5>

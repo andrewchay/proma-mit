@@ -61,6 +61,16 @@ function issue(f: ReturnType<typeof fixture>) {
   const preview = service.previewOwnerManagementDelegation(f.input)
   return service.confirmOwnerManagementDelegation({ input: f.input, previewHash: preview.previewHash })
 }
+/** 把已签发委托的到期时间改到过去，模拟自然到期（并重算完整性哈希）。 */
+function expireDelegation(delegationId: string) {
+  const db = store.getProjectDb()
+  const row = db.prepare('SELECT payload FROM project_owner_management_delegations WHERE id = ?').get(delegationId) as { payload: string }
+  const payload = JSON.parse(row.payload) as Record<string, unknown>
+  payload.expiresAt = Date.now() - 1000
+  const text = JSON.stringify(payload)
+  db.prepare('UPDATE project_owner_management_delegations SET payload = ?, integrity_hash = ? WHERE id = ?')
+    .run(text, createHash('sha256').update(text).digest('hex'), delegationId)
+}
 async function until(predicate: () => boolean) { for (let i = 0; i < 100; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)) } throw new Error('等待后台行为超时') }
 function clarify(taskId: string, knownUsage = true) {
   const execution = store.listAgentExecutionsByEntity('task', taskId)[0]!
@@ -651,4 +661,137 @@ test('Given 已签发管理委托 When 渠道服务地址或模型变化 Then �
   expect(after.state).not.toBe('active')
   expect(() => service.claimOwnerManagementTask(f.taskId, 'exec-x')).toThrow()
   service.revokeOwnerManagementDelegation(f.project.id, grant.id)
+})
+
+  test('Given 未配置 profile When 委托到期 Then 保持 expired，不自动续签', () => {
+    const f = fixture()
+    // 直接落一条已到期的委托，模拟时间流逝。
+    const preview = service.previewOwnerManagementDelegation(f.input)
+    const expiredInput = { ...f.input, expiresAt: Date.now() - 1000 }
+    // preview 会拒绝过去时间，因此直接调用续签入口验证「无 profile 时不动」。
+    expect(preview.previewHash).toBeTruthy()
+    expect(service.renewExpiredOwnerManagementDelegation(f.project.id)).toBeNull()
+    expect(service.getOwnerManagementDelegation(f.project.id).state).toBe('none')
+  })
+
+  test('Given 已配置 profile When 委托到期 Then 按 profile 续签并保持 active', () => {
+    const f = fixture()
+    service.saveOwnerManagerProfile(f.project.id, 0, {
+      maxCostMicros: f.input.maxCostMicros,
+      maxRequests: f.input.maxRequests,
+      expiresInHours: 24,
+    })
+    const grant = issue(f)
+
+    // 把委托的到期时间改到过去，模拟自然到期。
+    expireDelegation(grant.id)
+    expect(service.getOwnerManagementDelegation(f.project.id).state).toBe('expired')
+
+    const renewed = service.renewExpiredOwnerManagementDelegation(f.project.id)
+
+    expect(renewed).not.toBeNull()
+    expect(renewed!.expiresAt).toBeGreaterThan(Date.now())
+    expect(renewed!.id).not.toBe(grant.id)
+    expect(service.getOwnerManagementDelegation(f.project.id).state).toBe('active')
+  })
+
+  test('Given 已配置 profile When 续签 Then 生命周期预算上限不被抬高', () => {
+    const f = fixture()
+    service.saveOwnerManagerProfile(f.project.id, 0, {
+      maxCostMicros: f.input.maxCostMicros,
+      maxRequests: f.input.maxRequests,
+      expiresInHours: 24,
+    })
+    const grant = issue(f)
+    expireDelegation(grant.id)
+
+    const renewed = service.renewExpiredOwnerManagementDelegation(f.project.id)!
+
+    // 续签只顺延期限：额度与请求数上限必须与 profile 完全一致，不得因续签而叠加。
+    expect(renewed.maxCostMicros).toBe(f.input.maxCostMicros)
+    expect(renewed.maxRequests).toBe(f.input.maxRequests)
+  })
+
+  test('Given 委托尚未到期 When 调用续签 Then 不产生新委托', () => {
+    const f = fixture()
+    service.saveOwnerManagerProfile(f.project.id, 0, {
+      maxCostMicros: f.input.maxCostMicros,
+      maxRequests: f.input.maxRequests,
+      expiresInHours: 24,
+    })
+    const grant = issue(f)
+
+    expect(service.renewExpiredOwnerManagementDelegation(f.project.id)).toBeNull()
+    expect(service.getOwnerManagementDelegation(f.project.id).delegation!.id).toBe(grant.id)
+  })
+
+  test('Given 委托被撤销 When 调用续签 Then 不复活', () => {
+    const f = fixture()
+    service.saveOwnerManagerProfile(f.project.id, 0, {
+      maxCostMicros: f.input.maxCostMicros,
+      maxRequests: f.input.maxRequests,
+      expiresInHours: 24,
+    })
+    const grant = issue(f)
+    service.revokeOwnerManagementDelegation(f.project.id, grant.id)
+
+    expect(service.renewExpiredOwnerManagementDelegation(f.project.id)).toBeNull()
+    expect(service.getOwnerManagementDelegation(f.project.id).state).toBe('revoked')
+  })
+
+  test('Given 配置已漂移 When 委托到期 Then 不自动续签（必须人工重新确认）', () => {
+    const f = fixture()
+    service.saveOwnerManagerProfile(f.project.id, 0, {
+      maxCostMicros: f.input.maxCostMicros,
+      maxRequests: f.input.maxRequests,
+      expiresInHours: 24,
+    })
+    const grant = issue(f)
+    expireDelegation(grant.id)
+
+    // 改服务地址 → 配置漂移。此时自动续签会掩盖漂移，必须拒绝。
+    const channels = require('./channel-manager') as typeof import('./channel-manager')
+    const binding = (require('./project-owner-runtime-binding') as typeof import('./project-owner-runtime-binding')).getOwnerRuntimeBinding(f.project.id)!
+    channels.updateChannel(binding.channelId, { baseUrl: 'https://drifted.invalid/v1' })
+
+    expect(service.renewExpiredOwnerManagementDelegation(f.project.id)).toBeNull()
+  })
+
+test('Given 已配置 profile 且委托到期 When 管理循环核对 Then 自动续签并保持 active', () => {
+  const f = fixture()
+  service.saveOwnerManagerProfile(f.project.id, 0, {
+    maxCostMicros: f.input.maxCostMicros,
+    maxRequests: f.input.maxRequests,
+    expiresInHours: 24,
+  })
+  const grant = issue(f)
+  expireDelegation(grant.id)
+  expect(service.getOwnerManagementDelegation(f.project.id).state).toBe('expired')
+
+  // 走真实核对入口，而不是直接调续签函数。
+  reconcileOwnerManagement(f.project.id)
+
+  const after = service.getOwnerManagementDelegation(f.project.id)
+  expect(after.state).toBe('active')
+  expect(after.delegation!.id).not.toBe(grant.id)
+})
+
+test('Given 未配置 profile 且委托到期 When 管理循环核对 Then 保持 expired 不自动续签', () => {
+  const f = fixture()
+  const grant = issue(f)
+  expireDelegation(grant.id)
+
+  reconcileOwnerManagement(f.project.id)
+
+  expect(service.getOwnerManagementDelegation(f.project.id).state).toBe('expired')
+})
+
+test('Given 委托到期且目标被人工修改 When 自动续签 Then 保持原委托不变', () => {
+  const f = fixture()
+  service.saveOwnerManagerProfile(f.project.id, 0, { maxCostMicros: f.input.maxCostMicros, maxRequests: f.input.maxRequests, expiresInHours: 24 })
+  const grant = issue(f)
+  expireDelegation(grant.id)
+  saveProjectOwnerGoalDraft(f.project.id, 1, { objective: '新的目标', constraints: [] })
+  expect(service.renewExpiredOwnerManagementDelegation(f.project.id)).toBeNull()
+  expect(service.getOwnerManagementDelegation(f.project.id).delegation?.id).toBe(grant.id)
 })

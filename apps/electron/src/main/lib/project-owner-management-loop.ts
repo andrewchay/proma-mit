@@ -1,7 +1,7 @@
 import { findOwnerFollowupFuse, hasUnstartedOwnerConversation, preparePendingOwnerConversation } from './project-owner-management-conversation'
 import { decideAttentionCarryover } from './project-owner-attention-carryover-policy'
 import { prepareOwnerManagementAssignment, projectOwnerManagementAssignmentResult, queueOwnerAssignmentProtocolRetry, isRecoverableOwnerAssignmentRejection } from './project-owner-management-assignment'
-import { getOwnerManagementDelegation, hasActiveOwnerManagementRequest } from './project-owner-management-delegation'
+import { getOwnerManagementDelegation, hasActiveOwnerManagementRequest, renewExpiredOwnerManagementDelegation } from './project-owner-management-delegation'
 import type { OwnerManagementEvent } from '@gravitas/shared'
 import { prepareOwnerUnchangedAnswer, projectOwnerManagementRunResult } from './project-owner-management-questions'
 import { getProjectOwnerGoalDraft } from './project-owner-goal-service'
@@ -23,6 +23,15 @@ let requestActiveOwnerManagementRescan: (() => void) | null = null
 /** 系统唤醒后立即重新扫描项目，补偿休眠期间未触发的定时器与状态事件。 */
 export function rescanOwnerManagementProjects(): void {
   requestActiveOwnerManagementRescan?.()
+}
+
+/**
+ * 管理循环是否已启动。
+ * 外部事件触发器（event-router 的 owner-goal 目标）用它判断能否唤醒：
+ * 未启动时唤醒是无操作，必须让调用方看到失败而不是伪装成功。
+ */
+export function isOwnerManagementLoopRunning(): boolean {
+  return requestActiveOwnerManagementRescan !== null
 }
 
 /** 即使当前没有可继续处理的Run，也要把失效授权反馈写回Owner对话。 */
@@ -174,6 +183,7 @@ export function reconcileOwnerManagement(projectId: string): void {
   const db = store.getProjectDb()
   // 提交前收到唤醒不能消费未提交事件；启动扫描会补偿进程关闭时未发出的唤醒。
   if (db.isTransactionActive() || !store.getProject(projectId) || getOwnerManager(projectId)?.status !== 'active') return
+  renewExpiredProfiles(projectId)
   reportStaleManagementDelegations(projectId)
   try {
     const interactions = require('./project-owner-employee-interactions') as typeof import('./project-owner-employee-interactions')
@@ -320,6 +330,33 @@ function recoverMissingProposedPlanAssignment(projectId: string): void {
     if (recovery.consumed_at === null) continue
     const response = store.getProjectDb().prepare('SELECT 1 FROM project_owner_management_messages WHERE project_id = ? AND event_id = ? LIMIT 1').get(projectId, recovery.id)
     if (!response) appendOwnerManagementMessage({ projectId, eventId: `assignment-recheck-incomplete:${recovery.id}`, ...(taskId ? { taskId } : {}), role: 'assistant', kind: 'attention', content: '我已暂停：这份待审方案没有生成可核对的团队安排结果。原方案和授权记录仍保留；为避免重复请求，我没有自动重试。请在这里告诉我是否调整结果范围或项目可用团队。' })
+  }
+}
+
+/**
+ * 按长期 Owner profile 自动续签已到期的管理委托。
+ *
+ * 只在核对入口调用一次：续签失败（无 profile / 配置漂移 / 已撤销）时静默返回，
+ * 由既有 stale/expired 路径继续提示用户。任何失败都不能让核对中断。
+ */
+function renewExpiredProfiles(projectId: string): void {
+  try {
+    const subjects = store.getProjectDb().prepare('SELECT DISTINCT subject_key FROM project_owner_revisions WHERE project_id = ?').all(projectId) as { subject_key: string }[]
+    for (const { subject_key: key } of subjects) {
+      // 委托可以挂在项目级（subject_key='project'）或任务级（'task:<id>'）。
+      const taskId = key === 'project' ? undefined : key.startsWith('task:') ? key.slice(5) : null
+      if (taskId === null) continue
+      const view = getOwnerManagementDelegation(projectId, taskId)
+      // 只处理自然到期；其余状态（active/revoked/stale/exhausted/attention）保持既有语义。
+      if (view.state !== 'expired' || !view.delegation) continue
+      const renewed = renewExpiredOwnerManagementDelegation(projectId, taskId)
+      // 续签内部走 confirmOwnerManagementDelegation，已记录 delegation_confirmed 事件；
+      // 这里不再补 trace，避免同一事实产生两条审计。
+      if (renewed) console.log(`[Owner管理] 已按长期 profile 续签委托 ${renewed.id}（项目 ${projectId}）`)
+    }
+  } catch (cause) {
+    // 续签是增强路径：失败必须让原核对继续，不能把项目卡在异常里。
+    console.warn('[Owner管理] 长期 profile 续签失败', projectId, cause)
   }
 }
 

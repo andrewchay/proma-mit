@@ -53,6 +53,29 @@ export function registerProjectOwnerGoalIpcHandlers(ipc: GoalIpcRegistrar): void
     if (typeof value.delegationId !== 'string' || !value.delegationId.trim()) throw new Error('管理委托身份无效')
     return managementDelegation().revokeOwnerManagementDelegation(value.projectId as string, value.delegationId)
   }))
+  ipc.handle(PROJECT_IPC_CHANNELS.GET_OWNER_MANAGER_PROFILE, (_, request) => result(() => {
+    const value = requestFields(request, ['projectId'])
+    return managementDelegation().getOwnerManagerProfile(value.projectId as string)
+  }))
+  ipc.handle(PROJECT_IPC_CHANNELS.SAVE_OWNER_MANAGER_PROFILE, (_, request) => result(() => {
+    const value = requestFields(request, ['projectId', 'expectedRevision', 'input'])
+    const input = value.input
+    if (!input || typeof input !== 'object') throw new Error('Owner profile 内容无效')
+    const { maxCostMicros, maxRequests, expiresInHours } = input as Record<string, unknown>
+    if (typeof maxCostMicros !== 'number' || typeof maxRequests !== 'number' || typeof expiresInHours !== 'number') {
+      throw new Error('Owner profile 额度或期限无效')
+    }
+    return managementDelegation().saveOwnerManagerProfile(
+      value.projectId as string,
+      value.expectedRevision as number,
+      { maxCostMicros, maxRequests, expiresInHours },
+    )
+  }))
+  ipc.handle(PROJECT_IPC_CHANNELS.DELETE_OWNER_MANAGER_PROFILE, (_, request) => result(() => {
+    const value = requestFields(request, ['projectId', 'expectedRevision'])
+    managementDelegation().deleteOwnerManagerProfile(value.projectId as string, value.expectedRevision as number)
+    return null
+  }))
   ipc.handle(PROJECT_IPC_CHANNELS.GET_OWNER_MANAGEMENT, (_, request) => result(() => {
     const value = requestFields(request, ['projectId'])
     return getOwnerManagementConversation(value.projectId as string)
