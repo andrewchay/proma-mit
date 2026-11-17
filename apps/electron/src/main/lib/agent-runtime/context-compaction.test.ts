@@ -346,6 +346,23 @@ describe('上下文压缩（Proma / AI SDK）', () => {
     expect(result.compacted).toBe(false)
   })
 
+  test('Given 少于200条但内容超出保留预算 When 手动压缩 Then 早期内容进入摘要', async () => {
+    const history = makeHistory(8)
+    history[0] = { type: 'user', message: { content: [{ type: 'text', text: '重要早期内容'.repeat(5000) }] }, parent_tool_use_id: null } as unknown as SDKMessage
+    inMemorySdk.set('manual-large', history)
+    const result = await compactSessionNow({ sessionId: 'manual-large', provider: 'deepseek', apiKey: 'k', baseUrl: 'http://mock', model: 'm', contextWindowOverride: 8192, historyMessages: history })
+    expect(result.compacted).toBe(true)
+    expect(capturedSummaryPrompt).toContain('重要早期内容')
+    expect(result.history.length).toBeLessThan(history.length + 1)
+  })
+
+  test('Given 摘要后视图超出预算 When 压缩 Then 拒绝提交且不丢失未摘要消息', async () => {
+    const history = makeHistory(60)
+    inMemorySdk.set('budget-fail', history)
+    await expect(compactSessionNow({ sessionId: 'budget-fail', provider: 'deepseek', apiKey: 'k', baseUrl: 'http://mock', model: 'm', historyMessages: history, keepRecent: 20, targetInputTokens: 1 })).rejects.toThrow('超出目标 token 预算')
+    expect(inMemorySdk.get('budget-fail')).toEqual(history)
+  })
+
   test('compactSessionNow：摘要请求超时会发出 timed_out 终止态并拒绝', async () => {
     const history = makeHistory(400)
     const lifecycle: string[] = []

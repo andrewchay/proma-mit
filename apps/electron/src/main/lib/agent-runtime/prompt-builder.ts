@@ -278,7 +278,7 @@ function selectRecentHistory(messages: SDKMessage[]): SDKMessage[] {
 
   const boundary = boundaryIndex >= 0 ? messages[boundaryIndex] : undefined
   const tail = messages.slice(boundaryIndex + 1)
-  let start = Math.max(0, tail.length - MAX_HISTORY_MESSAGES)
+  let start = boundary ? 0 : Math.max(0, tail.length - MAX_HISTORY_MESSAGES)
   if (start > 0) {
     const resultIds = getToolResultIds(tail[start])
     const useIds = getToolUseIds(tail[start - 1])

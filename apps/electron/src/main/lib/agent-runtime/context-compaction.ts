@@ -417,7 +417,12 @@ function findLatestContextPacket(messages: SDKMessage[]): ContextPacket | undefi
  */
 export async function compactSessionNow(options: ContextCompactionOptions): Promise<ContextCompactionResult> {
   const { sessionId, historyMessages } = options
-  let keepRecent = options.keepRecent ?? DEFAULT_KEEP_RECENT_MESSAGES
+  const trigger = resolveAutoCompactionTrigger({ ...options, modelId: options.model })
+  const keepRecent = options.keepRecent ?? resolveAdaptiveKeepRecent({
+    historyMessages,
+    targetKeepTokens: trigger.targetKeepTokens,
+    desiredKeepRecent: Math.min(DEFAULT_KEEP_RECENT_MESSAGES, Math.max(0, historyMessages.length - 1)),
+  })
   options.onLifecycle?.({ status: 'started' })
   const earlyCount = Math.max(0, historyMessages.length - keepRecent)
   const earlyMessages = historyMessages.slice(0, earlyCount)
@@ -447,7 +452,7 @@ export async function compactSessionNow(options: ContextCompactionOptions): Prom
 
   let packet: ContextPacket | undefined
   try {
-    packet = await summarizeHistoryWithDeadline(options)
+    packet = await summarizeHistoryWithDeadline({ ...options, keepRecent })
   } catch (error) {
     const aborted = options.signal?.aborted === true || (error instanceof Error && error.name === 'AbortError')
     const timedOut = error instanceof ContextCompactionTimeoutError
@@ -462,34 +467,16 @@ export async function compactSessionNow(options: ContextCompactionOptions): Prom
   }
 
   if (options.targetInputTokens !== undefined) {
-    while (keepRecent > 0) {
-      const projectedHistory = [{
-        type: 'system',
-        subtype: 'compact_boundary',
-        session_id: sessionId,
-        summary: packet.summary,
-        contextPacket: packet,
-      } as unknown as SDKMessage, ...historyMessages.slice(historyMessages.length - keepRecent)]
-      const projectedTokens = estimateOutgoingContextTokens({
-        historyMessages: projectedHistory,
-        currentPrompt: options.currentPrompt,
-        systemPrompt: options.systemPrompt,
-        tools: options.tools,
-      })
-      if (projectedTokens <= options.targetInputTokens) break
-      keepRecent -= 1
-    }
-    const boundaryOnlyTokens = estimateOutgoingContextTokens({
-      historyMessages: [{ type: 'system', subtype: 'compact_boundary', session_id: sessionId, summary: packet.summary, contextPacket: packet } as unknown as SDKMessage],
-      currentPrompt: options.currentPrompt,
-      systemPrompt: options.systemPrompt,
-      tools: options.tools,
+    const projectedTokens = estimateOutgoingContextTokens({
+      historyMessages: [{ type: 'system', subtype: 'compact_boundary', session_id: sessionId, summary: packet.summary, contextPacket: packet } as unknown as SDKMessage, ...historyMessages.slice(historyMessages.length - keepRecent)],
+      currentPrompt: options.currentPrompt, systemPrompt: options.systemPrompt, tools: options.tools,
     })
-    if (boundaryOnlyTokens > options.targetInputTokens) {
-      const error = new Error('压缩后的 ContextPacket 仍超出目标 token 预算，已拒绝提交。')
+    if (projectedTokens > options.targetInputTokens) {
+      const error = new Error('压缩后的上下文仍超出目标 token 预算，已拒绝提交。')
       options.onLifecycle?.({ status: 'failed', message: error.message })
       throw error
     }
+
   }
 
   let history: SDKMessage[]

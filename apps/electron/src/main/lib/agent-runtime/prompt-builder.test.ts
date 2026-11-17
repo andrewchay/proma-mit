@@ -268,7 +268,7 @@ describe('视图层历史截断审计', () => {
     expect((await readAuditEvents()).length).toBe(before)
   })
 
-  test('存在 compact_boundary 时归因于压缩边界，不记录视图截断', async () => {
+  test('存在 compact_boundary 时保留摘要之后全部历史且不记录截断', async () => {
     __resetViewTruncationThrottle()
     const before = (await readAuditEvents()).length
     const history = makeHistory(100, 'view-4')
@@ -278,7 +278,9 @@ describe('视图层历史截断审计', () => {
       session_id: 'view-4',
       summary: '交接摘要',
     } as unknown as SDKMessage
-    sdkMessagesToChatMessages(history)
+    const result = sdkMessagesToChatMessages(history)
+    expect(result).toHaveLength(100)
+    expect(result[1]?.content).toContain("消息 1")
     expect((await readAuditEvents()).length).toBe(before)
   })
 })

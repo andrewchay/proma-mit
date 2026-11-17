@@ -29,7 +29,7 @@ mock.module('../project-pilot-request-exit', () => ({ PILOT_DEFAULT_PRICE_EVIDEN
 mock.module('../agent-runtime/tool-registry', () => ({
   createCoreTools: () => { tools++; return [] }, GOAL_CHECKPOINT_TOOL_NAME: 'GoalCheckpoint', ASK_USER_QUESTION_TOOL_NAME: 'AskUserQuestion', ENTER_PLAN_MODE_TOOL_NAME: 'EnterPlanMode', EXIT_PLAN_MODE_TOOL_NAME: 'ExitPlanMode',
 }))
-mock.module('../agent-runtime/context-compaction', () => ({ COMPACT_CONTEXT_TOOL_NAME: 'CompactContext', compactSessionNow: async () => { compact++; throw new Error('compact forbidden') }, maybeAutoCompact: async () => { compact++; throw new Error('compact forbidden') } }))
+mock.module('../agent-runtime/context-compaction', () => ({ COMPACT_CONTEXT_TOOL_NAME: 'CompactContext', estimateOutgoingContextTokens: () => 0, compactSessionNow: async () => { compact++; throw new Error('compact forbidden') }, maybeAutoCompact: async () => { compact++; throw new Error('compact forbidden') } }))
 mock.module('../agent-runtime/attachment-enrichment', () => ({ enrichHistoryWithDocuments: async () => { enriched++; return [] }, enrichMessageWithDocuments: async () => { enriched++; return 'polluted' }, getImageAttachmentData: () => { enriched++; return [] } }))
 mock.module('@gravitas/core/providers/ai-sdk-bridge', () => ({ createAgentAISDKModel: () => ({}), AISDKStreamStepAccumulator: class { consume(part: { type: string }) { return part.type === 'finish-step' ? [{ text: 'raw-answer', toolCalls: [], toolResults: [], finishReason: 'stop' }] : [] } } }))
 mock.module('ai', () => ({
