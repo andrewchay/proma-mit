@@ -499,7 +499,7 @@ function question(input: unknown, sources: Map<string, string>): ProjectOwnerCla
 }
 
 /** 仅与捕获的快照比较；真实调用/保存仍须向权威服务重新核验当前版本。 */
-export function parseProjectOwnerPlanningResponse(input: unknown, context: ProjectOwnerPlanningContext, validationTime = Date.now()): ProjectOwnerPlanningResponse {
+export function parseProjectOwnerPlanningResponse(input: unknown, context: ProjectOwnerPlanningContext, validationTime = Date.now(), requireDeliveryKind = true): ProjectOwnerPlanningResponse {
   validateContext(context)
   let parsed: unknown = input
   if (typeof input === 'string') {
@@ -612,7 +612,7 @@ export function parseProjectOwnerPlanningResponse(input: unknown, context: Proje
     const proposal = record(raw.proposal, ['summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment'])
     return { kind: 'plan_proposal', ...binding,
         proposal: parseProjectOwnerPlanProposal({ ...proposal, projectId: binding.projectId,
-        ...(binding.taskId === undefined ? {} : { taskId: binding.taskId }), goalVersion: binding.goalVersion }, context.goal.goal, context.sources.roles.map((role) => role.key), context.sources.code?.files ?? [], true, context.sources.delivery ?? [], context.conversation?.deliveryFeedback, true) }
+        ...(binding.taskId === undefined ? {} : { taskId: binding.taskId }), goalVersion: binding.goalVersion }, context.goal.goal, context.sources.roles.map((role) => role.key), context.sources.code?.files ?? [], true, context.sources.delivery ?? [], context.conversation?.deliveryFeedback, requireDeliveryKind) }
   }
   if (raw.kind === 'needs_clarification') {
     record(raw, ['schemaVersion', 'kind', 'projectId', 'taskId', 'goalVersion', 'contextFingerprint', 'reason', 'questions'])

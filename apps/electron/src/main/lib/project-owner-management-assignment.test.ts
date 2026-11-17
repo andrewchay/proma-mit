@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, expect, mock, spyOn, test } from 'bun:test'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -41,6 +41,7 @@ let failBusinessProjectId: string | null = null
 let reviseConversationProjectId: string | null = null
 let mixedRecoveryProjectId: string | null = null
 let legacyUntypedRecoveryProjectId: string | null = null
+let legacyParserForRecovery: { mockRestore(): void } | null = null
 beforeAll(async () => {
   await store.initProjectDb()
   // 排队、来源与最终单发送准入使用产品实现；runner/HTTP和模型回答是隔离替身。
@@ -121,7 +122,18 @@ beforeAll(async () => {
       handlers.onComplete([message])
       return
     }
-    const source = resolveOwnerPlanningSession(input.sessionId)!
+    let source = resolveOwnerPlanningSession(input.sessionId)!
+    if (source.link.purpose === 'owner_planning' && source.context.conversation && mixedRecoveryProjectId === source.link.projectId
+      && legacyUntypedRecoveryProjectId === source.link.projectId && !source.link.requestId.startsWith('historical-conflict-replan:')) {
+      const { buildProjectOwnerPlanningRequest } = await import('./project-owner-planning-protocol')
+      const request = buildProjectOwnerPlanningRequest(source.context, 'envelope', true, true, true, true, true, true, false)
+      const db = store.getProjectDb()
+      const row = db.prepare('SELECT payload FROM project_owner_planning_links WHERE planning_task_id = ?').get(source.link.planningTaskId) as { payload: string }
+      const payload = JSON.parse(row.payload) as Record<string, unknown>
+      payload.promptHash = createHash('sha256').update(JSON.stringify(request)).digest('hex')
+      db.prepare('UPDATE project_owner_planning_links SET payload = ? WHERE planning_task_id = ?').run(JSON.stringify(payload), source.link.planningTaskId)
+      source = resolveOwnerPlanningSession(input.sessionId)!
+    }
     const conversation = source.context.conversation
     const delivery = conversation?.deliveryReview
     const observation = conversation?.executionObservation
@@ -156,6 +168,7 @@ beforeAll(async () => {
       return
     }
     if (source.link.purpose === 'owner_planning') {
+      if (source.link.requestId.startsWith('historical-conflict-replan:')) { legacyParserForRecovery?.mockRestore(); legacyParserForRecovery = null }
       calls.push({ projectId: source.link.projectId, purpose: source.link.purpose, candidates: [] })
       const roleKey = source.context.sources.roles.find(role => role.key === 'requirements-analyst')?.key ?? source.context.sources.roles[0]!.key
       const recoveringMixed = conversation && mixedRecoveryProjectId === source.link.projectId
@@ -217,6 +230,18 @@ function fixture(team: 'complete' | 'missing-reviewer' | 'missing-role' | 'gener
   const context = saveGoal ? plans.getProjectOwnerPlanningContext(project.id, taskId) : null
   const plan = savePlan && context ? plans.saveProjectOwnerPlanDraft(project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '定位研究', assumptions: [], risks: [], steps: [{ key: 'brief', title: '分析需求', outcome: '定位简报', acceptanceCriteria: ['证据和取舍明确'], dependencies: [], roleKey: 'requirements-analyst', deliveryKind: 'text' }], changeReason: '创建可审核方案' }, taskId) : null
   return { project, workspace, teamWorkspace, owner, executor, reviewer, taskId, subject, plan, repo }
+}
+/** 用旧版解析行为生成历史记录；仅测试期间启用，不改变新请求的生产协议。 */
+async function installLegacyPlanParser(projectId: string) {
+  const planning = await import('./project-owner-planning')
+  const original = planning.parseProjectOwnerPlanProposal
+  const parser = spyOn(planning, 'parseProjectOwnerPlanProposal').mockImplementation((...args) => {
+    const input = args[0] as { projectId?: string; steps?: Array<{ deliveryKind?: string }> }
+    if (input.projectId === projectId && input.steps?.some(step => step.deliveryKind === undefined)) args[7] = false
+    return original(...args)
+  })
+  legacyParserForRecovery = parser
+  return parser
 }
 function confirm(f: ReturnType<typeof fixture>) { return plans.confirmProjectOwnerPlanDraft(f.project.id, 1, 1, f.taskId) }
 function authorize(f: ReturnType<typeof fixture>, autonomousExecution = false, maxRequests = 3, maxCostMicros = 10_000_000) {
@@ -293,6 +318,7 @@ test.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('Give
   })
   const stopSchedule = onOwnerAutonomousScheduleWake(id => { if (id === f.project.id) void scheduler.runOwnerAutonomousSchedule(id) })
   const stop = startOwnerManagementLoop()
+  const legacyParser = await installLegacyPlanParser(f.project.id)
   try {
     const db = store.getProjectDb()
     await until(() => Boolean(db.prepare("SELECT 1 FROM project_owner_execution_commands c JOIN agent_executions e ON e.id=c.execution_id WHERE c.project_id=? AND c.state='settled' AND e.status='failed'").get(f.project.id)))
@@ -312,6 +338,7 @@ test.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('Give
     expect(db.prepare('SELECT state FROM project_owner_execution_grants WHERE id=?').get(original.id)).toEqual({ state: 'paused' })
     expect(db.prepare('SELECT COUNT(*) AS n FROM project_owner_execution_commands WHERE grant_id=?').get(original.id)).toEqual({ n: 1 })
   } finally {
+    legacyParser.mockRestore(); legacyParserForRecovery = null
     failBusinessProjectId = null; reviseConversationProjectId = null; mixedRecoveryProjectId = null; legacyUntypedRecoveryProjectId = null
     await stop()
     stopSchedule()
@@ -327,6 +354,7 @@ test('Given 旧批次费用未知或已成功 When 对话要求继续 Then 保�
     reviseConversationProjectId = f.project.id
     authorize(f, true, 6, 20_000_000)
     const stop = startOwnerManagementLoop()
+    const legacyParser = await installLegacyPlanParser(f.project.id)
     try {
       const db = store.getProjectDb()
       await until(() => Boolean(db.prepare("SELECT 1 FROM project_owner_execution_commands c JOIN agent_executions e ON e.id=c.execution_id WHERE c.project_id=? AND c.state='settled' AND e.status='failed'").get(f.project.id)))
@@ -348,6 +376,7 @@ test('Given 旧批次费用未知或已成功 When 对话要求继续 Then 保�
       expect(db.prepare('SELECT COUNT(*) AS n FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id)).toEqual({ n: 1 })
       expect(db.prepare('SELECT COUNT(*) AS n FROM project_owner_task_materializations WHERE project_id=?').get(f.project.id)).toEqual({ n: 1 })
     } finally {
+      legacyParser.mockRestore(); legacyParserForRecovery = null
       failBusinessProjectId = null
       reviseConversationProjectId = null
       mixedRecoveryProjectId = null
