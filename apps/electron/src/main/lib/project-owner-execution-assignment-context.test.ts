@@ -148,14 +148,33 @@ test('Given 无代码候选但工作区是git仓库 When 构造上下文 Then �
     const previousSwiftPrompt = protocol.buildOwnerExecutionAssignmentRequest(value, true, 'current', true, true, false, true, false)
     expect(previousSwiftPrompt.systemPrompt).not.toContain('根目录的 Package.swift')
     expect(protocol.resolveOwnerExecutionAssignmentRequest(value, createHash('sha256').update(JSON.stringify(previousSwiftPrompt)).digest('hex'))).toEqual(previousSwiftPrompt)
-    for (const variant of ['current', 'registry-v2', 'registry-v1', 'legacy-6'] as const) {
+    for (const variant of ['current', 'registry-v3', 'registry-v2', 'registry-v1', 'legacy-6'] as const) {
       const request = protocol.buildOwnerExecutionAssignmentRequest(value, true, variant)
       expect(protocol.resolveOwnerExecutionAssignmentRequest(value, createHash('sha256').update(JSON.stringify(request)).digest('hex'))).toEqual(request)
       if (variant === 'current') for (const item of OWNER_RUNTIME_ASSERTION_TEMPLATES) expect(request.systemPrompt).toContain(item.id)
+      if (variant === 'registry-v3') {
+        expect(request.systemPrompt).toContain('diary.five-years')
+        expect(request.systemPrompt).not.toContain('text-counter.behavior')
+      }
       if (variant === 'registry-v2') {
         expect(request.systemPrompt).toContain('match3.board')
         expect(request.systemPrompt).not.toContain('diary.five-years')
-        expect(request.systemPrompt).toContain(OWNER_RUNTIME_ASSERTION_TEMPLATES.filter(item => !item.id.startsWith('diary.')).map(item => `${item.id}（${item.title}）`).join('、'))
+        expect(request.systemPrompt).not.toContain('text-counter.behavior')
+        // 历史目录按发布时的固定文本核验，不能从持续新增的当前目录推导。
+        expect(request.systemPrompt).toContain([
+          'html.loads（页面可加载且无脚本错误）',
+          'dom.board（存在 16 格棋盘容器）',
+          'dom.initial-tiles（开局至少两个数字块）',
+          'behavior.merge（同向按键可合并并计分）',
+          'storage.best-score（最高分可持久化）',
+          'behavior.game-over（无法移动时显示游戏结束）',
+          'dom.restart（重新开始恢复开局与零分）',
+          'match3.board（存在 8×8 满盘棋子棋盘）',
+          'match3.swap（有效交换使棋盘变化）',
+          'match3.invalid-revert（无效交换自动还原且不扣步数）',
+          'match3.score（消除后计分且棋盘补满）',
+          'match3.restart（重开后棋盘满盘且分数归零）',
+        ].join('、'))
       }
       if (variant === 'registry-v1') {
         // 三消断言加入前的冻结注册表：保留旧提示可解析，且不夹带新断言。

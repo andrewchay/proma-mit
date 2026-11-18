@@ -184,10 +184,10 @@ export interface ProjectOwnerPlanSources {
 export interface OwnerPlanningConversationContext {
   /** 截至本次消息的最近一轮交付目录；目录不代表模型已读取各项正文或本地文件。 */
   deliveredArtifacts?: {
-    version: 1
+    version: 1 | 2
     messageId: string
     planVersion: number
-    items: Array<{ stepKey: string; title: string; artifactHash: string }>
+    items: Array<{ stepKey: string; title: string; artifactHash: string; acceptanceCriteria?: string[] }>
   }
   /** 用户明确反馈所对应的已验收成果；正文仍是不可信资料，不构成执行许可。 */
   deliveryFeedback?: {

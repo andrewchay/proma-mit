@@ -1,6 +1,6 @@
 import { assertOwnerReviewerTextDelivery } from './project-owner-text-delivery'
 import { isOwnerDevelopmentValidationArtifact, ownerDevelopmentArtifactFromPrompt } from './project-owner-development-artifact'
-import { isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
+import { containsOwnerValidationOutputQuote, isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
 import type { OwnerDevelopmentValidationArtifact } from './project-owner-development-artifact'
 import type { OwnerDevelopmentDeliveryArtifact } from '@gravitas/shared'
 import { ownerDevelopmentValidationId } from './development-validation-attempt'
@@ -153,7 +153,7 @@ export function restoreVerbatimReviewQuotes(receipt: string, artifactContent: st
  * 严格解析 Reviewer 的 JSON 回执。自然语言猜测、Markdown 包裹、漏项和额外字段均不作为调度依据。
  * 此回执只表达技术建议，不代表业务验收、费用结算或外部验证事实。
  */
-export function parseOwnerTechnicalReviewResponse(raw: string, frozenCriteria: string[], expectedArtifactHash?: string, artifactContent?: string, artifactKind: 'text' | 'development' = 'text'): OwnerTechnicalReviewResponse {
+export function parseOwnerTechnicalReviewResponse(raw: string, frozenCriteria: string[], expectedArtifactHash?: string, artifactContent?: string, artifactKind: 'text' | 'development' = 'text', validationEvidence?: OwnerDevelopmentValidationArtifact[]): OwnerTechnicalReviewResponse {
   if (typeof raw !== 'string' || raw.length === 0 || raw.length > MAX_RESPONSE_LENGTH) throw new Error('技术评审回执为空或超出大小限制')
   if (!Array.isArray(frozenCriteria) || frozenCriteria.length === 0 || frozenCriteria.length > MAX_CRITERIA
     || frozenCriteria.some(item => !boundedText(item, 1000)) || new Set(frozenCriteria).size !== frozenCriteria.length) {
@@ -183,7 +183,7 @@ export function parseOwnerTechnicalReviewResponse(raw: string, frozenCriteria: s
       || !boundedText(value.evidence, 2000)) {
       throw new Error(`技术评审标准第 ${index + 1} 项无效或顺序不匹配`)
     }
-    if (expectedArtifactHash && (value.quote !== null && !boundedText(value.quote, 1000) || value.status === 'met' && !boundedText(value.quote, 1000) || typeof value.quote === 'string' && artifactContent !== undefined && !artifactContainsQuote(artifactContent, value.quote))) throw new Error('技术评审原文依据与完整成果不匹配')
+    if (expectedArtifactHash && (value.quote !== null && !boundedText(value.quote, 1000) || value.status === 'met' && !boundedText(value.quote, 1000) || typeof value.quote === 'string' && artifactContent !== undefined && !artifactContainsQuote(artifactContent, value.quote) && !(artifactKind === 'development' && value.status === 'met' && containsOwnerValidationOutputQuote(validationEvidence, value.quote)))) throw new Error('技术评审原文依据与完整成果不匹配')
     return { criterion: value.criterion as string, status: value.status as OwnerTechnicalReviewCriterionStatus, evidence: value.evidence, ...(expectedArtifactHash ? { quote: value.quote as string | null } : {}) }
   })
 
@@ -333,7 +333,7 @@ export function recordOwnerTechnicalReviewEvidence(reviewerCommandId: string, re
   const receiptJson = artifactHash && rawResponse.length <= MAX_RESPONSE_LENGTH
     ? restoreVerbatimReviewQuotes(unwrapReviewReceipt(rawResponse), artifactContent)
     : rawResponse
-  const response = parseOwnerTechnicalReviewResponse(receiptJson, listFrozenCriteria(row), artifactHash, artifactContent, development ? 'development' : 'text')
+  const response = parseOwnerTechnicalReviewResponse(receiptJson, listFrozenCriteria(row), artifactHash, artifactContent, development ? 'development' : 'text', validationEvidence)
   if (validationEvidence) assertOwnerDevelopmentValidationForVerdict(response.verdict, validationEvidence)
   const evidence = toEvidence(row, executor, response, receiptJson, createdAt, validationEvidence)
   const originalResponse = receiptJson === rawResponse ? null : rawResponse
@@ -410,7 +410,7 @@ export function listOwnerTechnicalReviewEvidence(projectId: string, taskId?: str
       }
       catch { artifactVerified = false }
     }
-    const response = parseOwnerTechnicalReviewResponse(row.response_json, frozenCriteria, artifactHash, artifactContent, artifactKind)
+    const response = parseOwnerTechnicalReviewResponse(row.response_json, frozenCriteria, artifactHash, artifactContent, artifactKind, developmentArtifact?.validationEvidence)
     if (!/^[a-f0-9]{64}$/.test(row.validation_evidence_sha256)
       || createHash('sha256').update(row.validation_evidence_json, 'utf8').digest('hex') !== row.validation_evidence_sha256) {
       throw new Error('Owner验证回执记录完整性校验失败')

@@ -328,11 +328,11 @@ test('Given 已准入的 Owner 会话 When 工具上下文工作目录漂移 The
   expect(() => gates.assertOwnerToolWorkingDirectory(sessionId, work)).not.toThrow()
   expect(() => gates.assertOwnerToolWorkingDirectory(sessionId, directory)).toThrow('不一致')
 })
-test('Given 完整文本交付 Owner执行 When 构建工具白名单 Then 不暴露工作区写入工具', () => {
+test('Given 无知识源的文本交付 When 构建工具白名单 Then 不暴露不可执行的资料读取和工作区写入', () => {
   const f = fixture(false, true), sessionId = syntheticRunningExecution(f)
   const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
   gates.admitOwnerExecutionGateSession(executionId, sessionId)
-  expect([...gates.getOwnerExecutionToolNames(sessionId)!].sort()).toEqual(['AskUserQuestion', 'ReadKnowledgeSource', 'SearchKnowledge'])
+  expect([...gates.getOwnerExecutionToolNames(sessionId)!].sort()).toEqual(['AskUserQuestion'])
 })
 test('Given合法Owner gate When文件写入 Then仅工作区内Write/Edit可进入逐次审批且审批前不执行', () => {
   const f = fixture(), sessionId = syntheticRunningExecution(f)
@@ -414,7 +414,7 @@ test('Given Owner用途工具目录 When 尚未准入或已准入 Then 不向模
   expect([...gates.getOwnerExecutionToolNames(sessionId)!]).toEqual([])
   const executionId = (store.getProjectDb().prepare('SELECT id FROM agent_executions WHERE session_id=?').get(sessionId) as { id: string }).id
   gates.admitOwnerExecutionGateSession(executionId, sessionId)
-  expect([...gates.getOwnerExecutionToolNames(sessionId)!].sort()).toEqual(['AskUserQuestion', 'Edit', 'ReadKnowledgeSource', 'SearchKnowledge', 'Write'])
+  expect([...gates.getOwnerExecutionToolNames(sessionId)!].sort()).toEqual(['AskUserQuestion', 'Edit', 'Write'])
 })
 
 test('Given无研发范围的Owner执行 When写入风险分级 Then新建和覆盖均须审批', () => {

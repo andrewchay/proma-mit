@@ -108,6 +108,9 @@ const greenfieldResponse: OwnerExecutionAssignmentProposal = {
 
 test('Given 绿地项目无代码候选 When Owner声明新建文件与内置断言 Then 接受', () => {
   expect(parseOwnerExecutionAssignmentProposal(greenfieldResponse, greenfieldContext)).toEqual(greenfieldResponse)
+  const incomplete = { ...greenfieldResponse, developmentScope: { ...greenfieldResponse.developmentScope!, targetPaths: ['index.html', 'README-verification.md'], allowedPaths: ['index.html'] } }
+  expect(() => parseOwnerExecutionAssignmentProposal(incomplete, greenfieldContext)).toThrow('允许范围必须覆盖全部目标文件')
+  expect(parseOwnerExecutionAssignmentProposal(incomplete, greenfieldContext, false, false)).toEqual(incomplete)
 })
 test('Given计划区分文本与代码 When安排混合步骤 Then选择研发批次并拒绝错误的执行类型', () => {
   const steps = [{ ...context.steps[0]!, deliveryKind: 'text' as const }, { ...context.steps[1]!, deliveryKind: 'development' as const }]

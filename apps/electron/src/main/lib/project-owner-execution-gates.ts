@@ -156,7 +156,8 @@ export function getOwnerExecutionToolNames(sessionId: string): ReadonlySet<strin
   if (context.kind === 'unrestricted') return null
   if (context.kind !== 'owner_business') return new Set()
   const fileActions = hasTextDeliveryForExecution(context) ? [] : ['Write', 'Edit']
-  return new Set([...OWNER_TOOL_ALLOWED, 'AskUserQuestion', ...(developmentScopeForExecution(context) ? ['Read'] : []), ...fileActions])
+  const knowledgeTools = context.record.source.knowledgeSources.length ? OWNER_TOOL_ALLOWED : []
+  return new Set([...knowledgeTools, 'AskUserQuestion', ...(developmentScopeForExecution(context) ? ['Read'] : []), ...fileActions])
 }
 
 function frozenSourceIds(record: OwnerExecutionRevalidationRecord): string[] {

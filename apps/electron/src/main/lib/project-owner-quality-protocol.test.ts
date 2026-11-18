@@ -196,3 +196,28 @@ test('Given研发Reviewer逐字引用解码后的源码 When交接Owner构建请
     expect(() => buildProjectOwnerPlanningRequest(c)).toThrow('逐项检查引用不匹配')
   }
 })
+
+test('Given返工决定引用原评审的说明缺陷和成功验证 When输出转义重复 Then只恢复可逐字验证的证据', async () => {
+  const { parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
+  const c = context(), delivery = c.conversation!.deliveryReview!
+  const source = String.raw`输入 \`甲\n\n乙\n\n\n\` → 5 行`
+  const output = '实际点击清空后输入为空且三项归零'
+  const artifact = delivery.developmentArtifact!
+  artifact.content = JSON.stringify({ files: [{ path: 'README.md', oldContent: null, newContent: source }] })
+  artifact.validationEvidence = [{ ...artifact.validationEvidence[0]!, outputTail: output, rawOutputByteLength: Buffer.byteLength(output),
+    rawOutputSha256: createHash('sha256').update(output).digest('hex') }]
+  delivery.review!.verdict = 'changes_requested'
+  delivery.review!.validationEvidence = artifact.validationEvidence
+  const findings = [{ severity: 'medium', description: '示例多出一次换行', requestedChange: '修正示例' }]
+  delivery.review!.criteria = [
+    { criterion: '说明与实现一致', status: 'not_met', evidence: '说明有误', quote: source },
+    { criterion: '实际浏览器验证通过', status: 'met', evidence: '验证成功', quote: output },
+  ]
+  const first = { ...delivery.review!.criteria[0]!, quote: source.replaceAll('\\', '\\\\') }
+  const second = delivery.review!.criteria[1]!
+  const decision = { ...acceptDecision(), verdict: 'rework', findings, criteria: [first, second] }
+  expect(parseOwnerQualityDecision(decision, c).criteria.map(item => item.quote)).toEqual([source, output])
+  expect(() => parseOwnerQualityDecision({ ...decision, criteria: [{ ...first, quote: first.quote.replace('5', '6') }, second] }, c)).toThrow('引用不符')
+  artifact.validationEvidence[0]!.outputTruncated = true
+  expect(() => parseOwnerQualityDecision(decision, c)).toThrow('引用不符')
+})

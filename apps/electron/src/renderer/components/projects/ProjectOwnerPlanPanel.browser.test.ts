@@ -66,7 +66,7 @@ createRoot(document.getElementById('root')).render(<App/>);
     await page.getByRole('button', { name: '还原待审方案', exact: true }).click()
     await page.getByRole('status').filter({ hasText: '待你审阅' }).waitFor()
     expect(await page.getByRole('button', { name: '确认当前计划内容', exact: true }).count()).toBe(0)
-    expect(await page.getByText('首次执行时，在同一次最终确认中确认方案范围与必要边界', { exact: false }).isVisible()).toBe(true)
+    expect(await page.getByText('确认项目范围和预算后，Owner 自行推进授权内的工作', { exact: false }).isVisible()).toBe(true)
     expect(await page.getByLabel('Owner方案摘要').getByText('报告', { exact: true }).isVisible()).toBe(false)
     await page.getByText('查看交付明细与重要条件', { exact: true }).click()
     await page.getByLabel('Owner方案摘要').getByText('报告', { exact: true }).waitFor()

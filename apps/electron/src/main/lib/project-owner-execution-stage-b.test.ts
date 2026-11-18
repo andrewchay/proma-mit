@@ -382,7 +382,7 @@ test('Given Owner命令由真实AI SDK发起 When经loopback OpenAI SSE Then收�
   expect(transportCalls).toBe(1)
   expect(requestBodies[0]).toMatchObject({ model: 'glm-5.3-flash', stream: true, stream_options: { include_usage: true } })
   const exposedTools = requestBodies[0]?.tools as Array<{ function: { name: string } }>
-  expect(exposedTools.map(tool => tool.function.name).sort()).toEqual(['AskUserQuestion', 'Edit', 'ReadKnowledgeSource', 'SearchKnowledge', 'Write'])
+  expect(exposedTools.map(tool => tool.function.name).sort()).toEqual(['AskUserQuestion', 'Edit', 'Write'])
 
   expect([requestBodies[0]?.max_tokens, requestBodies[0]?.max_completion_tokens].some(value => typeof value === 'number' && value > 0)).toBe(true)
   expect(messages.some(message => message.type === 'assistant' && JSON.stringify(message).includes('loopback fake result'))).toBe(true)

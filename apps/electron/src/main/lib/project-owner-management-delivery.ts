@@ -1,3 +1,4 @@
+import { deliveryContentMatchesArtifact } from './project-owner-delivery-content'
 import { readOwnerGrantUsage } from './project-owner-execution-settlement'
 import { createHash } from 'node:crypto'
 /** 将准确成果及逐项检查送入Owner分析；不授予验收或业务动作权限。 */
@@ -11,7 +12,7 @@ import { getOwnerExecutionRevalidation, listOwnerExecutionRevalidationHistory } 
 import { getOwnerTaskMaterializationRecord } from './project-owner-task-materialization'
 import { isCompletedStatus } from './task-status-logic'
 import * as store from './project-sqlite-store'
-import { appendOwnerManagementMessage, deliveryContentMatchesArtifact, getOwnerManager } from './project-owner-management-store'
+import { appendOwnerManagementMessage, getOwnerManager } from './project-owner-management-store'
 import { isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
 import { readDevelopmentValidationEvidence } from './development-validation-service'
 

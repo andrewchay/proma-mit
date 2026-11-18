@@ -85,17 +85,16 @@ export function scanOwnerExecutionObservations(projectId: string, now = Date.now
   scanBlockedQualityRecoveries(projectId, now)
 }
 
-/** 阻断后只有权威质量门槛变化才追加新观察；旧请求、决定和未知费用均不重放。 */
+/** 质量门槛变化或首次完整终态的信封抄写错误可追加新观察，旧决定及费用记录保留。 */
 function scanBlockedQualityRecoveries(projectId: string, now: number): void {
   if (getOwnerManager(projectId)?.status !== 'active' || store.getProjectDb().isTransactionActive()) return
-  const rows = store.getProjectDb().prepare("SELECT DISTINCT reviewer_command_id FROM project_owner_quality_actions WHERE project_id=? ORDER BY created_at").all(projectId) as { reviewer_command_id: string }[]
+  const rows = store.getProjectDb().prepare("SELECT id AS reviewer_command_id,execution_id FROM project_owner_execution_commands WHERE project_id=? AND role='reviewer' AND state='settled' ORDER BY rowid").all(projectId) as { reviewer_command_id: string; execution_id: string }[]
   for (const row of rows) {
     try {
       const action = readOwnerQualityAction(row.reviewer_command_id)
-      const recovery = action?.state === 'blocked' ? getOwnerQualityRecovery(projectId, row.reviewer_command_id) : null
-      if (!action || !recovery) continue
-      const reviewerCommand = store.getProjectDb().prepare('SELECT execution_id FROM project_owner_execution_commands WHERE id=? AND project_id=?').get(action.reviewerCommandId, projectId) as { execution_id: string } | undefined
-      const businessExecutionId = reviewerCommand?.execution_id
+      const recovery = !action || action.state === 'blocked' ? getOwnerQualityRecovery(projectId, row.reviewer_command_id) : null
+      if (!recovery) continue
+      const businessExecutionId = row.execution_id
       if (!businessExecutionId) continue
       const current = readOwnerExecutionObservation(projectId, businessExecutionId, 'terminal', now)
       const goal = getProjectOwnerGoalDraft(projectId, current.taskId)

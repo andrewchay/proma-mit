@@ -9,7 +9,8 @@
  *   不允许"只跑过就算通过"。
  */
 
-import type { DevelopmentValidationEvidence } from '@gravitas/shared'
+import { createHash } from 'node:crypto'
+import type { DevelopmentValidationEvidence, OwnerDevelopmentDeliveryArtifact } from '@gravitas/shared'
 
 /** 运行证据有效期：超期须重跑，避免拿旧结果充当新鲜成功。 */
 export const DEVELOPMENT_VALIDATION_EVIDENCE_VALIDITY_MS = 30 * 60 * 1000
@@ -77,4 +78,15 @@ export function isOwnerValidationEvidenceExpired(
   // 未来时间戳视为不可采信（按过期处理），否则超期判断会被绕过。
   if (item.finishedAt > now + DEVELOPMENT_VALIDATION_CLOCK_SKEW_MS) return true
   return now - item.finishedAt > DEVELOPMENT_VALIDATION_EVIDENCE_VALIDITY_MS
+}
+
+/** 运行时标准可引用准确且完整的成功回执正文；源码标准仍可引用源码。 */
+export function containsOwnerValidationOutputQuote(validation: OwnerDevelopmentDeliveryArtifact['validationEvidence'] | undefined, quote: string): boolean {
+  return quote.trim().length >= 12 && Boolean(validation?.some(item => {
+    const output = item.outputTail
+    return item.attemptState === 'completed' && item.freshness === 'fresh' && item.status === 'passed' && item.exitCode === 0
+      && item.timedOut === false && item.outputTruncated === false && typeof output === 'string' && output.includes(quote)
+      && Buffer.byteLength(output, 'utf8') === item.rawOutputByteLength
+      && createHash('sha256').update(output, 'utf8').digest('hex') === item.rawOutputSha256
+  }))
 }

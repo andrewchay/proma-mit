@@ -142,7 +142,7 @@ function readStoredOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRu
         if (value.state !== 'proposed' || !frozen.assignmentContext || value.planRevision !== undefined || value.clarification !== undefined || value.reply !== undefined || value.changeProposal !== undefined || value.qualityDecision !== undefined) throw new Error('Owner人员安排Run结论字段无效')
         const source = frozen.assignmentContext
         const protocolContext: OwnerExecutionAssignmentProtocolContext = { ...(source.teamContractVersion ? { teamContractVersion: source.teamContractVersion } : {}), contextFingerprint: source.contextFingerprint, workspaces: source.workspaces.map(({ id, name }) => ({ id, name })), executionKinds: source.executionKinds, ownerCarrierId: source.ownerCarrierId, steps: source.steps.map(({ key, dependencies, roleKey, deliveryKind, sourceReferences }) => ({ key, dependencies, roleKey, ...(deliveryKind ? { deliveryKind } : {}), ...(sourceReferences ? { sourceReferences } : {}) })), ...(source.codeFiles ? { codeFiles: source.codeFiles } : {}), candidates: source.candidates }
-        const proposal = parseOwnerExecutionAssignmentProposal(receipt.responseText, protocolContext)
+        const proposal = parseOwnerExecutionAssignmentProposal(receipt.responseText, protocolContext, false, false)
         if (!value.assignmentProposal || JSON.stringify(proposal) !== JSON.stringify(value.assignmentProposal)) throw new Error('人员安排结论与原始响应不一致')
       } else {
         if (value.assignmentProposal !== undefined) throw new Error('Owner规划Run不能夹带人员安排结论')
