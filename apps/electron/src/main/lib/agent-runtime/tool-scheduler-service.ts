@@ -51,6 +51,12 @@ export async function runGuardedToolCall<T>(input: {
   retry?: ToolRetryPolicy
 }): Promise<T> {
   if (INTERACTIVE_TOOL_NAMES.has(input.tool.name)) return input.execute()
+  // 新媒体交互入口经函数身份核验；它们仅在交互结束后调度数据库写入。
+  if (input.tool.name === 'nm_director_confirm_plan' || input.tool.name === 'nm_director_delegate') {
+    const { executeDirectorConfirm, executeDirectorDelegate } = await import('../new-media/director-interaction-tools')
+    if ((input.tool.name === 'nm_director_confirm_plan' && input.tool.execute === executeDirectorConfirm)
+      || (input.tool.name === 'nm_director_delegate' && input.tool.execute === executeDirectorDelegate)) return input.execute()
+  }
   const maxAttempts = Math.max(1, input.retry?.maxAttempts ?? 1)
   const spec = await planLockSpec(input.tool, input.args, input.ctx)
   const retryable = maxAttempts > 1 && spec.mode === 'shared'

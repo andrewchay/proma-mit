@@ -45,6 +45,12 @@ export const PI_PROMA_ASK_USER_TOOL_NAME = 'AskUserQuestion'
 export const PI_PROMA_AGENT_TOOL_NAME = 'Agent'
 export const PI_PROMA_GOAL_CHECKPOINT_TOOL_NAME = 'GoalCheckpoint'
 
+/** 只桥接新媒体总监使用的明确工具，其他插件仍须单独审查。 */
+const DIRECTOR_TOOL_NAMES = new Set([
+  'nm_director_brand', 'nm_director_plan', 'nm_director_confirm_plan',
+  'nm_director_delegate', 'nm_director_list_role_results', 'nm_director_save_xiaohongshu_copy', 'nm_director_save_design',
+])
+
 /** Pi runtime 的渐进能力开关。只有显式开启的能力才会注册到 Pi。 */
 export const PI_RUNTIME_TOOL_CAPABILITIES = {
   read: true,
@@ -514,11 +520,16 @@ export function createPiToolBridge(inputOptions: CreatePiToolBridgeOptions): Too
   for (const runtimeTool of coreTools) {
     const isWebBridge = runtimeTool.name.startsWith('WebBridge')
     const isComputerUse = runtimeTool.name.startsWith('ComputerUse')
-    if ((!PI_RUNTIME_TOOL_CAPABILITIES.webBridge || !isWebBridge) && (!PI_RUNTIME_TOOL_CAPABILITIES.computerUse || !isComputerUse)) continue
+    const isDirectorTool = options.allowSubAgent !== false && DIRECTOR_TOOL_NAMES.has(runtimeTool.name)
+    if ((!PI_RUNTIME_TOOL_CAPABILITIES.webBridge || !isWebBridge) && (!PI_RUNTIME_TOOL_CAPABILITIES.computerUse || !isComputerUse) && !isDirectorTool) continue
+    // Pi 使用 TypeBox 校验数组元素；共享工具 schema 未表达 items，这里补齐。
+    const parameters = runtimeTool.name === 'nm_director_save_xiaohongshu_copy'
+      ? { ...runtimeTool.parameters, properties: { ...runtimeTool.parameters.properties, hashtags: { type: 'array', items: { type: 'string' } } } }
+      : runtimeTool.parameters
     tools.push(createBridgeTool({
       piName: runtimeTool.name,
       runtimeName: runtimeTool.name,
-      parameters: Type.Unsafe(runtimeTool.parameters),
+      parameters: Type.Unsafe(parameters),
       promptSnippet: `${runtimeTool.name}: 通过 Proma 受管自动化边界执行。`,
     }, runtimeTool, options))
   }

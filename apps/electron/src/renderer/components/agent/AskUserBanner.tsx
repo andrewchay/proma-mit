@@ -135,13 +135,15 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
         if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
           e.preventDefault()
+          clearAutoAdvanceTimer()
           if (lastTab) submitRef.current?.()
-          else setActiveTab((prev) => prev + 1)
+          else setActiveTab((prev) => prev === curTab ? Math.min(prev + 1, qs.length - 1) : prev)
         }
         return
       }
 
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        clearAutoAdvanceTimer()
         e.preventDefault()
         const nextIdx = curFocusIdx === -1
           ? (e.key === 'ArrowDown' ? 0 : itemCount - 1)
@@ -158,14 +160,15 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
         }
       } else if (e.key === 'Enter' && !e.isComposing) {
         e.preventDefault()
+        clearAutoAdvanceTimer()
         if (lastTab) submitRef.current?.()
-        else setActiveTab((prev) => prev + 1)
+        else setActiveTab((prev) => prev === curTab ? Math.min(prev + 1, qs.length - 1) : prev)
       }
     }
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [request, toggleCustomByState, toggleOptionByState, questions.length])
+  }, [request, toggleCustomByState, toggleOptionByState, questions.length, clearAutoAdvanceTimer])
 
   /** 关闭问题 & 终止 Agent */
   const handleDismiss = (): void => {
@@ -242,7 +245,8 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
   const currentQuestion = questions[activeTab]
 
   const goNextTab = (): void => {
-    if (!isLastTab) setActiveTab((prev) => prev + 1)
+    clearAutoAdvanceTimer()
+    if (!isLastTab) setActiveTab((prev) => prev === activeTab ? Math.min(prev + 1, questions.length - 1) : prev)
   }
 
   if (!hasRequest || !currentQuestion) return null
@@ -291,7 +295,7 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
                         : 'bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground'
                     }
                   `}
-                  onClick={() => setActiveTab(idx)}
+                  onClick={() => { clearAutoAdvanceTimer(); setActiveTab(idx) }}
                 >
                   {`${idx + 1}-${q.multiSelect ? '多选' : '单选'}：${q.header || `问题 ${idx + 1}`}`}
                 </button>
@@ -327,11 +331,11 @@ export function AskUserBanner({ sessionId }: AskUserBannerProps): React.ReactEle
               clearAutoAdvanceTimer()
               autoAdvanceTimerRef.current = setTimeout(() => {
                 autoAdvanceTimerRef.current = null
-                setActiveTab((prev) => prev + 1)
+                setActiveTab((prev) => prev === activeTab ? Math.min(prev + 1, questions.length - 1) : prev)
               }, 150)
             }
           }}
-          onToggleCustom={() => toggleCustomByState(activeTab)}
+          onToggleCustom={() => { clearAutoAdvanceTimer(); toggleCustomByState(activeTab) }}
           onCustomTextChange={(text) => setAnswers((prev) => {
             const map = new Map(prev)
             const cur = map.get(activeTab) ?? EMPTY_ANSWER
@@ -414,7 +418,7 @@ function QuestionCard({
             {`${questionIndex + 1}-${question.multiSelect ? '多选' : '单选'}${question.header ? `：${question.header}` : ''}`}
           </span>
         )}
-        <p className="text-sm text-foreground">{question.question}</p>
+        <p className="max-h-64 overflow-y-auto whitespace-pre-wrap text-sm text-foreground">{question.question}</p>
       </div>
 
       {/* 选项卡片列表 */}

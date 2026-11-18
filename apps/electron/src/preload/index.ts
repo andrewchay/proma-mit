@@ -2244,6 +2244,7 @@ export interface ElectronAPI {
       content: {
         listDrafts: () => Promise<import('@gravitas/shared').NewMediaContentDraft[]>
         createDraft: (sourceText: string, platforms: import('@gravitas/shared').NewMediaPlatform[]) => Promise<import('@gravitas/shared').NewMediaContentDraft>
+        getDirectorDesignPreview: (draftId: string) => Promise<{ assetId: string; dataUrl: string } | null>
         listPublicationJobs: () => Promise<import('@gravitas/shared').NewMediaPublicationJob[]>
         schedulePublication: (input: { draftId: string; platform: import('@gravitas/shared').NewMediaPlatform; accountId: string; scheduledAt: number }) => Promise<import('@gravitas/shared').NewMediaPublicationJob>
       }
@@ -2327,7 +2328,7 @@ export interface ElectronAPI {
       }
       xiaohongshuHandoff: {
         list: () => Promise<import('@gravitas/shared').XiaohongshuHandoff[]>
-        prepare: (draftId: string) => Promise<import('@gravitas/shared').XiaohongshuHandoff>
+        prepare: (draftId: string, expectedDesignAssetId?: string | null) => Promise<import('@gravitas/shared').XiaohongshuHandoff>
         exportPackage: (handoffId: string) => Promise<import('@gravitas/shared').XiaohongshuHandoffExportResult>
         confirmPublished: (handoffId: string, actor: string) => Promise<import('@gravitas/shared').XiaohongshuHandoff>
         audit: (handoffId: string) => Promise<import('@gravitas/shared').XiaohongshuHandoffAuditEntry[]>
@@ -5086,6 +5087,7 @@ const electronAPI: ElectronAPI = {
       content: {
         listDrafts: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_DRAFTS),
         createDraft: (sourceText, platforms) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CREATE_DRAFT, sourceText, platforms),
+        getDirectorDesignPreview: (draftId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_DIRECTOR_DESIGN_PREVIEW, draftId),
         listPublicationJobs: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_PUBLICATION_JOBS),
         schedulePublication: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SCHEDULE_PUBLICATION, input),
       },
@@ -5169,7 +5171,7 @@ const electronAPI: ElectronAPI = {
       },
       xiaohongshuHandoff: {
         list: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_XHS_HANDOFFS),
-        prepare: (draftId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.PREPARE_XHS_HANDOFF, draftId),
+        prepare: (draftId, expectedDesignAssetId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.PREPARE_XHS_HANDOFF, draftId, expectedDesignAssetId),
         exportPackage: (handoffId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.EXPORT_XHS_HANDOFF, handoffId),
         confirmPublished: (handoffId, actor) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CONFIRM_XHS_PUBLISHED, handoffId, actor),
         audit: (handoffId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_XHS_HANDOFF_AUDIT, handoffId),

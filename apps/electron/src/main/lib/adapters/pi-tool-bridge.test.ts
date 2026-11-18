@@ -97,6 +97,24 @@ describe('Pi Tool Bridge', () => {
     expect(tools.some((tool) => tool.name === 'bash')).toBe(false)
   })
 
+  test('Given 新媒体插件工具 When Pi 会话启用 Then 仅桥接允许的总监工具并经过权限校验', async () => {
+    let executions = 0
+    const director: RuntimeToolDefinition = { name: 'nm_director_plan', description: '方案', parameters: { type: 'object', properties: {}, required: [] }, execute: async () => { executions++; return { toolCallId: '', content: '已保存' } } }
+    const other: RuntimeToolDefinition = { ...director, name: 'nm_unknown' }
+    const coreTools = [...createCoreTools(async () => ({ toolCallId: '', content: 'ok' })), director, other]
+    const denied = createPiToolBridge({ toolContext: { cwd: '/workspace', sessionId: 'pi' }, assertToolSession: () => {}, canUseTool: async () => ({ allowed: false }), coreTools })
+    expect(denied.some(tool => tool.name === 'nm_unknown')).toBe(false)
+    const directorTool = denied.find(tool => tool.name === 'nm_director_plan')
+    expect(directorTool).toBeDefined()
+    await directorTool!.execute('call', {}, undefined, undefined, {} as never)
+    expect(executions).toBe(0)
+    const allowed = createPiToolBridge({ toolContext: { cwd: '/workspace', sessionId: 'pi' }, assertToolSession: () => {}, canUseTool: async () => ({ allowed: true }), coreTools })
+    await allowed.find(tool => tool.name === 'nm_director_plan')!.execute('call', {}, undefined, undefined, {} as never)
+    expect(executions).toBe(1)
+    const controlled = createPiToolBridge({ toolContext: { cwd: '/workspace', sessionId: 'pi' }, allowSubAgent: false, assertToolSession: () => {}, canUseTool: async () => ({ allowed: true }), coreTools })
+    expect(controlled.some(tool => tool.name === 'nm_director_plan')).toBe(false)
+  })
+
   test('Given Pi 工具集已创建 When 来源上下文被改写 Then 仍使用初始会话与目录', async () => {
     const context = { cwd: '/workspace/original', sessionId: 'pi-original' }
     let seen: { cwd: string; sessionId: string; frozen: boolean } | undefined

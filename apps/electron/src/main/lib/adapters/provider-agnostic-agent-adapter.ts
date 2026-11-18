@@ -24,6 +24,7 @@ import type {
   SDKUserMessageInput,
   FileAttachment,
   AgentGoalCheckpoint,
+  AgentThinkingLevel,
   McpServerEntry,
   PromaPermissionMode,
   ProviderType,
@@ -176,6 +177,10 @@ export interface ProviderAgnosticAgentQueryOptions extends AgentQueryInput {
    * 避免模型看见工具后发起 tool_use 而在一轮内无法产出结果。
    */
   disableTools?: boolean
+  /** 纯文本角色使用其专用提示，不注入不可用工具的通用指南。 */
+  systemPromptMode?: 'standard' | 'direct'
+  /** 子任务可指定已支持模型的推理强度。 */
+  thinkingLevel?: AgentThinkingLevel
   /** 用户通过命令菜单/引用面板显式选择的 Skill slug 列表（自研 runtime 按需提示读取） */
   skillMentions?: string[]
 }
@@ -242,11 +247,14 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
       extraTools,
       runtimeTools,
       disableTools,
+      systemPromptMode,
+      thinkingLevel,
       onGoalCheckpoint,
       skillMentions,
       requestedOperation,
     } = input
 
+    if (systemPromptMode === 'direct' && !disableTools) throw new Error('直接系统提示仅适用于禁用工具的任务')
     if (!provider || !apiKey || !baseUrl || !cwd) {
       throw new Error('Provider-Agnostic Runtime 需要 provider、apiKey、baseUrl、cwd')
     }
@@ -330,7 +338,9 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
         })),
       ]
       const toolMap = new Map(tools.map((t) => [t.name, t]))
-      const effectiveSystemPrompt = buildAgentSystemPrompt(systemPrompt, cwd, buildSkillPromptContext(workspaceSlug))
+      const effectiveSystemPrompt = systemPromptMode === 'direct'
+        ? (systemPrompt?.trim() || '请根据提供的任务直接回答。')
+        : buildAgentSystemPrompt(systemPrompt, cwd, buildSkillPromptContext(workspaceSlug))
       // 用户在消息中显式要求读取的 Skill：注入指令块引导模型先 ReadSkill 再执行
       const skillRequestedBlock = buildSkillRequestedBlock(skillMentions, prompt)
 
@@ -423,6 +433,7 @@ export class ProviderAgnosticAgentAdapter implements AgentProviderAdapter {
           baseUrl,
           apiKey,
           modelId: model || '',
+          thinkingLevel,
           history,
           userMessage: promptWithSkillRequest,
           systemMessage: effectiveSystemPrompt,

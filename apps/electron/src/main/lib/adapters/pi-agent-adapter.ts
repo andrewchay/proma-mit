@@ -358,7 +358,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       ? AbortSignal.any([abortSignal, toolAbortController.signal])
       : toolAbortController.signal
     const guardedToolContext = guardControlledPiToolContext(sessionId, {
-      ...toolContextOverrides, cwd, sessionId, permissionMode, abortSignal: toolAbortSignal, ownerWorkspaceWrite: Boolean(ownerCommand),
+      ...toolContextOverrides, cwd, sessionId, workspaceSlug, permissionMode, abortSignal: toolAbortSignal, ownerWorkspaceWrite: Boolean(ownerCommand),
     })
     guardedToolContextRef = guardedToolContext
     bindRuntimeSessionIdentity(guardedToolContext, piSessionIdentity)

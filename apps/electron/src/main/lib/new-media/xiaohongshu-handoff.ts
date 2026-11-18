@@ -10,6 +10,8 @@ import type {
 import type { NewMediaAuditEntry } from './new-media-audit'
 import { appendNewMediaAudit, createNewMediaAuditEntry, listNewMediaAudit } from './new-media-audit'
 import { getNewMediaRecord, listNewMediaRecords } from './new-media-sqlite-store'
+import { getLatestDirectorDesign, readDirectorDesign } from './director-design'
+import { withDirectorDraftLock } from './director-draft-lock'
 
 const DRAFT_KIND = 'content-draft'
 const HANDOFF_KIND = 'xiaohongshu-handoff'
@@ -41,11 +43,20 @@ async function requireDraft(draftId: string): Promise<NewMediaContentDraft> {
   return draft
 }
 
-export async function prepareXiaohongshuHandoff(draftId: string): Promise<XiaohongshuHandoff> {
+export async function prepareXiaohongshuHandoff(draftId: string, expectedDesignAssetId?: string | null): Promise<XiaohongshuHandoff> {
+  return withDirectorDraftLock(draftId, () => prepareXiaohongshuHandoffLocked(draftId, expectedDesignAssetId))
+}
+
+async function prepareXiaohongshuHandoffLocked(draftId: string, expectedDesignAssetId?: string | null): Promise<XiaohongshuHandoff> {
   const draft = await requireDraft(draftId)
   const existing = (await listNewMediaRecords<XiaohongshuHandoff>(HANDOFF_KIND)).find((item) => item.draftId === draftId)
-  if (existing) return existing
+  if (existing) {
+    if (expectedDesignAssetId !== undefined && (existing.designAssetId ?? null) !== expectedDesignAssetId) throw new Error('交接绑定的封面与当前预览不一致，请刷新后检查')
+    return existing
+  }
   const copy = draft.platformCopies.xiaohongshu!
+  const design = await getLatestDirectorDesign(draftId)
+  if (expectedDesignAssetId !== undefined && (design?.id ?? null) !== expectedDesignAssetId) throw new Error('封面已变化，请刷新并重新检查')
   const now = Date.now()
   const handoff: XiaohongshuHandoff = {
     id: randomUUID(),
@@ -53,7 +64,8 @@ export async function prepareXiaohongshuHandoff(draftId: string): Promise<Xiaoho
     status: 'draft_ready',
     packageVersion: 1,
     packageFileName: `${safeName(copy.title)}-小红书交付包.zip`,
-    warnings: ['当前草稿未关联封面或媒体素材，请在小红书发布页补充并核验。'],
+    ...(design ? { designAssetId: design.id } : {}),
+    warnings: design ? ['请检查封面文字、素材授权及平台对 AI 生成内容的标识要求。'] : ['当前草稿未关联封面或媒体素材，请在小红书发布页补充并核验。'],
     createdAt: now,
     updatedAt: now,
   }
@@ -74,13 +86,15 @@ export async function buildXiaohongshuHandoffPackage(handoffId: string): Promise
   const draft = await requireDraft(handoff.draftId)
   const copy = draft.platformCopies.xiaohongshu!
   const content = [copy.title, '', copy.body, '', copy.hashtags.join(' ')].join('\n').trimEnd() + '\n'
+  const design = handoff.designAssetId ? await readDirectorDesign(handoff.designAssetId) : undefined
+  if (design && design.asset.draftId !== draft.id) throw new Error('设计素材与草稿不匹配')
   const manifest = {
     schemaVersion: 1,
     platform: 'xiaohongshu',
     draftId: draft.id,
     handoffId: handoff.id,
     generatedAt: new Date().toISOString(),
-    files: ['content.txt', 'content.json', 'README.md'],
+    files: ['content.txt', 'content.json', 'README.md', ...(design ? ['cover.png', 'cover.svg'] : [])],
     warnings: handoff.warnings,
     publicationSemantics: '该文件仅表示本地发布交接，不代表内容已在小红书发布。',
   }
@@ -89,7 +103,7 @@ export async function buildXiaohongshuHandoffPackage(handoffId: string): Promise
     '',
     '1. 打开小红书官方 App 或创作后台。',
     '2. 复制 `content.txt` 中的标题、正文和标签。',
-    '3. 补充并核验封面、图片或视频素材。',
+    design ? '3. 检查 cover.png 封面、素材授权及平台标识要求；cover.svg 是可编辑源文件。' : '3. 补充并核验封面、图片或视频素材。',
     '4. 由账号操作者检查后手动确认发布。',
     '',
     '本交付包不会登录账号、调用私有接口或自动发布。',
@@ -99,6 +113,7 @@ export async function buildXiaohongshuHandoffPackage(handoffId: string): Promise
   zip.addFile('content.json', Buffer.from(JSON.stringify({ title: copy.title, body: copy.body, hashtags: copy.hashtags }, null, 2), 'utf-8'))
   zip.addFile('manifest.json', Buffer.from(JSON.stringify(manifest, null, 2), 'utf-8'))
   zip.addFile('README.md', Buffer.from(readme, 'utf-8'))
+  if (design) { zip.addFile('cover.png', design.png); zip.addFile('cover.svg', design.svg) }
   return zip.toBuffer()
 }
 

@@ -2,6 +2,9 @@ import * as React from 'react'
 import { Bot, FileText, FileSpreadsheet, ShieldCheck, RefreshCw, MessageCircle, Radar, BarChart3, Send, UserRound } from 'lucide-react'
 import { ModuleBackButton } from '@/components/app-shell/ModuleBackButton'
 import { cn } from '@/lib/utils'
+import { useAtomValue, useSetAtom } from 'jotai'
+import { agentChannelIdAtom, agentModelIdAtom, agentSessionsAtom, agentSessionChannelMapAtom, agentSessionModelMapAtom, agentSessionDraftsAtom, currentAgentWorkspaceIdAtom } from '@/atoms/agent-atoms'
+import { useOpenSession } from '@/hooks/useOpenSession'
 import type { NewMediaContentDraft, NewMediaControlledAction, NewMediaEngagementItem, NewMediaListeningQuery, NewMediaMention, NewMediaMetricSnapshot, NewMediaPlatform, NewMediaPublicationJob, NewMediaSocialReport, NewMediaTrendItem, XiaohongshuHandoff } from '@gravitas/shared'
 import { CommunityPanel } from './CommunityPanel'
 import { ListeningPanel } from './ListeningPanel'
@@ -12,6 +15,7 @@ import { ReportImportPanel } from './ReportImportPanel'
 import { WechatAnalyticsPanel } from './WechatAnalyticsPanel'
 import { AccountsPanel } from './AccountsPanel'
 import { XiaohongshuHandoffPanel } from './XiaohongshuHandoffPanel'
+import { DirectorDesignPreview } from './DirectorDesignPreview'
 
 type SubView = 'accounts' | 'content' | 'community' | 'listening' | 'import' | 'insights' | 'outbound' | 'publish' | 'automation'
 
@@ -58,7 +62,18 @@ export function NewMediaModuleView(): React.ReactElement {
   const [executors, setExecutors] = React.useState<Array<{ kind: string; platform: string; description: string }>>([])
   const [sourceText, setSourceText] = React.useState('')
   const [loading, setLoading] = React.useState(false)
+  const [designRevision, setDesignRevision] = React.useState(0)
   const [agentEnabled, setAgentEnabled] = React.useState(false)
+  const [directorError, setDirectorError] = React.useState('')
+  const [openingDirector, setOpeningDirector] = React.useState(false)
+  const agentChannelId = useAtomValue(agentChannelIdAtom)
+  const agentModelId = useAtomValue(agentModelIdAtom)
+  const workspaceId = useAtomValue(currentAgentWorkspaceIdAtom)
+  const setAgentSessions = useSetAtom(agentSessionsAtom)
+  const setSessionChannels = useSetAtom(agentSessionChannelMapAtom)
+  const setSessionModels = useSetAtom(agentSessionModelMapAtom)
+  const setSessionDrafts = useSetAtom(agentSessionDraftsAtom)
+  const { openSession } = useOpenSession()
 
   const actionToFocus = React.useRef<string | null>(null)
 
@@ -89,6 +104,7 @@ export function NewMediaModuleView(): React.ReactElement {
         window.electronAPI.paa.newMedia.xiaohongshuHandoff.list(),
       ])
       setExecutors(await window.electronAPI.paa.newMedia.controlledOutbound.listExecutors())
+      setDesignRevision(value => value + 1)
       setDrafts(nextDrafts); setJobs(nextJobs); setActions(nextActions); setEngagements(nextEngagements)
       setQueries(nextQueries); setMentions(nextMentions); setSnapshots(nextSnapshots); setTrends(nextTrends); setReport(nextReport); setHandoffs(nextHandoffs)
     } finally {
@@ -105,6 +121,30 @@ export function NewMediaModuleView(): React.ReactElement {
     const next = agentEnabled ? [] : ALL_NEW_MEDIA_CAPABILITIES
     await window.electronAPI.updateSettings({ newMediaCapabilities: next })
     setAgentEnabled(!agentEnabled)
+  }
+
+  const openDirector = async (): Promise<void> => {
+    if (openingDirector) return
+    setOpeningDirector(true)
+    setDirectorError('')
+    try {
+      const settings = await window.electronAPI.getSettings()
+      const capabilities = Array.isArray(settings.newMediaCapabilities) ? settings.newMediaCapabilities : []
+      if (!capabilities.includes('content-operations')) {
+        await window.electronAPI.updateSettings({ newMediaCapabilities: [...capabilities, 'content-operations'] })
+        setAgentEnabled(true)
+      }
+      const session = await window.electronAPI.createAgentSession('新媒体总监', agentChannelId || undefined, workspaceId || undefined)
+      setAgentSessions(previous => [session, ...previous])
+      if (agentChannelId) setSessionChannels(previous => new Map(previous).set(session.id, agentChannelId))
+      if (agentModelId) setSessionModels(previous => new Map(previous).set(session.id, agentModelId))
+      setSessionDrafts(previous => new Map(previous).set(session.id, '请作为新媒体总监，先和我确认品牌、目标受众与内容方案，再协调文案和设计。'))
+      openSession('agent', session.id, session.title)
+    } catch (error) {
+      setDirectorError(error instanceof Error ? error.message : '无法打开新媒体总监')
+    } finally {
+      setOpeningDirector(false)
+    }
   }
 
   const createDraft = async (): Promise<void> => {
@@ -125,8 +165,8 @@ export function NewMediaModuleView(): React.ReactElement {
     await refresh()
   }
 
-  const prepareHandoff = async (draftId: string): Promise<void> => {
-    await window.electronAPI.paa.newMedia.xiaohongshuHandoff.prepare(draftId)
+  const prepareHandoff = async (draftId: string, expectedDesignAssetId?: string | null): Promise<void> => {
+    await window.electronAPI.paa.newMedia.xiaohongshuHandoff.prepare(draftId, expectedDesignAssetId)
     await refresh()
   }
 
@@ -192,6 +232,13 @@ export function NewMediaModuleView(): React.ReactElement {
         {subView === 'accounts' ? <AccountsPanel /> : subView === 'community' ? <CommunityPanel items={engagements} onRefresh={refresh} /> : subView === 'listening' ? <ListeningPanel queries={queries} mentions={mentions} onRefresh={refresh} /> : subView === 'import' ? <ReportImportPanel onRefresh={refresh} /> : subView === 'insights' ? <InsightsPanel snapshots={snapshots} trends={trends} report={report} onRefresh={refresh} /> : subView === 'content' ? (
           <div className="mx-auto max-w-5xl space-y-5">
             <section className="rounded-2xl bg-background p-4 shadow-sm">
+              <h2 className="font-medium">与新媒体总监协作</h2>
+              <p className="mt-2 text-sm text-foreground/65">启用上方 Agent 能力后，在 Agent 会话中告诉总监品牌、受众和目标。总监会先提交方案，等待你确认后再制作文案和设计。</p>
+              <p className="mt-1 text-xs text-foreground/50">小红书文案和封面可在这里预览，并准备人工发布交接。</p>
+              {directorError && <p role="alert" className="mt-2 text-sm text-destructive">{directorError}</p>}
+              <button disabled={openingDirector} onClick={() => void openDirector()} className="mt-3 rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground disabled:opacity-50">{openingDirector ? '正在打开…' : '与总监对话'}</button>
+            </section>
+            <section className="rounded-2xl bg-background p-4 shadow-sm">
               <h2 className="mb-3 font-medium">创建双平台草稿</h2>
               <textarea value={sourceText} onChange={(event) => setSourceText(event.target.value)} placeholder="输入原始内容，将生成小红书与公众号本地草稿……" className="min-h-28 w-full resize-y rounded-xl bg-muted/60 p-3 text-sm outline-none ring-primary/30 focus:ring-2" />
               <div className="mt-3 flex justify-end"><button onClick={() => void createDraft()} className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground">生成本地草稿</button></div>
@@ -221,7 +268,7 @@ export function NewMediaModuleView(): React.ReactElement {
                             <span className="text-xs text-muted-foreground">{status}</span>
                           </div>
                           {platform === 'xiaohongshu' ? (
-                            <button className="text-xs text-primary hover:underline" onClick={() => {
+                            (!draft.directorPlanId || handoff) && <button className="text-xs text-primary hover:underline" onClick={() => {
                               if (handoff) document.getElementById('xiaohongshu-handoffs')?.focus()
                               else void prepareHandoff(draft.id)
                             }}>
@@ -239,6 +286,7 @@ export function NewMediaModuleView(): React.ReactElement {
                           )}
                         </div>
                         <div className="mt-1 text-sm">{copy.title}</div>
+                        <details className="mt-2 text-xs text-foreground/65"><summary className="cursor-pointer">查看完整文案</summary><p className="mt-2 whitespace-pre-wrap">{copy.body}</p><p className="mt-2">{copy.hashtags.join(' ')}</p></details>
                         {action && ['rejected', 'executed', 'simulated'].includes(action.status) && (
                           <button className="mt-2 text-xs text-primary hover:underline" onClick={() => void requestPublish(draft, platform)}>
                             新建排程与审批
@@ -248,6 +296,7 @@ export function NewMediaModuleView(): React.ReactElement {
                     )
                   })}
                 </div>
+                {draft.directorPlanId && <DirectorDesignPreview key={`${draft.id}:${designRevision}`} draftId={draft.id} revision={designRevision} onPrepare={(assetId) => prepareHandoff(draft.id, assetId)} />}
               </article>)}
             </section>
             <section id="xiaohongshu-handoffs" aria-label="小红书发布交接" tabIndex={-1}>

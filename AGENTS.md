@@ -312,6 +312,13 @@ Owner 普通对话中的成果修订必须绑定准确交付版本及原完成�
 | `AgentListenersInitializer` | 挂载 `useGlobalAgentListeners`，全局 Agent IPC 监听 |
 | `UpdaterInitializer` | 订阅主进程推送的自动更新状态变化事件 |
 
+### 新媒体运营插件
+
+- 用户通过总监会话维护通用品牌简报和渠道方案；方案绑定品牌快照，须由用户确认后才委派只读文案、设计角色。设计角色使用可用的 OpenDesign 品牌与工艺参考；没有参考时明确提示。
+- 小红书首版支持将确认方案的文案保存为草稿，静态 SVG 渲染为 PNG，在工作台预览并打包交接；交接绑定素材并校验摘要，仍由用户在官方端手动发布。其他渠道仅支持方案和角色成果，不声称已实现发布交接。
+- 智谱 GLM-5.3 Flash 的设计子任务在未显式配置思考强度时使用 low；用户设置优先（该模型的 off 按能力映射为 low），其他模型不受影响。
+- 品牌、方案、角色结果及素材元数据保存在既有新媒体 SQLite；`new-media/director-assets/` 保存对应 PNG 和 SVG，备份和恢复时须与数据库一起保留。
+
 ### 本地文件存储（`~/.gravitas/`）
 
 ```
@@ -334,6 +341,7 @@ Owner 普通对话中的成果修订必须绑定准确交付版本及原完成�
 │       └── {uuid}.ext
 ├── user-profile.json       # 用户档案 { userName, avatar }
 ├── settings.json           # 应用设置 { themeMode, themeStyle }
+├── new-media/              # 新媒体数据库与 director-assets（设计素材，须一起备份）
 ├── projects/               # 项目管理：paa.db（SQLite；生产 better-sqlite3 直写 WAL，bun test 用 sql.js）
 │   └── web-watch/           # 项目外网扫描：{projectId}.json 配置 + {projectId}.jsonl 运行历史与来源
 └── sdk-config/             # Agent SDK 配置目录

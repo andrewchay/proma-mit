@@ -41,6 +41,10 @@ export function registerNewMediaIpcHandlers(): void {
     const { listContentDrafts } = await import('./content-operations')
     return listContentDrafts()
   })
+  handle(NEW_MEDIA_IPC_CHANNELS.GET_DIRECTOR_DESIGN_PREVIEW, async (_: unknown, draftId: unknown) => {
+    const v = await nmValidation()
+    return (await import('./director-design')).getDirectorDesignPreview(v.requireId(draftId, 'draftId'))
+  })
   handle(NEW_MEDIA_IPC_CHANNELS.CREATE_DRAFT, async (_: unknown, sourceText: unknown, platforms: unknown) => {
     const v = await nmValidation()
     const text = v.requireRichText(sourceText, 'sourceText', v.NEW_MEDIA_LIMITS.sourceText)
@@ -390,8 +394,10 @@ export function registerNewMediaIpcHandlers(): void {
   })
 
   handle(NEW_MEDIA_IPC_CHANNELS.LIST_XHS_HANDOFFS, async () => (await import('./xiaohongshu-handoff')).listXiaohongshuHandoffs())
-  handle(NEW_MEDIA_IPC_CHANNELS.PREPARE_XHS_HANDOFF, async (_: unknown, draftId: unknown) => {
-    return (await import('./xiaohongshu-handoff')).prepareXiaohongshuHandoff((await nmValidation()).requireId(draftId, 'draftId'))
+  handle(NEW_MEDIA_IPC_CHANNELS.PREPARE_XHS_HANDOFF, async (_: unknown, draftId: unknown, expectedDesignAssetId: unknown) => {
+    const v = await nmValidation()
+    const expected = expectedDesignAssetId === undefined || expectedDesignAssetId === null ? expectedDesignAssetId : v.requireId(expectedDesignAssetId, 'expectedDesignAssetId')
+    return (await import('./xiaohongshu-handoff')).prepareXiaohongshuHandoff(v.requireId(draftId, 'draftId'), expected)
   })
   handle(NEW_MEDIA_IPC_CHANNELS.EXPORT_XHS_HANDOFF, async (event, handoffId: unknown) => {
     const resolvedHandoffId = (await nmValidation()).requireId(handoffId, 'handoffId')

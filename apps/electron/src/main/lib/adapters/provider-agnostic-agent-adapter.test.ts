@@ -50,10 +50,12 @@ const { ProviderAgnosticAgentAdapter } = await import('./provider-agnostic-agent
 
 /** 从 mock 请求体中提取的轻量视图 */
 interface CapturedRequest {
+  system?: string
   userMessage: string
   historyLength: number
   continuationCount: number
   attachmentCount?: number
+  thinkingLevel?: string
 }
 
 describe('Provider-Agnostic Agent 适配器', () => {
@@ -104,6 +106,7 @@ describe('Provider-Agnostic Agent 适配器', () => {
             const body = JSON.parse(
               JSON.stringify({
                 model: input.modelId,
+                thinkingLevel: input.thinkingLevel,
                 system: input.systemMessage,
                 history: input.history,
                 userMessage: input.userMessage,
@@ -111,6 +114,8 @@ describe('Provider-Agnostic Agent 适配器', () => {
               }),
             )
             capturedRequests.push({
+              system: body.system,
+              thinkingLevel: body.thinkingLevel,
               userMessage: body.userMessage,
               historyLength: (body.history ?? []).length,
               continuationCount: (body.continuationMessages ?? []).length,
@@ -148,6 +153,19 @@ describe('Provider-Agnostic Agent 适配器', () => {
         return makeStreamResult('文件编辑完成，任务结束')
       },
     }))
+  })
+
+  test('纯文本角色只收到专用提示，不能在启用工具时使用直传模式', async () => {
+    firstTurnToolCalls = []
+    const adapter = new ProviderAgnosticAgentAdapter()
+    const input = { sessionId: 'direct-role', prompt: '制作内容', model: 'deepseek-chat', provider: 'deepseek' as const,
+      apiKey: 'mock-key', baseUrl: 'http://localhost/mock', cwd: tempDir, disableTools: true, systemPromptMode: 'direct' as const, systemPrompt: '只负责设计，不使用工具', thinkingLevel: 'low' as const }
+    try {
+      for await (const _ of adapter.query(input)) { /* 消费完整响应 */ }
+      expect(capturedRequests[0]?.system).toBe('只负责设计，不使用工具')
+      expect(capturedRequests[0]?.thinkingLevel).toBe('low')
+      await expect(adapter.query({ ...input, sessionId: 'direct-invalid', disableTools: false })[Symbol.asyncIterator]().next()).rejects.toThrow('仅适用于禁用工具')
+    } finally { adapter.dispose() }
   })
 
   test('Given 已取得 MCP 引用 When 后续提示词初始化失败 Then 释放引用并允许重试', async () => {

@@ -58,6 +58,14 @@ describe('生产调度接线（E05）', () => {
     expect(askResult.content).toBe('ok')
     expect(log).toContain('ask-ran')
   })
+  test('冒充总监交互工具名称不能绕过调度锁', async () => {
+    const log: string[] = []
+    const first = runGuardedToolCall({ tool: fakeTool('other-unknown'), args: {}, ctx, execute: async () => { log.push('first-start'); await Bun.sleep(40); log.push('first-end'); return 'ok' } })
+    const impostor = runGuardedToolCall({ tool: fakeTool('nm_director_confirm_plan'), args: {}, ctx, execute: async () => { log.push('impostor'); return 'ok' } })
+    await Promise.all([first, impostor])
+    expect(log.indexOf('impostor')).toBeGreaterThan(log.indexOf('first-end'))
+  })
+
   test('unknown 工具（fakeTool）在共享调度器上全局串行', async () => {
     const log: string[] = []
     const tool = fakeTool('McpFake')

@@ -705,6 +705,7 @@ export class AISDKRuntimeCore {
         onAskUser: state.onAskUser,
         runSubAgent: state.runSubAgent,
         mcpManager: state.mcpManager,
+        workspaceSlug: state.workspaceSlug,
       })
       const result = await runGuardedToolCall({
         tool: runtimeTool,

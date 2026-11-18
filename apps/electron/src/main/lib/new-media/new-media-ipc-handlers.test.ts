@@ -86,6 +86,24 @@ describe('新媒体 IPC 处理器', () => {
     expect(audit.map((entry) => entry.event)).toEqual(['prepared'])
   })
 
+  test('设计预览 IPC 只返回草稿对应的 PNG，不暴露本地路径', async () => {
+    const { createDirectorBrand, createDirectorPlan, confirmDirectorPlan, createDirectorXiaohongshuDraft } = await import('./director-workflow')
+    const { saveDirectorDesign } = await import('./director-design')
+    const { PNG } = await import('pngjs')
+    const brand = await createDirectorBrand('品牌', '资料')
+    const plan = await createDirectorPlan(brand.id, 'xiaohongshu', '方案')
+    await confirmDirectorPlan(plan.id)
+    const draft = await createDirectorXiaohongshuDraft({ planId: plan.id, title: '标题', body: '正文', hashtags: [] })
+    const png = PNG.sync.write(new PNG({ width: 1, height: 1 }))
+    const asset = await saveDirectorDesign(draft.id, '<svg viewBox="0 0 10 10"></svg>', async () => png)
+    const preview = await invoke(NEW_MEDIA_IPC_CHANNELS.GET_DIRECTOR_DESIGN_PREVIEW, draft.id)
+    expect(preview).toEqual({ assetId: asset.id, dataUrl: `data:image/png;base64,${png.toString('base64')}` })
+    await expect(invoke(NEW_MEDIA_IPC_CHANNELS.PREPARE_XHS_HANDOFF, draft.id, 'stale-asset')).rejects.toThrow('封面已变化')
+    expect((await invoke(NEW_MEDIA_IPC_CHANNELS.PREPARE_XHS_HANDOFF, draft.id, asset.id) as { designAssetId: string }).designAssetId).toBe(asset.id)
+    expect(String(preview)).not.toContain(testDir)
+    await expect(invoke(NEW_MEDIA_IPC_CHANNELS.GET_DIRECTOR_DESIGN_PREVIEW, '')).rejects.toThrow('new_media:invalid_text:draftId')
+  })
+
   test('账号能力查询只读且不含凭据字段', async () => {
     const account = await invoke(NEW_MEDIA_IPC_CHANNELS.CREATE_ACCOUNT, { platform: 'wechat-official-account', displayName: '服务号' }) as { id: string }
     const result = await invoke(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_CAPABILITIES, account.id) as { capabilities: unknown[]; profile: unknown }
