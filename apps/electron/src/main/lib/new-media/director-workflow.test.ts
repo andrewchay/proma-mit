@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { closeNewMediaDb, clearNewMediaRecordsForTests } from './new-media-sqlite-store'
-import { createDirectorBrand, updateDirectorBrand, createDirectorPlan, confirmDirectorPlan, createDirectorXiaohongshuDraft, listDirectorBrands, listDirectorPlans } from './director-workflow'
+import { createDirectorBrand, updateDirectorBrand, createDirectorPlan, confirmDirectorPlan, createDirectorXiaohongshuDraft, createDirectorWechatDraft, listDirectorBrands, listDirectorPlans } from './director-workflow'
 import { prepareXiaohongshuHandoff, buildXiaohongshuHandoffPackage } from './xiaohongshu-handoff'
 import AdmZip from 'adm-zip'
 import { newMediaPluginRuntime } from '../plugins/new-media-plugin'
@@ -185,6 +185,19 @@ describe('新媒体总监', () => {
     const ctx: ToolContext = { cwd: testDir, sessionId: 'session', runtime: 'ai-sdk', boundSession: owner, runSubAgent: async () => { revokeRuntimeSessionIdentity(owner); return '结果' } }
     await expect(delegateDirectorRole({ planId: plan.id, role: 'copywriter', task: '写作' }, ctx)).rejects.toThrow('失效')
     expect(await listDirectorRoleResults(plan.id)).toHaveLength(0)
+  })
+
+  test('公众号方案确认后可保存公众号文案，但不能误用小红书方案', async () => {
+    const brand = await createDirectorBrand('品牌', '成人英语')
+    const plan = await createDirectorPlan(brand.id, 'wechat-official-account', '公众号内容')
+    const input = { planId: plan.id, title: '标题', body: '正文' }
+    await expect(createDirectorWechatDraft(input)).rejects.toThrow('请先确认方案')
+    await confirmDirectorPlan(plan.id)
+    const draft = await createDirectorWechatDraft(input)
+    expect(draft.platformCopies['wechat-official-account']?.body).toBe('正文')
+    const other = await createDirectorPlan(brand.id, 'xiaohongshu', '小红书内容')
+    await confirmDirectorPlan(other.id)
+    await expect(createDirectorWechatDraft({ ...input, planId: other.id })).rejects.toThrow('不是微信公众号渠道')
   })
 
   test('品牌更新不会改变已确认方案的品牌依据，新方案使用更新后的资料', async () => {

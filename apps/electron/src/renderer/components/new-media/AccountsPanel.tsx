@@ -62,7 +62,7 @@ export function AccountsPanel(): React.ReactElement {
   return <div className="mx-auto max-w-5xl space-y-5">
     <section className="rounded-2xl bg-background p-4 shadow-sm">
       <h2 className="font-medium">账号连接模型</h2>
-      <p className="mt-1 text-sm text-foreground/55">账号与授权边界在这里管理。微信公众号支持用 stable token 校验已录入的凭据；AppSecret 不经界面传输，需通过主进程安全通道录入（尚未实现）。</p>
+      <p className="mt-1 text-sm text-foreground/55">账号与授权边界在这里管理。公众号凭据由主进程读取并加密保存，连接成功后仍需平台实际授予相关接口权限。</p>
       <div className="mt-4 flex flex-wrap gap-2">
         <select value={platform} onChange={(event) => setPlatform(event.target.value as NewMediaPlatform)} className="rounded-lg bg-muted px-3 py-2 text-sm">
           <option value="xiaohongshu">小红书</option><option value="wechat-official-account">微信公众号</option>
@@ -90,7 +90,7 @@ export function AccountsPanel(): React.ReactElement {
         />}
         <div className="mt-4 flex justify-end gap-2">
           <button onClick={() => void showAudit(account.id)} className="rounded-lg px-3 py-1.5 text-xs hover:bg-muted">查看审计</button>
-          {account.status === 'connected' ? <button onClick={async () => { await window.electronAPI.paa.newMedia.accounts.disconnect(account.id); await refresh() }} className="rounded-lg bg-destructive/10 px-3 py-1.5 text-xs text-destructive">断开</button> : <button onClick={() => void beginAuthorization(account)} className="rounded-lg bg-primary/10 px-3 py-1.5 text-xs text-primary">开始授权</button>}
+          {account.status === 'connected' || account.credentialProtection !== 'none' ? <button onClick={async () => { await window.electronAPI.paa.newMedia.accounts.disconnect(account.id); await refresh() }} className="rounded-lg bg-destructive/10 px-3 py-1.5 text-xs text-destructive">断开</button> : <button onClick={() => void beginAuthorization(account)} className="rounded-lg bg-primary/10 px-3 py-1.5 text-xs text-primary">开始授权</button>}
         </div>
         {audit[account.id] && <div className="mt-3 space-y-1 border-t border-border/40 pt-3">{(audit[account.id] ?? []).map((entry) => <div key={entry.id} className="text-xs text-foreground/55">{new Date(entry.createdAt).toLocaleString()} · {entry.detail}</div>)}</div>}
       </article>)}

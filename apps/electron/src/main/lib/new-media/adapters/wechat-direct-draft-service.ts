@@ -80,18 +80,23 @@ export interface WechatDraftTransportResponse {
   text(): Promise<string>
 }
 
+export class WechatDraftPreflightError extends Error {}
+
 export type WechatDraftTransport = (input: {
   url: string
   method: 'POST'
   headers: Record<string, string>
   body: string
   signal?: AbortSignal
+  beforeRequest?: () => void
 }) => Promise<WechatDraftTransportResponse>
 
 export interface WechatDraftDependencies {
   draftTransport?: WechatDraftTransport
   token?: WechatTokenDependencies
   now?: () => number
+  /** 每次发送前复核权限；抛错意味着该次请求未发送。 */
+  beforeRequest?: () => void
 }
 
 export interface WechatDraftPlatformData {
@@ -127,8 +132,10 @@ async function defaultTransport(input: {
   headers: Record<string, string>
   body: string
   signal?: AbortSignal
+  beforeRequest?: () => void
 }): Promise<WechatDraftTransportResponse> {
   const proxyUrl = await getEffectiveProxyUrl()
+  input.beforeRequest?.()
   const response = await getFetchFn(proxyUrl)(input.url, {
     method: input.method,
     headers: input.headers,
@@ -181,6 +188,7 @@ async function callDraftApi(input: {
 }): Promise<PlatformPayload> {
   const transport = input.dependencies.draftTransport ?? defaultTransport
   return withWechatAccessToken(input.credentialRef, async (accessToken) => {
+    input.dependencies.beforeRequest?.()
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     try {
@@ -191,6 +199,7 @@ async function callDraftApi(input: {
         headers: { 'content-type': 'application/json; charset=utf-8' },
         body: JSON.stringify(input.body),
         signal: controller.signal,
+        beforeRequest: input.dependencies.beforeRequest,
       })
       const raw = await response.text()
       let parsed: PlatformPayload
@@ -202,7 +211,7 @@ async function callDraftApi(input: {
       if (parsed.errcode && parsed.errcode !== 0) throw draftError(parsed.errcode, parsed.errmsg)
       return parsed
     } catch (error) {
-      if (error instanceof PlatformAdapterError) throw error
+      if (error instanceof PlatformAdapterError || error instanceof WechatDraftPreflightError) throw error
       if (error instanceof Error && error.name === 'AbortError') {
         throw new PlatformAdapterError('temporarily_unavailable', `草稿接口调用超时（${REQUEST_TIMEOUT_MS / 1000}s）`)
       }
@@ -210,7 +219,7 @@ async function callDraftApi(input: {
     } finally {
       clearTimeout(timer)
     }
-  }, input.dependencies.token ?? {})
+  }, { ...input.dependencies.token, beforeRequest: input.dependencies.beforeRequest })
 }
 
 export interface WechatDraftContext {

@@ -76,4 +76,9 @@ test('Pi 桥接的总监工具能完成确认和角色委派', async () => {
   const draft = await invoke('nm_director_save_xiaohongshu_copy', { plan_id: plan.id, title: '英语', body: '口语练习', hashtags: ['#英语'] })
   expect(draft.isError).toBe(false)
   expect(draft.data).toContain('#英语')
+  const wechatPlan = JSON.parse((await invoke('nm_director_plan', { operation: 'create', brand_id: brand.id, channel: 'wechat-official-account', proposal: '公众号内容' })).data) as { id: string }
+  expect((await invoke('nm_director_confirm_plan', { plan_id: wechatPlan.id })).isError).toBe(false)
+  const wechatDraft = await invoke('nm_director_save_wechat_copy', { plan_id: wechatPlan.id, title: '英语', body: '口语练习' })
+  expect(wechatDraft.isError).toBe(false)
+  expect(wechatDraft.data).toContain('wechat-official-account')
 })

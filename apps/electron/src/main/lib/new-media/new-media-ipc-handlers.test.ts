@@ -104,6 +104,13 @@ describe('新媒体 IPC 处理器', () => {
     await expect(invoke(NEW_MEDIA_IPC_CHANNELS.GET_DIRECTOR_DESIGN_PREVIEW, '')).rejects.toThrow('new_media:invalid_text:draftId')
   })
 
+  test('公众号凭据导入只接受账号和档案，取消选择不读取路径或写入', async () => {
+    const result = await invoke(NEW_MEDIA_IPC_CHANNELS.IMPORT_WECHAT_CREDENTIAL, { accountId: 'account', accountType: 'service', verificationStatus: 'verified', ipWhitelistConfigured: true })
+    expect(result).toEqual({ canceled: true })
+    await expect(invoke(NEW_MEDIA_IPC_CHANNELS.IMPORT_WECHAT_CREDENTIAL, { accountId: 'account', accountType: 'bad', verificationStatus: 'verified', ipWhitelistConfigured: true })).rejects.toThrow()
+    await expect(invoke(NEW_MEDIA_IPC_CHANNELS.CONFIRM_DIRECTOR_WECHAT_NOT_CREATED, { draftId: 'draft', accountId: 'account', confirmed: false })).rejects.toThrow('请先在公众号草稿箱确认未创建')
+  })
+
   test('账号能力查询只读且不含凭据字段', async () => {
     const account = await invoke(NEW_MEDIA_IPC_CHANNELS.CREATE_ACCOUNT, { platform: 'wechat-official-account', displayName: '服务号' }) as { id: string }
     const result = await invoke(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_CAPABILITIES, account.id) as { capabilities: unknown[]; profile: unknown }

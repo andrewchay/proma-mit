@@ -1,3 +1,4 @@
+import { getWechatAccountRevocationVersion, withWechatAccountLock, withWechatAccountRevocation } from './wechat-account-lock'
 import { randomUUID } from 'node:crypto'
 import type {
   NewMediaAccountAuditEntry,
@@ -95,41 +96,43 @@ export async function getNewMediaAccount(accountId: string): Promise<NewMediaCon
 }
 
 export async function beginNewMediaAccountAuthorization(accountId: string): Promise<NewMediaAuthorizationStart> {
-  const account = await requireAccount(accountId)
-  const adapter = getPlatformAdapterRegistry().get(account.platform)
-  if (!adapter.authorization.available) {
-    await auditOnly(accountAudit(account.id, 'validation_failed', 'local-user', adapter.authorization.description, {
+  return withWechatAccountLock(accountId, async () => {
+    const account = await requireAccount(accountId)
+    const adapter = getPlatformAdapterRegistry().get(account.platform)
+    if (!adapter.authorization.available) {
+      await auditOnly(accountAudit(account.id, 'validation_failed', 'local-user', adapter.authorization.description, {
+        platform: account.platform,
+        reason: 'authorization_unavailable',
+      }))
+      return {
+        accountId,
+        status: account.status,
+        method: adapter.authorization.method,
+        available: false,
+        description: adapter.authorization.description,
+      }
+    }
+
+    await adapter.beginAuthorization(account)
+    const pending: NewMediaConnectedAccount = {
+      ...account,
+      status: 'authorization_pending',
+      authorizationMethod: adapter.authorization.method,
+      errorCode: undefined,
+      updatedAt: Date.now(),
+    }
+    await withAudit(pending, accountAudit(account.id, 'authorization_started', 'local-user', `已启动${adapter.displayName}授权。`, {
       platform: account.platform,
-      reason: 'authorization_unavailable',
+      authorizationMethod: pending.authorizationMethod,
     }))
     return {
       accountId,
-      status: account.status,
+      status: pending.status,
       method: adapter.authorization.method,
-      available: false,
+      available: true,
       description: adapter.authorization.description,
     }
-  }
-
-  await adapter.beginAuthorization(account)
-  const pending: NewMediaConnectedAccount = {
-    ...account,
-    status: 'authorization_pending',
-    authorizationMethod: adapter.authorization.method,
-    errorCode: undefined,
-    updatedAt: Date.now(),
-  }
-  await withAudit(pending, accountAudit(account.id, 'authorization_started', 'local-user', `已启动${adapter.displayName}授权。`, {
-    platform: account.platform,
-    authorizationMethod: pending.authorizationMethod,
-  }))
-  return {
-    accountId,
-    status: pending.status,
-    method: adapter.authorization.method,
-    available: true,
-    description: adapter.authorization.description,
-  }
+  })
 }
 
 /** 仅供受信任的主进程 Adapter 回调调用；禁止通过 IPC 暴露。 */
@@ -138,121 +141,129 @@ export async function completeNewMediaAccountAuthorization(
   material: AuthorizationMaterial,
   actor = 'system:adapter',
 ): Promise<NewMediaConnectedAccount> {
-  const account = await requireAccount(accountId)
-  const adapter = getPlatformAdapterRegistry().get(account.platform)
-  let validation
-  try {
-    validation = await adapter.validateAuthorization(material, account)
-  } catch (error) {
-    const failed: NewMediaConnectedAccount = { ...account, status: 'error', errorCode: errorCode(error), updatedAt: Date.now() }
-    await withAudit(failed, accountAudit(account.id, 'validation_failed', actor, `授权校验失败：${failed.errorCode}`, {
-      platform: account.platform,
-      errorCode: failed.errorCode,
-    }))
-    throw error
-  }
+  return withWechatAccountLock(accountId, async () => {
+    const account = await requireAccount(accountId)
+    const adapter = getPlatformAdapterRegistry().get(account.platform)
+    let validation
+    try {
+      validation = await adapter.validateAuthorization(material, account)
+    } catch (error) {
+      const failed: NewMediaConnectedAccount = { ...account, status: 'error', errorCode: errorCode(error), updatedAt: Date.now() }
+      await withAudit(failed, accountAudit(account.id, 'validation_failed', actor, `授权校验失败：${failed.errorCode}`, {
+        platform: account.platform,
+        errorCode: failed.errorCode,
+      }))
+      throw error
+    }
 
-  const credentialRef = account.credentialRef ?? randomUUID()
-  saveNewMediaAccountSecret(credentialRef, material)
-  const connected: NewMediaConnectedAccount = {
-    ...account,
-    externalAccountId: validation.externalAccountId,
-    displayName: validation.displayName?.trim() || account.displayName,
-    status: 'connected',
-    authorizationMethod: adapter.authorization.method,
-    grantedScopes: [...validation.grantedScopes],
-    capabilities: adapter.getCapabilities(account),
-    credentialRef,
-    credentialProtection: getNewMediaCredentialProtection(),
-    authorizedAt: Date.now(),
-    expiresAt: validation.expiresAt,
-    lastValidatedAt: Date.now(),
-    errorCode: undefined,
-    updatedAt: Date.now(),
-  }
-  try {
-    await withAudit(connected, accountAudit(account.id, 'connected', actor, `已连接${adapter.displayName}账号；授权材料未写入业务数据库。`, {
-      platform: account.platform,
-      authorizationMethod: connected.authorizationMethod,
-      grantedScopeCount: connected.grantedScopes.length,
-      credentialProtection: connected.credentialProtection,
-    }))
-  } catch (error) {
-    removeNewMediaAccountSecret(credentialRef)
-    throw error
-  }
-  return connected
-}
-
-export async function validateNewMediaAccount(accountId: string): Promise<NewMediaConnectedAccount> {
-  const account = await requireAccount(accountId)
-  if (!account.credentialRef) throw new Error('账号尚未授权')
-  const material = loadNewMediaAccountSecret(account.credentialRef)
-  if (!material) throw new Error('账号授权材料缺失')
-  const adapter = getPlatformAdapterRegistry().get(account.platform)
-  try {
-    const result = await adapter.validateAuthorization(material, account)
-    const validated: NewMediaConnectedAccount = {
+    const credentialRef = account.credentialRef ?? randomUUID()
+    saveNewMediaAccountSecret(credentialRef, material)
+    const connected: NewMediaConnectedAccount = {
       ...account,
-      externalAccountId: result.externalAccountId,
-      grantedScopes: [...result.grantedScopes],
-      expiresAt: result.expiresAt,
+      externalAccountId: validation.externalAccountId,
+      displayName: validation.displayName?.trim() || account.displayName,
+      status: 'connected',
+      authorizationMethod: adapter.authorization.method,
+      grantedScopes: [...validation.grantedScopes],
+      capabilities: adapter.getCapabilities(account),
+      credentialRef,
+      credentialProtection: getNewMediaCredentialProtection(),
+      authorizedAt: Date.now(),
+      expiresAt: validation.expiresAt,
       lastValidatedAt: Date.now(),
-      status: result.expiresAt && result.expiresAt <= Date.now() ? 'expired' : 'connected',
       errorCode: undefined,
       updatedAt: Date.now(),
     }
-    await withAudit(validated, accountAudit(account.id, 'connected', 'local-user', '账号校验通过，能力与授权范围已刷新。', {
-      platform: account.platform,
-      status: validated.status,
-      grantedScopeCount: validated.grantedScopes.length,
-    }))
-    return validated
-  } catch (error) {
-    const failed: NewMediaConnectedAccount = { ...account, status: 'error', errorCode: errorCode(error), lastValidatedAt: Date.now(), updatedAt: Date.now() }
-    await withAudit(failed, accountAudit(account.id, 'validation_failed', 'local-user', `账号校验失败：${failed.errorCode}`, {
-      platform: account.platform,
-      errorCode: failed.errorCode,
-    }))
-    throw error
-  }
+    try {
+      await withAudit(connected, accountAudit(account.id, 'connected', actor, `已连接${adapter.displayName}账号；授权材料未写入业务数据库。`, {
+        platform: account.platform,
+        authorizationMethod: connected.authorizationMethod,
+        grantedScopeCount: connected.grantedScopes.length,
+        credentialProtection: connected.credentialProtection,
+      }))
+    } catch (error) {
+      removeNewMediaAccountSecret(credentialRef)
+      throw error
+    }
+    return connected
+  })
+}
+
+export async function validateNewMediaAccount(accountId: string): Promise<NewMediaConnectedAccount> {
+  return withWechatAccountLock(accountId, async () => {
+    const account = await requireAccount(accountId)
+    if (!account.credentialRef) throw new Error('账号尚未授权')
+    const material = loadNewMediaAccountSecret(account.credentialRef)
+    if (!material) throw new Error('账号授权材料缺失')
+    const adapter = getPlatformAdapterRegistry().get(account.platform)
+    try {
+      const result = await adapter.validateAuthorization(material, account)
+      const validated: NewMediaConnectedAccount = {
+        ...account,
+        externalAccountId: result.externalAccountId,
+        grantedScopes: [...result.grantedScopes],
+        expiresAt: result.expiresAt,
+        lastValidatedAt: Date.now(),
+        status: result.expiresAt && result.expiresAt <= Date.now() ? 'expired' : 'connected',
+        errorCode: undefined,
+        updatedAt: Date.now(),
+      }
+      await withAudit(validated, accountAudit(account.id, 'connected', 'local-user', '账号校验通过，能力与授权范围已刷新。', {
+        platform: account.platform,
+        status: validated.status,
+        grantedScopeCount: validated.grantedScopes.length,
+      }))
+      return validated
+    } catch (error) {
+      const failed: NewMediaConnectedAccount = { ...account, status: 'error', errorCode: errorCode(error), lastValidatedAt: Date.now(), updatedAt: Date.now() }
+      await withAudit(failed, accountAudit(account.id, 'validation_failed', 'local-user', `账号校验失败：${failed.errorCode}`, {
+        platform: account.platform,
+        errorCode: failed.errorCode,
+      }))
+      throw error
+    }
+  })
 }
 
 export async function disconnectNewMediaAccount(accountId: string): Promise<NewMediaConnectedAccount> {
-  const account = await requireAccount(accountId)
-  if (account.status === 'disconnected' && !account.credentialRef) return account
-  const adapter = getPlatformAdapterRegistry().get(account.platform)
-  const material = account.credentialRef ? loadNewMediaAccountSecret(account.credentialRef) : undefined
-  if (material && adapter.revokeAuthorization) await adapter.revokeAuthorization(material, account)
-  if (account.credentialRef) removeNewMediaAccountSecret(account.credentialRef)
-  const disconnected: NewMediaConnectedAccount = {
-    ...account,
-    status: 'disconnected',
-    externalAccountId: undefined,
-    grantedScopes: [],
-    credentialRef: undefined,
-    credentialProtection: 'none',
-    // 断开后必须清空 direct 档案与能力快照，避免残留旧权限被误判为仍可用。
-    wechatDirect: undefined,
-    capabilityStates: undefined,
-    authorizedAt: undefined,
-    expiresAt: undefined,
-    lastValidatedAt: undefined,
-    errorCode: undefined,
-    capabilities: adapter.getCapabilities(),
-    updatedAt: Date.now(),
-  }
-  await withAudit(disconnected, accountAudit(account.id, 'disconnected', 'local-user', '已断开账号并删除本地授权材料。', {
-    platform: account.platform,
-  }))
-  return disconnected
+  return withWechatAccountRevocation(accountId, async () => {
+    const account = await requireAccount(accountId)
+    if (account.status === 'disconnected' && !account.credentialRef) return account
+    const adapter = getPlatformAdapterRegistry().get(account.platform)
+    const material = account.credentialRef ? loadNewMediaAccountSecret(account.credentialRef) : undefined
+    if (material && adapter.revokeAuthorization) await adapter.revokeAuthorization(material, account)
+    if (account.credentialRef) removeNewMediaAccountSecret(account.credentialRef)
+    const disconnected: NewMediaConnectedAccount = {
+      ...account,
+      status: 'disconnected',
+      externalAccountId: undefined,
+      grantedScopes: [],
+      credentialRef: undefined,
+      credentialProtection: 'none',
+      // 断开后必须清空 direct 档案与能力快照，避免残留旧权限被误判为仍可用。
+      wechatDirect: undefined,
+      capabilityStates: undefined,
+      authorizedAt: undefined,
+      expiresAt: undefined,
+      lastValidatedAt: undefined,
+      errorCode: undefined,
+      capabilities: adapter.getCapabilities(),
+      updatedAt: Date.now(),
+    }
+    await withAudit(disconnected, accountAudit(account.id, 'disconnected', 'local-user', '已断开账号并删除本地授权材料。', {
+      platform: account.platform,
+    }))
+    return disconnected
+  })
 }
 
 export async function removeNewMediaAccount(accountId: string): Promise<boolean> {
-  const account = await requireAccount(accountId)
-  if (account.credentialRef) removeNewMediaAccountSecret(account.credentialRef)
-  await auditOnly(accountAudit(account.id, 'removed', 'local-user', '已删除账号元数据。', { platform: account.platform }))
-  return deleteNewMediaRecord(ACCOUNT_KIND, accountId)
+  return withWechatAccountRevocation(accountId, async () => {
+    const account = await requireAccount(accountId)
+    if (account.credentialRef) removeNewMediaAccountSecret(account.credentialRef)
+    await auditOnly(accountAudit(account.id, 'removed', 'local-user', '已删除账号元数据。', { platform: account.platform }))
+    return deleteNewMediaRecord(ACCOUNT_KIND, accountId)
+  })
 }
 
 /**
@@ -264,19 +275,27 @@ export async function removeNewMediaAccount(accountId: string): Promise<boolean>
 export async function configureWechatDirectAccount(
   accountId: string,
   input: WechatDirectConfigureInput,
+  options: { requireEncryption?: boolean; expectedRevocationVersion?: number } = {},
 ): Promise<NewMediaConnectedAccount> {
-  const account = await requireAccount(accountId)
-  if (account.platform !== 'wechat-official-account') throw new Error('该账号不是微信公众号账号')
-  return persistWechatDirectAccount(account, input)
+  return withWechatAccountLock(accountId, async () => {
+    const account = await requireAccount(accountId)
+    if (options.expectedRevocationVersion !== undefined && options.expectedRevocationVersion !== getWechatAccountRevocationVersion(accountId)) throw new Error('账号状态已变更，请重新选择凭据文件')
+    if (account.platform !== 'wechat-official-account') throw new Error('该账号不是微信公众号账号')
+    if (account.status !== 'connected' && (input.grantedScopes?.length ?? 0) > 0) throw new Error('账号尚未通过微信侧校验，不能写入接口权限集；请先完成 token 校验')
+    if (account.credentialRef) throw new Error('该账号已有凭据，请先断开后重新导入')
+    return persistWechatDirectAccount(account, input, options)
+  })
 }
 
 export async function updateWechatDirectAccountProfile(
   accountId: string,
   input: WechatDirectProfileUpdateInput,
 ): Promise<NewMediaConnectedAccount> {
-  const account = await requireAccount(accountId)
-  if (account.platform !== 'wechat-official-account') throw new Error('该账号不是微信公众号账号')
-  return persistWechatDirectProfile(account, input)
+  return withWechatAccountLock(accountId, async () => {
+    const account = await requireAccount(accountId)
+    if (account.platform !== 'wechat-official-account') throw new Error('该账号不是微信公众号账号')
+    return persistWechatDirectProfile(account, input)
+  })
 }
 
 /**
@@ -286,9 +305,11 @@ export async function connectWechatDirectAccount(
   accountId: string,
   dependencies: WechatTokenDependencies = {},
 ): Promise<NewMediaConnectedAccount> {
-  const account = await requireAccount(accountId)
-  if (account.platform !== 'wechat-official-account') throw new Error('该账号不是微信公众号账号')
-  return connectWechatDirectAccountInternal(account, dependencies)
+  return withWechatAccountLock(accountId, async () => {
+    const account = await requireAccount(accountId)
+    if (account.platform !== 'wechat-official-account') throw new Error('该账号不是微信公众号账号')
+    return connectWechatDirectAccountInternal(account, dependencies)
+  })
 }
 
 /**
@@ -298,9 +319,11 @@ export async function recordWechatObservedScopes(
   accountId: string,
   observation: { grantedScopes?: string[]; deniedScopes?: string[] },
 ): Promise<NewMediaConnectedAccount> {
-  const account = await requireAccount(accountId)
-  if (account.platform !== 'wechat-official-account') throw new Error('该账号不是微信公众号账号')
-  return recordWechatObservedScopesInternal(account, observation)
+  return withWechatAccountLock(accountId, async () => {
+    const account = await requireAccount(accountId)
+    if (account.platform !== 'wechat-official-account') throw new Error('该账号不是微信公众号账号')
+    return recordWechatObservedScopesInternal(account, observation)
+  })
 }
 
 /** 读取账号最近一次能力协商结果；未协商时返回空数组，不猜测能力。 */
