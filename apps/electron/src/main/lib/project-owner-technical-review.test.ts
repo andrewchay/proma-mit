@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { expect, test } from 'bun:test'
 import { assertOwnerDevelopmentValidationForVerdict, parseOwnerTechnicalReviewResponse, restoreVerbatimReviewQuotes } from './project-owner-technical-review'
 
@@ -99,4 +100,25 @@ test('Given完整文本评审v2 When引用正文 Then每项met必须有准确原
   expect(() => parseOwnerTechnicalReviewResponse(JSON.stringify(value), criteria, hash, content)).toThrow()
   expect(() => parseOwnerTechnicalReviewResponse(response('approved'), criteria, hash, content)).toThrow()
   expect(() => parseOwnerTechnicalReviewResponse(JSON.stringify(value), criteria)).toThrow()
+})
+
+
+test('Given代码评审同时引用说明缺陷与完整浏览器回执 Then接受精确回执引用且拒绝篡改或截断', () => {
+  const quote = '实际点击清空后输入为空且三项归零'
+  const output = JSON.stringify([{ status: 'passed', detail: quote }])
+  const validation = { command: 'browser:text-counter.behavior', validationId: `val-${'b'.repeat(64)}`,
+    attemptState: 'completed', freshness: 'fresh', status: 'passed', exitCode: 0, timedOut: false, outputTruncated: false,
+    outputTail: output, rawOutputSha256: createHash('sha256').update(output).digest('hex'), rawOutputByteLength: Buffer.byteLength(output) } as const
+  const artifactHash = 'a'.repeat(64)
+  const fileQuote = '示例错误：多写一次换行'
+  const content = JSON.stringify({ files: [{ oldContent: null, newContent: fileQuote }] })
+  const raw = response('changes_requested', { schemaVersion: 3, artifactHash, criteria: [
+    { criterion: criteria[0], status: 'not_met', evidence: '文档与实现不符', quote: fileQuote },
+    { criterion: criteria[1], status: 'met', evidence: '浏览器实测成功', quote },
+  ] })
+  const parse = (evidence = [validation]) => parseOwnerTechnicalReviewResponse(raw, criteria, artifactHash, content, 'development', evidence)
+  expect(parse().verdict).toBe('changes_requested')
+  expect(() => parse([])).toThrow('原文依据')
+  expect(() => parse([{ ...validation, rawOutputSha256: 'f'.repeat(64) }])).toThrow('原文依据')
+  expect(() => parseOwnerTechnicalReviewResponse(raw, criteria, artifactHash, content, 'development', [{ ...validation, outputTruncated: true }])).toThrow('原文依据')
 })

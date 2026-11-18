@@ -219,7 +219,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   // 不能因为写入时的目标版本较旧就在确认后整段消失。
   const waitingForUser = isOwnerWaitingForUser(messages)
   const waitingMessage = getOwnerWaitingMessage(messages, taskId)
-  const decisionLabel = waitingMessage?.kind !== 'attention' ? getOwnerWaitingLabel(messages, taskId) : null
+  const decisionLabel = waitingMessage?.kind !== 'attention' ? getOwnerWaitingLabel(messages, taskId, delegation.view?.state) : null
   const waitingForDecision = decisionLabel !== null
   const authorizationDecision = ['none', 'expired', 'stale', 'revoked', 'exhausted'].includes(delegation.view?.state ?? '')
   // 执行阻塞与执行区共用同一份推导：两处各自判断会出现“这里说暂无事项、那里说已阻塞”。

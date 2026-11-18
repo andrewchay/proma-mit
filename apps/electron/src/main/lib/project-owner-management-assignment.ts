@@ -21,13 +21,13 @@ import * as store from './project-sqlite-store'
 
 export function isRecoverableOwnerAssignmentRejection(detail: string): boolean {
   // 第三种是“结构/字段不合规”：方案本身有效，原预算内重排一次通常即可修复。
-  return ['Owner安排必须由未承担执行岗位的独立评审员审核', 'Owner人员安排必须完整覆盖所选步骤的全部岗位', 'Owner人员安排提案格式无效或夹带未授权字段'].includes(detail)
+  return ['Owner安排必须由未承担执行岗位的独立评审员审核', 'Owner人员安排必须完整覆盖所选步骤的全部岗位', 'Owner人员安排提案格式无效或夹带未授权字段', 'Owner绿地研发允许范围必须覆盖全部目标文件'].includes(detail)
 }
 
 export { ownerAssignmentFailureReason } from './project-owner-failure-reason'
 import { ownerAssignmentFailureReason } from './project-owner-failure-reason'
 
-/** 仅完整、成功终态且仅被已知岗位覆盖或独立评审协议拒绝的安排，允许在原预算内续跑一次。 */
+/** 仅完整、成功终态且仅被已知岗位覆盖、独立评审或绿地写入范围协议拒绝的安排，允许在原预算内续跑一次。 */
 export function queueOwnerAssignmentProtocolRetry(projectId: string, taskId: string | undefined, executionId: string): boolean {
   const outcome = getOwnerPlanningRunOutcome(executionId)
   const receipt = outcome ? getOwnerPlanningRunReceipt(outcome.receiptId) : null
@@ -55,7 +55,7 @@ export function queueOwnerAssignmentProtocolRetry(projectId: string, taskId: str
   const previousRetry = store.getProjectDb().prepare("SELECT 1 FROM project_owner_management_events WHERE project_id = ? AND json_extract(payload, '$.kind') = 'assignment_recheck' AND json_extract(payload, '$.taskId') IS ? AND json_extract(payload, '$.sourceRevision') = ? AND json_extract(payload, '$.sourceId') LIKE 'protocol-retry:%' LIMIT 1").get(projectId, taskId ?? null, plan.revision)
   if (previousRetry) return false
   const retry = recordOwnerManagementAssignmentProtocolRetry(projectId, plan.revision, executionId, taskId)
-  appendOwnerManagementMessage({ projectId, eventId: `assignment-protocol-retry-progress:${executionId}`, ...(taskId ? { taskId } : {}), role: 'assistant', kind: 'management_progress', planningTaskId: receipt.planningTaskId, content: '上一条团队安排有完整运行记录，但未通过岗位覆盖或独立评审员校验。我已在当前项目授权和预算内重新安排一次；原记录保留，不会循环重试。' })
+  appendOwnerManagementMessage({ projectId, eventId: `assignment-protocol-retry-progress:${executionId}`, ...(taskId ? { taskId } : {}), role: 'assistant', kind: 'management_progress', planningTaskId: receipt.planningTaskId, content: '上一条团队安排有完整运行记录，但未通过团队或研发范围校验。我已在当前项目授权和预算内重新安排一次；原记录保留，不会循环重试。' })
   return retry.kind === 'assignment_recheck'
 }
 

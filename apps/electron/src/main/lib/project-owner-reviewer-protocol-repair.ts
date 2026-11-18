@@ -34,7 +34,7 @@ export function ownerReviewerProtocolCorrection(sessionId: string, prompt: strin
   try {
     const parsed = parseOwnerTechnicalReviewResponse(raw, link.projection.acceptanceCriteria,
       development?.contentHash ?? text?.contentSha256, development?.content ?? text?.content,
-      development ? 'development' : 'text')
+      development ? 'development' : 'text', development?.validationEvidence)
     if (development?.validationEvidence) assertOwnerDevelopmentValidationForVerdict(parsed.verdict, development.validationEvidence)
     return null
   } catch (cause) {

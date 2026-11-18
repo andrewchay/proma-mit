@@ -52,6 +52,26 @@ test('Given用户反馈绑定已验收成果 When构建Owner请求 Then提供准
   expect(() => protocol.buildProjectOwnerPlanningRequest(c)).toThrow('正文摘要')
 })
 
+test('Given反馈绑定已验收代码快照 When构建规划请求 Then验证文件集合哈希并拒绝被改写的正文', async () => {
+  const protocol = await import('./project-owner-planning-protocol'), c = context()
+  const path = 'index.html', newContent = '<p>交付内容</p>'
+  const sha = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex')
+  const newSha256 = sha(newContent)
+  const artifactHash = sha([path, 'add', '', newSha256].join(String.fromCharCode(0)) + String.fromCharCode(10))
+  const content = JSON.stringify({
+    executionId: 'run', workspaceId: 'workspace', baseCommit: 'a'.repeat(40), contentHash: artifactHash,
+    files: [{ file: { path, changeType: 'add', oldSha256: null, newSha256, newBytes: Buffer.byteLength(newContent) }, oldContent: null, newContent }],
+  })
+  const messageId = '1'.repeat(64), userMessageId = '2'.repeat(64)
+  c.conversation = { conversationId: 'conversation', throughMessageId: userMessageId, historyThroughMessageId: userMessageId,
+    messages: [{ id: userMessageId, role: 'user', content: '请修正交付说明' }], truncated: false, currentPlan: null, tasks: [], tasksTruncated: false,
+    deliveryFeedback: { version: 1, messageId, artifactHash, title: '网页', acceptanceCriteria: ['页面可用'], content, ownerDecision: '已验收', reviewerSummary: '检查通过' } }
+
+  expect(protocol.buildProjectOwnerPlanningRequest(c).userPrompt).toContain(newSha256)
+  c.conversation.deliveryFeedback!.content = content.replace('交付内容', '篡改内容')
+  expect(() => protocol.buildProjectOwnerPlanningRequest(c)).toThrow('正文摘要')
+})
+
 test('Given反馈绑定准确成果 When Owner 提交修订方案 Then逐项评估改动与授权影响并拒绝不完整/错绑判断', async () => {
   const protocol = await import('./project-owner-planning-protocol'), c = context()
   const content = '已验收成果正文', artifactHash = createHash('sha256').update(content, 'utf8').digest('hex'), messageId = '3'.repeat(64)
@@ -77,6 +97,27 @@ test('Given反馈绑定准确成果 When Owner 提交修订方案 Then逐项评�
   expect(request.systemPrompt).toContain('changes必须按顺序逐字覆盖原全部acceptanceCriteria')
   expect(request.systemPrompt).toContain(messageId)
   expect(request.systemPrompt).toContain(artifactHash)
+})
+
+test('Given普通对话要求修改交付 When Owner选择冻结目录项 Then核验版本身份及每条原标准', async () => {
+  const protocol = await import('./project-owner-planning-protocol'), c = context()
+  const messageId = '1'.repeat(64), userMessageId = '2'.repeat(64), artifactHash = '3'.repeat(64)
+  c.conversation = { conversationId: 'conversation', throughMessageId: userMessageId, historyThroughMessageId: userMessageId,
+    messages: [{ id: userMessageId, role: 'user', content: '请修正使用说明的路径，不改变目标' }], truncated: false, currentPlan: null, tasks: [], tasksTruncated: false,
+    deliveredArtifacts: { version: 2, messageId, planVersion: 1, items: [{ stepKey: 'guide', title: '使用说明', artifactHash, acceptanceCriteria: ['现场可复用'] }] } }
+  const base = proposal(c)
+  const feedback = { messageId, stepKey: 'guide', artifactHash, summary: '修正使用说明', authorizationImpact: 'within_confirmed_boundary', authorizationRationale: '仅修复说明',
+    changes: [{ criterion: '现场可复用', disposition: 'addressed', proposedChange: '给出正确运行路径' }] }
+  const prompt = protocol.buildProjectOwnerPlanningRequest(c).systemPrompt
+  expect(prompt).toContain('普通对话中明确要求修改')
+  expect(prompt).toContain('"deliveryFeedbackAssessment":{"messageId"')
+  expect(prompt).toContain('"changes":[{"criterion"')
+  const priorRequest = protocol.buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, false)
+  expect(protocol.resolveProjectOwnerPlanningRequest(c, createHash('sha256').update(JSON.stringify(priorRequest)).digest('hex'))).toEqual(priorRequest)
+  const parse = (assessment: typeof feedback) => protocol.parseProjectOwnerPlanningResponse({ ...base, proposal: { ...base.proposal, deliveryFeedbackAssessment: assessment } }, c)
+  expect(parse(feedback)).toMatchObject({ proposal: { deliveryFeedbackAssessment: feedback } })
+  expect(() => parse({ ...feedback, artifactHash: '4'.repeat(64) })).toThrow('冻结交付目录')
+  expect(() => parse({ ...feedback, changes: [{ ...feedback.changes[0]!, criterion: '不存在的标准' }] })).toThrow('原完成标准')
 })
 
 test('Given持久Reviewer提示中的代码快照与验证回执 When投影进Owner管理上下文 Then接受准确绑定并原样提供完整证据', async () => {

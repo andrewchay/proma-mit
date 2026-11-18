@@ -173,6 +173,36 @@ export const OWNER_RUNTIME_ASSERTION_TEMPLATES: readonly OwnerRuntimeAssertionTe
     })()`,
   },
   {
+    id: 'text-counter.behavior',
+    title: '文本计数器输入、Unicode 码点、分词、换行及清空正确',
+    intentKeywords: ['文本计数器', '码点数', '词数', 'unicode'],
+    script: `(() => {
+      const input = document.querySelector('textarea#input')
+      const clear = document.querySelector('button#clear')
+      const outputs = ['codepoints', 'words', 'lines'].map(id => document.getElementById(id))
+      const visible = element => element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden'
+      if (!input || !clear || outputs.some(element => !element || !visible(element)) || !visible(input) || !visible(clear) || clear.disabled || input.readOnly || input.disabled) {
+        return { passed: false, detail: '缺少可操作的 textarea#input、button#clear 或可见的 #codepoints、#words、#lines' }
+      }
+      const observed = () => outputs.map(element => element.textContent.trim()).join(',')
+      if (input.value !== '' || observed() !== '0,0,0') return { passed: false, detail: '初始输入或计数不为零' }
+      const cases = [
+        ['甲🙂 乙\\ntest', '7,3,2', 'Unicode 和分词'],
+        ['甲\\r\\n\\r\\n乙', '2,2,3', 'CRLF 与空行'],
+        ['a👩‍💻 \\tb', '5,2,1', '组合 emoji 和制表符'],
+      ]
+      for (const [value, expected, description] of cases) {
+        input.value = value
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        const actual = observed()
+        if (actual !== expected) return { passed: false, detail: description + '：期望 ' + expected + '，实际 ' + actual }
+      }
+      clear.click()
+      if (input.value !== '' || observed() !== '0,0,0') return { passed: false, detail: '清空按钮未清除输入或未将计数归零' }
+      return { passed: true, detail: '初始为空，Unicode、分词、CRLF 空行和组合 emoji 的计数正确，实际点击清空后输入为空且三项归零' }
+    })()`,
+  },
+  {
     id: 'diary.five-years',
     title: '五年同日回顾及闰日占位',
     intentKeywords: ['五年日记', '5年日记', '五年同日', '闰日', '闰年'],

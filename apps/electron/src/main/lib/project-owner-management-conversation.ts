@@ -1,8 +1,9 @@
+import { deliveryContentMatchesArtifact } from './project-owner-delivery-content'
 import { readOwnerManagementDelivery } from './project-owner-management-delivery'
 /** 持续对话只产生管理资料与受控规划请求；不把自然语言当作授权或权威目标修改。 */
 import { createHash } from 'node:crypto'
 import { ownerDeliveryValidationBlocker, type OwnerManagementMessage, type ProjectOwnerPlanningContext, type SendOwnerManagementMessageRequest } from '@gravitas/shared'
-import { appendOwnerManagementMessage, deliveryContentMatchesArtifact, getOwnerManagementMessage, getOwnerManager, recordOwnerConversationMessage, recordStaleOwnerManagementTrace } from './project-owner-management-store'
+import { appendOwnerManagementMessage, getOwnerManagementMessage, getOwnerManager, recordOwnerConversationMessage, recordStaleOwnerManagementTrace } from './project-owner-management-store'
 import { getProjectOwnerGoalDraft } from './project-owner-goal-service'
 import { assertLocalActorEnabled, getProjectOwnerPlanDraft, getProjectOwnerPlanningContext } from './project-owner-plan-service'
 import { getOwnerRuntimeBinding, prepareOwnerPlanning } from './project-owner-runtime-binding'
@@ -73,7 +74,7 @@ function readOwnerManagementDeliveryFeedback(projectId: string, conversationId: 
     acceptanceCriteria: [...item.acceptanceCriteria], content: item.content, ownerDecision: item.ownerDecision, reviewerSummary: item.reviewerSummary }
 }
 /** 每次仅取本主体、截至准确用户消息的有界历史；随后消息不会改变在途请求。 */
-export function withOwnerConversationContext(context: ProjectOwnerPlanningContext, messageId: string, historyThroughMessageId?: string, interactionVersion: 1 | 2 = 2, deliveryVersion: 0 | 1 = 0, messageBindingVersion: 0 | 1 = 1, employeeInteractionVersion: 0 | 1 = 0, frozenEmployeeInteractions?: import('@gravitas/shared').OwnerEmployeeInteraction[], includeDeliveryCatalog = true, frozenDeliveryReview?: import('@gravitas/shared').OwnerManagementDeliveryReview): ProjectOwnerPlanningContext {
+export function withOwnerConversationContext(context: ProjectOwnerPlanningContext, messageId: string, historyThroughMessageId?: string, interactionVersion: 1 | 2 = 2, deliveryVersion: 0 | 1 = 0, messageBindingVersion: 0 | 1 = 1, employeeInteractionVersion: 0 | 1 = 0, frozenEmployeeInteractions?: import('@gravitas/shared').OwnerEmployeeInteraction[], includeDeliveryCatalog = true, frozenDeliveryReview?: import('@gravitas/shared').OwnerManagementDeliveryReview, deliveryCatalogVersion: 1 | 2 = 1): ProjectOwnerPlanningContext {
   const projectId = context.goal.goal.projectId, taskId = context.goal.goal.taskId
   const manager = getOwnerManager(projectId), message = getOwnerManagementMessage(projectId, messageId)
   const employee = message?.kind === 'employee_interaction' && message.role === 'assistant' ? message.employeeInteraction : undefined
@@ -103,8 +104,8 @@ export function withOwnerConversationContext(context: ProjectOwnerPlanningContex
   // 反馈只绑定一项成果；同时保留同轮目录，避免把最后一份说明当成全部交付。
   const deliveryRow = includeDeliveryCatalog && !observation && !employee && !fileObservation && !webObservation ? store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id = ? AND json_extract(payload, '$.taskId') IS ? AND json_extract(payload, '$.kind') = 'delivery' AND rowid <= (SELECT rowid FROM project_owner_management_messages WHERE id = ?) ORDER BY rowid DESC LIMIT 1").get(projectId, taskId ?? null, latest.id) as { id: string } | undefined : undefined
   const deliveryMessage = deliveryRow ? getOwnerManagementMessage(projectId, deliveryRow.id) : null
-  const deliveredArtifacts = deliveryMessage?.delivery ? { version: 1 as const, messageId: deliveryMessage.id, planVersion: deliveryMessage.delivery.planVersion,
-    items: deliveryMessage.delivery.items.map(({ stepKey, title, artifactHash }) => ({ stepKey, title, artifactHash })) } : undefined
+  const deliveredArtifacts = deliveryMessage?.delivery ? { version: deliveryCatalogVersion, messageId: deliveryMessage.id, planVersion: deliveryMessage.delivery.planVersion,
+    items: deliveryMessage.delivery.items.map(({ stepKey, title, artifactHash, acceptanceCriteria }) => ({ stepKey, title, artifactHash, ...(deliveryCatalogVersion === 2 ? { acceptanceCriteria } : {}) })) } : undefined
   const deliveryFeedback = message.deliveryReference
     ? readOwnerManagementDeliveryFeedback(projectId, manager.conversationId, taskId, message.deliveryReference)
     : undefined
