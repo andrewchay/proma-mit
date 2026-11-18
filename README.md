@@ -61,6 +61,7 @@ Owner 执行在重启后出现未知状态时，可对迟到终态和逐请求�
 ### 领域能力包（按订阅分发）
 
 - **营销能力包（ma-*）**：26 个达人营销 Skills（品牌 DNA、品牌屋、消费者洞察、KOL 金字塔、内容日历、脚本工坊、内容审核等）经营销 plugin 以订阅方式分发；配套**营销应用中心**（顶部菜单栏独立视图）、达人库 / 稿件审核 / 内容追踪 UI、Campaign 子系统（campaign-manager + 工具）、广告投放包（投放计划 / 调控审批 / 调控规则引擎）与共享素材层（广告视频生成的分镜 / 引擎 / 合成、视频创意管线）。
+- **新媒体运营插件**：与新媒体总监对话，维护品牌简报并确认每次运营方案；总监在确认后协调文案和设计角色，设计可使用工作区 OpenDesign 参考。首个渠道为小红书：工作台预览文案和封面，交接包包含正文、PNG 与可编辑 SVG，由用户在官方端手动发布。其他渠道可策划与创作，尚未接通同等发布交接。
 - **出海 sourcing 能力包**：面向出海业务的检索核验、画像构建、邮件收发与漏斗指标，检索核验补齐后可完整走通 sourcing 工作流。
 
 ### 订阅与权益（商业化）
@@ -281,6 +282,7 @@ Gravitas 采用本地文件存储，方便备份、迁移和排查问题。
 ├── user-profile.json
 ├── settings.json
 ├── calendar/                    # 日程管家：events.jsonl / tasks.jsonl
+├── new-media/                  # 新媒体数据库及 director-assets（设计 PNG / SVG，须一起备份）
 ├── projects/                    # 项目管理：paa.db（SQLite；生产 better-sqlite3 直写 WAL，bun test 用 sql.js）
 ├── goals/                       # Goal 状态层：{goalId}.json + index.json
 ├── token-usage/                 # Token 统计：{YYYY-MM}.jsonl

@@ -42,6 +42,10 @@ export type NewMediaRecordDomain =
 
 export const NEW_MEDIA_KIND_REGISTRY: readonly NewMediaKindDefinition[] = [
   { kind: 'content-draft', domain: 'content', description: '内容草稿' },
+  { kind: 'director-brand', domain: 'content', description: '新媒体品牌简报' },
+  { kind: 'director-plan', domain: 'content', description: '新媒体总监方案' },
+  { kind: 'director-role-result', domain: 'content', description: '新媒体角色交付' },
+  { kind: 'director-design-asset', domain: 'media', description: '新媒体设计素材' },
   { kind: 'publication-job', domain: 'content', description: '发布排程任务' },
   { kind: 'engagement', domain: 'community', description: '互动条目' },
   { kind: 'reply-draft', domain: 'community', description: '回复草稿' },
@@ -417,10 +421,11 @@ function run(sql: string, params: unknown[]): void {
   }
 }
 
-export async function putNewMediaRecord<T extends { id: string }>(kind: string, value: T): Promise<T> {
+export async function putNewMediaRecord<T extends { id: string }>(kind: string, value: T, beforeWrite?: () => void): Promise<T> {
   await initNewMediaDb()
   const now = Date.now()
   const existing = await getNewMediaRecord<T>(kind, value.id)
+  beforeWrite?.()
   run(
     `INSERT OR REPLACE INTO nm_record (kind, id, payload, created_at, updated_at, domain) VALUES (?, ?, ?, ?, ?, ?)`,
     [kind, value.id, JSON.stringify(value), existing ? readRecordCreatedAt(kind, value.id) : now, now, resolveNewMediaRecordDomain(kind)],

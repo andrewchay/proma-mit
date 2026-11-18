@@ -1130,7 +1130,7 @@ export class AgentOrchestrator {
               adapterProvider: protocol === 'openai-chat' ? 'openai' : undefined,
               apiKey,
               baseUrl,
-              model: modelId,
+              model: resolvedModelId,
               cwd: agentCwd,
               permissionMode: currentPiPermissionMode,
             }, toolInput)
@@ -1331,6 +1331,10 @@ export class AgentOrchestrator {
     }
     const prompt = spawnPlan.prompt
     const childCwd = spawnPlan.childCwd
+    // 新媒体角色只需返回文本和 SVG；即使父会话完全自动，也不能替用户执行外发或写文件。
+    const { directorRolePermissionMode, isDirectorRoleAgent } = await import('./new-media/director-roles')
+    const childPermissionMode = directorRolePermissionMode(subAgent.agentName, spawnPlan.permissionMode)
+    const directorRole = isDirectorRoleAgent(subAgent.agentName)
     const systemPrompt = def.prompt
       ? `${def.prompt}\n\n你当前被委派的任务如下，请完成后直接返回结果，不要反问用户。`
       : undefined
@@ -1359,7 +1363,13 @@ export class AgentOrchestrator {
         // Runtime 无法承载交互时应拒绝，而不是静默提升为 bypassPermissions。
         // 只读子代理强制 safe：Runtime 层会拒绝 Bash、Write、Edit、MCP 写入等副作用工具。
         // 这不能被父会话的 bypassPermissions 覆盖。
-        permissionMode: spawnPlan.permissionMode,
+        permissionMode: childPermissionMode,
+        // 角色输入已包含品牌与设计上下文；仅返回文本，避免绕过总监或消耗轮次调用无权工具。
+        disableTools: directorRole,
+        systemPromptMode: directorRole ? 'direct' : 'standard',
+        // GLM-5.3 Flash 的设计子任务默认使用低强度；显式用户设置优先，其他模型保持原样。
+        ...(subAgent.agentName === 'new-media-designer' && ctx.provider === 'zhipu' && (subAgent.model || ctx.model)?.toLowerCase() === 'glm-5.3-flash'
+          ? { thinkingLevel: getSettings().agentThinkingLevel ?? 'low' } : {}),
         mcpServers: ctx.mcpServers,
         maxTurns: subAgent.maxTurns ?? 10,
         abortSignal: subAgent.abortSignal,

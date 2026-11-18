@@ -191,6 +191,13 @@ export function buildBuiltinAgents(claudeAvailable = true): Record<string, Agent
     },
   }
 
+  // 新媒体角色仅在对应插件能力启用时注册。
+  const { hasNewMediaContentCapability } = require('./plugins/new-media-plugin') as typeof import('./plugins/new-media-plugin')
+  if (hasNewMediaContentCapability()) {
+    const { getDirectorRoleAgents } = require('./new-media/director-roles') as typeof import('./new-media/director-roles')
+    Object.assign(agents, getDirectorRoleAgents())
+  }
+
   // 采纳写回：把已采纳/持久化的内置 sub-agent prompt 覆盖合并到默认定义上，
   // 使所有调用点（runSubAgent / SDK agents 注册）自动生效。代码默认只在无覆盖时兜底。
   const withOverrides = applyBuiltinOverrides(agents)

@@ -1071,6 +1071,7 @@ export interface MemberSyncAllResult {
 export const NEW_MEDIA_IPC_CHANNELS = {
   LIST_DRAFTS: 'new-media:list-drafts',
   CREATE_DRAFT: 'new-media:create-draft',
+  GET_DIRECTOR_DESIGN_PREVIEW: 'new-media:get-director-design-preview',
   LIST_PUBLICATION_JOBS: 'new-media:list-publication-jobs',
   SCHEDULE_PUBLICATION: 'new-media:schedule-publication',
   LIST_ENGAGEMENTS: 'new-media:list-engagements',
@@ -1613,6 +1614,7 @@ export interface NewMediaAccountAuditEntry {
 
 export interface NewMediaContentDraft {
   id: string
+  directorPlanId?: string
   sourceText: string
   platformCopies: Partial<Record<NewMediaPlatform, { title: string; body: string; hashtags: string[] }>>
   createdAt: number
@@ -1625,6 +1627,7 @@ export interface XiaohongshuHandoff {
   status: XiaohongshuHandoffStatus
   packageVersion: 1
   packageFileName: string
+  designAssetId?: string
   packageSha256?: string
   warnings: string[]
   handedOffAt?: number
