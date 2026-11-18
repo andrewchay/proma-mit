@@ -1,6 +1,6 @@
 /** Owner质量判断纯协议。判断不等于执行，不读文件或改业务状态。 */
 import type { OwnerQualityDecision, ProjectOwnerPlanningContext } from '@gravitas/shared'
-import { isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
+import { containsOwnerValidationOutputQuote, isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
 import { resolveOwnerTypographyQuote } from './project-owner-quote'
 function object(value: unknown, fields: string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !fields.includes(key)) || fields.some(key => !Object.hasOwn(value, key))) throw new Error('Owner质量决定字段不完整或含未知字段')
@@ -37,7 +37,15 @@ export function parseOwnerQualityDecision(raw: unknown, context: ProjectOwnerPla
     const criterion = object(item, ['criterion', 'status', 'evidence', 'quote'])
     let quote = criterion.quote
     if (!developmentArtifact && typeof quote === 'string' && !artifactContent.includes(quote)) quote = resolveOwnerTypographyQuote(artifactContent, quote) ?? quote
-    if (typeof criterion.criterion !== 'string' || !['met', 'not_met', 'not_verified'].includes(String(criterion.status)) || (quote !== null && (typeof quote !== 'string' || !quote.trim() || quote.length > 1000 || !containsOwnerArtifactQuote(artifactContent, quote, Boolean(developmentArtifact)))) || criterion.status === 'met' && quote === null) throw new Error('Owner质量决定未按准确标准逐项判断或引用不符')
+    if (developmentArtifact && typeof quote === 'string') {
+      const original = review.criteria.find(item => item.criterion === criterion.criterion)?.quote
+      // 只有逐字的独立评审源码引用才能解除一次 JSON 反斜杠重复编码。
+      if (typeof original === 'string' && original !== quote && original.includes('\\')
+        && quote === original.replace(/\\/g, '\\\\') && containsOwnerArtifactQuote(artifactContent, original, true)) quote = original
+    }
+    const runtimeQuote = criterion.status === 'met' && typeof quote === 'string'
+      && containsOwnerValidationOutputQuote(developmentArtifact?.validationEvidence, quote)
+    if (typeof criterion.criterion !== 'string' || !['met', 'not_met', 'not_verified'].includes(String(criterion.status)) || (quote !== null && (typeof quote !== 'string' || !quote.trim() || quote.length > 1000 || !runtimeQuote && !containsOwnerArtifactQuote(artifactContent, quote, Boolean(developmentArtifact)))) || criterion.status === 'met' && quote === null) throw new Error('Owner质量决定未按准确标准逐项判断或引用不符')
     return { criterion: String(criterion.criterion), status: criterion.status as OwnerQualityDecision['criteria'][number]['status'], evidence: text(criterion.evidence), quote: quote as string | null }
   })
   const required = review.criteria.map(item => item.criterion)

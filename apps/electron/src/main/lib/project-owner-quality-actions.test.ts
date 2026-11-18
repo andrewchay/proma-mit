@@ -34,7 +34,7 @@ const rendererPlan = await import('../../renderer/atoms/project-owner-plan-atoms
 const rendererGoal = await import('../../renderer/atoms/project-owner-goal-atoms')
 const ipcHandlers = new Map<string, (event: unknown, request: unknown) => unknown>()
 registerProjectOwnerExecutionIpcHandlers({ handle: (channel, handler) => { ipcHandlers.set(channel, handler) } })
-interface Scenario { answerBlockedQuestion?: boolean; escalate?: boolean; blockedContinuation?: boolean; fencedReview?: boolean; missingReviewQuote?: 'verbatim' | 'paraphrase'; invalidReviewQuote?: boolean; queueOnly?: boolean; extraQualityCriteria?: boolean; omitQualityKind?: boolean; invalidQualityQuote?: boolean; rework?: boolean; evidenceGap?: boolean; ownerDefect?: boolean; dependent?: boolean; hold?: boolean; maxRework?: number; legacy?: boolean; development?: boolean; nestedCode?: boolean; mixedDelivery?: boolean; separateRoles?: boolean; forkedCode?: boolean; checkInherited?: boolean; browserValidation?: boolean; validationFails?: boolean; durableStartIntent?: boolean; emptyReview?: boolean; localConfigurationError?: string; localConfigurationRuntimeResult?: boolean; localConfigurationNonZeroUsage?: boolean }
+interface Scenario { invalidQualityBinding?: boolean; ordinaryFeedback?: boolean; feedbackOutOfScope?: boolean; answerBlockedQuestion?: boolean; escalate?: boolean; blockedContinuation?: boolean; fencedReview?: boolean; missingReviewQuote?: 'verbatim' | 'paraphrase'; invalidReviewQuote?: boolean; queueOnly?: boolean; extraQualityCriteria?: boolean; omitQualityKind?: boolean; invalidQualityQuote?: boolean; rework?: boolean; evidenceGap?: boolean; ownerDefect?: boolean; dependent?: boolean; transitiveText?: boolean; hold?: boolean; maxRework?: number; legacy?: boolean; development?: boolean; nestedCode?: boolean; mixedDelivery?: boolean; separateRoles?: boolean; forkedCode?: boolean; checkInherited?: boolean; browserValidation?: boolean; validationFails?: boolean; durableStartIntent?: boolean; emptyReview?: boolean; localConfigurationError?: string; localConfigurationRuntimeResult?: boolean; localConfigurationNonZeroUsage?: boolean }
 interface Trace { role: string; taskId: string; round: number; prompt: string }
 const scenarios = new Map<string, Scenario>(), traces = new Map<string, Trace[]>()
 const pending = new Map<string, { finish: () => void; executionId: string }>()
@@ -135,13 +135,16 @@ beforeAll(async () => {
       return
     }
     const delivery = conversation.deliveryReview
-    if (conversation.deliveryFeedback || ((scenario.escalate || scenario.blockedContinuation) && !conversation.executionObservation)) {
-      const feedback = conversation.deliveryFeedback
+    const catalog = scenario.ordinaryFeedback ? conversation.deliveredArtifacts : undefined
+    const catalogItem = catalog?.items[0]
+    const ordinaryFeedback = catalog?.version === 2 && catalogItem?.acceptanceCriteria ? { ...catalogItem, messageId: catalog.messageId, acceptanceCriteria: catalogItem.acceptanceCriteria } : undefined
+    if (conversation.deliveryFeedback || ordinaryFeedback || ((scenario.escalate || scenario.blockedContinuation) && !conversation.executionObservation)) {
+      const feedback = conversation.deliveryFeedback ?? ordinaryFeedback
       const roleKey = current.context.sources.roles[0]!.key
       const response = { schemaVersion: 1, kind: 'plan_proposal', binding: { projectId: execution.projectId, goalVersion: current.context.goal.goal.goalVersion, contextFingerprint: current.context.fingerprint }, proposal: {
         summary: '在原交付基础上补充用户指定的目标用户分析，并保留原有结论依据', assumptions: [], risks: [],
         steps: [{ key: 'revise-delivery', title: '按反馈修订定位建议', outcome: '交付补充目标用户分析的新版建议', acceptanceCriteria: feedback?.acceptanceCriteria ?? ['明确目标范围与受众依据'], dependencies: [], roleKey, deliveryKind: 'text' }],
-        ...(feedback ? { deliveryFeedbackAssessment: { messageId: feedback.messageId, artifactHash: feedback.artifactHash, ...(feedback.stepKey ? { stepKey: feedback.stepKey } : {}), summary: '本次修改针对已验收成果的目标用户分析补充', changes: feedback.acceptanceCriteria.map(criterion => ({ criterion, disposition: 'addressed', proposedChange: '在新版中补充对应分析并保留可核对依据' })), authorizationImpact: 'within_confirmed_boundary', authorizationRationale: '修改仍在原目标和交付边界内；旧执行许可不会沿用，需确认本次方案后再执行' } } : {}),
+        ...(feedback ? { deliveryFeedbackAssessment: { messageId: feedback.messageId, artifactHash: feedback.artifactHash, ...(feedback.stepKey ? { stepKey: feedback.stepKey } : {}), summary: '本次修改针对已验收成果的目标用户分析补充', changes: feedback.acceptanceCriteria.map(criterion => ({ criterion, disposition: 'addressed', proposedChange: '在新版中补充对应分析并保留可核对依据' })), authorizationImpact: scenario.feedbackOutOfScope ? 'additional_confirmation' : 'within_confirmed_boundary', authorizationRationale: scenario.feedbackOutOfScope ? '需要新增资料范围' : '修改仍在原目标和交付边界内；旧执行许可不会沿用' } } : {}),
       } }
       log.push({ role: 'owner_feedback', taskId: current.context.conversation?.tasks[0]?.id ?? '', round: 0, prompt: current.request.userPrompt })
       callbacks.onComplete([], { runtimeResult: { type: 'result', subtype: 'success', session_id: execution.sessionId, finish_reason: 'stop', result: JSON.stringify(response), owner_planning_usage: { inputTokens: 10, outputTokens: 20, cacheReadTokens: null, cacheWriteTokens: null }, usage: { input_tokens: 10, output_tokens: 20 } } })
@@ -157,7 +160,7 @@ beforeAll(async () => {
     const artifactContent = delivery?.developmentArtifact?.content ?? delivery?.artifact?.content
     const artifactRound = delivery?.developmentArtifact?.reworkOrdinal ?? delivery?.artifact?.reworkOrdinal ?? 0
     log.push({ role: delivery?.qualityDecisionVersion ? 'owner_quality' : 'owner_analysis', taskId: observed.businessTaskId, round: artifactRound, prompt: current.request.userPrompt })
-    const responseBinding = { projectId: execution.projectId, goalVersion: current.context.goal.goal.goalVersion, contextFingerprint: current.context.fingerprint }
+    const responseBinding = { projectId: scenario.invalidQualityBinding ? 'incorrect-project-id' : execution.projectId, goalVersion: current.context.goal.goal.goalVersion, contextFingerprint: current.context.fingerprint }
     const defect = Boolean(scenario.rework && artifactRound === 0)
     const decision = { reviewerCommandId: observed.commandId, artifactHash, verdict: scenario.escalate && !log.some(item => item.role === 'owner_feedback') ? 'escalate' : defect ? 'rework' : 'accept', reason: defect ? '受众依据仍缺，不能只看格式通过' : '已按准确范围标准核对完整成果与独立检查', criteria: [{ criterion: delivery?.developmentArtifact ? '代码输出固定42' : '明确目标范围与受众依据', status: defect ? 'not_met' : 'met', evidence: defect ? '正文未说明受众依据' : '范围与依据对应', quote: (scenario.invalidQualityQuote ? 'var bestKey = \'best-score-2048\';' : delivery?.developmentArtifact ? 'answer: 42' : artifactContent) as string | null | undefined }], findings: defect ? [{ severity: 'high', description: '受众依据未交代', requestedChange: '补充受众依据并保留明确范围' }] : [] }
     if (scenario.evidenceGap) {
@@ -214,13 +217,13 @@ async function fixture(scenario: Scenario = {}) {
     ? [{ key: 'a', title: '分支甲', outcome: '代码甲', acceptanceCriteria: [criterion], dependencies: [] as string[], roleKey }, { key: 'b', title: '分支乙', outcome: '代码乙', acceptanceCriteria: [criterion], dependencies: [] as string[], roleKey }, { key: 'merge', title: '合并实现', outcome: '完整代码', acceptanceCriteria: [criterion], dependencies: ['a', 'b'], roleKey }]
     : scenario.mixedDelivery
     ? [{ key: 'brief', title: '形成建议', outcome: '定位材料', acceptanceCriteria: ['明确目标范围与受众依据'], dependencies: [] as string[], roleKey: textRoleKey, deliveryKind: 'text' as const }, { key: 'delivery', title: '修复代码', outcome: '代码实现', acceptanceCriteria: ['代码输出固定42'], dependencies: ['brief'], roleKey, deliveryKind: 'development' as const }]
-    : [{ key: 'brief', title: scenario.development ? '修复代码' : '形成建议', outcome: scenario.development ? '代码实现' : '定位材料', acceptanceCriteria: [criterion], dependencies: [] as string[], roleKey }, ...(scenario.dependent ? [{ key: 'delivery', title: '整理最终建议', outcome: '最终版本', acceptanceCriteria: [criterion], dependencies: ['brief'], roleKey }] : [])]
+    : [{ key: 'brief', title: scenario.development ? '修复代码' : '形成建议', outcome: scenario.development ? '代码实现' : '定位材料', acceptanceCriteria: [criterion], dependencies: [] as string[], roleKey }, ...(scenario.dependent ? [{ key: 'delivery', title: '整理最终建议', outcome: '最终版本', acceptanceCriteria: [criterion], dependencies: ['brief'], roleKey }] : []), ...(scenario.transitiveText ? [{ key: 'final', title: '核对最终手册', outcome: '与原始资料一致的手册', acceptanceCriteria: [criterion], dependencies: ['delivery'], roleKey }] : [])]
   plans.saveProjectOwnerPlanDraft(project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '计划', assumptions: [], risks: [], steps, changeReason: '建立' }); const confirmedPlan = plans.confirmProjectOwnerPlanDraft(project.id, 1, 1)
   const roleAssignments = [{ roleKey, employeeId: executor.id }, ...(writer ? [{ roleKey: textRoleKey, employeeId: writer.id }] : [])].sort((a, b) => a.roleKey.localeCompare(b.roleKey))
   const subject = { projectId: project.id }, input = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: steps.map(item => item.key), executionKind: scenario.development ? 'development' : 'controlled', ...(!scenario.development ? { textDeliveryVersion: 1 } : { developmentScope: { workspaceId: workspace.id, targetPaths: scenario.nestedCode ? ['src/solution.cjs', 'diary/index.html'] : scenario.browserValidation ? ['src/solution.cjs', 'src/index.html'] : ['src/solution.cjs'], allowedPaths: scenario.nestedCode ? ['src', 'diary/index.html'] : ['src'], verificationCommands: scenario.browserValidation ? ['browser:html.loads'] : ['node src/verify.cjs'] } }), ...(!scenario.legacy ? { qualityManagementVersion: 1 } : {}), employeeRuntimeVersion: 2, executorEmployeeId: roleAssignments[0]!.employeeId, reviewerEmployeeId: reviewer.id, roleAssignments, workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1_000_000, maxRuns: 8, maxRework: scenario.maxRework ?? 1, expiresAt: Date.now() + 3600000, changeReason: '测试质量委托' }
   const pv = prep.previewOwnerExecutionPreparation(subject, input), saved = prep.saveOwnerExecutionPreparation(subject, input, pv.previewFingerprint)
   const materialInput = { requestId: randomUUID(), expectedMaterializationRevision: 0, expectedPreparationId: saved.id, expectedPreparationRevision: saved.revision, expectedPreparationHash: saved.integrityHash, expectedPolicyRevision: saved.policyRevision }
-  const permissionInput = { ...subject, requestId: randomUUID(), maxRequests: 12, maxCostMicros: 15_000_000, ...(scenario.escalate || scenario.blockedContinuation ? { autonomousExecution: true } : {}), expiresAt: Date.now() + 3600000 }, permissionPreview = delegation.previewOwnerManagementDelegation(permissionInput)
+  const permissionInput = { ...subject, requestId: randomUUID(), maxRequests: 12, maxCostMicros: 15_000_000, ...(scenario.escalate || scenario.blockedContinuation || scenario.ordinaryFeedback || scenario.invalidQualityBinding ? { autonomousExecution: true } : {}), expiresAt: Date.now() + 3600000 }, permissionPreview = delegation.previewOwnerManagementDelegation(permissionInput)
   delegation.confirmOwnerManagementDelegation({ input: permissionInput, previewHash: permissionPreview.previewHash })
   const consumeInitialEvents = async () => {
     const managementStore = await import('./project-owner-management-store')
@@ -329,12 +332,12 @@ test('Given已结算评审因引号排版被拒 When原会话和终态摘要完�
     const path = (await import('./config-paths')).getAgentSessionMessagesPath(execution.sessionId)
     writeFileSync(path, [JSON.stringify({ type: 'assistant', session_id: execution.sessionId, message: { content: [{ type: 'text', text: raw }] } }), JSON.stringify({ type: 'result', subtype: 'success', session_id: execution.sessionId })].join('\n') + '\n')
     const recovery = await import('./project-owner-review-recovery')
-    expect(recovery.recoverOwnerReviewTypography(f.project.id, row.grant_id, row.source_task_id, 0)).toBe(false)
+    expect(recovery.recoverOwnerReviewEvidence(f.project.id, row.grant_id, row.source_task_id, 0)).toBe(false)
     db.prepare('UPDATE agent_executions SET result_summary=? WHERE id=?').run(raw, execution.id)
     await scheduler.runOwnerAutonomousSchedule(f.project.id)
     await until(() => actionRows(f.project.id).length === 1, f.project.id)
     expect(actionRows(f.project.id)[0]?.state).toBe('accepted')
-    expect(recovery.recoverOwnerReviewTypography(f.project.id, row.grant_id, row.source_task_id, 0)).toBe(false)
+    expect(recovery.recoverOwnerReviewEvidence(f.project.id, row.grant_id, row.source_task_id, 0)).toBe(false)
     const stored = db.prepare('SELECT response_json,original_response_text FROM project_owner_technical_reviews WHERE reviewer_command_id=?').get(row.id) as { response_json: string; original_response_text: string }
     expect(stored.original_response_text).toBe(raw)
     expect(JSON.parse(stored.response_json).criteria[0].quote).toBe(artifact.content)
@@ -585,6 +588,24 @@ test('Given已有员工与新版质量委托 When交付及独立检查完成 The
   } finally { f.stop() }
 }, 15000)
 
+test('Given最终手册经中间步骤依赖原始时间表 When执行与评审 Then两者都收到准确的上游全文', async () => {
+  const f = await fixture({ dependent: true, transitiveText: true })
+  try {
+    await until(() => f.tasks().every(task => task.status === 'completed'), f.project.id)
+    const original = f.tasks().find(task => task.title === '形成建议')!
+    const final = f.tasks().find(task => task.title === '核对最终手册')!
+    const artifact = actionRows(f.project.id).find(action => action.taskId === original.id)!
+    const runs = traces.get(f.project.id)!.filter(item => item.taskId === final.id && ['executor', 'reviewer'].includes(item.role))
+    expect(runs.map(run => run.role)).toEqual(['executor', 'reviewer'])
+    for (const run of runs) {
+      const block = run.prompt.split('<untrusted-upstream-artifacts>')[1]!.split('</untrusted-upstream-artifacts>')[0]!
+      const handoffs = JSON.parse(block) as { taskId: string; artifactHash: string; content: string }[]
+      expect(handoffs).toHaveLength(2)
+      expect(handoffs.find(item => item.taskId === original.id)).toMatchObject({ artifactHash: artifact.artifactHash, content: expect.stringContaining('面向已访谈的现有用户') })
+    }
+  } finally { f.stop() }
+}, 20000)
+
 test('Given文本需求与代码实现共用授权 WhenOwner自主执行 Then文本验收后携带准确成果推进研发和独立评审', async () => {
   const f = await fixture({ development: true, mixedDelivery: true })
   try {
@@ -781,6 +802,42 @@ test('Given旧授权成果已被Owner验收且计划产生新重验证版本 Whe
     expect(deliveries[0]!.delivery).toMatchObject({ schemaVersion: 1, items: [{ artifactHash: oldAction.artifactHash }] })
   } finally { deliverySpy.mockRestore(); f.stop() }
 }, 15000)
+
+test('Given普通对话提出同范围修订 When Owner完成核验 Then无需点击交付卡或开工即可再交付', async () => {
+  const f = await fixture({ durableStartIntent: true, ordinaryFeedback: true })
+  try {
+    const deliveries = () => managementConversation.getOwnerManagementConversation(f.project.id).messages.filter(message => message.kind === 'delivery')
+    await until(() => deliveries().length === 1, f.project.id)
+    const first = deliveries()[0]!
+    const feedback = sendOwnerManagementMessage({ projectId: f.project.id, conversationId: first.conversationId, requestId: randomUUID(), expectedGoalRevision: 1, content: '请在已有建议中补充目标用户分析，保持原范围。' })
+    expect(feedback.deliveryReference).toBeUndefined()
+    await until(() => deliveries().length === 2, f.project.id)
+    const revised = plans.getProjectOwnerPlanDraft(f.project.id)!
+    expect(revised.actor).toBe('system:owner-manager')
+    expect(revised.proposal.deliveryFeedbackAssessment).toMatchObject({ messageId: first.id, artifactHash: first.delivery!.items[0]!.artifactHash, authorizationImpact: 'within_confirmed_boundary' })
+    expect(deliveries().map(item => item.id)).toContain(first.id)
+    const workerRuns = traces.get(f.project.id)!.filter(item => ['executor', 'reviewer'].includes(item.role))
+    expect(workerRuns.map(item => item.role)).toEqual(['executor', 'reviewer', 'executor', 'reviewer'])
+    const deliveredItem = first.delivery!.items[0]!
+    for (const run of workerRuns.slice(-2)) {
+      const original = run.prompt.split('<untrusted-prior-delivery>')[1]!.split('</untrusted-prior-delivery>')[0]!
+      expect(JSON.parse(original)).toMatchObject({ artifactHash: deliveredItem.artifactHash, content: deliveredItem.content })
+    }
+  } finally { await f.stop() }
+}, 20000)
+
+test('Given普通对话的交付修订扩大范围 When Owner生成评估 Then在告知用户后停在待确认方案', async () => {
+  const f = await fixture({ durableStartIntent: true, ordinaryFeedback: true, feedbackOutOfScope: true })
+  try {
+    const messages = () => managementConversation.getOwnerManagementConversation(f.project.id).messages
+    await until(() => messages().some(message => message.kind === 'delivery'), f.project.id)
+    const first = messages().find(message => message.kind === 'delivery')!
+    sendOwnerManagementMessage({ projectId: f.project.id, conversationId: first.conversationId, requestId: randomUUID(), expectedGoalRevision: 1, content: '请把新增资料也纳入已交付建议。' })
+    await until(() => messages().some(message => message.kind === 'attention' && message.content.includes('这次修订涉及需要你决定的范围')), f.project.id)
+    expect(plans.getProjectOwnerPlanDraft(f.project.id)?.state).toBe('proposed')
+    expect(traces.get(f.project.id)!.filter(item => item.role === 'executor')).toHaveLength(1)
+  } finally { await f.stop() }
+}, 20000)
 
 test('GivenOwner反馈修订方案 WhenRenderer确认Atom经正式IPC启动 Then新版自动复核并回到原对话', async () => {
   const f = await fixture({ dependent: true, durableStartIntent: true })
@@ -1813,5 +1870,39 @@ test('Given研发首轮完整冻结源码与Owner返工决定 When启动返工 T
     const content=readFileSync(join(workspaces.getAgentWorkspaceCwd(workspace,first.sessionId),'src/solution.cjs'),'utf8')
     expect(content).toContain('answer: 42')
     expect(executors[1]!.prompt).toContain(first.id)
+  } finally { f.stop() }
+}, 90000)
+
+test('Given 自主质量判断的项目编号抄错 When 完整终态在原额度内恢复 Then 新判断一次并保留原失败', async () => {
+  // 新恢复场景使用独立测试配置目录，避免共享前面研发场景累积的数据库状态。
+  store.closeProjectDb()
+  process.env.PROMA_TEST_CONFIG_DIR = join(directory, 'quality-binding-recovery')
+  await store.initProjectDb()
+  const f = await fixture({ hold: true, invalidQualityBinding: true })
+  try {
+    await until(() => pending.has(f.project.id), f.project.id)
+    const original = pending.get(f.project.id)!
+    scenarios.set(f.project.id, {})
+    original.finish()
+    await until(() => actionRows(f.project.id).length === 1, f.project.id)
+    expect(actionRows(f.project.id)[0]).toMatchObject({ state: 'accepted', recoveredFromOwnerExecutionId: original.executionId })
+    expect(runs.getOwnerPlanningRunOutcome(original.executionId)?.detail).toBe('Owner规划响应与目标或资料版本不匹配')
+    expect(traces.get(f.project.id)!.filter(item => item.role === 'owner_quality')).toHaveLength(2)
+    expect(traces.get(f.project.id)!.filter(item => ['executor', 'reviewer'].includes(item.role))).toHaveLength(2)
+  } finally { f.stop() }
+}, 90000)
+
+test('Given 质量信封再次抄错 When 自主补判也被拒绝 Then 保留两次费用且停止补判', async () => {
+  const f = await fixture({ hold: true, invalidQualityBinding: true })
+  try {
+    await until(() => pending.has(f.project.id), f.project.id)
+    scenarios.set(f.project.id, { invalidQualityBinding: true })
+    pending.get(f.project.id)!.finish()
+    await until(() => store.listAgentExecutionsByProject(f.project.id).filter(item => runs.getOwnerPlanningRunOutcome(item.id)?.detail === 'Owner规划响应与目标或资料版本不匹配').length === 2, f.project.id)
+    const reviewer = store.getProjectDb().prepare("SELECT id FROM project_owner_execution_commands WHERE project_id=? AND role='reviewer'").get(f.project.id) as { id: string }
+    expect(actions.getOwnerQualityRecovery(f.project.id, reviewer.id)).toBeNull()
+    expect(actionRows(f.project.id)).toHaveLength(0)
+    expect(traces.get(f.project.id)!.filter(item => item.role === 'owner_quality')).toHaveLength(2)
+    expect(delegation.getOwnerManagementDelegation(f.project.id).usedRequests).toBe(2)
   } finally { f.stop() }
 }, 90000)

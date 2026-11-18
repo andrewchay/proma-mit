@@ -134,7 +134,8 @@ function supersedeDeliveredFeedbackBatch(subject: ProjectOwnerGoalSubject, plan:
   const matches = message.delivery.items.filter(item => item.artifactHash === assessment.artifactHash
     && (assessment.stepKey === undefined || item.stepKey === assessment.stepKey))
   const grantId = /^owner-delivery:([^:]+):[a-f0-9]{64}$/.exec(message.eventId)?.[1]
-  if (matches.length !== 1 || !grantId) return false
+  if (matches.length !== 1 || !grantId || assessment.changes.length !== matches[0]!.acceptanceCriteria.length
+    || assessment.changes.some((change, index) => change.criterion !== matches[0]!.acceptanceCriteria[index])) return false
   const grant = getOwnerExecutionGrant(subject)
   if (!grant || grant.grantId !== grantId || grant.materializationId !== materializationId || grant.taskId !== subject.taskId) return false
   if (grant.state === 'active') {

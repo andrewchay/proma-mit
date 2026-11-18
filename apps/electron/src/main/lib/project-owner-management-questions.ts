@@ -134,11 +134,13 @@ export function projectOwnerManagementRunResult(projectId: string, executionId: 
     const plan = getProjectOwnerPlanDraft(projectId, snapshot.link.targetTaskId)
     if (plan?.state === 'stale' || plan?.sourceRun?.executionId !== executionId) return
     const delegation = getOwnerManagementDelegation(projectId, snapshot.link.targetTaskId)
-    const content = delegation.state !== 'active' || !delegation.delegation
-      ? `方案已保存。${plan.proposal.summary}\n当前持续管理授权已失效；我没有安排团队或启动员工。重新核对并确认项目授权后，我会继续。`
-      : delegation.delegation.autonomousExecution
-        ? `方案已准备好。${plan.proposal.summary}\n我会在已确认范围内自动安排团队并推进，不需要你批准普通计划或再次点击开工。`
-        : `方案已准备好。${plan.proposal.summary}\n我正在为方案准备内部安排，不会提前启动员工。请审阅结果与完成标准；需要调整时直接告诉我，确认开始后我会负责执行。`
+    const content = delegation.state === 'exhausted'
+      ? `方案已保存。${plan.proposal.summary}\n当前预算不足以预留下一次 Owner 请求；我没有安排团队或启动员工。${safeFailureDetail(delegation.detail)}`
+      : delegation.state !== 'active' || !delegation.delegation
+        ? `方案已保存。${plan.proposal.summary}\n当前持续管理授权已失效；我没有安排团队或启动员工。重新核对并确认项目授权后，我会继续。`
+        : delegation.delegation.autonomousExecution
+          ? `方案已准备好。${plan.proposal.summary}\n我会在已确认范围内自动安排团队并推进，不需要你批准普通计划或再次点击开工。`
+          : `方案已准备好。${plan.proposal.summary}\n我正在为方案准备内部安排，不会提前启动员工。请审阅结果与完成标准；需要调整时直接告诉我，确认开始后我会负责执行。`
     appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: 'plan_proposal', content })
   } else {
     const reason = safeFailureDetail(outcome.detail)

@@ -279,8 +279,8 @@ export async function runOwnerAutonomousSchedule(projectId: string, driver: Owne
       && evaluation.status.role === 'reviewer' && evaluation.status.grantId && evaluation.status.taskId
       && evaluation.status.reworkOrdinal !== undefined) {
       try {
-        const { recoverOwnerReviewTypography } = await import('./project-owner-review-recovery')
-        if (recoverOwnerReviewTypography(projectId, evaluation.status.grantId, evaluation.status.taskId, evaluation.status.reworkOrdinal)) {
+        const { recoverOwnerReviewEvidence } = await import('./project-owner-review-recovery')
+        if (recoverOwnerReviewEvidence(projectId, evaluation.status.grantId, evaluation.status.taskId, evaluation.status.reworkOrdinal)) {
           evaluation = evaluate(projectId)
           requestOwnerAutonomousScheduleWake(projectId)
         }

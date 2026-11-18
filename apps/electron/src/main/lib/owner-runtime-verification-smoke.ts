@@ -230,6 +230,27 @@ export async function runOwnerRuntimeVerificationSmoke(configRoot: string): Prom
   assert.equal(missingResource.exitCode, 1, '页面有被阻断的脚本时不能报告完整加载成功')
 
   // 日记检查必须真实驱动页面；无保存保护的反例不能通过草稿检查。
+  const counterPath = join(workspaceRoot, 'counter.html')
+  const counterHtml = `<!doctype html><textarea id="input"></textarea><button id="clear">清空</button>
+    <span id="codepoints">0</span><span id="words">0</span><span id="lines">0</span>
+    <script>
+    const input = document.getElementById('input')
+    const update = () => {
+      const value = input.value
+      document.getElementById('codepoints').textContent = [...value].filter(char => !/\\s/u.test(char)).length
+      document.getElementById('words').textContent = value.trim() ? value.trim().split(/\\s+/u).length : 0
+      document.getElementById('lines').textContent = value ? value.split(/\\r\\n|\\r|\\n/).length : 0
+    }
+    input.addEventListener('input', update)
+    document.getElementById('clear').onclick = () => { input.value = ''; update() }
+    </script>`
+  writeFileSync(counterPath, counterHtml)
+  const counter = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['counter.html'], command: 'browser:html.loads+text-counter.behavior', timeoutMs: 20_000 })
+  assert.equal(counter.exitCode, 0, `文本计数器实际交互未通过：${JSON.stringify(counter.checks)}`)
+  writeFileSync(counterPath, counterHtml.replace("input.value = ''; update()", "update()"))
+  const badCounter = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['counter.html'], command: 'browser:text-counter.behavior', timeoutMs: 20_000 })
+  assert.equal(badCounter.checks.find(check => check.id === 'text-counter.behavior')?.status, 'failed', '未实际清空的计数器应拒绝验收')
+
   const diaryHtml = '<!doctype html><section id="review"><input id="date" type="date"><button id="write">撰写日记</button><div id="years"></div></section><section id="edit" hidden><button id="back">返回</button><input id="edit-date" type="date"><textarea></textarea><button id="save">保存</button></section><script src="diary.js"></script>'
   const diaryScript = `
     const date = document.querySelector('#date'), years = document.querySelector('#years'), text = document.querySelector('textarea')

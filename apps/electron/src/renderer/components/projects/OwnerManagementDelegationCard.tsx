@@ -34,20 +34,22 @@ export function OwnerManagementDelegationCard({ projectId, taskId }: { projectId
   const scope = taskId ? '本任务范围' : '本项目范围'
   const needsRunReconciliation = editor.view?.state === 'attention'
   const stale = editor.view?.state === 'stale'
+  const exhausted = editor.view?.state === 'exhausted'
+  const budgetIncreaseEntered = !exhausted || (current && Math.round(Number(editor.budgetUsd) * 1_000_000) > current.maxCostMicros)
   const attention = editor.view?.attentionCheck
-  const canOffer = !current || editor.view?.state === 'revoked' || editor.view?.state === 'expired' || stale
+  const canOffer = !current || editor.view?.state === 'revoked' || editor.view?.state === 'expired' || stale || exhausted
   const active = Boolean(current && editor.view?.state === 'active')
-  const title = needsRunReconciliation ? 'Owner 已暂停：需要核对上次请求' : stale ? 'Owner 已暂停：授权范围需要重新确认' : '让 Owner 在对话中持续推进'
+  const title = needsRunReconciliation ? 'Owner 已暂停：需要核对上次请求' : stale ? 'Owner 已暂停：授权范围需要重新确认' : exhausted ? 'Owner 已暂停，等待项目预算决定' : '让 Owner 在对话中持续推进'
   const description = needsRunReconciliation
     ? '上一条模型请求尚未核对完成，Owner 已暂停并保留你的新消息。重新确认授权范围不会解除这次暂停，也不会重发请求；请先核对下方的原请求证据。'
     : stale
       ? '确认时使用的项目配置、资料范围或费用依据已有变化，因此 Owner 暂停后续模型请求，不会沿用旧授权。请重新核对当前预算和期限，再确认新范围；确认后 Owner 会从当前进度继续。'
-      : '确认后，Owner会在项目总预算、目标和资料范围内自行规划、安排并启动团队，跟进进度、独立检查成果和组织返工。研发任务可在隔离工作树内自主新建和修改授权范围中的普通文件；敏感文件仍需确认。只有需要业务决定、扩大范围或触及外部敏感动作时才会回来商量；发布和外发不包含在内。'
+      : exhausted ? '可在这里确认新的项目费用上限。原方案、已交付成果和历史占额会保留。' : '确认后，Owner会在项目总预算、目标和资料范围内自行规划、安排并启动团队，跟进进度、独立检查成果和组织返工。研发任务可在隔离工作树内自主新建和修改授权范围中的普通文件；敏感文件仍需确认。只有需要业务决定、扩大范围或触及外部敏感动作时才会回来商量；发布和外发不包含在内。'
   useEffect(() => {
-    if (!editor.view || !canOffer || editor.preview || editor.busy || editor.error) return
+    if (!editor.view || !canOffer || !budgetIncreaseEntered || editor.preview || editor.busy || editor.error) return
     const timer = window.setTimeout(() => { void act({ subject, action: 'preview' }) }, 250)
     return () => window.clearTimeout(timer)
-  }, [act, canOffer, editor.busy, editor.error, editor.preview, editor.view, subject])
+  }, [act, budgetIncreaseEntered, canOffer, editor.busy, editor.error, editor.preview, editor.view, subject])
   if (typeof window === 'undefined' || !window.electronAPI?.paa?.project?.previewOwnerManagementDelegation) return null
   if (active && current) return <p role="status" className="flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground">
     <span>项目管理授权有效。实际进度及需要处理的事项见项目概览。</span><span>Owner模型：{current.modelId}</span>
@@ -71,7 +73,8 @@ export function OwnerManagementDelegationCard({ projectId, taskId }: { projectId
       <p className="text-xs leading-5 text-muted-foreground">这是{scope}Owner与团队共用的项目总模型费用上限，覆盖规划、员工执行、独立检查和后续跟进。确认一次后，Owner会在该额度内自主推进，不会逐步要求你批准普通计划或员工启动。</p>
       <div className="grid gap-3 sm:grid-cols-2">{([{ key: 'budgetUsd', label: '项目总模型费用上限（美元）', min: 0.01, max: 100, step: 0.01 }, { key: 'hours', label: '授权有效时间（小时）', min: 1, max: 168, step: 1 }] as const).map(item => <label key={item.key} className="block text-xs">{item.label}<input aria-label={item.label} className="mt-1 w-full rounded-lg bg-muted/50 p-2 text-sm" type="number" min={item.min} max={item.max} step={item.step} value={editor[item.key]} onChange={event => edit({ subject, patch: { [item.key]: event.target.value } })} /></label>)}</div>
       {!editor.preview && editor.error && <button type="button" className="rounded-xl bg-background px-4 py-2 text-sm shadow-sm" disabled={editor.busy} onClick={() => void act({ subject, action: 'preview' })}>重新核对授权范围</button>}
-      {editor.preview && <div className="space-y-3 rounded-xl bg-background p-3 text-sm">
+      {exhausted && !budgetIncreaseEntered && <p className="text-xs text-muted-foreground">输入高于当前授权的项目费用上限后可预览。</p>}
+      {budgetIncreaseEntered && editor.preview && <div className="space-y-3 rounded-xl bg-background p-3 text-sm">
         <p className="text-xs text-muted-foreground">本次Owner模型：{editor.preview.modelId}</p>
         <p>你授权 Owner 在{scope}内按目标规划、组织团队、跟进进度并检查成果。项目总模型费用上限为 {usd(editor.preview.maxCostMicros)}，有效至 {new Date(editor.preview.expiresAt).toLocaleString()}。授权内的计划、派工、执行、独立检查和返工由 Owner 自主决定。</p>
         <p className="text-sm">该总额同时覆盖Owner规划、员工执行和独立检查；系统会持续核算已预留金额与可用余额。确认此授权后，Owner会自动继续，不需要你再批准普通方案或逐项启动员工。</p>

@@ -87,21 +87,37 @@ interface FailedOwnerQualityRecovery { previousExecutionId: string; previousDeta
 function readFailedOwnerQualityRecovery(projectId: string, reviewerCommandId: string, ownerExecutionId: string): FailedOwnerQualityRecovery | null {
   const outcome = runs().getOwnerPlanningRunOutcome(ownerExecutionId), receipt = outcome ? runs().getOwnerPlanningRunReceipt(outcome.receiptId) : null
   const snapshot = receipt ? readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true }) : null, conversation = snapshot?.context.conversation
-  if (outcome?.state !== 'failed' || outcome.detail !== 'Owner质量决定未按准确标准逐项判断或引用不符' || receipt?.projectId !== projectId
+  if (outcome?.state !== 'failed' || !['Owner质量决定未按准确标准逐项判断或引用不符', 'Owner规划响应与目标或资料版本不匹配'].includes(outcome.detail) || receipt?.projectId !== projectId
     || conversation?.executionObservation?.role !== 'reviewer' || conversation.executionObservation.commandId !== reviewerCommandId
     || conversation.deliveryReview?.qualityDecisionVersion !== 1) return null
+  if (outcome.detail === 'Owner规划响应与目标或资料版本不匹配') {
+    if (!receipt.validTerminal || receipt.stopped || receipt.error || receipt.runtimeResult?.subtype !== 'success'
+      || receipt.runtimeResult.finish_reason !== 'stop' || !Number.isSafeInteger(receipt.usage?.inputTokens)
+      || !Number.isSafeInteger(receipt.usage?.outputTokens) || conversation.deliveryReview.qualityRecovery) return null
+    // 只修复质量判断信封的抄写错误；原模型决定仍被拒绝，新请求必须重新判断。
+    let response: unknown
+    try { response = JSON.parse(receipt.responseText) } catch { return null }
+    if (!response || typeof response !== 'object' || !('kind' in response) || response.kind !== 'quality_decision') return null
+  }
   return { previousExecutionId: ownerExecutionId, previousDetail: outcome.detail, targetTaskId: snapshot?.link.targetTaskId }
 }
-/** 仅在阻断原因相关的权威事实改变后，提供一次新的分析入口。 */
+/** 权威阻断事实变化或首次完整终态的质量信封抄写错误，可在授权额度内提供新判断入口。 */
 export function getOwnerQualityRecovery(projectId: string, reviewerCommandId: string): { previousExecutionId: string; conditionFingerprint: string; previousDetail: string } | null {
   const latest = readOwnerQualityAction(reviewerCommandId)
-  // 烟测只对明确指定的原协议失败开放一次人工复验；普通产品流程仍不自动重试协议拒绝。
+  // 质量信封抄写错误可在自主授权内新判断一次；烟测另可显式选择历史引用错误。
   const smokeFailureId = process.env.GRAVITAS_PACKAGE_SMOKE === '1' ? process.env.GRAVITAS_OWNER_CHAIN_SMOKE_RECOVER_OWNER_EXECUTION_ID : undefined
-  const failed = !latest && smokeFailureId ? readFailedOwnerQualityRecovery(projectId, reviewerCommandId, smokeFailureId) : null
+  const lastRun = !latest && !smokeFailureId ? store.getProjectDb().prepare(`SELECT e.id FROM agent_executions e
+    JOIN project_owner_planning_links l ON l.planning_task_id=e.entity_id AND l.project_id=e.project_id
+    WHERE e.project_id=? AND json_extract(l.source_snapshot, '$.conversation.executionObservation.commandId')=?
+    ORDER BY e.rowid DESC LIMIT 1`).get(projectId, reviewerCommandId) as { id: string } | undefined : undefined
+  const candidateId = smokeFailureId ?? lastRun?.id
+  const candidate = !latest && candidateId ? readFailedOwnerQualityRecovery(projectId, reviewerCommandId, candidateId) : null
+  const failed = smokeFailureId || candidate?.previousDetail === 'Owner规划响应与目标或资料版本不匹配' ? candidate : null
   if (!failed && (!latest || latest.projectId !== projectId || latest.state !== 'blocked' || !latest.conditionFingerprint)) return null
   const targetTaskId = latest ? managementTaskId(latest.ownerExecutionId) : failed!.targetTaskId
   const management = getOwnerManagementDelegation(projectId, targetTaskId)
-  if (management.state !== 'active' || management.delegation?.qualityDecisionEnabled !== true) return null
+  if (management.state !== 'active' || management.delegation?.qualityDecisionEnabled !== true
+    || failed && !smokeFailureId && !management.delegation.autonomousExecution) return null
   const conditionFingerprint = getOwnerQualityConditionFingerprint(projectId, reviewerCommandId, targetTaskId)
   if (latest && conditionFingerprint === latest.conditionFingerprint) return null
   const row = store.getProjectDb().prepare("SELECT c.state,c.actual_cost_micros,c.usage_evidence,c.grant_id,c.source_task_id,c.rework_ordinal,e.status AS execution_status,g.state AS grant_state,g.expires_at,g.revalidation_id,g.revalidation_integrity_hash,g.source_hash,g.policy_revision,g.task_id AS grant_task_id FROM project_owner_execution_commands c JOIN project_owner_execution_grants g ON g.id=c.grant_id AND g.project_id=c.project_id JOIN agent_executions e ON e.id=c.execution_id WHERE c.id=? AND c.project_id=? AND c.role='reviewer'").get(reviewerCommandId, projectId) as Record<string, unknown> | undefined
