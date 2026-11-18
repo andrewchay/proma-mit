@@ -6,7 +6,7 @@
  * 所有入参先经 new-media-ipc-validation 校验，再进入服务层。
  */
 
-import type { WebContents } from 'electron'
+import type { OpenDialogOptions, WebContents } from 'electron'
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { NEW_MEDIA_IPC_CHANNELS } from '@gravitas/shared'
 import { withNewMediaIpcValidation } from './new-media-ipc-validation'
@@ -233,6 +233,46 @@ export function registerNewMediaIpcHandlers(): void {
     })
   })
 
+  // 主进程通过系统文件选择器读取密钥；不接受渲染进程传入路径或密钥。
+  handle(NEW_MEDIA_IPC_CHANNELS.IMPORT_WECHAT_CREDENTIAL, async (event, input: unknown) => {
+    const v = await nmValidation()
+    const payload = v.assertPlainObject(input, 'input')
+    const accountId = v.requireId(payload.accountId, 'accountId')
+    const accountType = v.requireEnum(payload.accountType, ['subscription', 'service', 'test'] as const, 'accountType')
+    const verificationStatus = v.requireEnum(payload.verificationStatus, ['verified', 'unverified'] as const, 'verificationStatus')
+    if (typeof payload.ipWhitelistConfigured !== 'boolean') throw new Error('ipWhitelistConfigured 必须是布尔值')
+    const { getWechatAccountRevocationVersion } = await import('./wechat-account-lock')
+    const revocationVersion = getWechatAccountRevocationVersion(accountId)
+    const options: OpenDialogOptions = { title: '选择公众号凭据 JSON 文件', properties: ['openFile'], filters: [{ name: 'JSON', extensions: ['json'] }] }
+    const owner = event.sender ? BrowserWindow.fromWebContents(event.sender) : undefined
+    const selected = owner ? await dialog.showOpenDialog(owner, options) : await dialog.showOpenDialog(options)
+    if (selected.canceled || !selected.filePaths[0]) return { canceled: true }
+    const service = await import('./adapters/wechat-credential-import')
+    const account = await service.importWechatCredentialFile(accountId, selected.filePaths[0], { accountType, verificationStatus, ipWhitelistConfigured: payload.ipWhitelistConfigured }, { expectedRevocationVersion: revocationVersion })
+    return { canceled: false, account }
+  })
+
+  // 用户在工作台选中账号、审核文案和封面后显式同步，不提交发布。
+  handle(NEW_MEDIA_IPC_CHANNELS.SYNC_DIRECTOR_WECHAT_DRAFT, async (_: unknown, input: unknown) => {
+    const v = await nmValidation()
+    const payload = v.assertPlainObject(input, 'input')
+    const service = await import('./wechat-director-sync')
+    return service.syncDirectorWechatDraft({ draftId: v.requireId(payload.draftId, 'draftId'), accountId: v.requireId(payload.accountId, 'accountId'), assetId: v.requireId(payload.assetId, 'assetId') })
+  })
+
+  handle(NEW_MEDIA_IPC_CHANNELS.GET_DIRECTOR_WECHAT_SYNC_STATUS, async (_: unknown, input: unknown) => {
+    const v = await nmValidation()
+    const payload = v.assertPlainObject(input, 'input')
+    return (await import('./wechat-director-sync')).getWechatDirectorSyncStatus(v.requireId(payload.draftId, 'draftId'), v.requireId(payload.accountId, 'accountId'))
+  })
+
+  handle(NEW_MEDIA_IPC_CHANNELS.CONFIRM_DIRECTOR_WECHAT_NOT_CREATED, async (_: unknown, input: unknown) => {
+    const v = await nmValidation()
+    const payload = v.assertPlainObject(input, 'input')
+    if (payload.confirmed !== true) throw new Error('请先在公众号草稿箱确认未创建')
+    return (await import('./wechat-director-sync')).confirmWechatDraftNotCreated(v.requireId(payload.draftId, 'draftId'), v.requireId(payload.accountId, 'accountId'))
+  })
+
   // 用 stable token 校验微信凭据并连接账号（用户显式触发；会产生真实网络请求）。
   handle(NEW_MEDIA_IPC_CHANNELS.CONNECT_WECHAT_DIRECT, async (_: unknown, accountId: unknown) => {
     const { requireId } = await nmValidation()
@@ -382,7 +422,7 @@ export function registerNewMediaIpcHandlers(): void {
   handle(NEW_MEDIA_IPC_CHANNELS.GET_SCHEMA_INFO, async () => (await import('./new-media-sqlite-store')).getNewMediaSchemaInfo())
 
   // 只读：返回账号最近一次能力协商结果与账号档案（均不含凭据）。
-  // AppSecret 等敏感材料不经过渲染进程，因此没有对应的写入通道。
+  // AppSecret 等敏感材料仅由主进程在系统选择器选择的文件中读取。
   handle(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_CAPABILITIES, async (_: unknown, accountId: unknown) => {
     const { requireId } = await nmValidation()
     const resolved = requireId(accountId, 'accountId')

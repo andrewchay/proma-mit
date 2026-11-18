@@ -2245,6 +2245,9 @@ export interface ElectronAPI {
         listDrafts: () => Promise<import('@gravitas/shared').NewMediaContentDraft[]>
         createDraft: (sourceText: string, platforms: import('@gravitas/shared').NewMediaPlatform[]) => Promise<import('@gravitas/shared').NewMediaContentDraft>
         getDirectorDesignPreview: (draftId: string) => Promise<{ assetId: string; dataUrl: string } | null>
+        syncWechatDraft: (input: { draftId: string; accountId: string; assetId: string }) => Promise<import('@gravitas/shared').WechatDraftRecord>
+        getWechatSyncStatus: (input: { draftId: string; accountId: string }) => Promise<'uploading' | 'creating' | 'upload_failed' | 'not_created' | 'synced' | null>
+        confirmWechatNotCreated: (input: { draftId: string; accountId: string; confirmed: true }) => Promise<void>
         listPublicationJobs: () => Promise<import('@gravitas/shared').NewMediaPublicationJob[]>
         schedulePublication: (input: { draftId: string; platform: import('@gravitas/shared').NewMediaPlatform; accountId: string; scheduledAt: number }) => Promise<import('@gravitas/shared').NewMediaPublicationJob>
       }
@@ -2291,6 +2294,7 @@ export interface ElectronAPI {
         getAdapterInfo: (platform: import('@gravitas/shared').NewMediaPlatform) => Promise<import('@gravitas/shared').NewMediaAdapterInfo>
         getCapabilities: (accountId: string) => Promise<{ capabilities: import('@gravitas/shared').WechatDirectCapabilityState[]; profile: import('@gravitas/shared').WechatDirectAccountProfile | null }>
         connect: (accountId: string) => Promise<import('@gravitas/shared').NewMediaConnectedAccount>
+        importCredential: (input: { accountId: string; accountType: 'subscription' | 'service' | 'test'; verificationStatus: 'verified' | 'unverified'; ipWhitelistConfigured: boolean }) => Promise<{ canceled: boolean; account?: import('@gravitas/shared').NewMediaConnectedAccount }>
       }
       publish: {
         list: (accountId?: string) => Promise<import('@gravitas/shared').WechatPublishRecord[]>
@@ -5088,6 +5092,9 @@ const electronAPI: ElectronAPI = {
         listDrafts: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_DRAFTS),
         createDraft: (sourceText, platforms) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CREATE_DRAFT, sourceText, platforms),
         getDirectorDesignPreview: (draftId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_DIRECTOR_DESIGN_PREVIEW, draftId),
+        syncWechatDraft: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SYNC_DIRECTOR_WECHAT_DRAFT, input),
+        getWechatSyncStatus: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_DIRECTOR_WECHAT_SYNC_STATUS, input),
+        confirmWechatNotCreated: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CONFIRM_DIRECTOR_WECHAT_NOT_CREATED, input),
         listPublicationJobs: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_PUBLICATION_JOBS),
         schedulePublication: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.SCHEDULE_PUBLICATION, input),
       },
@@ -5134,6 +5141,7 @@ const electronAPI: ElectronAPI = {
         getAdapterInfo: (platform) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ADAPTER_INFO, platform),
         getCapabilities: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_ACCOUNT_CAPABILITIES, accountId),
         connect: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CONNECT_WECHAT_DIRECT, accountId),
+        importCredential: (input) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.IMPORT_WECHAT_CREDENTIAL, input),
       },
       publish: {
         list: (accountId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_WECHAT_PUBLISHES, accountId),

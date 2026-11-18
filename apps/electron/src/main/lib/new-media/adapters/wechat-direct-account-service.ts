@@ -66,6 +66,7 @@ function negotiateFor(account: NewMediaConnectedAccount, profile: WechatDirectAc
 export async function configureWechatDirectAccount(
   account: NewMediaConnectedAccount,
   input: WechatDirectConfigureInput,
+  options: { requireEncryption?: boolean } = {},
 ): Promise<NewMediaConnectedAccount> {
   // 格式错误在写入前拒绝；错误信息不回显凭据内容。
   const { appId, appSecret } = assertWechatDirectCredentialFormat(input)
@@ -74,7 +75,7 @@ export async function configureWechatDirectAccount(
   }
 
   const credentialRef = account.credentialRef ?? randomUUID()
-  saveWechatDirectCredential(credentialRef, { appId, appSecret }, { accessToken: '', scopes: [] })
+  saveWechatDirectCredential(credentialRef, { appId, appSecret }, { accessToken: '', scopes: [] }, options)
 
   const profile: WechatDirectAccountProfile = {
     appId,

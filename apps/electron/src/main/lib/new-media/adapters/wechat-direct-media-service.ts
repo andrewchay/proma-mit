@@ -140,6 +140,7 @@ export function buildMediaMultipart(input: { fileName: string; bytes: Uint8Array
  */
 export interface WechatMediaDependencies {
   mediaTransport?: WechatMediaTransport
+  beforeRequest?: () => void
   token?: WechatTokenDependencies
   now?: () => number
 }
@@ -155,6 +156,7 @@ export type WechatMediaTransport = (input: {
   headers: Record<string, string>
   body: Uint8Array
   signal?: AbortSignal
+  beforeRequest?: () => void
 }) => Promise<WechatMediaTransportResponse>
 
 /** 平台 errcode → 本地可执行原因。 */
@@ -185,8 +187,10 @@ async function defaultTransport(input: {
   headers: Record<string, string>
   body: Uint8Array
   signal?: AbortSignal
+  beforeRequest?: () => void
 }): Promise<WechatMediaTransportResponse> {
   const proxyUrl = await getEffectiveProxyUrl()
+  input.beforeRequest?.()
   // fetch 的 BodyInit 不接受 Uint8Array，这里转成 ArrayBuffer 传递二进制体。
   const body = input.body.buffer.slice(input.body.byteOffset, input.body.byteOffset + input.body.byteLength) as ArrayBuffer
   const response = await getFetchFn(proxyUrl)(input.url, {
@@ -219,6 +223,7 @@ async function performUpload(input: {
   const endpoint = endpointFor(input.type, input.mode)
 
   return withWechatAccessToken(input.credentialRef, async (accessToken) => {
+    input.dependencies.beforeRequest?.()
     const controller = new AbortController()
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
     try {
@@ -229,6 +234,7 @@ async function performUpload(input: {
         headers: { 'content-type': `multipart/form-data; boundary=${boundary}` },
         body,
         signal: controller.signal,
+        beforeRequest: input.dependencies.beforeRequest,
       })
       const raw = await response.text()
       let parsed: WechatMediaResponse
@@ -249,7 +255,7 @@ async function performUpload(input: {
     } finally {
       clearTimeout(timer)
     }
-  }, input.dependencies.token ?? {})
+  }, { ...input.dependencies.token, beforeRequest: input.dependencies.beforeRequest })
 }
 
 function mediaError(errcode: number, errmsg?: string): PlatformAdapterError {

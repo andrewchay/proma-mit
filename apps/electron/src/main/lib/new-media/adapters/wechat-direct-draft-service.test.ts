@@ -8,6 +8,7 @@ import { saveWechatDirectCredential } from './wechat-direct-credential'
 import { clearWechatTokenCache, type WechatTokenTransport } from './wechat-direct-token-service'
 import {
   WECHAT_DRAFT_LIMITS,
+  WechatDraftPreflightError,
   WECHAT_DRAFT_LIMITS as LIMITS,
   createWechatDraft,
   deleteWechatDraft,
@@ -129,6 +130,13 @@ describe('P2-04 草稿新增与映射', () => {
     const { transport } = draftTransport({ add: {} })
     await expect(createDraft(transport)).rejects.toThrow('未返回草稿 media_id')
     expect(await listWechatDrafts()).toEqual([])
+  })
+
+  test('发送前撤权时不调用草稿接口', async () => {
+    configure()
+    const { transport, calls } = draftTransport({ add: { media_id: 'DRAFT-X' } })
+    await expect(createWechatDraft(CONTEXT, { articles: [article()] }, { draftTransport: transport, token: { transport: tokenTransport }, beforeRequest: () => { throw new WechatDraftPreflightError('撤权') } })).rejects.toThrow('撤权')
+    expect(calls).toHaveLength(0)
   })
 
   test('预检未通过时不出网', async () => {

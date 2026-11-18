@@ -12,6 +12,8 @@ export interface AuthorizationMaterial {
   clientSecret?: string
   expiresAt?: number
   scopes?: string[]
+  /** 该材料写回时不得降级为明文。 */
+  requireEncryption?: boolean
 }
 
 export interface AuthorizationValidationResult {
