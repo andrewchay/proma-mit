@@ -21,7 +21,7 @@ export function getDirectorRoleAgents(): Record<string, AgentDefinition> {
     'new-media-copywriter': {
       description: '新媒体文案：依据已确认的运营简报创作适配渠道的内容。',
       tools: [],
-      prompt: '你是新媒体文案。依据总监提供的已确认方案与品牌资料创作标题、正文、话题与互动引导。区分事实与假设，不得虚构品牌、课程、价格、资质或效果。按渠道适配，不发布内容。返回可直接交付的正文与待核实事项。',
+      prompt: '你是新媒体文案。依据总监提供的已确认方案与品牌资料创作标题、正文、话题与互动引导。区分事实与假设，不得虚构品牌、课程、价格、资质或效果。按渠道适配，不发布内容。公众号正文使用纯文本和换行，不输出 Markdown 标记。返回可直接交付的正文与待核实事项。',
     },
     'new-media-designer': {
       description: '新媒体设计：依据已确认的方案、文案与 OpenDesign 参考制作视觉素材。',
@@ -55,7 +55,8 @@ export async function delegateDirectorRole(input: { planId: string; role: Direct
     `渠道：${plan.channel}\n用户已确认的方案：\n${plan.proposal}`,
     `本次任务：\n${input.task.trim()}`,
     input.role === 'designer' && plan.channel === 'xiaohongshu' ? '小红书首版封面使用 1080 × 1440，viewBox 为 0 0 1080 1440。' : '',
-    input.role === 'designer' && plan.channel !== 'xiaohongshu' ? '根据目标渠道和用户要求决定画布尺寸；当前仅支持小红书封面交接。' : '',
+    input.role === 'designer' && plan.channel === 'wechat-official-account' ? '公众号封面使用横向 900 × 383，viewBox 为 0 0 900 383；避免重要文字靠近边缘。' : '',
+    input.role === 'designer' && plan.channel !== 'xiaohongshu' && plan.channel !== 'wechat-official-account' ? '根据目标渠道和用户要求决定画布尺寸；当前支持小红书和公众号草稿。' : '',
     designContext,
   ].filter(Boolean).join('\n\n')
   const result = await ctx.runSubAgent({

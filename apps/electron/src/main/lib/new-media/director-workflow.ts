@@ -85,6 +85,19 @@ export async function createDirectorXiaohongshuDraft(input: { planId: string; ti
   return putNewMediaRecord('content-draft', draft, beforeWrite)
 }
 
+export async function createDirectorWechatDraft(input: { planId: string; title: string; body: string }, beforeWrite?: () => void): Promise<NewMediaContentDraft> {
+  const plan = await getNewMediaRecord<DirectorPlan>('director-plan', requiredText(input.planId, '方案 ID', 100))
+  if (!plan || plan.status !== 'confirmed') throw new Error('请先确认方案，再制作内容')
+  if (plan.channel !== 'wechat-official-account') throw new Error('当前方案不是微信公众号渠道')
+  const title = requiredText(input.title, '标题', 200)
+  const body = requiredText(input.body, '正文')
+  const draft: NewMediaContentDraft & { directorPlanId: string } = {
+    directorPlanId: plan.id, id: randomUUID(), sourceText: body,
+    platformCopies: { 'wechat-official-account': { title, body, hashtags: [] } }, createdAt: Date.now(),
+  }
+  return putNewMediaRecord('content-draft', draft, beforeWrite)
+}
+
 export async function saveDirectorRoleResult(input: { planId: string; role: 'copywriter' | 'designer'; task: string; result: string }, beforeWrite?: () => void) {
   return putNewMediaRecord('director-role-result', {
     id: randomUUID(), planId: input.planId, role: input.role, task: input.task,

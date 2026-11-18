@@ -8,7 +8,7 @@ import { createContentDraft, getPublicationJob, schedulePublication, type NewMed
 import { createListeningQuery, createReplyDraft, getListeningDigest, ingestEngagement, listEngagements } from '../new-media/community-listening'
 import { getSocialReport, getTrendOpportunities, ingestMetricSnapshot, ingestTrend } from '../new-media/analytics-trends'
 import { getControlledActionAudit, requestControlledAction, simulateControlledAction } from '../new-media/controlled-actions'
-import { createDirectorBrand, updateDirectorBrand, listDirectorBrands, createDirectorPlan, listDirectorPlans, createDirectorXiaohongshuDraft, listDirectorRoleResults } from '../new-media/director-workflow'
+import { createDirectorBrand, updateDirectorBrand, listDirectorBrands, createDirectorPlan, listDirectorPlans, createDirectorXiaohongshuDraft, createDirectorWechatDraft, listDirectorRoleResults } from '../new-media/director-workflow'
 import { executeDirectorConfirm, executeDirectorDelegate } from '../new-media/director-interaction-tools'
 import { saveDirectorDesign } from '../new-media/director-design'
 import { assertDirectorToolActive } from '../new-media/director-tool-gate'
@@ -137,7 +137,7 @@ function contentTools(): RuntimeToolDefinition[] {
     },
     {
       name: 'nm_director_save_design',
-      description: '为已确认方案的小红书草稿保存设计角色创作的 SVG，并渲染为可预览的 PNG。SVG 必须有 viewBox，不允许脚本、外部资源、内嵌图片、style 或 url()。仅保存本地文件，不会发布。',
+      description: '为已确认方案的小红书或公众号草稿保存设计角色创作的 SVG，并渲染为可预览的 PNG。SVG 必须有 viewBox，不允许脚本、外部资源、内嵌图片、style 或 url()。仅保存本地文件，不会发布。',
       parameters: { type: 'object', properties: { draft_id: { type: 'string' }, svg: { type: 'string' } }, required: ['draft_id', 'svg'] },
       execute: async (input, ctx) => {
         const args = (input ?? {}) as Record<string, unknown>
@@ -145,6 +145,17 @@ function contentTools(): RuntimeToolDefinition[] {
           const asset = await saveDirectorDesign(typeof args.draft_id === 'string' ? args.draft_id : '', typeof args.svg === 'string' ? args.svg : '', undefined, ctx)
           return { toolCallId: '', content: JSON.stringify({ assetId: asset.id, draftId: asset.draftId, message: '已保存 SVG 和 PNG；请在新媒体工作台预览、审核后准备交接。' }) }
         } catch (error) { return { toolCallId: '', content: error instanceof Error ? error.message : '保存设计失败', isError: true } }
+      },
+    },
+    {
+      name: 'nm_director_save_wechat_copy',
+      description: '将已确认方案制作的公众号标题和正文保存为本地草稿，需在工作台选择账号并同步到微信草稿箱，不会发布。',
+      parameters: { type: 'object', properties: { plan_id: { type: 'string' }, title: { type: 'string' }, body: { type: 'string' } }, required: ['plan_id', 'title', 'body'] },
+      execute: async (input, ctx) => {
+        const args = (input ?? {}) as Record<string, unknown>
+        try {
+          return { toolCallId: '', content: JSON.stringify(await createDirectorWechatDraft({ planId: String(args.plan_id ?? ''), title: String(args.title ?? ''), body: String(args.body ?? '') }, () => assertDirectorToolActive(ctx))) }
+        } catch (error) { return { toolCallId: '', content: error instanceof Error ? error.message : '保存公众号草稿失败', isError: true } }
       },
     },
     {
@@ -402,7 +413,7 @@ export function newMediaPluginRuntime(): BuiltinPluginRuntime {
     contributeTools: contentTools,
     contributePrompts: () => isNewMediaEnabled() ? [
       '新媒体工具的本地草稿、排程与模拟回执不代表已经发布。任何真实外发必须经用户明确确认并取得真实平台回执。',
-      ...(hasNewMediaContentCapability() ? ['用户要求新媒体总监时，负责品牌、策略和统筹。使用 nm_director_brand 保存品牌简报，使用 nm_director_plan 保存具体方案并调用 nm_director_confirm_plan 等待用户确认；确认后调用 nm_director_delegate 分别委派 copywriter 和 designer，将文案结果传给设计角色。小红书文案用 nm_director_save_xiaohongshu_copy 保存，再用 nm_director_save_design 保存设计角色生成的 SVG 并渲染 PNG；向用户展示结果，提示在工作台预览和交接。若角色或设计素材不可用须如实说明，不得声称完成发布。'] : []),
+      ...(hasNewMediaContentCapability() ? ['用户要求新媒体总监时，负责品牌、策略和统筹。使用 nm_director_brand 保存品牌简报，使用 nm_director_plan 保存具体方案并调用 nm_director_confirm_plan 等待用户确认；确认后调用 nm_director_delegate 分别委派 copywriter 和 designer，将文案结果传给设计角色。小红书文案用 nm_director_save_xiaohongshu_copy 保存；公众号文案用 nm_director_save_wechat_copy 保存。再用 nm_director_save_design 保存设计角色生成的 SVG 并渲染 PNG；向用户展示结果，提示在工作台预览和交接。若角色或设计素材不可用须如实说明，不得声称完成发布。'] : []),
     ] : [],
     contributeSkills,
   }

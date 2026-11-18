@@ -96,6 +96,21 @@ describe('P2-01 微信 direct 凭据模型', () => {
     expect(JSON.stringify(descriptor)).not.toContain(SECRET)
   })
 
+  test('要求加密时即使安全存储不可用也不落盘明文', async () => {
+    const account = await createNewMediaAccount({ platform: 'wechat-official-account', displayName: '加密测试' })
+    const input = { appId: APP_ID, appSecret: SECRET, accountType: 'service', verificationStatus: 'verified', ipWhitelistConfigured: true } as const
+    await expect(configureWechatDirectAccount(account.id, input, { requireEncryption: true })).rejects.toThrow('无法加密公众号凭据')
+    expect((await getNewMediaAccount(account.id))?.credentialRef).toBeUndefined()
+  })
+
+  test('同一账号并发导入不会覆盖已有凭据', async () => {
+    const account = await createNewMediaAccount({ platform: 'wechat-official-account', displayName: '并发测试' })
+    const input = { appId: APP_ID, appSecret: SECRET, accountType: 'service', verificationStatus: 'verified', ipWhitelistConfigured: true } as const
+    const results = await Promise.allSettled([configureWechatDirectAccount(account.id, input), configureWechatDirectAccount(account.id, input)])
+    expect(results.filter(item => item.status === 'fulfilled')).toHaveLength(1)
+    expect(results.filter(item => item.status === 'rejected')).toHaveLength(1)
+  })
+
   test('配置凭据不会让账号变成 connected，且未连接时不能写入权限集', async () => {
     const account = await createNewMediaAccount({ platform: 'wechat-official-account', displayName: '测试号' })
     const configured = await configureWechatDirectAccount(account.id, {

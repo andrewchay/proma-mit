@@ -23,7 +23,7 @@ const ACCOUNT_TYPE_LABEL: Record<WechatDirectAccountProfile['accountType'], stri
  *
  * 两件必须如实说明的事：
  * 1. AppSecret 属于 client secret，按项目约束不得经渲染进程输入；
- *    因此这里只呈现凭据状态与录入要求，不提供明文输入框。
+ *    因此通过主进程系统文件选择器导入，不提供明文输入框。
  * 2. 微信不返回接口权限清单，权限只能由真实接口调用观察得到；
  *    因此「缺少平台权限」是默认状态，而不是异常。
  */
@@ -44,6 +44,9 @@ export function WechatConnectionGuide({
 }): React.ReactElement {
   const [notice, setNotice] = React.useState('')
   const [busy, setBusy] = React.useState(false)
+  const [accountType, setAccountType] = React.useState<WechatDirectAccountProfile['accountType']>('service')
+  const [verificationStatus, setVerificationStatus] = React.useState<WechatDirectAccountProfile['verificationStatus']>('unverified')
+  const [ipWhitelistConfigured, setIpWhitelistConfigured] = React.useState(false)
 
   const gaps = React.useMemo(() => {
     const problems: string[] = []
@@ -62,6 +65,20 @@ export function WechatConnectionGuide({
     }
     return [...set].sort()
   }, [capabilities])
+
+  const importCredential = async (): Promise<void> => {
+    setBusy(true)
+    setNotice('')
+    try {
+      const result = await window.electronAPI.paa.newMedia.accounts.importCredential({ accountId, accountType, verificationStatus, ipWhitelistConfigured })
+      if (!result.canceled) setNotice('凭据已加密保存，请在微信后台核对 IP 白名单后校验连接。原始文件仍在所选位置，请自行安全处理。')
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '凭据导入失败')
+    } finally {
+      setBusy(false)
+      await onRefresh()
+    }
+  }
 
   const connect = async (): Promise<void> => {
     setBusy(true)
@@ -97,7 +114,13 @@ export function WechatConnectionGuide({
 
     <div className="rounded-lg bg-muted/50 p-2 text-xs text-foreground/60">
       <div className="flex items-center gap-1 font-medium"><KeyRound size={12} />凭据录入方式</div>
-      <p className="mt-1">AppSecret 属于客户端密钥，不会经过界面或 IPC 传输；录入必须在主进程安全通道完成（尚未实现）。当前版本在此只展示凭据状态，不提供明文输入框。</p>
+      <p className="mt-1">通过系统文件选择器导入包含 appId 与 appSecret 的 JSON 文件；密钥仅在主进程读取并加密保存。原文件不会自动删除，请自行安全处理。</p>
+      {credentialProtection === 'none' && <div className="mt-2 flex flex-wrap items-center gap-2">
+        <label>账号类型 <select value={accountType} onChange={event => setAccountType(event.target.value as WechatDirectAccountProfile['accountType'])} className="rounded bg-background px-2 py-1"><option value="service">服务号</option><option value="subscription">订阅号</option><option value="test">测试号</option></select></label>
+        <label>认证状态 <select value={verificationStatus} onChange={event => setVerificationStatus(event.target.value as WechatDirectAccountProfile['verificationStatus'])} className="rounded bg-background px-2 py-1"><option value="unverified">未认证</option><option value="verified">已认证</option></select></label>
+        <label><input type="checkbox" checked={ipWhitelistConfigured} onChange={event => setIpWhitelistConfigured(event.target.checked)} /> 已配置出口 IP 白名单</label>
+        <button disabled={busy} onClick={() => void importCredential()} className="rounded bg-primary px-2 py-1 text-primary-foreground disabled:opacity-50">选择凭据文件</button>
+      </div>}
     </div>
 
     <div>

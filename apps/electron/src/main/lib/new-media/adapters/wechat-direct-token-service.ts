@@ -35,11 +35,13 @@ export type WechatTokenTransport = (input: {
   headers: Record<string, string>
   body: string
   signal?: AbortSignal
+  beforeRequest?: () => void
 }) => Promise<WechatTokenTransportResponse>
 
 export interface WechatTokenDependencies {
   transport?: WechatTokenTransport
   now?: () => number
+  beforeRequest?: () => void
 }
 
 export interface WechatAccessToken {
@@ -119,8 +121,10 @@ async function defaultTransport(input: {
   headers: Record<string, string>
   body: string
   signal?: AbortSignal
+  beforeRequest?: () => void
 }): Promise<WechatTokenTransportResponse> {
   const proxyUrl = await getEffectiveProxyUrl()
+  input.beforeRequest?.()
   const response = await getFetchFn(proxyUrl)(input.url, {
     method: input.method,
     headers: input.headers,
@@ -149,7 +153,9 @@ async function requestStableToken(
   try {
     // force_refresh: false —— 让微信在自身缓存有效时直接返回，减少刷新次数。
     const body = JSON.stringify({ grant_type: 'client_credential', appid: material.appId, secret: material.appSecret, force_refresh: false })
+    dependencies.beforeRequest?.()
     const response = await transport({
+      beforeRequest: dependencies.beforeRequest,
       url: WECHAT_STABLE_TOKEN_ENDPOINT,
       method: 'POST',
       headers: { 'content-type': 'application/json' },

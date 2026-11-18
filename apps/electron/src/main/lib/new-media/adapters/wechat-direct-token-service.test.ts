@@ -195,3 +195,10 @@ describe('P2-02 微信 stable token', () => {
     expect(otherAttempts).toBe(1)
   })
 })
+
+test('撤权检查阻止发起 token 刷新', async () => {
+  configureCredential()
+  const { transport, calls } = fakeTransport([{ body: { access_token: 'TOKEN', expires_in: 7200 } }])
+  await expect(getWechatAccessToken(REF, { dependencies: { transport, beforeRequest: () => { throw new Error('账号正在断开') } } })).rejects.toThrow('账号正在断开')
+  expect(calls).toHaveLength(0)
+})

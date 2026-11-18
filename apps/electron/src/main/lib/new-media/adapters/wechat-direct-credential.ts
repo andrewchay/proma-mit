@@ -70,11 +70,12 @@ export function saveWechatDirectCredential(
   credentialRef: string,
   input: WechatDirectCredentialInput,
   extra: Pick<WechatDirectAuthorizationMaterial, 'accessToken' | 'refreshToken' | 'expiresAt' | 'scopes'> = { accessToken: '' },
+  options: { requireEncryption?: boolean } = {},
 ): WechatDirectCredentialDescriptor {
   if (!credentialRef.trim()) throw new Error('凭据引用不能为空')
   const { appId, appSecret } = assertWechatDirectCredentialFormat(input)
-  const material: WechatDirectAuthorizationMaterial = { ...extra, appId, appSecret }
-  saveNewMediaAccountSecret(credentialRef, material)
+  const material: WechatDirectAuthorizationMaterial = { ...extra, appId, appSecret, ...(options.requireEncryption ? { requireEncryption: true } : {}) }
+  saveNewMediaAccountSecret(credentialRef, material, options)
   return describeWechatDirectCredential(credentialRef)
 }
 

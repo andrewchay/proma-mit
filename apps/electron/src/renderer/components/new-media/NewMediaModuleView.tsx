@@ -16,6 +16,7 @@ import { WechatAnalyticsPanel } from './WechatAnalyticsPanel'
 import { AccountsPanel } from './AccountsPanel'
 import { XiaohongshuHandoffPanel } from './XiaohongshuHandoffPanel'
 import { DirectorDesignPreview } from './DirectorDesignPreview'
+import { WechatDirectorDraft } from './WechatDirectorDraft'
 
 type SubView = 'accounts' | 'content' | 'community' | 'listening' | 'import' | 'insights' | 'outbound' | 'publish' | 'automation'
 
@@ -274,7 +275,7 @@ export function NewMediaModuleView(): React.ReactElement {
                             }}>
                               {handoff ? '查看交接' : '准备官方发布交接'}
                             </button>
-                          ) : action ? (
+                          ) : draft.directorPlanId ? null : action ? (
                             <button className="text-xs text-primary hover:underline" onClick={() => {
                               actionToFocus.current = action.id
                               setSubView('outbound')
@@ -296,7 +297,8 @@ export function NewMediaModuleView(): React.ReactElement {
                     )
                   })}
                 </div>
-                {draft.directorPlanId && <DirectorDesignPreview key={`${draft.id}:${designRevision}`} draftId={draft.id} revision={designRevision} onPrepare={(assetId) => prepareHandoff(draft.id, assetId)} />}
+                {draft.directorPlanId && draft.platformCopies.xiaohongshu && <DirectorDesignPreview key={`${draft.id}:${designRevision}`} draftId={draft.id} revision={designRevision} onPrepare={(assetId) => prepareHandoff(draft.id, assetId)} />}
+                {draft.directorPlanId && draft.platformCopies['wechat-official-account'] && <WechatDirectorDraft key={`${draft.id}:${designRevision}`} draftId={draft.id} />}
               </article>)}
             </section>
             <section id="xiaohongshu-handoffs" aria-label="小红书发布交接" tabIndex={-1}>
