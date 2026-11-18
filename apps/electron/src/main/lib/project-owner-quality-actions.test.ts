@@ -594,6 +594,7 @@ test('Given最终手册经中间步骤依赖原始时间表 When执行与评审 
     await until(() => f.tasks().every(task => task.status === 'completed'), f.project.id)
     const original = f.tasks().find(task => task.title === '形成建议')!
     const final = f.tasks().find(task => task.title === '核对最终手册')!
+    const directDependency = store.listTaskDependencies(f.project.id).find(edge => edge.taskId === final.id)!
     const artifact = actionRows(f.project.id).find(action => action.taskId === original.id)!
     const runs = traces.get(f.project.id)!.filter(item => item.taskId === final.id && ['executor', 'reviewer'].includes(item.role))
     expect(runs.map(run => run.role)).toEqual(['executor', 'reviewer'])
@@ -601,6 +602,7 @@ test('Given最终手册经中间步骤依赖原始时间表 When执行与评审 
       const block = run.prompt.split('<untrusted-upstream-artifacts>')[1]!.split('</untrusted-upstream-artifacts>')[0]!
       const handoffs = JSON.parse(block) as { taskId: string; artifactHash: string; content: string }[]
       expect(handoffs).toHaveLength(2)
+      expect(handoffs.map(item => item.taskId)).toEqual([directDependency.dependsOnTaskId, original.id])
       expect(handoffs.find(item => item.taskId === original.id)).toMatchObject({ artifactHash: artifact.artifactHash, content: expect.stringContaining('面向已访谈的现有用户') })
     }
   } finally { f.stop() }

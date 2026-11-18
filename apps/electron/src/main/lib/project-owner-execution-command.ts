@@ -74,7 +74,7 @@ type UpstreamHandoffVersion = 1 | 2
 const CURRENT_UPSTREAM_HANDOFF_VERSION: UpstreamHandoffVersion = 2
 const textHandoffHeader = 'Owner文本上游成果交接 v2。'
 
-function resolveUpstreamArtifactHandoffs(projectId: string, grantId: string, taskId: string, record: NonNullable<ReturnType<typeof getOwnerExecutionRevalidation>['revalidation']>, includeAncestors: boolean): OwnerUpstreamArtifactHandoff[] {
+function resolveUpstreamArtifactHandoffs(projectId: string, grantId: string, taskId: string, record: NonNullable<ReturnType<typeof getOwnerExecutionRevalidation>['revalidation']>, handoffVersion: UpstreamHandoffVersion, includeLegacyAncestors: boolean): OwnerUpstreamArtifactHandoff[] {
   if (record.source.qualityManagementVersion !== 1) return []
   const tasksById = new Map(record.source.tasks.map(task => [task.taskId, task]))
   const taskStatuses = store.listTaskStatuses(projectId)
@@ -103,12 +103,30 @@ function resolveUpstreamArtifactHandoffs(projectId: string, grantId: string, tas
     return { taskId: task.id, taskTitle: task.title, commandId: executorCommands[0]!.id, ownerExecutionId: latest.ownerExecutionId, artifactHash: artifact.contentHash, reworkOrdinal: artifact.reworkOrdinal, content: artifact.content }
   }
   const directIds = predecessors(taskId)
-  const handoffs = directIds.map(readHandoff)
   const maxHandoffBytes = 64 * 1024
+  if (handoffVersion === 1 && includeLegacyAncestors) {
+    // 保持带历史标记的已排队命令原有 DFS 后序，启动前会逐字核对冻结提示。
+    const visited = new Set([taskId])
+    const upstreamIds: string[] = []
+    const visit = (id: string): void => {
+      for (const predecessorId of predecessors(id)) {
+        if (visited.has(predecessorId)) continue
+        visited.add(predecessorId)
+        visit(predecessorId)
+        upstreamIds.push(predecessorId)
+      }
+    }
+    visit(taskId)
+    const handoffs = upstreamIds.map(readHandoff)
+    if (Buffer.byteLength(serializeUpstreamHandoffs(handoffs), 'utf8') > maxHandoffBytes) fail('上游成果交接超过64KiB上下文上限，需先拆分或缩小交付')
+    return handoffs
+  }
+
+  const handoffs = directIds.map(readHandoff)
   const serializedBytes = () => Buffer.byteLength(serializeUpstreamHandoffs(handoffs), 'utf8')
   if (serializedBytes() > maxHandoffBytes) fail('上游成果交接超过64KiB上下文上限，需先拆分或缩小交付')
-  if (includeAncestors) {
-    // 直接依赖优先。间接成果按冻结依赖顺序补齐，只附带能完整放入预算的原文。
+  if (handoffVersion === CURRENT_UPSTREAM_HANDOFF_VERSION) {
+    // 新命令直系依赖优先。间接成果按冻结依赖顺序补齐，只附带能完整放入预算的原文。
     const visited = new Set([taskId, ...directIds])
     const pending = [...directIds]
     for (const id of pending) {
@@ -155,8 +173,7 @@ function resolveCommandChain(subject: ProjectOwnerGoalSubject, input: AckInput, 
   if (frozenTask.taskId !== task.id || ownerExecutionHash(deps.slice().sort((a, b) => a.id.localeCompare(b.id))) !== ownerExecutionHash(frozenTask.dependencies.slice().sort((a, b) => a.id.localeCompare(b.id)))) fail('依赖集合与v2冻结不一致')
   const sourceHash = hashOwnerCommandSource({ taskId: task.id, taskSpecificationHash: linkFrozen.taskSpecificationHash ?? '', linkIntegrityHash: linkRow.integrity_hash, dependencies: deps })
   const includeTextAncestors = ownerTaskHasTextDelivery(record.source, task.id)
-    && (handoffVersion === CURRENT_UPSTREAM_HANDOFF_VERSION || includeLegacyTextAncestors)
-  const upstreamHandoffs = resolveUpstreamArtifactHandoffs(subject.projectId, input.grantId, task.id, record, includeTextAncestors)
+  const upstreamHandoffs = resolveUpstreamArtifactHandoffs(subject.projectId, input.grantId, task.id, record, handoffVersion, includeTextAncestors && includeLegacyTextAncestors)
   if (input.role === 'executor' && input.reworkOrdinal > 0) {
     const previousReviews = listOwnerTechnicalReviewEvidence(subject.projectId, task.id).filter(review =>
       review.grantId === input.grantId && review.stepLinkId === task.ownerStepLinkId
