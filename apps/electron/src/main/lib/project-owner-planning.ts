@@ -118,7 +118,7 @@ export function parseProjectOwnerPlanProposal(
   codeFiles: readonly ProjectOwnerCodeFileMatch[] = [],
   requireCodeReferences = false,
   deliverySources: readonly ProjectOwnerDeliveryContext[] = [],
-  expectedDeliveryFeedback?: OwnerPlanningConversationContext['deliveryFeedback'],
+  expectedDeliveryFeedback?: Pick<NonNullable<OwnerPlanningConversationContext['deliveryFeedback']>, 'messageId' | 'artifactHash' | 'stepKey' | 'acceptanceCriteria'>,
   requireDeliveryKind = false,
 ): ProjectOwnerPlanProposal {
   const value = record(input, ['projectId', 'taskId', 'goalVersion', 'summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment'], '计划提案')

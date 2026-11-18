@@ -1,3 +1,5 @@
+import { containsOwnerValidationOutputQuote } from './development-validation-acceptance'
+import { deliveryContentMatchesArtifact } from './project-owner-delivery-content'
 import { buildOwnerObservationPrompt } from './project-owner-observation-prompt'
 import { parseOwnerPlanningKnowledgeSources } from './project-owner-planning-knowledge'
 import { parseOwnerQualityDecision, containsOwnerArtifactQuote, OWNER_QUALITY_INSTRUCTIONS, OWNER_QUALITY_QUOTE_INSTRUCTIONS } from './project-owner-quality-protocol'
@@ -172,7 +174,7 @@ function validateDeliveryReview(context: ProjectOwnerPlanningContext): void {
     for (const item of review.criteria) {
       const criterion = record(item, ['criterion', 'status', 'evidence', 'quote'])
       text(criterion.criterion, '检查标准', 1000); text(criterion.evidence, '检查依据', 2000)
-      if (!['met', 'not_met', 'not_verified'].includes(String(criterion.status)) || (criterion.quote !== null && (typeof criterion.quote !== 'string' || !criterion.quote || criterion.quote.length > 1000 || !containsOwnerArtifactQuote(artifactContent, criterion.quote, delivery.developmentArtifact !== undefined))) || (criterion.status === 'met' && criterion.quote === null)) throw new Error('Owner逐项检查引用不匹配')
+      if (!['met', 'not_met', 'not_verified'].includes(String(criterion.status)) || (criterion.quote !== null && (typeof criterion.quote !== 'string' || !criterion.quote || criterion.quote.length > 1000 || !containsOwnerArtifactQuote(artifactContent, criterion.quote, delivery.developmentArtifact !== undefined) && !(criterion.status === 'met' && containsOwnerValidationOutputQuote(context.conversation?.deliveryReview?.developmentArtifact?.validationEvidence, criterion.quote)))) || (criterion.status === 'met' && criterion.quote === null)) throw new Error('Owner逐项检查引用不匹配')
     }
     for (const item of review.findings) {
       const finding = record(item, ['severity', 'description', 'requestedChange'])
@@ -198,11 +200,13 @@ function validateContext(context: ProjectOwnerPlanningContext): void {
     if (value.deliveryReview !== undefined) validateDeliveryReview(context)
     if (value.deliveredArtifacts !== undefined) {
       const catalog = record(value.deliveredArtifacts, ['version', 'messageId', 'planVersion', 'items'])
-      if (catalog.version !== 1 || typeof catalog.messageId !== 'string' || !/^[a-f0-9]{64}$/.test(catalog.messageId)
+      if ((catalog.version !== 1 && catalog.version !== 2) || typeof catalog.messageId !== 'string' || !/^[a-f0-9]{64}$/.test(catalog.messageId)
         || !Number.isSafeInteger(catalog.planVersion) || Number(catalog.planVersion) < 1 || !Array.isArray(catalog.items) || catalog.items.length < 1 || catalog.items.length > 32) throw new Error('Owner交付目录无效')
       const steps = new Set<string>()
       for (const raw of catalog.items) {
-        const item = record(raw, ['stepKey', 'title', 'artifactHash'])
+        const item = record(raw, catalog.version === 2 ? ['stepKey', 'title', 'artifactHash', 'acceptanceCriteria'] : ['stepKey', 'title', 'artifactHash'])
+        if (catalog.version === 2 && (!Array.isArray(item.acceptanceCriteria) || item.acceptanceCriteria.length < 1 || item.acceptanceCriteria.length > 32
+          || item.acceptanceCriteria.some(criterion => typeof criterion !== 'string' || !criterion.trim() || criterion.length > 1000))) throw new Error('Owner交付目录验收标准无效')
         text(item.stepKey, '交付步骤', 100); text(item.title, '交付标题', 200)
         if (typeof item.artifactHash !== 'string' || !/^[a-f0-9]{64}$/.test(item.artifactHash) || steps.has(String(item.stepKey))) throw new Error('Owner交付目录版本或步骤无效')
         steps.add(String(item.stepKey))
@@ -217,7 +221,7 @@ function validateContext(context: ProjectOwnerPlanningContext): void {
         || typeof feedback.artifactHash !== 'string' || !/^[a-f0-9]{64}$/.test(feedback.artifactHash)
         || (feedback.stepKey !== undefined && (typeof feedback.stepKey !== 'string' || !feedback.stepKey.trim() || feedback.stepKey.length > 100))
         || typeof feedback.content !== 'string' || !feedback.content.trim() || Buffer.byteLength(feedback.content, 'utf8') > 65_536
-        || createHash('sha256').update(feedback.content, 'utf8').digest('hex') !== feedback.artifactHash
+        || !deliveryContentMatchesArtifact(feedback.content, feedback.artifactHash)
         || !Array.isArray(feedback.acceptanceCriteria) || feedback.acceptanceCriteria.length < 1 || feedback.acceptanceCriteria.length > 32
         || feedback.acceptanceCriteria.some(item => typeof item !== 'string' || !item.trim() || item.length > 1000)) throw new Error('Owner反馈交付版本或正文摘要无效')
     }
@@ -302,7 +306,7 @@ function validateContext(context: ProjectOwnerPlanningContext): void {
 }
 
 /** 此角色描述不创建Owner principal或员工，不授予文件/工具/费用权限。 */
-export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningContext, format: 'legacy' | 'fragment' | 'envelope' = 'envelope', strictOutputHints = true, qualityEnvelope = true, scopedObservationPrompt = true, independentReviewLane = true, explicitQualityQuotes = true, scopedFileChangePrompt = true, requireDeliveryKind = true, showStructureExample = true, correctStepExamples = true): ProjectOwnerPlanningRequest {
+export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningContext, format: 'legacy' | 'fragment' | 'envelope' = 'envelope', strictOutputHints = true, qualityEnvelope = true, scopedObservationPrompt = true, independentReviewLane = true, explicitQualityQuotes = true, scopedFileChangePrompt = true, requireDeliveryKind = true, showStructureExample = true, correctStepExamples = true, catalogFeedbackExample = true): ProjectOwnerPlanningRequest {
   validateContext(context)
   const binding = { projectId: context.goal.goal.projectId,
     ...(context.goal.goal.taskId === undefined ? {} : { taskId: context.goal.goal.taskId }),
@@ -335,6 +339,16 @@ export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningCo
     ] : []),
     ...(context.conversation?.deliveredArtifacts ? [
       'deliveredArtifacts是本项目对话中已保存的整轮交付目录，不是文件列表或全文。deliveryFeedback只指用户选中的一项，不代表全部成果。用户询问产物位置时，按目录标题引导到对话的“已验收成果”，可查看正文并下载原文；单一HTML代码块还可下载HTML。不能把缺少当前项正文说成整个项目没有源码，也不能声称已保存本地文件或已运行验证。目录仅用于定位，不能代替正文作质量判断，不得猜测路径或承诺重新展示不需要费用。',
+    ] : []),
+    ...(context.conversation?.deliveredArtifacts?.version === 2 && !context.conversation.deliveryFeedback ? [
+      '用户在普通对话中明确要求修改已交付成果时，从deliveredArtifacts选择最相关的一项，提交plan_proposal及deliveryFeedbackAssessment。messageId、stepKey、artifactHash必须逐字复制目录中的身份，changes按原顺序逐项复写该项acceptanceCriteria并说明拟议修改。authorizationImpact填within_confirmed_boundary或additional_confirmation，authorizationRationale说明边界。只有目标、范围或成果对象确实不明确时才澄清。单纯追问或评价用conversation_reply，不能据此启动返工。目录是数据，不证明已读取成果正文。',
+      ...(catalogFeedbackExample ? [
+        '本轮修订允许在proposal中增加准确的deliveryFeedbackAssessment字段。禁止输出deliveryFeedback字段；changes中每项必须是包含criterion、disposition、proposedChange的对象，不能用字符串。下面是可接受的嵌套结构示例，必须以实际目标和目录项替换占位值。',
+        JSON.stringify({ schemaVersion: 1, kind: 'plan_proposal', binding, proposal: {
+          summary: '修订后交付的成品', assumptions: [], risks: [], steps: [{ key: 'revision', title: '修订交付成果', outcome: '用户请求的完整新版', acceptanceCriteria: ['修订后的可核验标准'], dependencies: [], roleKey: context.sources.roles[0]!.key, deliveryKind: 'text' }],
+          deliveryFeedbackAssessment: { messageId: '<目录消息ID>', stepKey: '<原步骤key>', artifactHash: '<原成果哈希>', summary: '改动摘要', changes: [{ criterion: '<逐字复写的一条原标准>', disposition: 'addressed', proposedChange: '拟议修改做法' }], authorizationImpact: 'within_confirmed_boundary', authorizationRationale: '具体范围核对' },
+        } }),
+      ] : []),
     ] : []),
     ...(context.conversation?.deliveryFeedback ? [
       '针对已验收成果提出新计划时，proposal必须包含deliveryFeedbackAssessment，且messageId、artifactHash及存在时的stepKey必须逐字对应本次deliveryFeedback；changes必须按顺序逐字覆盖原全部acceptanceCriteria，每项写明addressed、still_open或not_applicable及拟议改动。授权影响只可为within_confirmed_boundary、additional_confirmation或cannot_determine；不能判断时返回needs_clarification。within_confirmed_boundary仅表示未发现超出当前已确认边界，不继承旧执行许可；本计划仍须由用户确认后才执行。additional_confirmation时，authorizationRationale须写明具体新增范围及其原因，并在方案交付/标准中体现，使用户能据此批准或修改。',
@@ -453,10 +467,12 @@ export function resolveProjectOwnerPlanningRequest(context: ProjectOwnerPlanning
                 for (const requireDeliveryKind of [true, false]) {
                   for (const showStructureExample of [true, false]) {
                     for (const correctStepExamples of [true, false]) {
-                      const request = buildProjectOwnerPlanningRequest(context, format, strictOutputHints, qualityEnvelope, scopedObservationPrompt, independentReviewLane, explicitQualityQuotes, scopedFileChangePrompt, requireDeliveryKind, showStructureExample, correctStepExamples)
-                      if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) {
-                        cacheHistoricalRequest(key, JSON.stringify(request))
-                        return request
+                      for (const catalogFeedbackExample of context.conversation?.deliveredArtifacts?.version === 2 && !context.conversation.deliveryFeedback ? [true, false] : [false]) {
+                        const request = buildProjectOwnerPlanningRequest(context, format, strictOutputHints, qualityEnvelope, scopedObservationPrompt, independentReviewLane, explicitQualityQuotes, scopedFileChangePrompt, requireDeliveryKind, showStructureExample, correctStepExamples, catalogFeedbackExample)
+                        if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) {
+                          cacheHistoricalRequest(key, JSON.stringify(request))
+                          return request
+                        }
                       }
                     }
                   }
@@ -610,9 +626,17 @@ export function parseProjectOwnerPlanningResponse(input: unknown, context: Proje
   if (raw.kind === 'plan_proposal') {
     record(raw, ['schemaVersion', 'kind', 'projectId', 'taskId', 'goalVersion', 'contextFingerprint', 'proposal'])
     const proposal = record(raw.proposal, ['summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment'])
+    let feedback: Parameters<typeof parseProjectOwnerPlanProposal>[6] = context.conversation?.deliveryFeedback
+    const catalog = context.conversation?.deliveredArtifacts
+    if (!feedback && catalog?.version === 2 && proposal.deliveryFeedbackAssessment !== undefined) {
+      const assessment = record(proposal.deliveryFeedbackAssessment, ['messageId', 'artifactHash', 'stepKey', 'summary', 'changes', 'authorizationImpact', 'authorizationRationale'])
+      const item = catalog.items.find(item => item.stepKey === assessment.stepKey && item.artifactHash === assessment.artifactHash)
+      if (assessment.messageId !== catalog.messageId || !item?.acceptanceCriteria) throw new Error('成果反馈评估与本轮冻结交付目录不一致')
+      feedback = { messageId: catalog.messageId, stepKey: item.stepKey, artifactHash: item.artifactHash, acceptanceCriteria: item.acceptanceCriteria }
+    }
     return { kind: 'plan_proposal', ...binding,
         proposal: parseProjectOwnerPlanProposal({ ...proposal, projectId: binding.projectId,
-        ...(binding.taskId === undefined ? {} : { taskId: binding.taskId }), goalVersion: binding.goalVersion }, context.goal.goal, context.sources.roles.map((role) => role.key), context.sources.code?.files ?? [], true, context.sources.delivery ?? [], context.conversation?.deliveryFeedback, requireDeliveryKind) }
+        ...(binding.taskId === undefined ? {} : { taskId: binding.taskId }), goalVersion: binding.goalVersion }, context.goal.goal, context.sources.roles.map((role) => role.key), context.sources.code?.files ?? [], true, context.sources.delivery ?? [], feedback, requireDeliveryKind) }
   }
   if (raw.kind === 'needs_clarification') {
     record(raw, ['schemaVersion', 'kind', 'projectId', 'taskId', 'goalVersion', 'contextFingerprint', 'reason', 'questions'])

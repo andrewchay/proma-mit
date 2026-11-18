@@ -33,6 +33,7 @@ test('Given Owner等待用户处理 When 显示对话进度 Then 标签说明具
   expect(getOwnerWaitingLabel([message('attention')], undefined, 'stale')).toBe('授权范围需要重新确认')
   expect(getOwnerWaitingLabel([message('attention')])).toBe('Owner 提出需要关注的事项')
   expect(getOwnerWaitingLabel([message('plan_proposal')])).toBe('方案待你审阅')
+  expect(getOwnerWaitingLabel([message('plan_proposal')], undefined, 'exhausted')).toBe('等待项目预算决定')
   expect(getOwnerWaitingLabel([message('clarification')])).toBe('需要补充必要信息')
   expect(getOwnerWaitingLabel([message('management_progress')])).toBeNull()
 })

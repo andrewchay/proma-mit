@@ -81,6 +81,13 @@ function acceptPlanAndArrange(event: OwnerManagementEvent, proposed: NonNullable
     prepareOwnerManagementAssignment(event)
     return
   }
+  const feedback = proposed.proposal.deliveryFeedbackAssessment
+  if (feedback && feedback.authorizationImpact !== 'within_confirmed_boundary') {
+    appendOwnerManagementMessage({ projectId: event.projectId, eventId: `owner-feedback-scope:${event.id}:${proposed.revision}`,
+      ...(event.taskId ? { taskId: event.taskId } : {}), goalRevision: proposed.goalRevision,
+      role: 'assistant', kind: 'attention', content: `这次修订涉及需要你决定的范围：${feedback.authorizationRationale}` })
+    return
+  }
   const accepted = confirmProjectOwnerPlanDraftForOwner(event.projectId, proposed.goalRevision, proposed.revision, event.taskId)
   prepareOwnerManagementAssignment({ ...event, id: `owner-plan-accepted:${event.id}:${accepted.revision}`, kind: 'plan_confirmed', sourceRevision: accepted.revision })
 }

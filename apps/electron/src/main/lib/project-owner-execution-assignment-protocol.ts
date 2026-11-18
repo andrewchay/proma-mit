@@ -10,11 +10,12 @@ export interface OwnerExecutionAssignmentRequest { expectedGoalRevision: number;
 /**
  * 断言注册表会进入冻结安排提示，历史请求只能按当时的注册表文本还原。
  * - current：当前注册表全量（随版本演进）；
+ * - registry-v3：增加文本计数器断言前的注册表；
  * - registry-v2：增加日记断言前的 12 项注册表文本；
  * - registry-v1：2026-11 增加三消断言前的 7 项注册表文本；
  * - legacy-6：更早的 6 项简写清单。
  */
-export type OwnerBrowserRegistryVariant = 'current' | 'registry-v2' | 'registry-v1' | 'legacy-6'
+export type OwnerBrowserRegistryVariant = 'current' | 'registry-v3' | 'registry-v2' | 'registry-v1' | 'legacy-6'
 const BROWSER_REGISTRY_V2_TEXT = 'html.loads（页面可加载且无脚本错误）、dom.board（存在 16 格棋盘容器）、dom.initial-tiles（开局至少两个数字块）、behavior.merge（同向按键可合并并计分）、storage.best-score（最高分可持久化）、behavior.game-over（无法移动时显示游戏结束）、dom.restart（重新开始恢复开局与零分）、match3.board（存在 8×8 满盘棋子棋盘）、match3.swap（有效交换使棋盘变化）、match3.invalid-revert（无效交换自动还原且不扣步数）、match3.score（消除后计分且棋盘补满）、match3.restart（重开后棋盘满盘且分数归零）'
 const BROWSER_REGISTRY_V1_TEXT = 'html.loads（页面可加载且无脚本错误）、dom.board（存在 16 格棋盘容器）、dom.initial-tiles（开局至少两个数字块）、behavior.merge（同向按键可合并并计分）、storage.best-score（最高分可持久化）、behavior.game-over（无法移动时显示游戏结束）、dom.restart（重新开始恢复开局与零分）'
 const BROWSER_REGISTRY_LEGACY_6_TEXT = 'html.loads（页面可加载）、dom.board（16格棋盘）、dom.initial-tiles（开局数字块）、behavior.merge（按键合并计分）、storage.best-score（最高分持久化）、dom.restart（重开入口）'
@@ -22,7 +23,8 @@ function browserRegistryText(variant: OwnerBrowserRegistryVariant): string {
   if (variant === 'registry-v2') return BROWSER_REGISTRY_V2_TEXT
   if (variant === 'registry-v1') return BROWSER_REGISTRY_V1_TEXT
   if (variant === 'legacy-6') return BROWSER_REGISTRY_LEGACY_6_TEXT
-  return OWNER_RUNTIME_ASSERTION_TEMPLATES.map(item => `${item.id}（${item.title}）`).join('、')
+  const templates = variant === 'registry-v3' ? OWNER_RUNTIME_ASSERTION_TEMPLATES.filter(item => item.id !== 'text-counter.behavior') : OWNER_RUNTIME_ASSERTION_TEMPLATES
+  return templates.map(item => `${item.id}（${item.title}）`).join('、')
 }
 /** 原生/命令行项目的固定构建命令清单；空清单表示该变体发布时尚无此能力。 */
 function buildRegistryText(includeBuildCommands: boolean): string {
@@ -30,7 +32,7 @@ function buildRegistryText(includeBuildCommands: boolean): string {
   const items = listOwnerRuntimeBuildCommands().map(item => `${item.id}（${item.title}）`).join('、')
   return items ? `；原生或命令行项目可用 build:<标识>，可选标识：${items}` : ''
 }
-export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, requireRoleCoverage = true, browserRegistryVariant: OwnerBrowserRegistryVariant = 'current', stepDeliveryInstructions = true, roleSpecificCapabilities = true, greenfieldRootTargets = false, includeBuildCommands = true, requireSwiftPackage = true): OwnerExecutionAssignmentRequest {
+export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, requireRoleCoverage = true, browserRegistryVariant: OwnerBrowserRegistryVariant = 'current', stepDeliveryInstructions = true, roleSpecificCapabilities = true, greenfieldRootTargets = false, includeBuildCommands = true, requireSwiftPackage = true, requireCompleteGreenfieldScope = true): OwnerExecutionAssignmentRequest {
   return {
     expectedGoalRevision: context.goalRevision,
     expectedContextFingerprint: context.sourceContextFingerprint,
@@ -47,8 +49,10 @@ export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssi
           ? '本次为绿地研发：项目没有既有代码候选，executionKind应选development并在developmentScope中声明本次要新建的文件。targetPaths写工作区内的新文件相对路径（禁止绝对路径、..、反斜杠、受保护文件）；allowedPaths必须是targetPaths的子集；verificationCommands只能从内置形式中选择（见下一条），至少一条且不能为空。controlled时不得输出developmentScope。'
           : '本次为绿地研发：项目没有既有代码候选，executionKind应选development并在developmentScope中声明本次要新建的文件。targetPaths写工作区内的新文件相对路径（禁止绝对路径、..、反斜杠、受保护文件）；allowedPaths必须是targetPaths的子集；verificationCommands只能用browser:<断言标识>。controlled时不得输出developmentScope。'
         : 'executionKind为development时必须给developmentScope：目标路径必须来自所选步骤sourceReferences；允许修改路径必须来自冻结codeFiles，且只选本次真正需要的最小范围；至少提出一条验证命令供执行边界核对。代码依据不足时不得编造路径。controlled时不得输出developmentScope。',
+      ...(requireCompleteGreenfieldScope && context.greenfieldDevelopment ? ['绿地研发的allowedPaths必须逐项覆盖所有targetPaths，并且不能引入额外路径。要同时交付页面和说明时，两份文件都必须在两个数组中。输出前检查两个数组包含相同的路径集合。'] : []),
       ...(greenfieldRootTargets && context.greenfieldDevelopment ? ['绿地仓库没有可核验的目标目录时，请优先选择仓库根目录下的新文件，例如index.html、app.js和style.css，避免把缺失父目录误当成已有能力。若用户明确要求目录结构，应如实保留要求和不确定性，不得静默改写。'] : []),
       ...(includeBuildCommands && requireSwiftPackage && context.greenfieldDevelopment && context.executionKinds.includes('development') ? ['使用 build:swift 或 build:swift-test 时，目标路径须包含工作区根目录的 Package.swift 和实际 Swift 源文件，并按 Swift Package 布局创建。构建在禁止网络的隔离环境中运行，不能依赖下载外部包。构建成功不代表原生界面或业务行为已验证。'] : []),
+      ...(browserRegistryVariant === 'current' && context.executionKinds.includes('development') ? ['文本计数器要求验证输入、码点、词数、换行或清空时，使用 browser:html.loads+text-counter.behavior。验收需要 textarea#input、button#clear 以及只展示数字的 #codepoints、#words、#lines。把此控件约定写入本次范围理由；页面仅加载不能验证这些行为。'] : []),
       ...(context.executionKinds.includes('development')
         ? [includeBuildCommands
           ? `本次提供development方式：验证命令只接受内置运行验证形式 browser:<断言标识>（多个用+连接，可选标识：${browserRegistryText(browserRegistryVariant)}）${buildRegistryText(true)}。禁止提出bun test、npm test、pytest等仓库自带测试或自写验证脚本：Owner员工不执行仓库代码。成果含HTML页面时必须至少声明一条browser断言；成果是原生或命令行程序时用对应的build命令（目标文件扩展名须与命令匹配）。无法用任何内置形式覆盖时，在reason中如实说明验证缺口，但不得留空。`
@@ -61,7 +65,7 @@ export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssi
 }
 /** 历史安排请求保留原提示，仅按完整hash识别已知格式。 */
 export function resolveOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, promptHash: string): OwnerExecutionAssignmentRequest {
-  const registryVariants: readonly OwnerBrowserRegistryVariant[] = ['current', 'registry-v2', 'registry-v1', 'legacy-6']
+  const registryVariants: readonly OwnerBrowserRegistryVariant[] = ['current', 'registry-v3', 'registry-v2', 'registry-v1', 'legacy-6']
   for (const requireRoleCoverage of [true, false]) {
     for (const registryVariant of registryVariants) {
       for (const stepDeliveryInstructions of [true, false]) {
@@ -70,8 +74,10 @@ export function resolveOwnerExecutionAssignmentRequest(context: OwnerExecutionAs
             // includeBuildCommands=false 还原"只有 browser 断言"的历史提示文本。
             for (const includeBuildCommands of [true, false]) {
               for (const requireSwiftPackage of [true, false]) {
-                const request = buildOwnerExecutionAssignmentRequest(context, requireRoleCoverage, registryVariant, stepDeliveryInstructions, roleSpecificCapabilities, greenfieldRootTargets, includeBuildCommands, requireSwiftPackage)
-                if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) return request
+                for (const requireCompleteGreenfieldScope of context.greenfieldDevelopment ? [true, false] : [false]) {
+                  const request = buildOwnerExecutionAssignmentRequest(context, requireRoleCoverage, registryVariant, stepDeliveryInstructions, roleSpecificCapabilities, greenfieldRootTargets, includeBuildCommands, requireSwiftPackage, requireCompleteGreenfieldScope)
+                  if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) return request
+                }
               }
             }
           }
@@ -101,7 +107,7 @@ function text(value: unknown, name: string, maximum = 1200): string {
   return value
 }
 /** 模型输出只用于提案；只接受冻结计划、项目工作区与员工候选，不接受权限、预算或执行指令。 */
-export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: OwnerExecutionAssignmentProtocolContext, requireSwiftPackage = false): OwnerExecutionAssignmentProposal {
+export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: OwnerExecutionAssignmentProtocolContext, requireSwiftPackage = false, requireCompleteGreenfieldScope = true): OwnerExecutionAssignmentProposal {
   let value = raw
   if (typeof raw === 'string') {
     try { value = JSON.parse(raw) } catch { throw new Error('Owner人员安排不是有效JSON') }
@@ -142,6 +148,7 @@ export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: Own
       // 路径已由 normalizeRepoRelativePath 拒绝绝对路径、父目录与反斜杠，受保护路径也已拒绝；
       // 这里再要求允许范围覆盖全部目标，且验证命令只能来自内置注册表（不执行任何仓库脚本）。
       if (allowedPaths.some(path => !pathWithinAllowed(path, targetPaths))) throw new Error('Owner绿地研发允许范围必须是目标路径的子集')
+      if (requireCompleteGreenfieldScope && targetPaths.some(path => !pathWithinAllowed(path, allowedPaths))) throw new Error('Owner绿地研发允许范围必须覆盖全部目标文件')
       for (const command of verificationCommands) {
         if (isBuildVerificationCommand(command)) {
           // 原生/命令行项目没有网页可断言，用固定 argv 的构建命令产出真实退出码；

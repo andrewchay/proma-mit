@@ -27,6 +27,7 @@ export function getOwnerWaitingMessage(messages: readonly OwnerManagementMessage
 export function getOwnerWaitingLabel(messages: readonly OwnerManagementMessage[], taskId?: string, authorizationState?: string): string | null {
   const latest = getOwnerWaitingMessage(messages, taskId)
   if (!latest) return null
+  if (latest.kind === 'plan_proposal' && authorizationState === 'exhausted') return '等待项目预算决定'
   const label = ownerWaitLabels[latest.kind]
   if (!label) return null
   return latest.kind === 'attention' && authorizationState === 'stale' ? '授权范围需要重新确认' : label

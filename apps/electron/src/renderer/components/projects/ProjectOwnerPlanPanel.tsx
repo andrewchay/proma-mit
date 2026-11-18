@@ -1,6 +1,7 @@
 import { useEffect, useId, useMemo, useRef } from 'react'
 import { atom, useAtomValue, useSetAtom } from 'jotai'
 import type { ProjectOwnerPlanDraft, ProjectOwnerPlanSources } from '@gravitas/shared'
+import { getOwnerDelegationEditor, ownerDelegationEditorsAtom } from '../../atoms/owner-management-delegation-atoms'
 import { getOwnerGoalEditor, ownerGoalEditorsAtom } from '../../atoms/project-owner-goal-atoms'
 import { acknowledgeOwnerPlanComparisonAtom, canRemoveOwnerPlanStep, removeOwnerPlanStepAtom, canConfirmOwnerPlan, canSaveOwnerPlan, confirmOwnerPlanAtom, editOwnerPlanAtom, getOwnerPlanEditor, loadOwnerPlanAtom, loadOwnerPlanHistoryAtom, ownerPlanEditorsAtom, ownerPlanGoalReady, saveOwnerPlanAtom } from '../../atoms/project-owner-plan-atoms'
 
@@ -12,13 +13,14 @@ const buttonClass = 'rounded-md bg-muted px-3 py-2 text-sm disabled:opacity-50'
 const stateLabel = (state: ProjectOwnerPlanDraft['state']) => state === 'stale' ? '已过期' : state === 'confirmed' ? '已确认内容' : '待审阅'
 const feedbackAuthorizationLabel = (impact: NonNullable<ProjectOwnerPlanDraft['proposal']['deliveryFeedbackAssessment']>['authorizationImpact']) => impact === 'within_confirmed_boundary' ? '未发现超出当前确认范围' : impact === 'additional_confirmation' ? '包含需要你确认的新增范围' : '影响尚不能确定'
 const feedbackDispositionLabel = (disposition: NonNullable<ProjectOwnerPlanDraft['proposal']['deliveryFeedbackAssessment']>['changes'][number]['disposition']) => disposition === 'addressed' ? '本方案拟处理' : disposition === 'still_open' ? '仍未解决' : '不适用'
-function feedbackApprovalInstruction(plan: ProjectOwnerPlanDraft): string {
+function feedbackApprovalInstruction(plan: ProjectOwnerPlanDraft, autonomousStatus?: string): string {
   if (plan.state === 'stale') return '方案依据已变化，这份修订方案已失效，不能直接确认；Owner需要按最新信息重新整理。旧执行许可不会沿用。'
   if (plan.proposal.deliveryFeedbackAssessment?.authorizationImpact !== 'within_confirmed_boundary') {
     return plan.state === 'confirmed'
       ? '方案内容已确认，但新增或未能确认的范围仍需你确认；完成前Owner不会启动员工。旧执行许可不会沿用。'
       : '这份修订方案仍待你审阅；新增或未能确认的范围还需你确认，完成前Owner不会启动员工。旧执行许可不会沿用。'
   }
+  if (autonomousStatus) return autonomousStatus
   if (plan.state === 'confirmed') return '你已确认这份修订方案；Owner正在核对剩余额度和来源，未完成核对前不会启动员工。旧执行许可不会沿用。'
   return '这份修订方案仍待你审阅；确认方案并开始执行前，Owner会核对剩余额度和来源，旧执行许可不会沿用。'
 }
@@ -97,13 +99,14 @@ function PlanFacts({ plan }: { plan: ProjectOwnerPlanDraft }): React.ReactElemen
 interface ConversationPlanSummaryProps {
   plan: ProjectOwnerPlanDraft
   dirty: boolean
+  autonomousStatus?: string
 }
-function ConversationPlanSummary({ plan, dirty }: ConversationPlanSummaryProps): React.ReactElement {
+function ConversationPlanSummary({ plan, dirty, autonomousStatus }: ConversationPlanSummaryProps): React.ReactElement {
   return <div className="mt-4 space-y-3 text-sm" aria-label="Owner方案摘要">
     <p className="leading-6">{plan.proposal.summary}</p>
     {plan.proposal.deliveryFeedbackAssessment && <section className="space-y-2 rounded-xl bg-primary/5 p-3" aria-label="针对本次修改意见的评估">
       <p className="font-medium">针对这次修改意见</p><p>{plan.proposal.deliveryFeedbackAssessment.summary}</p>
-      <p className="text-xs text-muted-foreground">范围判断：{feedbackAuthorizationLabel(plan.proposal.deliveryFeedbackAssessment.authorizationImpact)}。{plan.proposal.deliveryFeedbackAssessment.authorizationRationale}。{feedbackApprovalInstruction(plan)}</p>
+      <p className="text-xs text-muted-foreground">范围判断：{feedbackAuthorizationLabel(plan.proposal.deliveryFeedbackAssessment.authorizationImpact)}。{plan.proposal.deliveryFeedbackAssessment.authorizationRationale}。{feedbackApprovalInstruction(plan, autonomousStatus)}</p>
       <details><summary className="cursor-pointer text-xs">逐项查看原完成标准如何处理</summary><ul className="mt-2 list-disc space-y-1 pl-5 text-xs">{plan.proposal.deliveryFeedbackAssessment.changes.map((change, index) => <li key={`${index}-${change.criterion}`}>{change.criterion}：{feedbackDispositionLabel(change.disposition)}；{change.proposedChange}</li>)}</ul></details>
     </section>}
     <details className="rounded-lg bg-muted/30 px-3 py-2">
@@ -121,8 +124,8 @@ function ConversationPlanSummary({ plan, dirty }: ConversationPlanSummaryProps):
 }
 export function ProjectOwnerPlanPanel({ projectId, taskId, conversational = false }: { projectId: string; taskId?: string; conversational?: boolean }): React.ReactElement {
   const subject = useMemo(() => ({ projectId, ...(taskId === undefined ? {} : { taskId }) }), [projectId, taskId])
-  const viewAtom = useMemo(() => atom(get => ({ editor: getOwnerPlanEditor(get(ownerPlanEditorsAtom), subject), goalRevision: getOwnerGoalEditor(get(ownerGoalEditorsAtom), subject).snapshot?.revision, goalReady: ownerPlanGoalReady(get, subject), canSave: canSaveOwnerPlan(get, subject), canConfirm: canConfirmOwnerPlan(get, subject) })), [subject])
-  const { editor, goalRevision, goalReady, canSave, canConfirm } = useAtomValue(viewAtom)
+  const viewAtom = useMemo(() => atom(get => ({ editor: getOwnerPlanEditor(get(ownerPlanEditorsAtom), subject), delegation: getOwnerDelegationEditor(get(ownerDelegationEditorsAtom), subject).view, goalRevision: getOwnerGoalEditor(get(ownerGoalEditorsAtom), subject).snapshot?.revision, goalReady: ownerPlanGoalReady(get, subject), canSave: canSaveOwnerPlan(get, subject), canConfirm: canConfirmOwnerPlan(get, subject) })), [subject])
+  const { editor, delegation, goalRevision, goalReady, canSave, canConfirm } = useAtomValue(viewAtom)
   const load = useSetAtom(loadOwnerPlanAtom); const edit = useSetAtom(editOwnerPlanAtom)
   const save = useSetAtom(saveOwnerPlanAtom); const confirm = useSetAtom(confirmOwnerPlanAtom)
   const acknowledge = useSetAtom(acknowledgeOwnerPlanComparisonAtom); const history = useSetAtom(loadOwnerPlanHistoryAtom)
@@ -133,11 +136,19 @@ export function ProjectOwnerPlanPanel({ projectId, taskId, conversational = fals
   const snapshot = editor.snapshot
   const roles = editor.context?.sources.roles ?? snapshot?.sources.roles ?? []
   const editStep = (index: number, patch: Partial<(typeof editor.steps)[number]>) => edit({ subject, patch: { steps: editor.steps.map((step, i) => i === index ? { ...step, ...patch } : step) } })
-  const conversationalState = editor.loading ? '正在整理方案' : snapshot?.state === 'confirmed' ? '方案已确认' : snapshot?.state === 'stale' ? '方案需要更新' : snapshot ? '待你审阅' : '尚无方案'
+  const autonomous = delegation?.delegation?.autonomousExecution === true
+  const budgetPaused = autonomous && delegation.state === 'exhausted'
+  const autonomousPendingPlan = snapshot?.state === 'proposed' && autonomous
+    && (!snapshot.proposal.deliveryFeedbackAssessment || snapshot.proposal.deliveryFeedbackAssessment.authorizationImpact === 'within_confirmed_boundary')
+  const autonomousStatus = autonomousPendingPlan
+    ? budgetPaused ? '修订方案已保存。确认项目预算后，Owner 会核对来源和余额并自行继续。'
+      : delegation.state === 'active' ? 'Owner 会按已确认的范围核对来源和余额，自行推进这份修订方案。' : undefined
+    : undefined
+  const conversationalState = editor.loading ? '正在整理方案' : snapshot?.state === 'confirmed' ? '方案已确认' : snapshot?.state === 'stale' ? '方案需要更新' : autonomousStatus ? budgetPaused ? '等待项目预算决定' : '等待 Owner 推进' : snapshot ? '待你审阅' : '尚无方案'
   return <section className="mt-4 min-w-0 rounded-xl bg-card p-5 shadow-sm [overflow-wrap:anywhere]" aria-label={conversational ? 'Owner方案' : taskId ? '任务计划审阅' : '项目计划审阅'}>
     <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-lg font-semibold">{conversational ? 'Owner 的方案' : 'Owner 计划审阅'}</h2>{snapshot && !conversational && <p className="mt-1 text-xs text-muted-foreground">计划 v{snapshot.planVersion} · {snapshot.origin === 'generated' ? 'AI生成（可信Run）' : '人工记录'}</p>}</div>
       <OwnerModuleStatus tone={editor.loading ? 'muted' : snapshot?.state === 'confirmed' ? 'accent' : snapshot?.state === 'stale' ? 'danger' : snapshot ? 'warn' : 'muted'}>{conversational ? conversationalState : editor.loading ? '正在加载' : snapshot ? stateLabel(snapshot.state) : '尚无计划'}</OwnerModuleStatus></div>
-    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{conversational ? '你可以在对话里补充目标和修改意见。首次执行时，在同一次最终确认中确认方案范围与必要边界，Owner随后按方案推进；对已交付成果的修改，Owner会先给出修订方案，等你确认后再继续。' : '这里只审阅和确认内容，不会调用模型，不会收费或派工。岗位建议不是员工实例，步骤不是已创建任务；旧版本确认不沿用到新版本。'}</p>
+    <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{conversational ? '你可以在对话里补充目标、约束或修改意见。确认项目范围和预算后，Owner 自行推进授权内的工作，遇到需要你决定的事项会在对话中提出。' : '这里只审阅和确认内容，不会调用模型，不会收费或派工。岗位建议不是员工实例，步骤不是已创建任务；旧版本确认不沿用到新版本。'}</p>
     {editor.error && (conversational ? <div className="mt-3 space-y-2"><p className="text-sm text-destructive" role="alert">暂时无法读取最新方案；你的对话和修改意见仍会保留。</p><button type="button" className={buttonClass} disabled={editor.loading || editor.saving} onClick={() => void load(subject)}>重新读取方案</button></div> : <p className="mt-3 text-sm text-destructive" role="alert">计划接口：{editor.error}。本地输入仍保留，目标保存不受影响。</p>)}
     {!snapshot && <p className="mt-4 text-sm text-muted-foreground">{editor.loaded ? conversational ? 'Owner 正在根据目标和项目现状整理方案。' : '尚无可审阅计划。可在上方绑定既有载体并准备目标规划，不需要默认手工拆任务。' : conversational ? '方案仍在加载；你的目标和对话会保留。' : '计划尚未加载完成；不会创建或生成计划。'}</p>}
     {snapshot && <>
@@ -149,7 +160,7 @@ export function ProjectOwnerPlanPanel({ projectId, taskId, conversational = fals
           {editor.context && <div className="mt-3 space-y-2"><p className="whitespace-pre-wrap text-xs text-muted-foreground">最新目标 v{editor.context.goal.goal.goalVersion}：{editor.context.goal.goal.objective}<br />约束：{editor.context.goal.goal.constraints.join('；') || '无'}<br />目标标准：{editor.context.goal.goal.acceptanceCriteria.join('；') || '无'}<br />最新来源指纹：{editor.context.fingerprint}</p><PlanSourceFacts sources={editor.context.sources} /></div>}
           <button type="button" className={`${buttonClass} mt-3`} disabled={editor.loading || editor.saving || editor.conflict || !editor.loaded} onClick={() => acknowledge(subject)}>已比较最新计划，保留我的输入继续编辑</button></>}
       </div>}
-      {conversational && <ConversationPlanSummary plan={snapshot} dirty={editor.dirty} />}
+      {conversational && <ConversationPlanSummary plan={snapshot} dirty={editor.dirty} autonomousStatus={autonomousStatus} />}
       {!conversational && <div className="mt-4">
       <form className="mt-4 space-y-3" onSubmit={event => { event.preventDefault(); void save(subject) }}>
         <PlanTextField id={`${id}-summary`} label="计划摘要" rows={3} required maxLength={2000} value={editor.summary} onChange={summary => edit({ subject, patch: { summary } })} />

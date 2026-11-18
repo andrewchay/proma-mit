@@ -612,7 +612,7 @@ test.each(['reviewer', 'coverage'] as const)('Given 安排请求完整结束但�
     const runs = listOwnerExecutionAssignmentRuns(f.subject)
     expect(runs.flatMap(run => run.outcomes.map(outcome => outcome.state)).sort()).toEqual(['failed', 'proposed'])
     expect(calls.slice(before).filter(item => item.projectId === f.project.id && item.purpose === 'owner_execution_assignment')).toHaveLength(2)
-    expect(getOwnerManagementConversation(f.project.id).messages.map(item => item.content)).toContain('上一条团队安排有完整运行记录，但未通过岗位覆盖或独立评审员校验。我已在当前项目授权和预算内重新安排一次；原记录保留，不会循环重试。')
+    expect(getOwnerManagementConversation(f.project.id).messages.map(item => item.content)).toContain('上一条团队安排有完整运行记录，但未通过团队或研发范围校验。我已在当前项目授权和预算内重新安排一次；原记录保留，不会循环重试。')
     reconcileOwnerManagement(f.project.id)
     reconcileOwnerManagement(f.project.id)
     await new Promise(resolve => setTimeout(resolve, 100))
@@ -1142,6 +1142,41 @@ test('Given Owner规划请求执行中持续管理授权被撤销 When提案返�
     nextOwnerPlanningResponseGate = null
     stop()
     delegation.revokeOwnerManagementDelegation(f.project.id, issued.id)
+  }
+}, 15000)
+
+test('Given 最后一笔 Owner 预算用于规划 When 提案返回 Then 提示预算且在增额后复用原提案', async () => {
+  const f = fixture('complete', false, false)
+  const input = { ...f.subject, requestId: randomUUID(), maxRequests: 6, maxCostMicros: 10_000_000,
+    expiresAt: Date.now() + 3600000, autonomousExecution: true as const, autonomousWorkspaceEditVersion: 1 as const }
+  const initial = delegation.previewOwnerManagementDelegation(input)
+  input.maxCostMicros = initial.perRequestCeilingMicros * 5
+  const preview = delegation.previewOwnerManagementDelegation(input)
+  const issued = delegation.confirmOwnerManagementDelegation({ input, previewHash: preview.previewHash })
+  let activeDelegationId = issued.id
+  const stop = startOwnerManagementLoop()
+  try {
+    await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'plan_proposal'))
+    const proposalMessage = getOwnerManagementConversation(f.project.id).messages.find(item => item.kind === 'plan_proposal')
+    expect(proposalMessage?.content).toContain('当前预算不足以预留下一次 Owner 请求')
+    expect(proposalMessage?.content).toContain('20%上限')
+    expect(delegation.getOwnerManagementDelegation(f.project.id)).toMatchObject({ state: 'exhausted', usedRequests: 1 })
+    const proposal = plans.getProjectOwnerPlanDraft(f.project.id)
+    expect(proposal?.state).toBe('proposed')
+    expect(listOwnerExecutionAssignmentRuns(f.subject)).toHaveLength(0)
+    expect(calls.filter(item => item.projectId === f.project.id).map(item => item.purpose)).toEqual(['owner_planning'])
+    expect(store.getProjectDb().prepare('SELECT COUNT(*) AS n FROM project_owner_execution_commands WHERE project_id=?').get(f.project.id)).toMatchObject({ n: 0 })
+    const renewed = authorize(f, true, 6)
+    activeDelegationId = renewed.id
+    await until(() => calls.some(item => item.projectId === f.project.id && item.purpose === 'owner_execution_assignment'))
+    const accepted = plans.getProjectOwnerPlanDraft(f.project.id)
+    expect(accepted?.state).toBe('confirmed')
+    expect(accepted?.sourceRun?.executionId).toBe(proposal?.sourceRun?.executionId)
+    expect(delegation.getOwnerManagementDelegation(f.project.id).usedRequests).toBe(2)
+    expect(calls.filter(item => item.projectId === f.project.id).map(item => item.purpose)).toEqual(['owner_planning', 'owner_execution_assignment'])
+  } finally {
+    stop()
+    delegation.revokeOwnerManagementDelegation(f.project.id, activeDelegationId)
   }
 }, 15000)
 

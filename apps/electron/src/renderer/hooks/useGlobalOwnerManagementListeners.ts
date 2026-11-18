@@ -11,7 +11,7 @@ const ownerNotices: Partial<Record<OwnerManagementMessage['kind'], { title: stri
   clarification: { title: '项目 Owner 有问题需要你确认', description: '问题和建议已保存在项目对话中。' },
   configuration_required: { title: '项目 Owner 需要确认必要设置', description: '打开项目对话查看需要补充的设置。' },
   execution_arranged: { title: '项目方案已准备好', description: '请在项目对话中确认执行范围和必要边界。' },
-  plan_proposal: { title: '项目方案待你审阅', description: 'Owner 已整理方案，请在项目对话中查看并确认或修改。' },
+  plan_proposal: { title: 'Owner 已保存项目方案', description: '打开项目对话查看方案及下一步。' },
   planning_confirmation: { title: '项目 Owner 等待必要确认', description: '打开项目对话查看本次需要确认的内容。' },
   reply: { title: '项目 Owner 更新了处理结果', description: '打开项目对话查看判断依据和后续安排。' },
   delivery: { title: '项目成果已交付', description: 'Owner 已完成约定的质量检查，成果已保存在项目对话中。' },
