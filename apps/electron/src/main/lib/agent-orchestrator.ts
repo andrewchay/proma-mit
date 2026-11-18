@@ -991,6 +991,7 @@ export class AgentOrchestrator {
   }): Promise<void> {
     const { sessionId, channelId, workspaceId, userMessage, prompt = userMessage, modelId, provider, apiKey, baseUrl, callbacks, startedAt, permissionMode, attachments, triggeredBy, isDelegationSession, skillMentions, requestedOperation, runtimeBudgetLimitUsd, onGoalCheckpoint, prepareGoalRun, assertRunOwner } = options
     let userMessageUuid = ''
+    let currentUserMessage: SDKMessage | undefined
 
     logInfo(sessionId, `[Pi Runtime] 会话开始 模型=${modelId ?? '-'} 渠道=${channelId} 触发=${triggeredBy ?? 'user'} 委派=${isDelegationSession ?? false}`)
 
@@ -1048,6 +1049,7 @@ export class AgentOrchestrator {
           _attachments: attachments,
           _createdAt: Date.now(),
         } as unknown as SDKMessage
+        currentUserMessage = userSDKMsg
         appendSDKMessages(sessionId, [userSDKMsg])
       }
 
@@ -1077,6 +1079,7 @@ export class AgentOrchestrator {
         channelId,
         cwd: agentCwd,
         historyMessages,
+        ...(currentUserMessage ? { currentUserMessage } : {}),
         attachments,
         permissionMode: currentPiPermissionMode,
         // 会话级思考级别：来自全局设置 agentThinkingLevel（Pi 专用；仅 reasoning 模型生效）

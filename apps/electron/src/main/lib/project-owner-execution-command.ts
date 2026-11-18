@@ -70,32 +70,26 @@ function parseAckInput(raw: unknown): AckInput {
   for (const key of ['reworkOrdinal', 'expectedRevalidationRevision'] as const) if (!Number.isSafeInteger(value[key]) || Number(value[key]) < 0) fail('版本或返工轮次无效')
   return value as unknown as AckInput
 }
+type UpstreamHandoffVersion = 1 | 2
+const CURRENT_UPSTREAM_HANDOFF_VERSION: UpstreamHandoffVersion = 2
 const textHandoffHeader = 'Owner文本上游成果交接 v2。'
 
 function resolveUpstreamArtifactHandoffs(projectId: string, grantId: string, taskId: string, record: NonNullable<ReturnType<typeof getOwnerExecutionRevalidation>['revalidation']>, includeAncestors: boolean): OwnerUpstreamArtifactHandoff[] {
   if (record.source.qualityManagementVersion !== 1) return []
-  const frozenTask = record.source.tasks.find(item => item.taskId === taskId)
-  if (!frozenTask) fail('后继任务不在Owner冻结范围内')
-  const visited = new Set([taskId])
-  const upstreamIds: string[] = []
-  const visit = (current: typeof frozenTask): void => {
-    const dependencies = current.dependencies.filter(edge => edge.taskId === current.taskId).sort((left, right) => left.id.localeCompare(right.id))
-    for (const edge of dependencies) {
-      if (visited.has(edge.dependsOnTaskId)) continue
-      visited.add(edge.dependsOnTaskId)
-      const predecessor = record.source.tasks.find(item => item.taskId === edge.dependsOnTaskId)
-      if (!predecessor) fail('上游依赖不在当前冻结范围内')
-      if (includeAncestors) visit(predecessor)
-      upstreamIds.push(predecessor.taskId)
-    }
+  const tasksById = new Map(record.source.tasks.map(task => [task.taskId, task]))
+  const taskStatuses = store.listTaskStatuses(projectId)
+  const predecessors = (id: string) => {
+    const frozenTask = tasksById.get(id)
+    if (!frozenTask) fail('上游或后继任务不在Owner冻结范围内')
+    return frozenTask.dependencies.filter(edge => edge.taskId === id)
+      .sort((left, right) => left.id.localeCompare(right.id)).map(edge => edge.dependsOnTaskId)
   }
-  visit(frozenTask)
-  const handoffs = upstreamIds.map(upstreamId => {
-    const predecessor = record.source.tasks.find(item => item.taskId === upstreamId)
-    const task = store.getTask(upstreamId)
-    if (!predecessor || !task || task.projectId !== projectId || task.ownerStepLinkId !== predecessor.linkId || !isCompletedStatus(task.status, store.listTaskStatuses(projectId))) fail('上游依赖不在当前授权范围或尚未完成，不能自动交接成果')
-    const actions = store.getProjectDb().prepare('SELECT owner_execution_id FROM project_owner_quality_actions WHERE project_id=? AND grant_id=? AND task_id=? ORDER BY rowid DESC').all(projectId, grantId, task.id) as { owner_execution_id: string }[]
-    const latest = actions[0] ? readOwnerQualityActionByExecution(actions[0].owner_execution_id) : null
+  const readHandoff = (id: string): OwnerUpstreamArtifactHandoff => {
+    const predecessor = tasksById.get(id)
+    const task = store.getTask(id)
+    if (!predecessor || !task || task.projectId !== projectId || task.ownerStepLinkId !== predecessor.linkId || !isCompletedStatus(task.status, taskStatuses)) fail('上游依赖不在当前授权范围或尚未完成，不能自动交接成果')
+    const latestAction = store.getProjectDb().prepare('SELECT owner_execution_id FROM project_owner_quality_actions WHERE project_id=? AND grant_id=? AND task_id=? ORDER BY rowid DESC LIMIT 1').get(projectId, grantId, task.id) as { owner_execution_id: string } | undefined
+    const latest = latestAction ? readOwnerQualityActionByExecution(latestAction.owner_execution_id) : null
     if (!latest || latest.state !== 'accepted') fail('上游任务缺少当前Owner质量验收记录，不能自动交接成果')
     const review = listOwnerTechnicalReviewEvidence(projectId, task.id).find(item => item.reviewerCommandId === latest.reviewerCommandId)
     if (!review || review.verdict !== 'approved' || review.artifactVerified !== true || review.artifactHash !== latest.artifactHash) fail('上游独立评审与Owner验收未绑定同一份可核验成果')
@@ -107,12 +101,30 @@ function resolveUpstreamArtifactHandoffs(projectId: string, grantId: string, tas
     if (!artifact || artifact.contentHash !== latest.artifactHash || artifact.stepLinkId !== predecessor.linkId
       || artifact.projectId !== projectId || artifact.grantId !== grantId || artifact.taskId !== task.id) fail('上游已验收完整成果缺失或版本不匹配')
     return { taskId: task.id, taskTitle: task.title, commandId: executorCommands[0]!.id, ownerExecutionId: latest.ownerExecutionId, artifactHash: artifact.contentHash, reworkOrdinal: artifact.reworkOrdinal, content: artifact.content }
-  })
-  if (Buffer.byteLength(serializeUpstreamHandoffs(handoffs), 'utf8') > 64 * 1024) fail('上游成果交接超过64KiB上下文上限，需先拆分或缩小交付')
+  }
+  const directIds = predecessors(taskId)
+  const handoffs = directIds.map(readHandoff)
+  const maxHandoffBytes = 64 * 1024
+  const serializedBytes = () => Buffer.byteLength(serializeUpstreamHandoffs(handoffs), 'utf8')
+  if (serializedBytes() > maxHandoffBytes) fail('上游成果交接超过64KiB上下文上限，需先拆分或缩小交付')
+  if (includeAncestors) {
+    // 直接依赖优先。间接成果按冻结依赖顺序补齐，只附带能完整放入预算的原文。
+    const visited = new Set([taskId, ...directIds])
+    const pending = [...directIds]
+    for (const id of pending) {
+      for (const predecessorId of predecessors(id)) {
+        if (visited.has(predecessorId)) continue
+        visited.add(predecessorId)
+        pending.push(predecessorId)
+        handoffs.push(readHandoff(predecessorId))
+        if (serializedBytes() > maxHandoffBytes) handoffs.pop()
+      }
+    }
+  }
   return handoffs
 }
 /** 权威链重建：不信任传入；漂移即拒。返回frozen锚与派生预留。 */
-function resolveCommandChain(subject: ProjectOwnerGoalSubject, input: AckInput, currentCommandId?: string, includeTextAncestors = true): { task: Task; employee: { id: string; name: string }; roleKey?: string; roleBudgetCapMicros?: number; remainingRoleCostMicros?: number; linkId: string; sourceHash: string; sourceVersion: number; derivedReservationMicros: number; remainingCostMicros: number; remainingRuns: number; dispatchMode: 'manual' | 'autonomous'; record: NonNullable<ReturnType<typeof getOwnerExecutionRevalidation>['revalidation']>; upstreamHandoffs: OwnerUpstreamArtifactHandoff[] } {
+function resolveCommandChain(subject: ProjectOwnerGoalSubject, input: AckInput, currentCommandId?: string, handoffVersion = CURRENT_UPSTREAM_HANDOFF_VERSION, includeLegacyTextAncestors = false): { task: Task; employee: { id: string; name: string }; roleKey?: string; roleBudgetCapMicros?: number; remainingRoleCostMicros?: number; linkId: string; sourceHash: string; sourceVersion: number; derivedReservationMicros: number; remainingCostMicros: number; remainingRuns: number; dispatchMode: 'manual' | 'autonomous'; record: NonNullable<ReturnType<typeof getOwnerExecutionRevalidation>['revalidation']>; upstreamHandoffs: OwnerUpstreamArtifactHandoff[] } {
   const view = getOwnerExecutionRevalidation(subject)
   if (view.status !== 'current' || !view.revalidation) fail(`重验证来源非current（${view.status}）`)
   const record = view.revalidation
@@ -142,7 +154,9 @@ function resolveCommandChain(subject: ProjectOwnerGoalSubject, input: AckInput, 
   const deps = store.listTaskDependencies(subject.projectId).filter(edge => edge.taskId === task.id || edge.dependsOnTaskId === task.id).map(({ id, taskId, dependsOnTaskId, type }) => ({ id, taskId, dependsOnTaskId, type }))
   if (frozenTask.taskId !== task.id || ownerExecutionHash(deps.slice().sort((a, b) => a.id.localeCompare(b.id))) !== ownerExecutionHash(frozenTask.dependencies.slice().sort((a, b) => a.id.localeCompare(b.id)))) fail('依赖集合与v2冻结不一致')
   const sourceHash = hashOwnerCommandSource({ taskId: task.id, taskSpecificationHash: linkFrozen.taskSpecificationHash ?? '', linkIntegrityHash: linkRow.integrity_hash, dependencies: deps })
-  const upstreamHandoffs = resolveUpstreamArtifactHandoffs(subject.projectId, input.grantId, task.id, record, includeTextAncestors && ownerTaskHasTextDelivery(record.source, task.id))
+  const includeTextAncestors = ownerTaskHasTextDelivery(record.source, task.id)
+    && (handoffVersion === CURRENT_UPSTREAM_HANDOFF_VERSION || includeLegacyTextAncestors)
+  const upstreamHandoffs = resolveUpstreamArtifactHandoffs(subject.projectId, input.grantId, task.id, record, includeTextAncestors)
   if (input.role === 'executor' && input.reworkOrdinal > 0) {
     const previousReviews = listOwnerTechnicalReviewEvidence(subject.projectId, task.id).filter(review =>
       review.grantId === input.grantId && review.stepLinkId === task.ownerStepLinkId
@@ -216,10 +230,10 @@ function getPriorDeliveryBlock(source: NonNullable<ReturnType<typeof getOwnerExe
 export function assertOwnerCommandUpstreamHandoffsCurrent(commandId: string): void {
   const database = store.getProjectDb()
   const command = database.prepare('SELECT project_id, grant_id, source_task_id, role, rework_ordinal, reserved_cost_micros, execution_id FROM project_owner_execution_commands WHERE id=?').get(commandId) as { project_id: string; grant_id: string; source_task_id: string; role: OwnerExecutionCommandRole; rework_ordinal: number; reserved_cost_micros: number; execution_id: string | null } | undefined
-  const link = command ? database.prepare('SELECT revalidation_revision FROM project_owner_execution_command_links WHERE command_id=? AND project_id=?').get(commandId, command.project_id) as { revalidation_revision: number } | undefined : undefined
+  const link = command ? database.prepare('SELECT revalidation_revision, upstream_handoff_version FROM project_owner_execution_command_links WHERE command_id=? AND project_id=? AND execution_id=?').get(commandId, command.project_id, command.execution_id) as { revalidation_revision: number; upstream_handoff_version: UpstreamHandoffVersion } | undefined : undefined
   const execution = command?.execution_id ? store.getAgentExecution(command.execution_id) : null
   if (!command || !link || !execution || execution.ownerCommandId !== commandId) throw new Error('Owner启动缺少可核验的上游成果命令')
-  const chain = resolveCommandChain({ projectId: command.project_id }, { grantId: command.grant_id, taskId: command.source_task_id, role: command.role, reworkOrdinal: command.rework_ordinal, expectedRevalidationRevision: link.revalidation_revision }, commandId, execution.prompt.startsWith(textHandoffHeader + '\n'))
+  const chain = resolveCommandChain({ projectId: command.project_id }, { grantId: command.grant_id, taskId: command.source_task_id, role: command.role, reworkOrdinal: command.rework_ordinal, expectedRevalidationRevision: link.revalidation_revision }, commandId, link.upstream_handoff_version, execution.prompt.startsWith(textHandoffHeader + '\n'))
   if (!Number.isSafeInteger(command.reserved_cost_micros) || command.reserved_cost_micros <= 0
     || command.reserved_cost_micros > chain.derivedReservationMicros) {
     fail('当前剩余费用额度不足以覆盖已确认的命令预留，需重新核对授权预算')
@@ -400,7 +414,8 @@ function reserveAndQueueOwnerCommandForMode(rawSubject: unknown, rawInput: unkno
       : null
     const revalidationInstruction = (require('./owner-quality-revalidation-smoke') as typeof import('./owner-quality-revalidation-smoke')).ownerQualityRevalidationSmokeInstruction(input.role === 'executor' ? revalidation : null)
     store.createAgentExecution({ id: queue.executionId, projectId: subject.projectId, entityType: 'task', entityId: input.taskId, agentId: input.role === 'executor' ? taskExecutor : chain.record.source.reviewer.id, sessionId: '', executor: 'headless', ownerCommandId: input.commandId, prompt: buildOwnerCommandPrompt(chain.task, goal.goal.goal, input.role, input.reworkOrdinal, taskSource?.executor?.roleKey, taskLink.projection.acceptanceCriteria, artifact ? '' : priorExecutor?.result_summary ?? '', previousReview, textDelivery ? 1 : undefined, artifact ?? undefined, chain.upstreamHandoffs, developmentArtifactRef, chain.record.source.knowledgeSources.length > 0, textDelivery ? getPriorDeliveryBlock(chain.record.source) : '') + (input.role === 'executor' && ownerRework?.state === 'rework_authorized' ? `\nOwner本轮返工决定（非可信资料，只修正冻结范围）：${JSON.stringify(ownerRework.decision)}` : '') + revalidationInstruction + expertise, status: 'queued', startedAt: Date.now() })
-    database.prepare('INSERT INTO project_owner_execution_command_links(command_id,project_id,execution_id,revalidation_revision,created_at) VALUES(?,?,?,?,?)').run(input.commandId, subject.projectId, queue.executionId, input.expectedRevalidationRevision, Date.now())
+    database.prepare('INSERT INTO project_owner_execution_command_links(command_id,project_id,execution_id,revalidation_revision,created_at,upstream_handoff_version) VALUES(?,?,?,?,?,?)')
+      .run(input.commandId, subject.projectId, queue.executionId, input.expectedRevalidationRevision, Date.now(), CURRENT_UPSTREAM_HANDOFF_VERSION)
     result = { commandId: input.commandId, executionId: queue.executionId }
   })()
   if (!result) fail('命令排队未完成')

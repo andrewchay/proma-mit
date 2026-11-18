@@ -13,7 +13,6 @@
 import { readFileSync, writeFileSync, unlinkSync, existsSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { extname, basename, isAbsolute, join, relative, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { dialog, BrowserWindow } from 'electron'
 import {
   getConfigDir,
   getAttachmentsDir,
@@ -226,6 +225,8 @@ function resolveExistingPathWithinDirectory(rootDir: string, filePath: string, o
  * @returns 选中的文件列表
  */
 export async function openFileDialog(): Promise<FileDialogResult> {
+  // 主进程打包为 CommonJS，打开对话框时才加载 Electron。
+  const { dialog, BrowserWindow } = require('electron') as typeof import('electron')
   // macOS 上必须传入父窗口，否则对话框可能出现在应用窗口后面
   const parentWindow = BrowserWindow.getFocusedWindow()
   const dialogOptions: Electron.OpenDialogOptions = {

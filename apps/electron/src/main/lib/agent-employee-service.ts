@@ -90,6 +90,7 @@ import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
 
 /** 当前进程内 execution 对应的 Runtime generation；重启后未知时拒绝伪造已停止。 */
 const runtimeGenerationByExecution = new Map<string, number>()
+const preparingOwnerReviewerExecutions = new Set<string>()
 
 /** 精确用途优先于员工档案/状态/grant；同时检查复用会话的全部关联及负向残余。 */
 function isOwnerBusinessExecutionRestricted(execution: AgentExecution): boolean {
@@ -1152,6 +1153,8 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
   const updated = store.getAgentExecution(executionId)!
   let userMessage = ownerPlanning?.request.userPrompt ?? updated.prompt
   if (ownerExecution?.role === 'reviewer') {
+    // 已认领但还在读取冻结快照，Runtime 此时尚未注册为活跃。
+    preparingOwnerReviewerExecutions.add(executionId)
     try {
       const { source: frozen, taskId } = readOwnerCommandFrozenSource(ownerExecution.commandId)
       if (ownerTaskDeliveryKind(frozen, taskId) === 'development') {
@@ -1165,6 +1168,8 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
     } catch (error) {
       handleExecutionError(executionId, `独立Reviewer未能读取完整代码快照：${error instanceof Error ? error.message : 'Owner代码快照读取失败'}`, Date.now())
       return false
+    } finally {
+      preparingOwnerReviewerExecutions.delete(executionId)
     }
   }
 
@@ -1902,7 +1907,7 @@ export function scanAgentEmployeeHeartbeat(maxDurationMs: number = DEFAULT_MAX_D
     // Stage B Owner执行不能进入普通超时/失联回写与Pilot用量路径；会话失活或探测异常时按unknown恢复并撤权。
     if (execution.ownerCommandId) {
       // Runtime已结束但终态冻结/结算仍在进行时，会话可能已不活跃；不能抢先判定中断。
-      if (pendingOwnerCommandCallbacks.has(execution.ownerCommandId)) continue
+      if (preparingOwnerReviewerExecutions.has(execution.id) || pendingOwnerCommandCallbacks.has(execution.ownerCommandId)) continue
       let active = false
       try { active = isAgentSessionActive(execution.sessionId) } catch { /* 探测异常按unknown保全，绝不普通重试 */ }
       if (active) store.updateAgentExecution(execution.id, { lastHeartbeatAt: now })

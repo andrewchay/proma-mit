@@ -14,7 +14,6 @@
  * @earendil-works/pi-coding-agent 0.82.x 的 ModelRuntime API。
  */
 
-import { shell } from 'electron'
 import type {
   CodexOAuthCredentials,
   CodexOAuthDeviceCode,
@@ -28,6 +27,19 @@ let piSdkPromise: Promise<PiSdk> | undefined
 function loadPiSdk(): Promise<PiSdk> {
   piSdkPromise ??= import('@earendil-works/pi-coding-agent')
   return piSdkPromise
+}
+
+/**
+ * 惰性获取 Electron shell。
+ *
+ * 顶层 `import { shell } from 'electron'` 会让任何间接依赖本模块的测试文件在
+ * bun 下整文件炸掉（占位 electron 模块没有 shell 导出），而登录流程只有真正
+ * 打开浏览器时才需要它。
+ */
+function openExternal(url: string): void {
+  void import('electron')
+    .then(({ shell }) => shell.openExternal(url))
+    .catch((error: unknown) => console.error('[Codex OAuth] 打开浏览器失败:', error))
 }
 
 type OAuthCredential = { type: 'oauth'; access: string; refresh: string; expires: number; [key: string]: unknown }
@@ -114,11 +126,11 @@ export async function loginCodexOAuth(options?: CodexLoginOptions): Promise<Code
       notify: (event) => {
         if (event.type === 'auth_url') {
           options?.onAuthUrl?.(event.url)
-          shell.openExternal(event.url).catch((err) => console.error('[Codex OAuth] 打开浏览器失败:', err))
+          openExternal(event.url)
         } else if (event.type === 'device_code') {
           console.log(`[Codex OAuth] 请在浏览器中授权（设备码：${event.userCode}）`)
           options?.onDeviceCode?.({ userCode: event.userCode, verificationUri: event.verificationUri })
-          shell.openExternal(event.verificationUri).catch((err) => console.error('[Codex OAuth] 打开设备授权页面失败:', err))
+          openExternal(event.verificationUri)
         } else if (event.type === 'progress' || event.type === 'info') {
           console.log(`[Codex OAuth] ${event.message}`)
           options?.onProgress?.(event.message)

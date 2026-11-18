@@ -8,7 +8,7 @@
  * 暂不改动现有 web-bridge-service。后续再接入工具层与站点信任权限。
  */
 
-import { BrowserWindow, WebContentsView, type NativeImage } from 'electron'
+import type { BrowserWindow, WebContentsView, NativeImage } from 'electron'
 import { withBrowserCdpTimeout, throwIfBrowserOperationAborted, BrowserOperationAbortedError, BROWSER_OBSERVE_TIMEOUT_MS, type CdpCommandFn } from './browser-cdp'
 import { assertSafeBrowserUrl } from './browser-policy'
 import { parseBrowserPressAction } from './browser-key-policy'
@@ -74,6 +74,8 @@ export class BrowserController {
       return existing
     }
 
+    // 主进程打包为 CommonJS，创建宿主窗口时才加载 Electron。
+    const { BrowserWindow } = require('electron') as typeof import('electron')
     const hostWindow = new BrowserWindow({
       width: 1200,
       height: 800,
@@ -100,6 +102,7 @@ export class BrowserController {
 
   private createTab(session: BrowserSession, claimAsAgent = false): BrowserTab {
     const tabId = `tab-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const { WebContentsView } = require('electron') as typeof import('electron')
     const view = new WebContentsView({
       webPreferences: {
         contextIsolation: true,
