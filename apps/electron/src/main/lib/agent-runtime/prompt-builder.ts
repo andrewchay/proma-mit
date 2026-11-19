@@ -326,6 +326,10 @@ export function sdkMessagesToChatMessages(messages: SDKMessage[]): ChatMessage[]
 
     if (msg.type === 'assistant') {
       const assistantMsg = msg as SDKAssistantMessage
+      if (assistantMsg.error) {
+        pendingToolCalls.clear()
+        continue
+      }
       const content = assistantMsg.message?.content
       if (!Array.isArray(content)) continue
 

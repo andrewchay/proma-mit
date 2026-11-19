@@ -38,6 +38,7 @@ export function ChannelSettings(): React.ReactElement {
   const [viewMode, setViewMode] = React.useState<ViewMode>('list')
   const [editingChannel, setEditingChannel] = React.useState<Channel | null>(null)
   const [loading, setLoading] = React.useState(true)
+  const [loadError, setLoadError] = React.useState(false)
   const [agentChannelId, setAgentChannelId] = useAtom(agentChannelIdAtom)
   const [, setAgentModelId] = useAtom(agentModelIdAtom)
   const [agentChannelIds, setAgentChannelIds] = useAtom(agentChannelIdsAtom)
@@ -58,11 +59,13 @@ export function ChannelSettings(): React.ReactElement {
   const loadChannels = React.useCallback(async (): Promise<Channel[]> => {
     try {
       const list = await window.electronAPI.listChannels()
+      setLoadError(false)
       setChannels(list)
       setGlobalChannels(list) // 同步到全局缓存
       return list
     } catch (error) {
       console.error('[渠道设置] 加载渠道列表失败:', error)
+      setLoadError(true)
       return []
     } finally {
       setLoading(false)
@@ -202,6 +205,10 @@ export function ChannelSettings(): React.ReactElement {
         onCancel={handleFormCancel}
       />
     )
+  }
+
+  if (loadError) {
+    return <p role="alert" className="text-sm text-destructive">无法读取渠道配置，原文件已保留。请检查配置文件和访问权限后重试。</p>
   }
 
   // Claude runtime 兼容渠道（已启用）：Anthropic / DeepSeek / Kimi API / Kimi Coding Plan / MiniMax

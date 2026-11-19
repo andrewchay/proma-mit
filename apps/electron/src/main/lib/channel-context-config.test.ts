@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, mock, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -12,9 +12,16 @@ mock.module('electron', () => ({
   shell: { openExternal: async () => undefined },
 }))
 mock.module('./config-audit-service', () => ({ appendConfigAudit: async () => undefined, redactSensitive: (value: unknown) => value }))
-const { createChannel, getChannelById, updateChannel } = await import('./channel-manager')
+const { createChannel, getChannelById, updateChannel, listChannels } = await import('./channel-manager')
 
 describe('模型窗口配置持久化', () => {
+  test('配置损坏时拒绝覆盖原文件', () => {
+    const path = join(configDir, 'channels.json')
+    writeFileSync(path, '{损坏')
+    expect(() => listChannels()).toThrow()
+    expect(readFileSync(path, 'utf8')).toBe('{损坏')
+    rmSync(path)
+  })
   test('保存 API 与手动值，切换端点后清除旧 API 值，保留手动配置', () => {
     const channel = createChannel({ provider: 'google', name: '测试', baseUrl: 'https://google.test', apiKey: 'fake', enabled: true,
       models: [{ id: 'gemini-4-argon', name: 'Gemini', enabled: true, contextWindow: 1_048_576, contextWindowSource: 'api', contextWindowOverride: 512_000 }] })

@@ -72,6 +72,13 @@ describe('Prompt 构建器', () => {
     expect(history[1]?.content).toBe('有什么可以帮你？')
   })
 
+  test('恢复会话时不将 provider 错误作为模型历史', () => {
+    const history = sdkMessagesToChatMessages([
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'provider error' }] }, parent_tool_use_id: null, error: { message: 'provider error' } },
+    ])
+    expect(history).toEqual([])
+  })
+
   test('sdkMessagesToChatMessages 序列化 tool_use/tool_result', () => {
     const messages: SDKMessage[] = [
       {
