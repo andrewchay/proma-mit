@@ -55,7 +55,7 @@ export interface OwnerGateSessionRow {
 export function isOwnerWorkspaceFileActionCandidate(sessionId: string, toolName: string, args?: Record<string, unknown>): boolean {
   if (toolName !== 'Write' && toolName !== 'Edit') return false
   const context = resolveOwnerExecutionGateSession(sessionId)
-  if (context.kind !== 'owner_business') return false
+  if (context.kind !== 'owner_business' || context.reviewer) return false
   const filePath = typeof args?.file_path === 'string' ? args.file_path.trim() : ''
   if (!filePath) return false
   const workspace = getAgentWorkspace(context.record.source.workspaceId)
@@ -108,9 +108,9 @@ function assertOwnerDevelopmentRead(sessionId: string, args?: Record<string, unk
 export type OwnerSessionGateContext =
   | { kind: 'unrestricted' }
   | { kind: 'restricted'; reason: string }
-  | { kind: 'owner_business'; subject: { projectId: string; taskId?: string }; record: OwnerExecutionRevalidationRecord; executionId: string; gate: OwnerGateSessionRow | null }
+  | OwnerBusinessChain
 
-type OwnerBusinessChain = { kind: 'owner_business'; subject: { projectId: string; taskId?: string }; record: OwnerExecutionRevalidationRecord; executionId: string; gate: OwnerGateSessionRow | null }
+type OwnerBusinessChain = { kind: 'owner_business'; subject: { projectId: string; taskId?: string }; record: OwnerExecutionRevalidationRecord; executionId: string; reviewer: boolean; gate: OwnerGateSessionRow | null }
 function developmentScopeForExecution(context: OwnerBusinessChain) {
   const execution = store.getAgentExecution(context.executionId)
   return execution ? context.record.source.tasks.find(task => task.taskId === execution.entityId)?.developmentScope : undefined
@@ -122,9 +122,15 @@ function hasTextDeliveryForExecution(context: OwnerBusinessChain): boolean {
 }
 function resolveOwnerBusinessChain(sessionId: string): { kind: 'restricted'; reason: string } | OwnerBusinessChain {
   try {
-    const execution = (store.getProjectDb().prepare("SELECT id, entity_id, owner_command_id FROM agent_executions WHERE session_id = ? AND status = 'running' ORDER BY started_at DESC").all(sessionId) as Array<{ id: string; entity_id: string; owner_command_id: string | null }>)
+    const execution = (store.getProjectDb().prepare(`SELECT execution.id, execution.entity_id, execution.owner_command_id, command.role AS owner_role
+      FROM agent_executions execution
+      LEFT JOIN project_owner_execution_commands command ON command.id = execution.owner_command_id AND command.execution_id = execution.id
+      WHERE execution.session_id = ? AND execution.status = 'running' ORDER BY execution.started_at DESC`).all(sessionId) as Array<{
+        id: string; entity_id: string; owner_command_id: string | null; owner_role: 'executor' | 'reviewer' | null
+      }>)
       .find(row => store.hasOwnerBusinessExecutionEvidence(row.id) || Boolean(row.owner_command_id))
     if (!execution) return { kind: 'restricted', reason: 'Owner业务会话无运行中execution，工具执行拒绝' }
+    if (execution.owner_command_id && execution.owner_role !== 'reviewer' && execution.owner_role !== 'executor') return { kind: 'restricted', reason: 'Owner命令角色无法核验，工具执行拒绝' }
     const task = store.getTask(execution.entity_id)
     if (!task?.ownerStepLinkId) return { kind: 'restricted', reason: 'Owner任务标记缺失，工具执行拒绝' }
     const linkRow = store.getProjectDb().prepare('SELECT materialization_id, project_id FROM project_owner_task_step_links WHERE id = ? AND task_id = ?').get(task.ownerStepLinkId, task.id) as { materialization_id: string; project_id: string } | undefined
@@ -135,7 +141,7 @@ function resolveOwnerBusinessChain(sessionId: string): { kind: 'restricted'; rea
     if (view.status !== 'current' || !view.revalidation) return { kind: 'restricted', reason: `Owner重验证来源非current（${view.status}），工具执行拒绝` }
     const record = view.revalidation
     const gate = store.getProjectDb().prepare('SELECT * FROM project_owner_execution_gate_sessions WHERE session_id = ?').get(sessionId) as { session_id: string; execution_id: string; revalidation_id: string; revalidation_integrity_hash: string; content_snapshot_hash: string; provider_admitted_at: number | null; created_at: number } | undefined
-    return { kind: 'owner_business', subject, record, executionId: execution.id, gate: gate ? { sessionId: gate.session_id, executionId: gate.execution_id, revalidationId: gate.revalidation_id, revalidationIntegrityHash: gate.revalidation_integrity_hash, contentSnapshotHash: gate.content_snapshot_hash, providerAdmittedAt: gate.provider_admitted_at, createdAt: gate.created_at } : null }
+    return { kind: 'owner_business', subject, record, executionId: execution.id, reviewer: execution.owner_role === 'reviewer', gate: gate ? { sessionId: gate.session_id, executionId: gate.execution_id, revalidationId: gate.revalidation_id, revalidationIntegrityHash: gate.revalidation_integrity_hash, contentSnapshotHash: gate.content_snapshot_hash, providerAdmittedAt: gate.provider_admitted_at, createdAt: gate.created_at } : null }
   } catch (error) {
     return { kind: 'restricted', reason: error instanceof Error ? error.message : 'Owner门禁链核验失败' }
   }
@@ -155,9 +161,13 @@ export function getOwnerExecutionToolNames(sessionId: string): ReadonlySet<strin
   const context = resolveOwnerExecutionGateSession(sessionId)
   if (context.kind === 'unrestricted') return null
   if (context.kind !== 'owner_business') return new Set()
-  const fileActions = hasTextDeliveryForExecution(context) ? [] : ['Write', 'Edit']
+  const files: string[] = []
+  if (!context.reviewer) {
+    if (!hasTextDeliveryForExecution(context)) files.push('Write', 'Edit')
+    if (developmentScopeForExecution(context)) files.push('Read')
+  }
   const knowledgeTools = context.record.source.knowledgeSources.length ? OWNER_TOOL_ALLOWED : []
-  return new Set([...knowledgeTools, 'AskUserQuestion', ...(developmentScopeForExecution(context) ? ['Read'] : []), ...fileActions])
+  return new Set([...knowledgeTools, 'AskUserQuestion', ...files])
 }
 
 function frozenSourceIds(record: OwnerExecutionRevalidationRecord): string[] {
@@ -303,6 +313,9 @@ export function assertToolAllowedForSessionPurpose(sessionId: string, toolName: 
   if (context.kind === 'owner_business' && toolName === 'AskUserQuestion') {
     if (args?.interactionType === 'computer_use_takeover') throw new Error('Owner员工暂不支持系统接管请求')
     return
+  }
+  if (context.kind === 'owner_business' && context.reviewer && ['Read', 'Write', 'Edit'].includes(toolName)) {
+    throw new Error('Owner独立评审只使用提示中冻结的成果和验证回执，无法访问仓库文件')
   }
   if (context.kind === 'owner_business' && toolName === 'Read') {
     assertOwnerDevelopmentRead(sessionId, args)

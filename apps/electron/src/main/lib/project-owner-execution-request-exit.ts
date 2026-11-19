@@ -2,7 +2,7 @@ import { readOwnerCommandRuntime, assertOwnerCommandPrice } from './project-owne
 /** Owner逐请求出口：derive→reserve→verify→fetch→settle五步镜像；Owner出口一律redirect:'error'；默认fake transport。 */
 import { createHash, randomUUID } from 'node:crypto'
 import * as store from './project-sqlite-store'
-import { derivePilotRequestEnvelope, getPilotReviewedPriceEvidence, getPilotReviewedPriceEvidenceForModel } from './project-pilot-request-evidence'
+import { derivePilotRequestEnvelope, getPilotReviewedPriceEvidence, getPilotReviewedPriceEvidenceForModel, OWNER_AI_SDK_MIN_OUTPUT_TOKENS } from './project-pilot-request-evidence'
 import { getAgentProviderProtocol, type ProviderType } from '@gravitas/shared'
 import { PILOT_DEFAULT_PRICE_EVIDENCE_ID } from './project-pilot-request-exit'
 import { ownerEmployeePriceProviderKind } from './project-owner-employee-runtime'
@@ -133,7 +133,7 @@ export function resolveOwnerExecutionMaxOutputTokens(sessionId: string, modelId:
   const budgetBoundedMax = outputMicrosPerToken > 0 && row.reserved_cost_micros > 0
     ? Math.floor(row.reserved_cost_micros * 0.5 / outputMicrosPerToken)
     : protocolSafeMax
-  return Math.max(1024, Math.min(price.maxModelOutputTokens, protocolSafeMax, budgetBoundedMax))
+  return Math.max(OWNER_AI_SDK_MIN_OUTPUT_TOKENS, Math.min(price.maxModelOutputTokens, protocolSafeMax, budgetBoundedMax))
 }
 function reserveOwnerRequest(input: { requestId: string; commandId: string; executionId: string; sessionId: string; envelope: ReturnType<typeof derivePilotRequestEnvelope> }) {
   if ([input.requestId, input.commandId, input.executionId, input.sessionId].some(id => typeof id !== 'string' || !id.trim())
@@ -158,11 +158,15 @@ function reserveOwnerRequest(input: { requestId: string; commandId: string; exec
     assertOwnerSmokeRequestLimit()
     const command = database.prepare("SELECT project_id, grant_id, state, reserved_cost_micros FROM project_owner_execution_commands WHERE id=? AND execution_id=?").get(input.commandId, input.executionId) as { project_id: string; grant_id: string; state: string; reserved_cost_micros: number } | undefined
     const execution = store.getAgentExecution(input.executionId)
-    const grant = command && database.prepare("SELECT state, expires_at FROM project_owner_execution_grants WHERE id=? AND project_id=?").get(command.grant_id, command.project_id) as { state: string; expires_at: number } | undefined
+    const grant = command && database.prepare("SELECT state, expires_at, dispatch_mode FROM project_owner_execution_grants WHERE id=? AND project_id=?").get(command.grant_id, command.project_id) as { state: string; expires_at: number; dispatch_mode: string } | undefined
     if (!command || !execution || !grant || command.state !== 'running' || grant.state !== 'active'
       || grant.expires_at <= Date.now() || execution.status !== 'running'
       || execution.ownerCommandId !== input.commandId || execution.sessionId !== input.sessionId) {
       throw new Error('Owner请求归属或活动授权无法核验')
+    }
+    if (grant.dispatch_mode === 'autonomous') {
+      const control = require('./project-owner-dispatch-control') as typeof import('./project-owner-dispatch-control')
+      control.assertOwnerDispatchManagementCurrent(command.project_id, command.grant_id)
     }
     if (database.prepare('SELECT 1 FROM project_owner_execution_request_reservations WHERE request_id=?').get(input.requestId)) throw new Error('Owner请求ID已预留，不得重复发送')
     if (database.prepare('SELECT 1 FROM project_owner_execution_request_reservations WHERE execution_id=? AND request_evidence_id=?').get(input.executionId, input.envelope.requestEvidenceId)) throw new Error('Owner请求体指纹已预留，不得重复发送')

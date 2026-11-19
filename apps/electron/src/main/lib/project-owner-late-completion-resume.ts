@@ -1,3 +1,4 @@
+import { ownerDevelopmentSnapshotScope } from './project-owner-development-artifact'
 /** 完成受限验证后才恢复原授权；失败或任何来源变化都保留暂停状态。 */
 import { join } from 'node:path'
 import { lstatSync } from 'node:fs'
@@ -58,7 +59,7 @@ function assertCurrent(audit: OwnerLateCompletionReconciliation, isSessionActive
   const directory = join(getConfigDir(), 'agent-workspaces', workspace.slug, row.sessionId), stat = lstatSync(directory)
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('研发会话目录无效')
   const worktree = resolveDevelopmentWorktree(workspace.rootPath, directory), snapshot = loadDevelopmentSnapshot(directory, row.executionId)
-  const scope = validateDevelopmentScope(task.developmentScope, { getWorkspace: getAgentWorkspace })
+  const scope = ownerDevelopmentSnapshotScope(validateDevelopmentScope(task.developmentScope, { getWorkspace: getAgentWorkspace }), row.commandId)
   if (!worktree || snapshot.contentHash !== audit.snapshotHash || !developmentWorktreeMatchesSnapshot(worktree, snapshot, scope)) throw new Error('冻结代码成果已变化')
   const requests = db.prepare(`SELECT request_id AS requestId,execution_id AS executionId,session_id AS sessionId,state,
     settled_cost_micros AS settledCostMicros,request_evidence_id AS requestEvidenceId,price_evidence_id AS priceEvidenceId

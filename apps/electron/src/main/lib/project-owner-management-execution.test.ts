@@ -78,7 +78,7 @@ afterEach(async () => {
   await new Promise(resolve => setTimeout(resolve, 25))
 })
 async function until(predicate: () => boolean) { for (let i = 0; i < 150; i++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 10)) } throw new Error('等待主动跟进超时') }
-async function fixture(running = false, failed = false, unknownUsage = false, textDelivery = false, body?: string, durableStartIntent = false, maxRequests = 6) {
+async function fixture(running = false, failed = false, unknownUsage = false, textDelivery = false, body?: string, durableStartIntent = false, maxRequests = 6, tightBudget = false) {
   workerBody = body ?? (textDelivery ? 'report '.repeat(4000) + '全文末端：受众依据尚待原始访谈验证。' : '资料整理完成，但缺受众来源与成果文件核验。')
   leaveWorkerRunning = running; failWorker = failed; unknownWorkerUsage = unknownUsage
   const project = store.createProject({ title: '主动管理样例', description: '' }), workspace = workspaces.createAgentWorkspace(`跟进-${randomUUID()}`)
@@ -89,13 +89,13 @@ async function fixture(running = false, failed = false, unknownUsage = false, te
   goals.saveProjectOwnerGoalDraft(project.id, 0, { objective: '形成定位建议' })
   binding.saveOwnerRuntimeBinding(project.id, 0, { ownerName: 'Owner', carrierId: owner.id, workspaceId: workspace.id, changeReason: '测试' })
   reconcileOwnerManagement(project.id)
-  const budgetInput = { projectId: project.id, requestId: randomUUID(), maxRequests, maxCostMicros: 20_000_000, expiresAt: Date.now() + 6 * 3600000 }
+  const budgetInput = { projectId: project.id, requestId: randomUUID(), maxRequests, maxCostMicros: tightBudget ? 2_000_000 : 20_000_000, expiresAt: Date.now() + 6 * 3600000 }
   const budgetPreview = delegation.previewOwnerManagementDelegation(budgetInput)
   const projectBudget = delegation.confirmOwnerManagementDelegation({ input: budgetInput, previewHash: budgetPreview.previewHash })
   const context = plans.getProjectOwnerPlanningContext(project.id), roleKey = context.sources.roles[0]!.key
   plans.saveProjectOwnerPlanDraft(project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '调研计划', assumptions: [], risks: [], steps: [{ key: 'brief', title: '整理资料', outcome: '定位材料', acceptanceCriteria: ['注明受众依据'], dependencies: [], roleKey }], changeReason: '建立' })
   const confirmedPlan = plans.confirmProjectOwnerPlanDraft(project.id, 1, 1)
-  const subject = { projectId: project.id }, input = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: ['brief'], executionKind: 'controlled', ...(textDelivery ? { textDeliveryVersion: 1 } : {}), employeeRuntimeVersion: 2, executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id, roleAssignments: [{ roleKey, employeeId: executor.id }], workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1000000, maxRuns: 4, maxRework: 1, expiresAt: Date.now() + 3600000, changeReason: '测试' }
+  const subject = { projectId: project.id }, input = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: ['brief'], executionKind: 'controlled', ...(textDelivery ? { textDeliveryVersion: 1 } : {}), employeeRuntimeVersion: 2, executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id, roleAssignments: [{ roleKey, employeeId: executor.id }], workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: tightBudget ? budgetInput.maxCostMicros : 1_000_000, maxRuns: tightBudget ? 2 : 4, maxRework: tightBudget ? 0 : 1, expiresAt: Date.now() + 3600000, changeReason: '测试' }
   const pv = prep.previewOwnerExecutionPreparation(subject, input), prepared = prep.saveOwnerExecutionPreparation(subject, input, pv.previewFingerprint)
   const materialInput = { requestId: randomUUID(), expectedMaterializationRevision: 0, expectedPreparationId: prepared.id, expectedPreparationRevision: prepared.revision, expectedPreparationHash: prepared.integrityHash, expectedPolicyRevision: prepared.policyRevision }
   const scheduler = await import('./project-owner-autonomous-scheduler')
@@ -182,10 +182,30 @@ test('Given项目总预算绑定规划委托 When员工命令排队 Then管理�
   expect(current.reservedCostMicros).toBeGreaterThan(0)
   expect(current.reservedCostMicros).toBeLessThanOrEqual(f.projectBudget.maxCostMicros)
   const remaining = f.projectBudget.maxCostMicros - current.reservedCostMicros
-  expect(() => delegation.assertOwnerManagementBudgetReservationAvailable(f.projectBudget.id, remaining)).not.toThrow()
-  expect(() => delegation.assertOwnerManagementBudgetReservationAvailable(f.projectBudget.id, remaining + 1)).toThrow('项目总预算余额不足')
+  expect(delegation.getOwnerManagementBudgetReservationRemaining(f.projectBudget.id)).toBe(remaining)
   const persisted = store.getProjectDb().prepare('SELECT owner_management_delegation_id FROM project_owner_execution_grants WHERE id=?').get(f.grant.grantId)
   expect(persisted).toEqual({ owner_management_delegation_id: f.projectBudget.id })
+})
+
+test('Given 项目预算已被管理请求占用 When 自主安排最后一个评审 Then 预留不超过项目剩余额度', async () => {
+  const f = await fixture(false, false, false, false, undefined, false, 6, true)
+  const stop = startOwnerManagementLoop()
+  try {
+    await until(() => Boolean(active(f.project.id)))
+    const current = delegation.getOwnerManagementDelegation(f.project.id)
+    const remaining = f.projectBudget.maxCostMicros - current.reservedCostMicros
+    const executorCommand = store.getProjectDb().prepare('SELECT actual_cost_micros FROM project_owner_execution_commands WHERE id=?').get(f.execution.ownerCommandId!) as { actual_cost_micros: number }
+    expect(remaining).toBeLessThan(f.grant.budget.maxCostMicros - executorCommand.actual_cost_micros)
+    const { reserveAndQueueAutonomousOwnerCommand } = await import('./project-owner-execution-command')
+    const queued = reserveAndQueueAutonomousOwnerCommand({ projectId: f.project.id }, { grantId: f.grant.grantId, taskId: f.execution.entityId, role: 'reviewer', reworkOrdinal: 0, expectedRevalidationRevision: f.grant.revalidationRevision })
+    const command = store.getProjectDb().prepare('SELECT reserved_cost_micros FROM project_owner_execution_commands WHERE id=?').get(queued.commandId)
+    expect(command).toEqual({ reserved_cost_micros: remaining })
+    expect(delegation.getOwnerManagementDelegation(f.project.id).reservedCostMicros).toBe(f.projectBudget.maxCostMicros)
+    const { runOwnerAutonomousSchedule } = await import('./project-owner-autonomous-scheduler')
+    await runOwnerAutonomousSchedule(f.project.id)
+    await until(() => store.getAgentExecution(queued.executionId)?.status === 'completed')
+    expect(delegation.getOwnerManagementDelegation(f.project.id).reservedCostMicros).toBeLessThan(f.projectBudget.maxCostMicros)
+  } finally { stop() }
 })
 
 test('Given旧对话委托 When业务结果到达 Then仅准备不消耗旧额度、内部启动也拒绝', async () => {

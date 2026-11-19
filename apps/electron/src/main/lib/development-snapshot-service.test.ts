@@ -5,7 +5,7 @@
 import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildElectronMock } from './testing/electron-mock'
@@ -16,7 +16,7 @@ process.env.PROMA_TEST_CONFIG_DIR = join(directory, 'config')
 mock.module('electron', () => buildElectronMock())
 
 const { createDevelopmentWorktree } = await import('./agent-development-worktree')
-const { createDevelopmentSnapshot, loadDevelopmentSnapshot, developmentWorktreeMatchesSnapshot, SNAPSHOT_LIMITS } = await import('./development-snapshot-service')
+const { createDevelopmentSnapshot, createDevelopmentSnapshotAsync, loadDevelopmentSnapshot, developmentWorktreeMatchesSnapshot, developmentWorktreeMatchesSnapshotAsync, SNAPSHOT_LIMITS } = await import('./development-snapshot-service')
 
 beforeAll(async () => { /* 快照服务不依赖项目数据库 */ })
 afterAll(() => {
@@ -86,6 +86,33 @@ describe('快照冻结（T06/T08）', () => {
     const f = fixture('clean')
     expect(() => createDevelopmentSnapshot({ worktreePath: f.worktreePath, sessionDirectory: f.session, executionId: f.executionId, workspaceId: 'ws', scope: f.scope })).toThrow('没有变更')
   })
+})
+
+test('Given 带只读继承文件的窄范围修订 When 收集与复核 Then 保留原内容并拒绝修改或丢失', async () => {
+  const f = fixture('inherited'),
+    b = join(f.worktreePath, 'src/b.ts'),
+    input = { worktreePath: f.worktreePath, sessionDirectory: f.session, executionId: f.executionId, workspaceId: 'ws' }
+  writeFileSync(b, '已交付的 b\n')
+  const prior = await createDevelopmentSnapshotAsync({ ...input, scope: f.scope })
+  const scope = { ...f.scope, allowedPaths: ['src/a.ts'], inheritedFiles: prior.files, priorDeliveryHash: prior.contentHash }
+  await expect(createDevelopmentSnapshotAsync({ ...input, executionId: randomUUID(), scope })).rejects.toThrow('没有产生区别于原交付的文件变更')
+  expect(developmentWorktreeMatchesSnapshot(f.worktreePath, prior, scope)).toBe(false)
+  writeFileSync(join(f.worktreePath, 'src/a.ts'), '本轮修订 a\n')
+  const revised = await createDevelopmentSnapshotAsync({ ...input, executionId: randomUUID(), scope })
+  expect(revised.files.find(file => file.path === 'src/b.ts')).toEqual(prior.files[0])
+  expect(developmentWorktreeMatchesSnapshot(f.worktreePath, revised, scope)).toBe(true)
+  expect(await developmentWorktreeMatchesSnapshotAsync(f.worktreePath, revised, scope)).toBe(true)
+  if (process.platform !== 'win32') {
+    chmodSync(b, 0o755)
+    expect(developmentWorktreeMatchesSnapshot(f.worktreePath, revised, scope)).toBe(false)
+    await expect(createDevelopmentSnapshotAsync({ ...input, executionId: randomUUID(), scope })).rejects.toThrow('执行权限已变化')
+    chmodSync(b, 0o644)
+  }
+  for (const invalid of ['未经授权的 b\n', 'original-b\n']) {
+    writeFileSync(b, invalid)
+    expect(developmentWorktreeMatchesSnapshot(f.worktreePath, revised, scope)).toBe(false)
+    await expect(createDevelopmentSnapshotAsync({ ...input, executionId: randomUUID(), scope })).rejects.toThrow('只读继承文件已变化')
+  }
 })
 
 describe('完整变化集只读比对', () => {

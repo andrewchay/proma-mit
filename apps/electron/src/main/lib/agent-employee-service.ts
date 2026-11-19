@@ -77,7 +77,7 @@ import { settleOwnerCommandUsage } from './project-owner-execution-settlement'
 import { requestOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
 import { recordOwnerTechnicalReviewEvidence } from './project-owner-technical-review'
 import { ownerExecutionHash } from './project-owner-execution-hash'
-import { hydrateOwnerDevelopmentReviewerPrompt, ownerDevelopmentArtifactReferenceFromPrompt, readOwnerDevelopmentArtifactForReview, seedOwnerDevelopmentRework, seedOwnerDevelopmentDependencies } from './project-owner-development-artifact'
+import { hydrateOwnerDevelopmentReviewerPrompt, ownerDevelopmentArtifactReferenceFromPrompt, readOwnerDevelopmentArtifactForReview, seedOwnerDevelopmentRework, seedOwnerDevelopmentBaseline } from './project-owner-development-artifact'
 import { prepareOwnerTargetDirectories } from './project-owner-safe-directory'
 import { resolveMixedBatchHandoffTarget, seedFailedDevelopmentWorktree } from './project-owner-development-recovery'
 import type { PilotUsageEvidence } from './project-pilot-budget-ledger'
@@ -1054,9 +1054,9 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
         const { source: frozen, taskId } = readOwnerCommandFrozenSource(ownerExecution.commandId)
         const scope = frozen.tasks.find(item => item.taskId === taskId)?.developmentScope
         if (!scope) throw new Error('Owner研发执行缺少冻结文件范围')
-        // 返工/依赖交接优先：它们已经携带准确的上游成果。
+        // 返工优先；首次运行从本批代码依赖或用户引用的已验收交付恢复。
         const continuedFrom = await seedOwnerDevelopmentRework(ownerExecution.commandId, worktree.path)
-          ?? await seedOwnerDevelopmentDependencies(ownerExecution.commandId, worktree.path)
+          ?? await seedOwnerDevelopmentBaseline(ownerExecution.commandId, worktree.path)
         if (continuedFrom) Object.assign(worktree, { continuedFromExecutionId: continuedFrom })
         else await seedMixedBatchFailure(execution.projectId, ownerExecution.commandId, workspace, worktree.path, sessionDirectory)
         prepareOwnerTargetDirectories(worktree.path, scope.targetPaths, scope.allowedPaths)

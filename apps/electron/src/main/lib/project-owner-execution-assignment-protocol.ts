@@ -15,7 +15,7 @@ export interface OwnerExecutionAssignmentRequest { expectedGoalRevision: number;
  * - registry-v1：2026-11 增加三消断言前的 7 项注册表文本；
  * - legacy-6：更早的 6 项简写清单。
  */
-export type OwnerBrowserRegistryVariant = 'current' | 'registry-v3' | 'registry-v2' | 'registry-v1' | 'legacy-6'
+export type OwnerBrowserRegistryVariant = 'current' | 'registry-v4' | 'registry-v3' | 'registry-v2' | 'registry-v1' | 'legacy-6'
 const BROWSER_REGISTRY_V2_TEXT = 'html.loads（页面可加载且无脚本错误）、dom.board（存在 16 格棋盘容器）、dom.initial-tiles（开局至少两个数字块）、behavior.merge（同向按键可合并并计分）、storage.best-score（最高分可持久化）、behavior.game-over（无法移动时显示游戏结束）、dom.restart（重新开始恢复开局与零分）、match3.board（存在 8×8 满盘棋子棋盘）、match3.swap（有效交换使棋盘变化）、match3.invalid-revert（无效交换自动还原且不扣步数）、match3.score（消除后计分且棋盘补满）、match3.restart（重开后棋盘满盘且分数归零）'
 const BROWSER_REGISTRY_V1_TEXT = 'html.loads（页面可加载且无脚本错误）、dom.board（存在 16 格棋盘容器）、dom.initial-tiles（开局至少两个数字块）、behavior.merge（同向按键可合并并计分）、storage.best-score（最高分可持久化）、behavior.game-over（无法移动时显示游戏结束）、dom.restart（重新开始恢复开局与零分）'
 const BROWSER_REGISTRY_LEGACY_6_TEXT = 'html.loads（页面可加载）、dom.board（16格棋盘）、dom.initial-tiles（开局数字块）、behavior.merge（按键合并计分）、storage.best-score（最高分持久化）、dom.restart（重开入口）'
@@ -23,7 +23,8 @@ function browserRegistryText(variant: OwnerBrowserRegistryVariant): string {
   if (variant === 'registry-v2') return BROWSER_REGISTRY_V2_TEXT
   if (variant === 'registry-v1') return BROWSER_REGISTRY_V1_TEXT
   if (variant === 'legacy-6') return BROWSER_REGISTRY_LEGACY_6_TEXT
-  const templates = variant === 'registry-v3' ? OWNER_RUNTIME_ASSERTION_TEMPLATES.filter(item => item.id !== 'text-counter.behavior') : OWNER_RUNTIME_ASSERTION_TEMPLATES
+  const templates = OWNER_RUNTIME_ASSERTION_TEMPLATES.filter(item =>
+    (variant === 'current' || item.id !== 'calculator.scientific') && (variant !== 'registry-v3' || item.id !== 'text-counter.behavior'))
   return templates.map(item => `${item.id}（${item.title}）`).join('、')
 }
 /** 原生/命令行项目的固定构建命令清单；空清单表示该变体发布时尚无此能力。 */
@@ -52,7 +53,8 @@ export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssi
       ...(requireCompleteGreenfieldScope && context.greenfieldDevelopment ? ['绿地研发的allowedPaths必须逐项覆盖所有targetPaths，并且不能引入额外路径。要同时交付页面和说明时，两份文件都必须在两个数组中。输出前检查两个数组包含相同的路径集合。'] : []),
       ...(greenfieldRootTargets && context.greenfieldDevelopment ? ['绿地仓库没有可核验的目标目录时，请优先选择仓库根目录下的新文件，例如index.html、app.js和style.css，避免把缺失父目录误当成已有能力。若用户明确要求目录结构，应如实保留要求和不确定性，不得静默改写。'] : []),
       ...(includeBuildCommands && requireSwiftPackage && context.greenfieldDevelopment && context.executionKinds.includes('development') ? ['使用 build:swift 或 build:swift-test 时，目标路径须包含工作区根目录的 Package.swift 和实际 Swift 源文件，并按 Swift Package 布局创建。构建在禁止网络的隔离环境中运行，不能依赖下载外部包。构建成功不代表原生界面或业务行为已验证。'] : []),
-      ...(browserRegistryVariant === 'current' && context.executionKinds.includes('development') ? ['文本计数器要求验证输入、码点、词数、换行或清空时，使用 browser:html.loads+text-counter.behavior。验收需要 textarea#input、button#clear 以及只展示数字的 #codepoints、#words、#lines。把此控件约定写入本次范围理由；页面仅加载不能验证这些行为。'] : []),
+      ...((browserRegistryVariant === 'current' || browserRegistryVariant === 'registry-v4') && context.executionKinds.includes('development') ? ['文本计数器要求验证输入、码点、词数、换行或清空时，使用 browser:html.loads+text-counter.behavior。验收需要 textarea#input、button#clear 以及只展示数字的 #codepoints、#words、#lines。把此控件约定写入本次范围理由；页面仅加载不能验证这些行为。'] : []),
+      ...(browserRegistryVariant === 'current' && context.executionKinds.includes('development') ? ['科学计算器要求验证运算优先级、角度模式、除零或清空时，使用 browser:html.loads+calculator.scientific。控件约定为 input#expression、select#angle（deg 选项）、button#calculate、button#clear、#result、#error。页面可加载不满足这些行为标准。'] : []),
       ...(context.executionKinds.includes('development')
         ? [includeBuildCommands
           ? `本次提供development方式：验证命令只接受内置运行验证形式 browser:<断言标识>（多个用+连接，可选标识：${browserRegistryText(browserRegistryVariant)}）${buildRegistryText(true)}。禁止提出bun test、npm test、pytest等仓库自带测试或自写验证脚本：Owner员工不执行仓库代码。成果含HTML页面时必须至少声明一条browser断言；成果是原生或命令行程序时用对应的build命令（目标文件扩展名须与命令匹配）。无法用任何内置形式覆盖时，在reason中如实说明验证缺口，但不得留空。`
@@ -65,7 +67,7 @@ export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssi
 }
 /** 历史安排请求保留原提示，仅按完整hash识别已知格式。 */
 export function resolveOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, promptHash: string): OwnerExecutionAssignmentRequest {
-  const registryVariants: readonly OwnerBrowserRegistryVariant[] = ['current', 'registry-v3', 'registry-v2', 'registry-v1', 'legacy-6']
+  const registryVariants: readonly OwnerBrowserRegistryVariant[] = ['current', 'registry-v4', 'registry-v3', 'registry-v2', 'registry-v1', 'legacy-6']
   for (const requireRoleCoverage of [true, false]) {
     for (const registryVariant of registryVariants) {
       for (const stepDeliveryInstructions of [true, false]) {

@@ -1,6 +1,6 @@
 import type { MaterializeOwnerTasksRequest, OwnerExecutionGrant, OwnerExecutionPreparationInput, OwnerExecutionStartIntent, OwnerExecutionStartIntentRequest, OwnerManagementMessage, OwnerTaskMaterializationRecord, ProjectOwnerGoalSubject, ProjectOwnerPlanDraft } from '@gravitas/shared'
 import { getProjectOwnerGoalDraft } from './project-owner-goal-service'
-import { confirmProjectOwnerPlanDraft, getProjectOwnerPlanDraft, getProjectOwnerPlanningContext } from './project-owner-plan-service'
+import { confirmProjectOwnerPlanDraft, getProjectOwnerPlanDraft, getProjectOwnerPlanningContext, listProjectOwnerPlanHistory } from './project-owner-plan-service'
 import { assertLocalActorEnabled } from './project-owner-plan-service'
 import { getProjectDb } from './project-sqlite-store'
 import { ownerExecutionHash, ownerExecutionObject, parseOwnerExecutionInput, parseOwnerExecutionSubject } from './project-owner-execution-source'
@@ -11,11 +11,12 @@ import { confirmOwnerExecutionGrantRevoke, getOwnerExecutionGrant, previewOwnerE
 import { appendOwnerManagementMessage, getOwnerManagementMessage, getOwnerManager, recordOwnerManagementStartAccepted, recordOwnerManagementStartBlocked } from './project-owner-management-store'
 import { getPilotPolicy } from './project-pilot-policy'
 import { getOwnerManagementDelegation } from './project-owner-management-delegation'
-import { getOwnerPlanningRunReceipt } from './project-owner-planning-run-service'
+import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt } from './project-owner-planning-run-service'
 import { readOwnerPlanningSnapshot } from './project-owner-planning-source'
-import { readOwnerQualityActionByExecution } from './project-owner-quality-actions'
+import { readOwnerQualityActionByExecution, readOwnerQualityArtifact } from './project-owner-quality-actions'
 import { settleOwnerCommandUsage } from './project-owner-execution-settlement'
 import { planMixedBatchSupersession, recordMixedBatchSupersession, type MixedBatchSupersessionPlan } from './project-owner-mixed-batch-recovery'
+import { applyOwnerTextInsertionProposal, parseOwnerExactTextInsertion } from './project-owner-delivery-content'
 import type { PilotUsageEvidence } from './project-pilot-budget-ledger'
 
 interface IntentRow { id: string; project_id: string; task_id: string | null; payload: string; integrity_hash: string; state: string; grant_id: string | null; created_at: number; recovery_status: string }
@@ -147,21 +148,68 @@ function supersedeDeliveredFeedbackBatch(subject: ProjectOwnerGoalSubject, plan:
   return true
 }
 
+/** 只接替同一原文的单行修改，且上一轮完整用量与失败前候选稿都可核验。 */
+function hasRepairableTextRevision(
+  subject: ProjectOwnerGoalSubject, plan: ProjectOwnerPlanDraft, previous: OwnerTaskMaterializationRecord,
+  grant: OwnerExecutionGrant, message: OwnerManagementMessage,
+): boolean {
+  const requested = parseOwnerExactTextInsertion(message.content)
+  const assessment = plan.proposal.deliveryFeedbackAssessment
+  if (!requested || !assessment || plan.proposal.steps.length !== 1 || plan.proposal.steps[0]?.deliveryKind !== 'text'
+    || message.deliveryReference?.messageId !== assessment.messageId
+    || message.deliveryReference?.artifactHash !== assessment.artifactHash || message.deliveryReference?.stepKey !== assessment.stepKey) return false
+  const db = getProjectDb()
+  const latest = db.prepare("SELECT id FROM project_owner_management_messages WHERE project_id=? AND json_extract(payload,'$.role')='user' AND json_extract(payload,'$.taskId') IS ? ORDER BY rowid DESC LIMIT 1").get(subject.projectId, subject.taskId ?? null) as { id: string } | undefined
+  if (latest?.id !== message.id) return false
+  const priorPlan = listProjectOwnerPlanHistory(subject.projectId, subject.taskId)
+    .find(item => item.revision === previous.preview.preparation.source.planRevision)
+  const priorAssessment = priorPlan?.proposal.deliveryFeedbackAssessment
+  if (!priorAssessment || priorPlan.proposal.steps.length !== 1 || priorPlan.proposal.steps[0]?.deliveryKind !== 'text'
+    || assessment.messageId !== priorAssessment.messageId
+    || assessment.artifactHash !== priorAssessment.artifactHash || assessment.stepKey !== priorAssessment.stepKey) return false
+
+  const { readOwnerPriorDelivery } = require('./project-owner-execution-command') as typeof import('./project-owner-execution-command')
+  const original = readOwnerPriorDelivery({ projectId: subject.projectId, taskId: subject.taskId, planRevision: plan.revision, planFingerprint: plan.planFingerprint }, true)
+  if (!original || original.development) return false
+  const row = db.prepare(`SELECT e.id FROM agent_executions e JOIN project_owner_planning_links l ON l.planning_task_id=e.entity_id
+    WHERE e.project_id=? AND json_extract(l.source_snapshot, '$.conversation.executionObservation.grantId')=?
+      AND json_extract(l.source_snapshot, '$.conversation.deliveryReview.qualityDecisionVersion')=1
+    ORDER BY e.rowid DESC LIMIT 1`).get(subject.projectId, grant.grantId) as { id: string } | undefined
+  const outcome = row && getOwnerPlanningRunOutcome(row.id)
+  const receipt = outcome && getOwnerPlanningRunReceipt(outcome.receiptId)
+  if (outcome?.state !== 'failed' || outcome.protocolRejected !== true
+    || outcome.detail !== 'Owner返工必须指出具体不满足标准及可执行修改'
+    || !receipt?.validTerminal || receipt.stopped || receipt.error || receipt.capturedAt > message.createdAt
+    || !Number.isSafeInteger(receipt.usage?.inputTokens) || !Number.isSafeInteger(receipt.usage?.outputTokens)) return false
+  const source = readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true })?.context.conversation
+  const reviewer = source?.executionObservation?.commandId
+  if (!reviewer || source?.executionObservation?.role !== 'reviewer'
+    || source.executionObservation.grantId !== grant.grantId
+    || db.prepare('SELECT 1 FROM project_owner_quality_actions WHERE reviewer_command_id=? LIMIT 1').get(reviewer)) return false
+  const candidate = readOwnerQualityArtifact(reviewer)
+  if (!candidate || candidate.grantId !== grant.grantId || candidate.contentHash !== source.deliveryReview?.artifact?.contentSha256) return false
+  if (db.prepare("SELECT 1 FROM project_owner_execution_commands WHERE grant_id=? AND source_task_id=? AND rework_ordinal>? AND state<>'released' LIMIT 1")
+    .get(grant.grantId, candidate.taskId, candidate.reworkOrdinal)) return false
+  return Boolean(applyOwnerTextInsertionProposal(candidate.content, { ...requested, original: original.item.content }))
+}
+
 /** 旧成果停在待协商或验证阻断时，以原批次的质量决定和后续用户消息核验修订来源。 */
-function supersedeEscalatedBatch(subject: ProjectOwnerGoalSubject, plan: ProjectOwnerPlanDraft, previous: OwnerTaskMaterializationRecord): boolean {
+function readReviewedBatchForRevision(subject: ProjectOwnerGoalSubject, plan: ProjectOwnerPlanDraft, previous: OwnerTaskMaterializationRecord, exactTextRecoveryOnly = false): OwnerExecutionGrant | null {
   const source = previous.preview.preparation.source
-  if (plan.origin !== 'generated' || !plan.sourceRun || plan.goalRevision !== source.goalRevision) return false
+  if (plan.origin !== 'generated' || !plan.sourceRun || plan.goalRevision !== source.goalRevision) return null
   const receipt = getOwnerPlanningRunReceipt(plan.sourceRun.receiptId)
   const planning = receipt && readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true })
   // 未识别的历史提示只供查看；不能据此认定旧批次可被替换。
-  if (!planning || planning.sourceWarning || !planning.link.conversationMessageId || planning.link.planRevision !== source.planRevision) return false
+  if (!planning || planning.sourceWarning || !planning.link.conversationMessageId || planning.link.planRevision !== source.planRevision) return null
   const message = getOwnerManagementMessage(subject.projectId, planning.link.conversationMessageId)
   if (!message || message.role !== 'user' || message.kind !== 'conversation'
-    || message.taskId !== subject.taskId || message.goalRevision !== plan.goalRevision) return false
+    || message.taskId !== subject.taskId || message.goalRevision !== plan.goalRevision) return null
 
   const grant = getOwnerExecutionGrant(subject)
   if (!grant || grant.materializationId !== previous.id || grant.materializationIntegrityHash !== previous.integrityHash
-    || grant.taskId !== subject.taskId || grant.dispatchMode !== 'autonomous') return false
+    || grant.taskId !== subject.taskId || grant.dispatchMode !== 'autonomous') return null
+  if (hasRepairableTextRevision(subject, plan, previous, grant, message)) return grant
+  if (exactTextRecoveryOnly) return null
   const db = getProjectDb()
   const rows = db.prepare(`
     SELECT q.owner_execution_id FROM project_owner_quality_actions q
@@ -176,7 +224,12 @@ function supersedeEscalatedBatch(subject: ProjectOwnerGoalSubject, plan: Project
         WHERE newer.grant_id=q.grant_id AND newer.task_id=q.task_id AND newer.rowid>q.rowid
       )
   `).all(subject.projectId, grant.grantId, message.createdAt) as { owner_execution_id: string }[]
-  if (!rows.some(row => ['escalated', 'blocked'].includes(readOwnerQualityActionByExecution(row.owner_execution_id)?.state ?? ''))) return false
+  return rows.some(row => ['escalated', 'blocked'].includes(readOwnerQualityActionByExecution(row.owner_execution_id)?.state ?? '')) ? grant : null
+}
+
+function supersedeEscalatedBatch(subject: ProjectOwnerGoalSubject, plan: ProjectOwnerPlanDraft, previous: OwnerTaskMaterializationRecord): boolean {
+  const grant = readReviewedBatchForRevision(subject, plan, previous)
+  if (!grant) return false
   if (grant.state !== 'active') return grant.state === 'paused' || grant.state === 'archived'
   const preview = previewOwnerExecutionGrantRevoke(subject, { grantId: grant.grantId })
   if (preview.blockers.length) throw new Error(`旧批次的执行或费用尚未收敛，不能启动修订：${preview.blockers.join('；')}`)
@@ -468,6 +521,17 @@ export function resumeOwnerExecutionStartIntent(intentId: string, expectedSubjec
     const ownerConfirmed = plan.actor === 'system:owner-manager' && autonomousGrant.state === 'active' && autonomousGrant.delegation?.autonomousExecution === true
     if (plan.state !== 'confirmed' || (plan.actor !== 'local-user' && !ownerConfirmed) || plan.planFingerprint !== intent.planFingerprint)
       throw new Error('启动确认对应方案未能核实；执行已停止')
+    if (ownerConfirmed && plan.proposal.deliveryFeedbackAssessment) {
+      const { readOwnerDevelopmentRevisionLimit } = require('./project-owner-development-artifact') as typeof import('./project-owner-development-artifact')
+      const limit = readOwnerDevelopmentRevisionLimit(plan, intent.input.workspaceId, true)
+      const scope = intent.input.developmentScope
+      if (limit && (scope?.workspaceId !== intent.input.workspaceId
+        || scope.targetPaths.length !== 1 || scope.targetPaths[0] !== limit.path
+        || scope.allowedPaths.length !== 1 || scope.allowedPaths[0] !== limit.path
+        || ownerExecutionHash([...(scope.verificationCommands ?? [])].sort()) !== ownerExecutionHash([...limit.commands].sort()))) {
+        throw new Error('当前启动记录与用户指定的修订路径或原验证范围不一致，员工未启动')
+      }
+    }
     const materializationView = getOwnerTaskMaterialization(subject)
     const previousMaterialization = materializationView.materialization
     // 混合批次：只暂停旧授权并记录现场，关联记录等新批次材料化成功后再写。
@@ -531,9 +595,49 @@ export function resumeOwnerExecutionStartIntent(intentId: string, expectedSubjec
   return recovery
 }
 
+/** 一次性恢复之前因批次接替不足而停下的确切单行修订。 */
+function reopenVerifiedTextRevision(intent: OwnerExecutionStartIntent): boolean {
+  const subject = { projectId: intent.projectId, ...(intent.taskId ? { taskId: intent.taskId } : {}) }
+  const db = getProjectDb()
+  const recoveryEvent = `exact-text-start-recovered:${intent.intentId}`
+  const previousNotice = db.prepare('SELECT id FROM project_owner_management_messages WHERE project_id=? AND event_id=?')
+    .get(intent.projectId, attentionEventId(intent.intentId)) as { id: string } | undefined
+  const notice = previousNotice && getOwnerManagementMessage(intent.projectId, previousNotice.id)
+  if (!notice || !notice.content.includes('这个方案已有一批任务，系统暂时无法继续原批次')) return false
+  const latest = db.prepare('SELECT id FROM project_owner_execution_start_intents WHERE project_id=? AND task_id IS ? ORDER BY created_at DESC,rowid DESC LIMIT 1').get(intent.projectId, intent.taskId ?? null) as { id: string } | undefined
+  if (latest?.id !== intent.intentId || intent.input.expiresAt <= Date.now() || intent.input.executionKind !== 'controlled') return false
+  const delegation = getOwnerManagementDelegation(intent.projectId, intent.taskId)
+  const plan = getProjectOwnerPlanDraft(intent.projectId, intent.taskId)
+  if (delegation.state !== 'active' || !delegation.delegation?.autonomousExecution || plan?.state !== 'confirmed'
+    || plan.actor !== 'system:owner-manager' || plan.revision !== intent.expectedPlanRevision
+    || plan.proposal.steps.length !== 1 || intent.input.selectedStepKeys.length !== 1
+    || intent.input.selectedStepKeys[0] !== plan.proposal.steps[0]?.key
+    || plan.planFingerprint !== intent.planFingerprint || plan.contextFingerprint !== intent.contextFingerprint) return false
+  const previous = getOwnerTaskMaterialization(subject).materialization
+  const grant = previous && readReviewedBatchForRevision(subject, plan, previous, true)
+  if (!grant || (grant.state !== 'active' && grant.state !== 'paused' && grant.state !== 'archived')
+    || (grant.state === 'active' && previewOwnerExecutionGrantRevoke(subject, { grantId: grant.grantId }).blockers.length)) return false
+  let reopened = false
+  db.transaction(() => {
+    if (db.prepare('SELECT 1 FROM project_owner_management_messages WHERE project_id=? AND event_id=?').get(intent.projectId, recoveryEvent)) return
+    const changed = db.prepare("UPDATE project_owner_execution_start_intents SET recovery_status='pending' WHERE id=? AND state='pending' AND recovery_status='needs_attention'").run(intent.intentId)
+    if (changed.changes !== 1) return
+    appendOwnerManagementMessage({ ...subject, eventId: recoveryEvent, role: 'assistant', kind: 'management_progress',
+      content: '我已核对原手册、此前修订和模型用量。我会在现有授权内继续这次单行修订，保留原记录。' })
+    reopened = true
+  })()
+  return reopened
+}
+
 /** 启动扫描只接手pending确认；单个失败保留原记录并继续处理其他项目。 */
 export async function recoverPendingOwnerExecutionStartIntents(projectId?: string, dependencies: StartIntentDependencies = production): Promise<void> {
-  const rows = getProjectDb().prepare("SELECT * FROM project_owner_execution_start_intents WHERE state='pending' AND recovery_status='pending' AND (? IS NULL OR project_id=?) ORDER BY created_at,id").all(projectId ?? null, projectId ?? null) as IntentRow[]
+  const rows = getProjectDb().prepare(`SELECT i.* FROM project_owner_execution_start_intents i
+    WHERE i.state='pending' AND (? IS NULL OR i.project_id=?) AND (i.recovery_status='pending' OR
+      (i.recovery_status='needs_attention' AND EXISTS (
+        SELECT 1 FROM project_owner_management_messages m WHERE m.project_id=i.project_id
+          AND m.event_id='execution-start-recovery:' || i.id || ':attention'
+          AND instr(json_extract(m.payload, '$.content'), '这个方案已有一批任务，系统暂时无法继续原批次')>0)))
+    ORDER BY i.created_at,i.id`).all(projectId ?? null, projectId ?? null) as IntentRow[]
   for (const row of rows) {
     const manager = getOwnerManager(row.project_id)
     if (!manager || manager.status !== 'active') continue
@@ -552,6 +656,7 @@ export async function recoverPendingOwnerExecutionStartIntents(projectId?: strin
       continue
     }
     try {
+      if (row.recovery_status === 'needs_attention' && !reopenVerifiedTextRevision(intent)) continue
       const grant = await resumeOwnerExecutionStartIntent(intent.intentId, undefined, dependencies)
       const completedIntent = readRow(getProjectDb().prepare('SELECT * FROM project_owner_execution_start_intents WHERE id=?').get(intent.intentId) as IntentRow)
       if (completedIntent.state === 'completed') coalesceEquivalentPendingIntents(completedIntent, grant)

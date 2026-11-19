@@ -80,12 +80,13 @@ export function isOwnerValidationEvidenceExpired(
   return now - item.finishedAt > DEVELOPMENT_VALIDATION_EVIDENCE_VALIDITY_MS
 }
 
-/** 运行时标准可引用准确且完整的成功回执正文；源码标准仍可引用源码。 */
-export function containsOwnerValidationOutputQuote(validation: OwnerDevelopmentDeliveryArtifact['validationEvidence'] | undefined, quote: string): boolean {
+/** 运行标准可引用完整成功回执的输出，或以准确命令定位同一条已核验回执。 */
+export function containsOwnerValidationEvidenceQuote(validation: OwnerDevelopmentDeliveryArtifact['validationEvidence'] | undefined, quote: string): boolean {
   return quote.trim().length >= 12 && Boolean(validation?.some(item => {
     const output = item.outputTail
     return item.attemptState === 'completed' && item.freshness === 'fresh' && item.status === 'passed' && item.exitCode === 0
-      && item.timedOut === false && item.outputTruncated === false && typeof output === 'string' && output.includes(quote)
+      && item.timedOut === false && item.outputTruncated === false && typeof output === 'string'
+      && (output.includes(quote) || quote === item.command || quote === `"command":${JSON.stringify(item.command)}`)
       && Buffer.byteLength(output, 'utf8') === item.rawOutputByteLength
       && createHash('sha256').update(output, 'utf8').digest('hex') === item.rawOutputSha256
   }))

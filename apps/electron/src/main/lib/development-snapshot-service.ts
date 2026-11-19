@@ -49,13 +49,37 @@ function isValidDevelopmentExecutionId(value: string): boolean {
 
 interface SnapshotLimitsParam { maxFileBytes?: number; maxTotalBytes?: number; maxFiles?: number }
 
+/** 继承文件只对快照可见，路径权限仍完全取自 allowedPaths。 */
+export interface DevelopmentSnapshotScope extends DevelopmentTaskScope {
+  inheritedFiles?: readonly DevelopmentSnapshotFile[]
+  priorDeliveryHash?: string
+  priorDeliveryFiles?: readonly DevelopmentSnapshotFile[]
+  priorBrowserTargets?: readonly string[]
+}
+
+function checkInheritedExecutable(path: string, mode: number, baseTreeEntry: string): void {
+  if (Boolean(mode & 0o111) !== baseTreeEntry.startsWith('100755 ')) {
+    throw new Error(`只读继承文件的执行权限已变化：${path}`)
+  }
+}
+
+function checkInheritedFiles(files: DevelopmentSnapshotFile[], inherited: ReadonlyMap<string, DevelopmentSnapshotFile>): void {
+  const byPath = new Map(files.map(file => [file.path, file]))
+  for (const [path, expected] of inherited) {
+    const actual = byPath.get(path)
+    if (!actual || actual.changeType !== expected.changeType || actual.oldSha256 !== expected.oldSha256 || actual.newSha256 !== expected.newSha256 || actual.newBytes !== expected.newBytes) {
+      throw new Error(`只读继承文件已变化，不能冻结本轮交付：${path}`)
+    }
+  }
+}
+
 export interface CreateSnapshotInput {
   /** worktree 路径（只读访问） */
   worktreePath: string
   sessionDirectory: string
   executionId: string
   workspaceId: string
-  scope: DevelopmentTaskScope
+  scope: DevelopmentSnapshotScope
   limits?: SnapshotLimitsParam
 }
 
@@ -141,7 +165,7 @@ export async function createDevelopmentSnapshotAsync(input: CreateSnapshotInput)
 export function developmentWorktreeMatchesSnapshot(
   worktreePath: string,
   snapshot: DevelopmentSnapshot,
-  scope: DevelopmentTaskScope,
+  scope: DevelopmentSnapshotScope,
 ): boolean {
   try {
     if (snapshot.workspaceId !== scope.workspaceId) return false
@@ -156,7 +180,7 @@ export function developmentWorktreeMatchesSnapshot(
 export async function developmentWorktreeMatchesSnapshotAsync(
   worktreePath: string,
   snapshot: DevelopmentSnapshot,
-  scope: DevelopmentTaskScope,
+  scope: DevelopmentSnapshotScope,
 ): Promise<boolean> {
   try {
     if (snapshot.workspaceId !== scope.workspaceId) return false
@@ -232,7 +256,7 @@ interface CapturedDevelopmentState {
 async function captureDevelopmentStateAsync(
   worktreePath: string,
   baseCommit: string,
-  scope: DevelopmentTaskScope,
+  scope: DevelopmentSnapshotScope,
   overrides?: SnapshotLimitsParam,
 ): Promise<CapturedDevelopmentState> {
   if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(baseCommit)) throw new Error('研发基线损坏')
@@ -241,13 +265,14 @@ async function captureDevelopmentStateAsync(
   const trackedPaths = diffRaw.split('\0').filter(Boolean)
   const untrackedPaths = parseUntrackedZ(await gitAsync(worktreePath, 'status', '--porcelain=v1', '-z', '--untracked-files=all'))
   const entries = [...new Set([...trackedPaths, ...untrackedPaths])]
+  const inherited = new Map(scope.inheritedFiles?.map(file => [file.path, file]))
   const files: DevelopmentSnapshotFile[] = []
   const contentDirEntries: CapturedDevelopmentState['contentDirEntries'] = []
   let totalBytes = 0
 
   for (const rawPath of entries) {
     const path = normalizeRepoRelativePath(rawPath)
-    if (!pathWithinAllowed(path, scope.allowedPaths)) throw new Error(`存在范围外变更，整轮交付被阻塞：${path}`)
+    if (!pathWithinAllowed(path, scope.allowedPaths) && !inherited.has(path)) throw new Error(`存在范围外变更，整轮交付被阻塞：${path}`)
     if (isProtectedDevelopmentPath(path)) throw new Error(`变更涉及受保护路径，整轮交付被阻塞：${path}`)
     const absolute = join(worktreePath, ...path.split('/'))
     const existedAtBase = await gitObjectExistsAsync(worktreePath, baseCommit, path)
@@ -268,6 +293,7 @@ async function captureDevelopmentStateAsync(
       try {
         const stat = await handle.stat()
         if (!stat.isFile() || stat.size > limits.maxFileBytes) throw new Error(`文件超出单文件上限或不是普通文件：${path}`)
+        if (process.platform !== 'win32' && inherited.has(path)) checkInheritedExecutable(path, stat.mode, await gitAsync(worktreePath, 'ls-tree', baseCommit, '--', `:(literal)${path}`))
         newContent = await handle.readFile()
       } finally { await handle.close() }
       if (newContent.byteLength > limits.maxFileBytes) throw new Error(`文件超出单文件上限（${limits.maxFileBytes} 字节）：${path}`)
@@ -282,7 +308,10 @@ async function captureDevelopmentStateAsync(
     contentDirEntries.push({ index, oldContent, newContent })
     if (files.length > limits.maxFiles) throw new Error(`变更文件数超出上限（${limits.maxFiles}）`)
   }
-  return { files, contentHash: hashFiles(files), contentDirEntries }
+  checkInheritedFiles(files, inherited)
+  const contentHash = hashFiles(files)
+  if (scope.priorDeliveryHash === contentHash) throw new Error('Owner研发修订没有产生区别于原交付的文件变更')
+  return { files, contentHash, contentDirEntries }
 }
 
 function gitAsync(repository: string, ...args: string[]): Promise<string> {
@@ -347,7 +376,7 @@ async function writeSnapshotFileAsync(path: string, content: Buffer): Promise<vo
 function captureDevelopmentState(
   worktreePath: string,
   baseCommit: string,
-  scope: DevelopmentTaskScope,
+  scope: DevelopmentSnapshotScope,
   overrides?: SnapshotLimitsParam,
 ): CapturedDevelopmentState {
   if (!/^(?:[a-f0-9]{40}|[a-f0-9]{64})$/.test(baseCommit)) throw new Error('研发基线损坏')
@@ -360,6 +389,7 @@ function captureDevelopmentState(
   const untrackedPaths = parseUntrackedZ(git(worktreePath, 'status', '--porcelain=v1', '-z', '--untracked-files=all'))
   const entries = [...new Set([...trackedPaths, ...untrackedPaths])]
 
+  const inherited = new Map(scope.inheritedFiles?.map(file => [file.path, file]))
   const files: DevelopmentSnapshotFile[] = []
   let totalBytes = 0
   const contentDirEntries: Array<{ index: number; newContent?: Buffer; oldContent?: Buffer }> = []
@@ -367,7 +397,7 @@ function captureDevelopmentState(
   for (const rawPath of entries) {
     const path = normalizeRepoRelativePath(rawPath)
 
-    if (!pathWithinAllowed(path, scope.allowedPaths)) {
+    if (!pathWithinAllowed(path, scope.allowedPaths) && !inherited.has(path)) {
       throw new Error(`存在范围外变更，整轮交付被阻塞：${path}`)
     }
     if (isProtectedDevelopmentPath(path)) {
@@ -394,6 +424,7 @@ function captureDevelopmentState(
     if (changeType !== 'delete') {
       const stat = statSync(absolute)
       if (!stat.isFile()) throw new Error(`暂不支持的变更对象：${path}`)
+      if (process.platform !== 'win32' && inherited.has(path)) checkInheritedExecutable(path, stat.mode, git(worktreePath, 'ls-tree', baseCommit, '--', `:(literal)${path}`))
       if (stat.size > limits.maxFileBytes) {
         throw new Error(`文件超出单文件上限（${limits.maxFileBytes} 字节）：${path}`)
       }
@@ -417,7 +448,10 @@ function captureDevelopmentState(
 
   if (files.length > limits.maxFiles) throw new Error(`变更文件数超出上限（${limits.maxFiles}）`)
 
-  return { files, contentHash: hashFiles(files), contentDirEntries }
+  checkInheritedFiles(files, inherited)
+  const contentHash = hashFiles(files)
+  if (scope.priorDeliveryHash === contentHash) throw new Error('Owner研发修订没有产生区别于原交付的文件变更')
+  return { files, contentHash, contentDirEntries }
 }
 
 /** 不跟随目标或任一父目录的符号链接，包括dangling链接。 */

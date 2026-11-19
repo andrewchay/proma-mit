@@ -36,6 +36,39 @@ test('Given 已存目标与资料快照 When 构建规划请求 Then data-only�
   expect(request).not.toHaveProperty('grantId')
 })
 
+test('Given 规划把同一源码的缺陷清单交给文本员工 When 入账 Then 合入有能力的修复步骤并保留历史提示', async () => {
+  const protocol = await import('./project-owner-planning-protocol'), c = context()
+  const current = protocol.buildProjectOwnerPlanningRequest(c)
+  const previous = protocol.buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, true, false)
+  const recover = (request: typeof current) => protocol.resolveProjectOwnerPlanningRequest(c, createHash('sha256').update(JSON.stringify(request)).digest('hex'))
+  expect(recover(previous)).toEqual(previous)
+  expect(recover(current)).toEqual(current)
+  expect(protocol.usesOwnerSourceInspectionRouting(previous)).toBe(false)
+  expect(protocol.usesOwnerSourceInspectionRouting(current)).toBe(true)
+  const step = (key: string, title: string, outcome: string, acceptanceCriteria: string[], dependencies: string[], deliveryKind: 'text' | 'development') =>
+    ({ key, title, outcome, acceptanceCriteria, dependencies, deliveryKind, roleKey: 'requirements-analyst' })
+  const steps = [
+    step('scope', '目标梳理', '功能约束', ['保留原页面'], [], 'text'),
+    step('inspect', '梳理现有 index.html 缺陷清单', '定位具体缺陷和修复方案', ['源码行为得到核对'], ['scope'], 'text'),
+    step('repair', '修复 index.html 计算逻辑', '更新 index.html', ['除零报错'], ['inspect'], 'development'),
+    step('notes', '交付说明', '整理上游验收记录', ['说明功能验证结果'], ['repair'], 'text'),
+  ]
+  const raw = proposal(c)
+  const parse = (sourceSteps: typeof steps, request: typeof current) =>
+    protocol.parseProjectOwnerPlanningResponse({ ...raw, proposal: { ...raw.proposal, steps: sourceSteps } }, c, Date.now(), true, protocol.usesOwnerSourceInspectionRouting(request))
+  expect(parse(steps, previous)).toMatchObject({ proposal: { steps } })
+  expect(parse(steps, current)).toMatchObject({ proposal: { steps: [
+    steps[0],
+    { ...steps[2], outcome: '更新 index.html；同在本次隔离研发中完成：定位具体缺陷和修复方案', dependencies: ['scope'], acceptanceCriteria: ['除零报错', '源码行为得到核对'] },
+    steps[3],
+  ] } })
+  // 存在独立下游使用该分析时不能静默取消其中一个交付。
+  const branched = [...steps, step('audit', '另行审阅分析', '独立业务审阅', ['记录结论'], ['inspect'], 'text')]
+  expect(parse(branched, current)).toMatchObject({ proposal: { steps: branched } })
+  const separate = steps.map(item => item.key === 'inspect' ? { ...item, title: '单独梳理 index.html 缺陷清单' } : item)
+  expect(parse(separate, current)).toMatchObject({ proposal: { steps: separate } })
+})
+
 test('Given用户反馈绑定已验收成果 When构建Owner请求 Then提供准确版本正文并视为不可信资料', async () => {
   const protocol = await import('./project-owner-planning-protocol'), c = context()
   const content = '旧交付的完整正文', artifactHash = createHash('sha256').update(content, 'utf8').digest('hex')
@@ -118,6 +151,35 @@ test('Given普通对话要求修改交付 When Owner选择冻结目录项 Then�
   expect(parse(feedback)).toMatchObject({ proposal: { deliveryFeedbackAssessment: feedback } })
   expect(() => parse({ ...feedback, artifactHash: '4'.repeat(64) })).toThrow('冻结交付目录')
   expect(() => parse({ ...feedback, changes: [{ ...feedback.changes[0]!, criterion: '不存在的标准' }] })).toThrow('原完成标准')
+})
+
+test('Given 三步项目已交付 When 只新增一行的计划引用旧依赖 Then 只免除同一目录已验收的旧步骤', async () => {
+  const protocol = await import('./project-owner-planning-protocol'), c = context()
+  const messageId = '1'.repeat(64), userMessageId = '2'.repeat(64), content = '旧手册原文'
+  const artifactHash = createHash('sha256').update(content, 'utf8').digest('hex')
+  c.conversation = { conversationId: 'conversation', throughMessageId: userMessageId, historyThroughMessageId: userMessageId,
+    messages: [{ id: userMessageId, role: 'user', content: '请只在活动信息下面新增一行「签到桌 13:45 开放」。' }], truncated: false, currentPlan: null, tasks: [], tasksTruncated: false,
+    deliveryFeedback: { version: 1, messageId, stepKey: 'guide', artifactHash, title: '使用说明',
+      acceptanceCriteria: ['现场可复用'], content, ownerDecision: '已验收', reviewerSummary: '已核对' },
+    deliveredArtifacts: { version: 2, messageId, planVersion: 1, items: ['budget', 'tables', 'guide'].map((stepKey, index) => ({
+      stepKey, title: '已验收成果', artifactHash: index === 2 ? artifactHash : String(index + 4).repeat(64), acceptanceCriteria: ['现场可复用'],
+    })) } }
+  const base = proposal(c)
+  const draft = {
+    ...base, proposal: { ...base.proposal, deliveryFeedbackAssessment: { messageId, stepKey: 'guide', artifactHash,
+      summary: '新增一行并保留原文', authorizationImpact: 'within_confirmed_boundary', authorizationRationale: '范围未扩大',
+      changes: [{ criterion: '现场可复用', disposition: 'addressed', proposedChange: '新增签到时间' }] },
+    },
+  }
+  const parse = (dependencies: string[], enabled = true) => protocol.parseProjectOwnerPlanningResponse({
+    ...draft, proposal: { ...draft.proposal, steps: [{ ...base.proposal.steps[0]!, dependencies }] },
+  }, c, Date.now(), true, enabled)
+  expect(parse(['budget', 'tables'])).toMatchObject({ proposal: { steps: [{ dependencies: [] }] } })
+  expect(() => parse(['budget'], false)).toThrow('依赖任务不存在')
+  expect(() => parse(['unknown'])).toThrow('依赖任务不存在')
+  expect(() => parse(['brief'])).toThrow()
+  delete c.conversation.deliveryFeedback
+  expect(() => parse(['budget'])).toThrow('依赖任务不存在')
 })
 
 test('Given持久Reviewer提示中的代码快照与验证回执 When投影进Owner管理上下文 Then接受准确绑定并原样提供完整证据', async () => {

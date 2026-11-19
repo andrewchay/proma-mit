@@ -1,6 +1,7 @@
+import { createHash } from 'node:crypto'
 import { describe, expect, test } from 'bun:test'
 import type { DevelopmentValidationEvidence } from '@gravitas/shared'
-import { DEVELOPMENT_VALIDATION_CLOCK_SKEW_MS, DEVELOPMENT_VALIDATION_EVIDENCE_VALIDITY_MS, evaluateDevelopmentValidationEvidence, isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
+import { DEVELOPMENT_VALIDATION_CLOCK_SKEW_MS, DEVELOPMENT_VALIDATION_EVIDENCE_VALIDITY_MS, containsOwnerValidationEvidenceQuote, evaluateDevelopmentValidationEvidence, isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
 
 const HASH = 'a'.repeat(64)
 
@@ -124,4 +125,20 @@ describe('时间戳作弊', () => {
     const now = 10_000
     expect(isOwnerValidationEvidenceExpired({ finishedAt: now + DEVELOPMENT_VALIDATION_CLOCK_SKEW_MS + 1 }, now)).toBe(true)
   })
+})
+
+test('Given 冻结浏览器成功回执 When Reviewer 引用命令字段 Then 核验摘要与终态后识别准确证据', () => {
+  const outputTail = '[{"id":"text-counter.behavior","status":"passed"}]'
+  const evidence = {
+    command: 'browser:html.loads+text-counter.behavior', validationId: 'real-browser',
+    attemptState: 'completed' as const, freshness: 'fresh' as const, status: 'passed' as const, exitCode: 0,
+    timedOut: false, outputTruncated: false, outputTail, rawOutputByteLength: Buffer.byteLength(outputTail),
+    rawOutputSha256: createHash('sha256').update(outputTail).digest('hex'),
+  }
+  const quote = `"command":${JSON.stringify(evidence.command)}`
+  expect(containsOwnerValidationEvidenceQuote([evidence], quote)).toBe(true)
+  expect(containsOwnerValidationEvidenceQuote([evidence], evidence.command)).toBe(true)
+  expect(containsOwnerValidationEvidenceQuote([evidence], 'browser:html.loads')).toBe(false)
+  expect(containsOwnerValidationEvidenceQuote([{ ...evidence, status: 'failed', exitCode: 1 }], quote)).toBe(false)
+  expect(containsOwnerValidationEvidenceQuote([{ ...evidence, outputTail: '改写输出' }], quote)).toBe(false)
 })

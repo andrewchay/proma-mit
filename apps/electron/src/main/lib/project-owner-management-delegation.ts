@@ -19,7 +19,7 @@ import { getOwnerCarrierFacts, getOwnerRuntimeBinding, ownerCarrierBindingMatche
 import { assertLocalActorEnabled, confirmProjectOwnerPlanDraft, getProjectOwnerPlanDraft, getProjectOwnerPlanningContext } from './project-owner-plan-service'
 import { getProjectOwnerGoalDraft } from './project-owner-goal-service'
 import { getOwnerManager, recordOwnerManagementDelegationConfirmed } from './project-owner-management-store'
-import { getPilotReviewedPriceEvidenceForModel } from './project-pilot-request-evidence'
+import { getPilotReviewedPriceEvidence, getPilotReviewedPriceEvidenceForModel } from './project-pilot-request-evidence'
 import { resolveOwnerPlanningTask } from './project-owner-planning-source'
 import { requestOwnerManagementWake } from './project-owner-management-events'
 import { readOwnerPlanningApiKey } from './owner-planning-configuration'
@@ -27,7 +27,31 @@ import { OWNER_PLANNING_V6_INPUT_TOKEN_CEILING, usesBoundedOwnerPlanningEnvelope
 
 interface Row { payload: string; integrity_hash: string }
 interface GrantRow extends Row { revoked_at: number | null }
-interface Claim { taskId: string; executionId: string; delegationId: string; reservedCostMicros: number }
+interface OwnerUsageTariff {
+  priceEvidenceId: string
+  priceEvidenceHash: string
+  channelId: string
+  modelId: string
+  maxInputTokens: number
+  maxOutputTokens: number
+}
+interface Claim { taskId: string; executionId: string; delegationId: string; reservedCostMicros: number; usageTariff?: OwnerUsageTariff }
+
+function ownerUsageTariff(source: NonNullable<ReturnType<typeof resolveOwnerPlanningTask>>, delegation: OwnerManagementDelegation): OwnerUsageTariff | undefined {
+  const channel = getChannelById(source.binding.channelId)
+  // 使用签发委托时已核准的美元预算费率。国内直连牌价 ¥0.80/M、¥2.80/M 由原费率在 USDCNY ≥ 5.6 时覆盖。
+  // 国内牌价与换算复核来源：open.bigmodel.cn/pricing；fred.stlouisfed.org/series/DEXCHUS（2026-11-13）。
+  // 人员安排使用 v5 和较小输出上限；发送端同样强制 GLM 请求字节包络。
+  const boundedProtocol = source.link.protocolVersion === '6'
+    || (source.link.protocolVersion === '5' && source.link.purpose === 'owner_execution_assignment')
+  if (!boundedProtocol || !channel?.enabled || channel.provider !== 'zhipu') return undefined
+  const endpoint = channel.baseUrl.replace(/\/$/, '')
+  if (endpoint !== 'https://api.z.ai/api/paas/v4' && endpoint !== 'https://open.bigmodel.cn/api/paas/v4') return undefined
+  const price = getPilotReviewedPriceEvidence(delegation.priceEvidenceId)
+  if (!price || price.evidenceId !== 'zai-glm-5.3-flash-2026-09-28' || price.model !== source.binding.modelId || price.providerKind !== 'openai') return undefined
+  return { priceEvidenceId: price.evidenceId, priceEvidenceHash: hash(price), channelId: channel.id, modelId: price.model,
+    maxInputTokens: Math.min(price.maxModelInputTokens, OWNER_PLANNING_V6_INPUT_TOKEN_CEILING), maxOutputTokens: source.link.maxOutputTokens }
+}
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex')
 function safeOutcomeDetail(detail: string | undefined): string | undefined {
   if (!detail) return undefined
@@ -148,8 +172,10 @@ export interface OwnerModelBudgetUsage {
   projectBudgetMicros: number
   ownerModelLimitMicros: number
   ownerModelMicros: number
-  /** 仅可信 Runtime 报告的实际费用；估价不解除未知预留。 */
+  /** 仅可信 Runtime 报告的实际费用。 */
   ownerModelSettledMicros: number
+  /** 完整官方渠道用量按审核费率计算的费用上界。 */
+  ownerModelRatedUsageMicros: number
   ownerModelInFlightMicros: number
   executionMicros: number
   remainingOwnerModelMicros: number
@@ -178,36 +204,68 @@ export function assertOwnerModelBudgetAvailable(input: { projectBudgetMicros: nu
 
 /**
  * 单个请求的Owner模型开销：
- * 仅完整性校验通过的 Runtime 实际费用可结算；token 和本地估价不能释放未知占额。
+ * 正式回执可报告实际费用；只有冻结的官方渠道费率和完整终态用量才能算出可核验上界。
  */
-function claimCostMicros(claim: Claim, database = store.getProjectDb()): { micros: number; settled: boolean } {
-  const row = database.prepare('SELECT id FROM project_owner_planning_run_receipts WHERE execution_id = ? ORDER BY rowid DESC LIMIT 1').get(claim.executionId) as { id: string } | undefined
-  if (row) {
+function claimCostMicros(claim: Claim, database = store.getProjectDb()): { micros: number; source: 'reported' | 'rated' | 'reserved' } {
+  const rows = database.prepare('SELECT id FROM project_owner_planning_run_receipts WHERE execution_id = ? ORDER BY rowid DESC')
+    .all(claim.executionId) as { id: string }[]
+  const { getOwnerPlanningRunReceipt } = require('./project-owner-planning-run-service') as typeof import('./project-owner-planning-run-service')
+  const reportedMicros = (id: string): number | null => {
     try {
-      const { getOwnerPlanningRunReceipt } = require('./project-owner-planning-run-service') as typeof import('./project-owner-planning-run-service')
+      const receipt = getOwnerPlanningRunReceipt(id)
+      const usd = receipt?.cost.usd
+      return receipt?.executionId === claim.executionId && receipt.cost.source === 'runtime_reported'
+        && typeof usd === 'number' && Number.isFinite(usd) && usd >= 0 ? Math.ceil(usd * 1_000_000) : null
+    } catch { return null }
+  }
+  if (claim.usageTariff && rows.length > 1) {
+    // 终态回执不唯一时保守占用，后到的较小回执不能释放额度。
+    const micros = rows.reduce((ceiling, row) => Math.max(ceiling, reportedMicros(row.id) ?? 0), claim.reservedCostMicros)
+    return { micros, source: 'reserved' }
+  }
+  const row = rows[0]
+  if (row) {
+    const reported = reportedMicros(row.id)
+    if (reported !== null) return { micros: reported, source: 'reported' }
+    try {
       const receipt = getOwnerPlanningRunReceipt(row.id)
-      if (receipt?.executionId === claim.executionId && receipt.cost.source === 'runtime_reported' && typeof receipt.cost.usd === 'number' && Number.isFinite(receipt.cost.usd) && receipt.cost.usd >= 0) {
-        return { micros: Math.ceil(receipt.cost.usd * 1_000_000), settled: true }
+      const tariff = claim.usageTariff
+      if (receipt?.executionId === claim.executionId && receipt.planningTaskId === claim.taskId && tariff
+        && receipt.validTerminal && !receipt.stopped && receipt.error === null && receipt.runtimeSource === 'ai-sdk'
+        && receipt.requestHash && receipt.channelId === tariff.channelId && receipt.modelId === tariff.modelId
+        && receipt.runtimeResult?.subtype === 'success' && receipt.runtimeResult.finish_reason === 'stop') {
+        const price = getPilotReviewedPriceEvidence(tariff.priceEvidenceId)
+        const input = receipt.usage?.inputTokens
+        const output = receipt.usage?.outputTokens
+        if (price?.model === tariff.modelId && hash(price) === tariff.priceEvidenceHash
+          && typeof input === 'number' && Number.isSafeInteger(input) && input > 0 && input <= tariff.maxInputTokens
+          && typeof output === 'number' && Number.isSafeInteger(output) && output > 0 && output <= tariff.maxOutputTokens
+          && receipt.runtimeResult.usage.input_tokens === input && receipt.runtimeResult.usage.output_tokens === output) {
+          const micros = Number((BigInt(input) * BigInt(price.inputMicrosPerMillion)
+            + BigInt(output) * BigInt(price.outputMicrosPerMillion) + 999999n) / 1000000n) + price.extraCostCeilingMicros
+          if (Number.isSafeInteger(micros) && micros <= claim.reservedCostMicros) return { micros, source: 'rated' }
+        }
       }
     } catch { /* 回执损坏时按预留保守占用。 */ }
   }
-  return { micros: claim.reservedCostMicros, settled: false }
+  return { micros: claim.reservedCostMicros, source: 'reserved' }
 }
 
-/** Owner 模型开销按可信实际费用与未知预留统计，不用估价冒充结算。 */
+/** Owner 模型开销分别统计实际费用、审核费率用量上界与未知预留。 */
 export function getOwnerModelBudgetUsage(projectId: string, projectBudgetMicros: number, excludeExecutionId?: string): OwnerModelBudgetUsage {
   const rows = store.getProjectDb().prepare('SELECT id, payload, integrity_hash FROM project_owner_management_delegations WHERE project_id = ? ORDER BY rowid').all(projectId) as Array<{ id: string } & Row>
   const entries = rows.flatMap(row => claims(row.id)).filter(claim => claim.executionId !== excludeExecutionId)
-  let ownerModelMicros = 0, ownerModelSettledMicros = 0
+  let ownerModelMicros = 0, ownerModelSettledMicros = 0, ownerModelRatedUsageMicros = 0
   for (const claim of entries) {
     const cost = claimCostMicros(claim)
     ownerModelMicros += cost.micros
-    if (cost.settled) ownerModelSettledMicros += cost.micros
+    if (cost.source === 'reported') ownerModelSettledMicros += cost.micros
+    if (cost.source === 'rated') ownerModelRatedUsageMicros += cost.micros
   }
   const execution = historicalUsage(projectId).executionReservedCostMicros
   const limit = ownerModelBudgetLimit(projectBudgetMicros)
   if (!Number.isSafeInteger(ownerModelMicros) || ownerModelMicros < 0) throw new Error('Owner模型占额记录无效，请保留账本核对')
-  return { projectBudgetMicros, ownerModelLimitMicros: limit, ownerModelMicros, ownerModelSettledMicros, ownerModelInFlightMicros: ownerModelMicros - ownerModelSettledMicros, executionMicros: execution, remainingOwnerModelMicros: Math.max(0, limit - ownerModelMicros) }
+  return { projectBudgetMicros, ownerModelLimitMicros: limit, ownerModelMicros, ownerModelSettledMicros, ownerModelRatedUsageMicros, ownerModelInFlightMicros: ownerModelMicros - ownerModelSettledMicros - ownerModelRatedUsageMicros, executionMicros: execution, remainingOwnerModelMicros: Math.max(0, limit - ownerModelMicros) }
 }
 
 function historicalUsage(projectId: string): { usedRequests: number; reservedCostMicros: number; managementReservedCostMicros: number; executionReservedCostMicros: number } {
@@ -220,7 +278,11 @@ function historicalUsage(projectId: string): { usedRequests: number; reservedCos
   const ids = delegations.map(item => item.id)
   if (!ids.length) return { usedRequests: 0, reservedCostMicros: 0, managementReservedCostMicros: 0, executionReservedCostMicros: 0 }
   const entryList = ids.flatMap(claims)
-  const managementReserved = entryList.reduce((sum, claim) => sum + claim.reservedCostMicros, 0)
+  const managementReserved = entryList.reduce((sum, claim) => {
+    const cost = claim.usageTariff ? claimCostMicros(claim) : null
+    // 旧委托按原总预算契约计；具备新费率证据的用量上界可释放未消耗的预留。
+    return sum + (cost?.micros ?? claim.reservedCostMicros)
+  }, 0)
   const placeholders = ids.map(() => '?').join(',')
   const execution = store.getProjectDb().prepare(`SELECT COALESCE(SUM(CASE
     WHEN c.state='released' THEN 0
@@ -235,14 +297,13 @@ function historicalUsage(projectId: string): { usedRequests: number; reservedCos
   return { usedRequests: entryList.length, reservedCostMicros: total, managementReservedCostMicros: managementReserved, executionReservedCostMicros: execution.reserved }
 }
 /** 用于执行命令排队时，与管理调用共享同一项目总预算；未知/未结算命令按完整预留额占用。 */
-export function assertOwnerManagementBudgetReservationAvailable(delegationId: string, additionalCostMicros: number): void {
-  if (!Number.isSafeInteger(additionalCostMicros) || additionalCostMicros <= 0) throw new Error('Owner项目预算新增占额无效')
+export function getOwnerManagementBudgetReservationRemaining(delegationId: string): number {
   const row = store.getProjectDb().prepare('SELECT payload, integrity_hash, revoked_at FROM project_owner_management_delegations WHERE id=?').get(delegationId) as GrantRow | undefined
   if (!row || row.revoked_at !== null) throw new Error('项目总预算授权已撤销或缺失')
   const delegation = read<OwnerManagementDelegation>(row)
   const current = getOwnerManagementDelegation(delegation.projectId, delegation.taskId)
   if (!['active', 'exhausted'].includes(current.state) || current.delegation?.id !== delegationId) throw new Error(current.detail || '项目总预算授权已失效')
-  if (current.reservedCostMicros + additionalCostMicros > delegation.maxCostMicros) throw new Error('项目总预算余额不足，须先确认增量预算')
+  return Math.max(0, delegation.maxCostMicros - current.reservedCostMicros)
 }
 /** 新目标修订必须有原问题→答复→目标的精确证据；人工改目标不能继承旧委托。 */
 function assertGoalLineage(delegation: OwnerManagementDelegation, currentRevision: number): void {
@@ -274,7 +335,7 @@ export function getOwnerManagementDelegation(projectId: string, taskId?: string)
   const usage = historicalUsage(projectId)
   const base = { delegation, ...usage, ownerModelBudget: (() => {
     const budget = getOwnerModelBudgetUsage(projectId, delegation.maxCostMicros)
-    return { limitMicros: budget.ownerModelLimitMicros, usedMicros: budget.ownerModelMicros, settledMicros: budget.ownerModelSettledMicros, inFlightMicros: budget.ownerModelInFlightMicros, remainingMicros: budget.remainingOwnerModelMicros, ratio: OWNER_MODEL_BUDGET_RATIO }
+    return { limitMicros: budget.ownerModelLimitMicros, usedMicros: budget.ownerModelMicros, settledMicros: budget.ownerModelSettledMicros, ratedUsageMicros: budget.ownerModelRatedUsageMicros, inFlightMicros: budget.ownerModelInFlightMicros, remainingMicros: budget.remainingOwnerModelMicros, ratio: OWNER_MODEL_BUDGET_RATIO }
   })() }
   let rejectedProtocolReply = false
   let localConfigurationFailure = false
@@ -529,7 +590,8 @@ export function claimOwnerManagementTask(taskId: string, executionId: string): v
   if (source.link.conversationMessageId && view.delegation.conversationEnabled !== true) throw new Error('旧管理委托不包含持续对话，请重新确认管理范围')
   if (hasActiveOwnerManagementRequest(view.delegation.id)) throw new Error('Owner已有管理请求运行，等待当前结果')
   assertOwnerModelBudgetAvailable({ projectBudgetMicros: view.delegation.maxCostMicros, ownerModelMicros: getOwnerModelBudgetUsage(view.delegation.projectId, view.delegation.maxCostMicros).ownerModelMicros, nextReservedMicros: view.delegation.perRequestCeilingMicros })
-  const claim: Claim = { taskId, executionId, delegationId: view.delegation.id, reservedCostMicros: view.delegation.perRequestCeilingMicros }
+  const usageTariff = ownerUsageTariff(source, view.delegation)
+  const claim: Claim = { taskId, executionId, delegationId: view.delegation.id, reservedCostMicros: view.delegation.perRequestCeilingMicros, ...(usageTariff ? { usageTariff } : {}) }
   db.prepare('UPDATE controlled_task_preparations SET owner_management_delegation_id = ? WHERE task_id = ?').run(claim.delegationId, taskId)
   db.prepare('INSERT INTO project_owner_management_claims (task_id, delegation_id, execution_id, payload, integrity_hash) VALUES (?, ?, ?, ?, ?)').run(taskId, claim.delegationId, executionId, JSON.stringify(claim), hash(claim))
 }

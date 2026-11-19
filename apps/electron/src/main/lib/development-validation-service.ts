@@ -22,7 +22,7 @@ import { getAgentWorkspace } from './agent-workspace-manager'
 import { getAgentSessionMeta } from './agent-session-manager'
 import { getAgentSessionWorkspacePath } from './config-paths'
 import { resolveDevelopmentWorktree } from './agent-development-worktree'
-import { developmentWorktreeMatchesSnapshot, loadDevelopmentSnapshot } from './development-snapshot-service'
+import { developmentWorktreeMatchesSnapshot, loadDevelopmentSnapshot, type DevelopmentSnapshotScope } from './development-snapshot-service'
 import { normalizeRepoRelativePath } from './development-task-service'
 import { DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS, parseDevelopmentValidationRecord } from './development-validation-record'
 import { completeOwnerDevelopmentValidationAttempt, ownerDevelopmentValidationId, reserveOwnerDevelopmentValidationAttempt } from './development-validation-attempt'
@@ -48,6 +48,7 @@ interface ValidationWorld {
   sessionDirectory: string
   snapshot: DevelopmentSnapshot
   scope: DevelopmentTaskScope
+  snapshotScope: DevelopmentSnapshotScope
   binding: DevelopmentValidationBinding
 }
 
@@ -68,7 +69,9 @@ function resolveValidationWorld(taskId: string, executionId?: string): Validatio
   const snapshot = loadDevelopmentSnapshot(sessionDirectory, execution.id)
   if (snapshot.executionId !== execution.id || snapshot.workspaceId !== workspace.id) throw new DevelopmentValidationError('研发快照身份不匹配')
   if (!Number.isSafeInteger(snapshot.createdAt) || snapshot.createdAt < 0 || snapshot.createdAt > Date.now()) throw new DevelopmentValidationError('研发快照时间无效')
+  const { ownerDevelopmentSnapshotScope } = require('./project-owner-development-artifact') as typeof import('./project-owner-development-artifact')
   const scope = task.developmentScope
+  const snapshotScope = execution.ownerCommandId ? ownerDevelopmentSnapshotScope(scope, execution.ownerCommandId) : scope
   const normalized = (paths: string[]): string[] => [...new Set(paths.map(normalizeRepoRelativePath))].sort()
   const scopeHash = hashJson({ workspaceId: scope.workspaceId, targetPaths: normalized(scope.targetPaths), allowedPaths: normalized(scope.allowedPaths) })
   const binding: DevelopmentValidationBinding = {
@@ -79,7 +82,7 @@ function resolveValidationWorld(taskId: string, executionId?: string): Validatio
       reviewerId: scope.reviewerId ?? null, decisionIds: [...new Set(scope.decisionIds ?? [])].sort(),
     }),
   }
-  return { taskId, executionId: execution.id, worktreePath, sessionDirectory, snapshot, scope, binding }
+  return { taskId, executionId: execution.id, worktreePath, sessionDirectory, snapshot, scope, snapshotScope, binding }
 }
 
 function listTaskExecutions(taskId: string) {
@@ -103,17 +106,23 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
 
   const world = resolveValidationWorld(taskId, options.executionId)
   if (!world.scope.verificationCommands?.includes(trimmed)) throw new DevelopmentValidationError('验证命令授权已变化')
-  if (!developmentWorktreeMatchesSnapshot(world.worktreePath, world.snapshot, world.scope)) {
+  if (!developmentWorktreeMatchesSnapshot(world.worktreePath, world.snapshot, world.snapshotScope)) {
     throw new DevelopmentValidationError('工作目录与冻结快照不一致，请先返工或重新交付')
   }
 
   const startedAt = Date.now()
+  const priorFiles = new Map(world.snapshotScope.priorDeliveryFiles?.map(file => [file.path, file.newSha256]))
+  const unchangedPriorPaths = world.snapshot.files.flatMap(file =>
+    file.newSha256 !== null && priorFiles.get(file.path) === file.newSha256 ? [file.path] : [])
   // browser: 前缀走受管浏览器内置断言，复用同一套证据格式与门禁；
   // build: 前缀解析成注册表里的固定 argv（模型不能自带参数）；其余仍按 argv 直接执行。
   const browserRun = isBrowserVerificationCommand(trimmed)
     ? await executeBrowserVerificationCommand({
         workspaceRoot: world.worktreePath,
         targetPaths: world.scope.targetPaths ?? [],
+        // 只把前一轮已验收且经过快照核验的文件交给浏览器。任务的读写范围与 HTML 目标保持独立。
+        inheritedResourcePaths: unchangedPriorPaths,
+        inheritedBrowserTargets: world.snapshotScope.priorBrowserTargets?.filter(path => unchangedPriorPaths.includes(path)),
         command: trimmed,
         timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       })
@@ -318,7 +327,7 @@ export function readDevelopmentValidationEvidence(taskId: string, executionId: s
     || !world.scope.verificationCommands?.includes(result.command) || result.startedAt < world.snapshot.createdAt) {
     return { result, freshness: 'stale', reason: '身份、快照或验证配置已变化' }
   }
-  if (!developmentWorktreeMatchesSnapshot(world.worktreePath, world.snapshot, world.scope)) {
+  if (!developmentWorktreeMatchesSnapshot(world.worktreePath, world.snapshot, world.snapshotScope)) {
     return { result, freshness: 'stale', reason: '当前工作目录的完整Git变化集与快照不一致' }
   }
   return { result, freshness: 'fresh' }
@@ -340,7 +349,7 @@ function validationWorldStillMatches(original: ValidationWorld): boolean {
     const current = resolveValidationWorld(original.taskId, original.executionId)
     return hashJson(current.binding) === hashJson(original.binding)
       && current.snapshot.contentHash === original.snapshot.contentHash
-      && developmentWorktreeMatchesSnapshot(current.worktreePath, current.snapshot, current.scope)
+      && developmentWorktreeMatchesSnapshot(current.worktreePath, current.snapshot, current.snapshotScope)
   } catch {
     return false
   }

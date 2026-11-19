@@ -406,5 +406,5 @@ export interface OwnerManagementDelegationView {
   detail: string
   attentionCheck?: OwnerManagementAttentionCheck
   /** Owner模型开销占项目总预算的占比上限用量；只读展示，不代表账单。 */
-  ownerModelBudget?: { limitMicros: number; usedMicros: number; settledMicros: number; inFlightMicros: number; remainingMicros: number; ratio: number }
+  ownerModelBudget?: { limitMicros: number; usedMicros: number; settledMicros: number; ratedUsageMicros?: number; inFlightMicros: number; remainingMicros: number; ratio: number }
 }

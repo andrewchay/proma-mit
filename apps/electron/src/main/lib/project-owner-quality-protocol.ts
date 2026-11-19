@@ -1,6 +1,6 @@
 /** Owner质量判断纯协议。判断不等于执行，不读文件或改业务状态。 */
 import type { OwnerQualityDecision, ProjectOwnerPlanningContext } from '@gravitas/shared'
-import { containsOwnerValidationOutputQuote, isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
+import { containsOwnerValidationEvidenceQuote, isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
 import { resolveOwnerTypographyQuote } from './project-owner-quote'
 function object(value: unknown, fields: string[]): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key => !fields.includes(key)) || fields.some(key => !Object.hasOwn(value, key))) throw new Error('Owner质量决定字段不完整或含未知字段')
@@ -25,6 +25,8 @@ export function containsOwnerArtifactQuote(content: string, quote: string, devel
 export function isOwnerEvidenceGapRework(decision: OwnerQualityDecision): boolean {
   return decision.verdict === 'rework' && !decision.criteria.some(item => item.status === 'not_met') && decision.criteria.some(item => item.status === 'not_verified')
 }
+export const OWNER_ACCEPT_WITH_FINDINGS = 'Owner选择通过但同时提交了缺陷，请重新判断是否影响验收标准'
+
 export function parseOwnerQualityDecision(raw: unknown, context: ProjectOwnerPlanningContext, validationTime = Date.now()): OwnerQualityDecision {
   const delivery = context.conversation?.deliveryReview, observed = context.conversation?.executionObservation
   const review = delivery?.review, artifact = delivery?.artifact, developmentArtifact = delivery?.developmentArtifact
@@ -37,14 +39,22 @@ export function parseOwnerQualityDecision(raw: unknown, context: ProjectOwnerPla
     const criterion = object(item, ['criterion', 'status', 'evidence', 'quote'])
     let quote = criterion.quote
     if (!developmentArtifact && typeof quote === 'string' && !artifactContent.includes(quote)) quote = resolveOwnerTypographyQuote(artifactContent, quote) ?? quote
-    if (developmentArtifact && typeof quote === 'string') {
-      const original = review.criteria.find(item => item.criterion === criterion.criterion)?.quote
+    if (developmentArtifact) {
+      const independent = review.criteria.find(item => item.criterion === criterion.criterion)
+      const independentQuote = independent?.quote
+      // 只复用同一标准的独立引用，且明确要求的命令已有绑定的完整成功回执。
+      if (quote === null && criterion.status === 'met' && independent?.status === 'met' && typeof independentQuote === 'string' && typeof criterion.criterion === 'string') {
+        const commands: string[] = criterion.criterion.match(/\bbrowser:[a-z0-9.-]+(?:\+[a-z0-9.-]+)*/g) ?? []
+        if (developmentArtifact.validationEvidence.some(item => commands.includes(item.command)
+          && Number.isSafeInteger(item.finishedAt) && !isOwnerValidationEvidenceExpired(item, validationTime)
+          && containsOwnerValidationEvidenceQuote([item], independentQuote))) quote = independentQuote
+      }
       // 只有逐字的独立评审源码引用才能解除一次 JSON 反斜杠重复编码。
-      if (typeof original === 'string' && original !== quote && original.includes('\\')
-        && quote === original.replace(/\\/g, '\\\\') && containsOwnerArtifactQuote(artifactContent, original, true)) quote = original
+      if (typeof quote === 'string' && typeof independentQuote === 'string' && independentQuote.includes('\\')
+        && quote === independentQuote.replace(/\\/g, '\\\\') && containsOwnerArtifactQuote(artifactContent, independentQuote, true)) quote = independentQuote
     }
     const runtimeQuote = criterion.status === 'met' && typeof quote === 'string'
-      && containsOwnerValidationOutputQuote(developmentArtifact?.validationEvidence, quote)
+      && containsOwnerValidationEvidenceQuote(developmentArtifact?.validationEvidence, quote)
     if (typeof criterion.criterion !== 'string' || !['met', 'not_met', 'not_verified'].includes(String(criterion.status)) || (quote !== null && (typeof quote !== 'string' || !quote.trim() || quote.length > 1000 || !runtimeQuote && !containsOwnerArtifactQuote(artifactContent, quote, Boolean(developmentArtifact)))) || criterion.status === 'met' && quote === null) throw new Error('Owner质量决定未按准确标准逐项判断或引用不符')
     return { criterion: String(criterion.criterion), status: criterion.status as OwnerQualityDecision['criteria'][number]['status'], evidence: text(criterion.evidence), quote: quote as string | null }
   })
@@ -59,8 +69,9 @@ export function parseOwnerQualityDecision(raw: unknown, context: ProjectOwnerPla
     if (!['low', 'medium', 'high'].includes(String(finding.severity))) throw new Error('Owner质量决定缺陷等级无效')
     return { severity: finding.severity as OwnerQualityDecision['findings'][number]['severity'], description: text(finding.description), requestedChange: text(finding.requestedChange) }
   })
-  if (value.verdict === 'accept' && (review.verdict !== 'approved' || criteria.some(item => item.status !== 'met') || findings.length
+  if (value.verdict === 'accept' && (review.verdict !== 'approved' || criteria.some(item => item.status !== 'met')
     || developmentArtifact && (!review.validationEvidence?.length || review.validationEvidence.some(item => item.attemptState !== 'completed' || item.freshness !== 'fresh' || isOwnerValidationEvidenceExpired(item, validationTime) || item.status !== 'passed' || item.exitCode !== 0 || item.timedOut !== false || item.outputTruncated !== false || !item.rawOutputSha256 || !Number.isSafeInteger(item.rawOutputByteLength))))) throw new Error('Owner不能在独立检查未通过或标准未满足时接受成果')
+  if (value.verdict === 'accept' && findings.length) throw new Error(OWNER_ACCEPT_WITH_FINDINGS)
   const evidenceGap = Boolean(developmentArtifact && review.verdict === 'blocked' && criteria.some(item => item.status === 'not_verified'))
   if (value.verdict === 'rework' && ((!criteria.some(item => item.status === 'not_met') && !evidenceGap) || !findings.length)) throw new Error('Owner返工必须指出具体不满足标准及可执行修改')
   return { reviewerCommandId: String(value.reviewerCommandId), artifactHash: String(value.artifactHash), verdict: value.verdict as OwnerQualityDecision['verdict'], reason: text(value.reason), criteria, findings }

@@ -1,10 +1,10 @@
 import { ownerDevelopmentArtifactFromPrompt } from './project-owner-development-artifact'
-import { containsOwnerValidationOutputQuote } from './development-validation-acceptance'
+import { containsOwnerValidationEvidenceQuote } from './development-validation-acceptance'
 /** 从已结算运行核对原评审及冻结证据，不重发模型请求。 */
 import { getAgentSessionSDKMessages } from './agent-session-manager'
 import { getOwnerManagementMessage, appendOwnerManagementMessage } from './project-owner-management-store'
 import { assertOwnerReviewerTextDelivery } from './project-owner-text-delivery'
-import { recordOwnerTechnicalReviewEvidence, restoreVerbatimReviewQuotes } from './project-owner-technical-review'
+import { recordOwnerTechnicalReviewEvidence, restoreVerbatimReviewQuotes, unwrapReviewReceipt } from './project-owner-technical-review'
 import * as store from './project-sqlite-store'
 
 export function recoverOwnerReviewEvidence(projectId: string, grantId: string, taskId: string, round: number): boolean {
@@ -35,9 +35,9 @@ export function recoverOwnerReviewEvidence(projectId: string, grantId: string, t
   const development = ownerDevelopmentArtifactFromPrompt(row.prompt)
   if (development) {
     let response: { criteria?: Array<{ status?: unknown; quote?: unknown }> } | null
-    try { response = JSON.parse(raw) } catch { return false }
+    try { response = JSON.parse(unwrapReviewReceipt(raw)) } catch { return false }
     if (!Array.isArray(response?.criteria) || !response.criteria.some(item => item?.status === 'met' && typeof item.quote === 'string'
-      && containsOwnerValidationOutputQuote(development.validationEvidence, item.quote))) return false
+      && containsOwnerValidationEvidenceQuote(development.validationEvidence, item.quote))) return false
     recordOwnerTechnicalReviewEvidence(row.id, row.execution_id, raw)
     appendOwnerManagementMessage({ projectId, taskId, eventId: `owner-review-runtime-quote-recovered:${row.id}:${row.execution_id}`, role: 'assistant', kind: 'management_progress', content: '已从原评审及完整受管浏览器回执核对运行引用，恢复独立评审；无需重新运行评审。Owner 将继续判断成果。' })
     return true
