@@ -22,7 +22,7 @@ import { createPromaSkillsOverride, preparePromptWithPromaSkills } from './pi-sk
 import { resolveCollaborationWorkspaceId } from '../agent-collaboration-tools'
 import { logWarn } from '../file-logger'
 import { enrichMessageWithDocuments, getImageAttachmentData } from '../agent-runtime/attachment-enrichment'
-import { buildPiHistorySessionEntries, convertPiMessageToSDKMessage, convertSDKMessagesToPiMessages, isAssistantPiMessage } from './pi-message-adapter'
+import { buildPiHistorySessionEntries, convertPiMessageToSDKMessage, convertSDKMessagesToPiMessages, isAssistantPiMessage, resetPiSessionHistory } from './pi-message-adapter'
 import { registerPiModelFromChannel } from './pi-model-registry'
 import { loadPiCodingAgent } from './pi-sdk-loader'
 import { createPiToolBridge, type PiCanUseToolCallback } from './pi-tool-bridge'
@@ -31,7 +31,7 @@ import type { ToolContext } from '../agent-runtime/types'
 import { ElectronRuntimeMcpService, type RuntimeMcpService } from '../agent-runtime/runtime-mcp-service'
 import { createPartialMessageCoalescer } from './pi-streaming-control'
 import { inspectImageWithVisionRelay, isVisionRelayConfigured, isVisionRelayEligibleForModel, getVisionRelayRouteLabel } from '../vision-relay-service'
-import { isTransientNetworkError } from '../error-patterns'
+import { isContextOverflowError, isTransientNetworkError } from '../error-patterns'
 import { getAgentSessionMeta } from '../agent-session-manager'
 import { compactSessionNow, maybeAutoCompact, estimateOutgoingContextTokens } from '../agent-runtime/context-compaction'
 import { awaitOwnerExecutionRequestsSettled } from '../project-owner-execution-request-exit'
@@ -44,6 +44,8 @@ export interface PiAgentQueryOptions extends AgentQueryInput {
   systemPrompt?: string
   /** 历史 SDKMessage，用于恢复 Pi in-memory session 上下文 */
   historyMessages?: SDKMessage[]
+  /** 本回合已落盘的用户消息；恢复后会由 session.prompt 再次写入 Pi 会话。 */
+  currentUserMessage?: SDKMessage
   /** 当前会话权限模式 */
   permissionMode?: PromaPermissionMode
   /** 编排层实际工具权限；不能沿用初始化前快照。 */
@@ -279,7 +281,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
 
   private async *querySession(input: PiAgentQueryOptions, startController: AbortController, resources: PiQueryResources): AsyncIterable<SDKMessage> {
     assertNoOwnerBusinessSession(input.sessionId)
-    const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy, isDelegationSession, thinkingLevel, requestedOperation, abortSignal, runtimeBudgetLimitUsd } = input
+    const { sessionId, prompt, provider, apiKey, baseUrl, model, cwd, systemPrompt, historyMessages, currentUserMessage, attachments, permissionMode, canUseTool, toolContextOverrides, mcpServers, workspaceSlug, workspaceId, workspaceSkillsDir, onMcpAuthRequired, onAgentEvent, triggeredBy, isDelegationSession, thinkingLevel, requestedOperation, abortSignal, runtimeBudgetLimitUsd } = input
     // P01/P03：策略 required 保证不满足时在调用 Provider 前拒绝（fail-closed）。
     assertRuntimePolicy('pi')
     if (runtimeBudgetLimitUsd !== undefined && (!Number.isFinite(runtimeBudgetLimitUsd) || runtimeBudgetLimitUsd <= 0)) {
@@ -668,6 +670,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
     // 执行期间 Pi 不会发任何生命周期事件，但会话并非挂起；看门狗必须跳过这段静默，
     // 否则 120s 后误杀 → AbortError 被当瞬时错误重试 → 「重试中(1/3)」且会话状态错乱。
     let inFlightToolCalls = 0
+    let turnHadToolExecution = false
     const touchActivity = (): void => { lastActivityAt = Date.now() }
     const touchModelActivity = (): void => {
       currentPromptHasModelActivity = true
@@ -756,6 +759,7 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       }
       if (event.type === 'tool_execution_start') {
         touchActivity()
+        turnHadToolExecution = true
         inFlightToolCalls += 1
         // tool span：begin 入内存；inputKeys 只存参数键名（脱敏，不存值）。
         Promise.resolve(spanSink?.begin({
@@ -927,6 +931,11 @@ export class PiAgentAdapter implements AgentProviderAdapter {
       // （如 "Stream ended without finish_reason" / "Anthropic stream ended before
       // message_stop"），在这里对同一条 prompt 再次驱动 Pi session。Pi 会话状态
       // 保留在 session 中，重试会续传而非重放，避免用户消息重复。
+      //
+      // 上下文超限走独立的一次性恢复：压缩历史后重建 in-memory 会话再重跑本回合。
+      // Pi 原生压缩已关闭（见上方 compaction.enabled=false），没有这条兜底时，
+      // 一旦请求前漏判就只剩 Provider 报错。
+      let overflowRecoveryAttempted = false
       const retryablePromptChain = async (): Promise<void> => {
         let attempts = 0
         const MAX_PROMPT_RETRIES = 3
@@ -942,6 +951,43 @@ export class PiAgentAdapter implements AgentProviderAdapter {
             // 未收到可归属的费用回执时一次网络重试也可能重复计费；有限阈值
             // 模式必须先停等，不能借现有 prompt 断流重试绕开未知费用门禁。
             if (budgetGate) throw error
+
+            // 上下文超限：只恢复一次，避免无限重试。
+            if (
+              !overflowRecoveryAttempted
+              && !requestGated
+              && provider !== 'openai-codex'
+              && !turnHadToolExecution
+              && effectiveHistoryMessages.length > 0
+              && isContextOverflowError(message)
+            ) {
+              overflowRecoveryAttempted = true
+              console.warn(`[Pi Runtime] 上下文超限，压缩后重跑本回合: sessionId=${sessionId}`)
+              logWarn(sessionId, `[Pi Runtime] 上下文超限恢复: ${message.slice(0, 200)}`)
+              const recovered = await runWithCompactionAbort((signal) => compactSessionNow({
+                sessionId,
+                provider,
+                apiKey,
+                baseUrl: baseUrl ?? '',
+                model,
+                historyMessages: effectiveHistoryMessages,
+                signal,
+                ...(controlledFetch ? { fetchFn: controlledFetch } : {}),
+                audit: { sessionId, runtime: 'pi', trigger: 'overflow_recovery' },
+                onLifecycle: (event) => onAgentEvent?.({ type: 'compaction_status', ...event }),
+              }))
+              // 压缩无法降低上下文时不再重跑，原样抛出原始溢出错误。
+              if (!recovered.compacted) throw error
+              // boundary 已落盘；Pi 的 in-memory SessionManager 仍是压缩前的条目，
+              // 必须重建，否则下一次 prepareRequest 依旧投影出超限历史。
+              const currentUserMessageId = currentUserMessage
+                ? (currentUserMessage as SDKMessage & { uuid?: string }).uuid
+                : undefined
+              resetPiSessionHistory(sessionManager, recovered.history, currentUserMessageId)
+              effectiveHistoryMessages = recovered.history
+              continue
+            }
+
             if (!isTransientNetworkError(message) || attempts >= MAX_PROMPT_RETRIES) throw error
             attempts += 1
             const delayMs = 1000 * attempts

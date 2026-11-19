@@ -1257,8 +1257,12 @@ function migrate(database: SqliteCompat): void {
   database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_command_links (
     command_id TEXT NOT NULL, project_id TEXT NOT NULL, execution_id TEXT NOT NULL,
     revalidation_revision INTEGER NOT NULL, created_at INTEGER NOT NULL,
+    upstream_handoff_version INTEGER NOT NULL DEFAULT 1 CHECK (upstream_handoff_version IN (1, 2)),
     PRIMARY KEY (command_id, execution_id)
   )`)
+  if (!readColumnNames(database, 'project_owner_execution_command_links').includes('upstream_handoff_version')) {
+    database.exec('ALTER TABLE project_owner_execution_command_links ADD COLUMN upstream_handoff_version INTEGER NOT NULL DEFAULT 1 CHECK (upstream_handoff_version IN (1, 2))')
+  }
   database.exec(`CREATE TABLE IF NOT EXISTS project_owner_execution_request_reservations (
     request_id TEXT PRIMARY KEY, command_id TEXT NOT NULL, execution_id TEXT NOT NULL, session_id TEXT NOT NULL,
     request_evidence_id TEXT NOT NULL, price_evidence_id TEXT NOT NULL,

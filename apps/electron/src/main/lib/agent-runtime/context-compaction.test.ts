@@ -7,7 +7,7 @@
 
 import { describe, expect, mock, test, beforeEach, afterEach } from 'bun:test'
 import { buildElectronMock } from '../testing/electron-mock'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SDKMessage } from '@gravitas/shared'
@@ -301,6 +301,27 @@ describe('上下文压缩（Proma / AI SDK）', () => {
     expect(keep).toBe(5)
   })
 
+  test('保留窗口选取是线性的：序列化字符量不随消息数平方增长', () => {
+    // 旧实现每轮都对 slice(index) 整体重新 stringify，总字符量随条数平方增长。
+    const history = makeHistory(200)
+    let serializedChars = 0
+    const originalStringify = JSON.stringify
+    JSON.stringify = ((...args: Parameters<typeof originalStringify>) => {
+      const result = originalStringify(...args)
+      serializedChars += result?.length ?? 0
+      return result
+    }) as typeof originalStringify
+    try {
+      resolveAdaptiveKeepRecent({ historyMessages: history, targetKeepTokens: 25_600 })
+    } finally {
+      JSON.stringify = originalStringify
+    }
+    const singlePassChars = originalStringify(history).length
+    // 线性实现只需常数倍于「整段历史序列化一次」的字符量；
+    // 二次实现会是 n/2 倍（此处 100 倍）。
+    expect(serializedChars).toBeLessThan(singlePassChars * 4)
+  })
+
   test('工具结果裁剪的保护边界独立于保留窗口硬顶', async () => {
     // 回归：曾把两者共用 DEFAULT_KEEP_RECENT_MESSAGES，硬顶放宽到 200 后
     // 20 余条历史全部进入保护范围，超大工具结果不再被裁剪。
@@ -329,6 +350,40 @@ describe('上下文压缩（Proma / AI SDK）', () => {
     expect(resolveKeepRecentTokenTarget(8_192, 5_632)).toBe(1_638)
     // 低水位更小时取低水位
     expect(resolveKeepRecentTokenTarget(1_000_000, 1_000)).toBe(650)
+  })
+
+  test('压缩跳过审计记录的是保留目标（20% 预算），不是低水位提交上限', async () => {
+    const sessionId = 's-skip-audit'
+    // 典型空转场景：已报告 usage 远超预算，但本地可估算历史远小于保留目标。
+    const history = makeHistory(5)
+    inMemorySdk.set(sessionId, history)
+    const observedUsage = { contextTokens: 220_000, modelId: 'm', recordedAt: Date.now() }
+    const trigger = resolveAutoCompactionTrigger({
+      historyMessages: history,
+      provider: 'deepseek',
+      modelId: 'm',
+      contextWindowOverride: 128_000,
+      observedUsage,
+    })
+
+    const result = await maybeAutoCompact({
+      sessionId,
+      provider: 'deepseek',
+      apiKey: 'k',
+      baseUrl: 'http://mock',
+      model: 'm',
+      contextWindowOverride: 128_000,
+      historyMessages: history,
+      observedUsage,
+      audit: { sessionId, runtime: 'proma', trigger: 'automatic' },
+    })
+
+    expect(result.compacted).toBe(false)
+    const events = readFileSync(join(tempDir, 'context-compaction-audit', 'events.jsonl'), 'utf8')
+      .trim().split('\n').map((line) => JSON.parse(line) as { compactionSkipped?: { targetKeepTokens: number } })
+    const skipped = events.find((event) => event.compactionSkipped)
+    expect(skipped?.compactionSkipped?.targetKeepTokens).toBe(trigger.targetKeepTokens)
+    expect(trigger.targetKeepTokens).not.toBe(Math.floor(trigger.inputBudgetTokens * 0.65))
   })
 
   test('maybeAutoCompact：早期文本过小不压缩', async () => {

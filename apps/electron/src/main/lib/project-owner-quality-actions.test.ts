@@ -594,6 +594,7 @@ test('Given最终手册经中间步骤依赖原始时间表 When执行与评审 
     await until(() => f.tasks().every(task => task.status === 'completed'), f.project.id)
     const original = f.tasks().find(task => task.title === '形成建议')!
     const final = f.tasks().find(task => task.title === '核对最终手册')!
+    const directDependency = store.listTaskDependencies(f.project.id).find(edge => edge.taskId === final.id)!
     const artifact = actionRows(f.project.id).find(action => action.taskId === original.id)!
     const runs = traces.get(f.project.id)!.filter(item => item.taskId === final.id && ['executor', 'reviewer'].includes(item.role))
     expect(runs.map(run => run.role)).toEqual(['executor', 'reviewer'])
@@ -601,10 +602,36 @@ test('Given最终手册经中间步骤依赖原始时间表 When执行与评审 
       const block = run.prompt.split('<untrusted-upstream-artifacts>')[1]!.split('</untrusted-upstream-artifacts>')[0]!
       const handoffs = JSON.parse(block) as { taskId: string; artifactHash: string; content: string }[]
       expect(handoffs).toHaveLength(2)
+      expect(handoffs.map(item => item.taskId)).toEqual([directDependency.dependsOnTaskId, original.id])
       expect(handoffs.find(item => item.taskId === original.id)).toMatchObject({ artifactHash: artifact.artifactHash, content: expect.stringContaining('面向已访谈的现有用户') })
     }
   } finally { f.stop() }
 }, 20000)
+
+test('给定研发评审已认领并正在读取快照，心跳扫描不会将尚未交接的评审标为失联', async () => {
+  const artifacts = await import('./project-owner-development-artifact')
+  const readArtifact = artifacts.readOwnerDevelopmentArtifactForReview
+  let sawPreparation = false
+  const readDuringHeartbeat = spyOn(artifacts, 'readOwnerDevelopmentArtifactForReview').mockImplementation(async commandId => {
+    const artifact = await readArtifact(commandId)
+    const command = store.getProjectDb().prepare('SELECT execution_id FROM project_owner_execution_commands WHERE id=?')
+      .get(commandId) as { execution_id: string }
+    sawPreparation = true
+    employees.scanAgentEmployeeHeartbeat()
+    expect(store.getAgentExecution(command.execution_id)?.status).toBe('running')
+    return artifact
+  })
+  let f: Awaited<ReturnType<typeof fixture>> | undefined
+  try {
+    f = await fixture({ development: true })
+    const current = f
+    await until(() => current.tasks().every(task => task.status === 'completed'), current.project.id)
+    expect(sawPreparation).toBe(true)
+  } finally {
+    readDuringHeartbeat.mockRestore()
+    await f?.stop()
+  }
+}, 15000)
 
 test('Given文本需求与代码实现共用授权 WhenOwner自主执行 Then文本验收后携带准确成果推进研发和独立评审', async () => {
   const f = await fixture({ development: true, mixedDelivery: true })

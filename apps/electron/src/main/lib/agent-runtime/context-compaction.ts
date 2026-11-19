@@ -37,6 +37,9 @@ export const DEFAULT_CONTEXT_OUTPUT_RESERVE_TOKENS = 32_000
 /** 网络协议和工具追加的不确定性缓冲。 */
 export const DEFAULT_CONTEXT_SAFETY_BUFFER_TOKENS = 8_000
 
+const REQUEST_FRAMING_TOKENS = 256
+const MESSAGE_FRAMING_TOKENS = 12
+
 /** 单次摘要压缩的默认截止时间，避免 runtime 永久停留在 compacting。 */
 export const DEFAULT_COMPACTION_TIMEOUT_MS = 120_000
 
@@ -252,7 +255,7 @@ export function estimateOutgoingContextTokens(input: {
     input.systemPrompt ?? '',
     input.tools ? JSON.stringify(input.tools) : '',
   ].join('\n')
-  return estimateTokenCount(payload) + 256 + input.historyMessages.length * 12
+  return estimateTokenCount(payload) + REQUEST_FRAMING_TOKENS + input.historyMessages.length * MESSAGE_FRAMING_TOKENS
 }
 
 /**
@@ -260,6 +263,8 @@ export function estimateOutgoingContextTokens(input: {
  *
  * 从最新往回累加，直到达到 targetKeepTokens 或触碰条数硬顶。
  * 历史总量本身小于目标时返回全部条数——调用方据此跳过压缩。
+ *
+ * 逐条累加，避免每轮重新序列化整个尾部切片（旧实现总字符量随条数平方增长）。
  */
 export function resolveAdaptiveKeepRecent(input: {
   historyMessages: SDKMessage[]
@@ -268,10 +273,12 @@ export function resolveAdaptiveKeepRecent(input: {
 }): number {
   const hardCap = Math.max(0, Math.min(input.desiredKeepRecent ?? DEFAULT_KEEP_RECENT_MESSAGES, input.historyMessages.length))
   const target = Math.max(0, input.targetKeepTokens)
+  let accumulatedTokens = REQUEST_FRAMING_TOKENS
   let selected = 0
   for (let index = input.historyMessages.length - 1; index >= 0 && selected < hardCap; index--) {
-    const candidateTokens = estimateOutgoingContextTokens({ historyMessages: input.historyMessages.slice(index) })
-    if (candidateTokens > target) break
+    const messageTokens = estimateTokenCount(JSON.stringify(input.historyMessages[index])) + MESSAGE_FRAMING_TOKENS
+    if (accumulatedTokens + messageTokens > target) break
+    accumulatedTokens += messageTokens
     selected += 1
   }
   return selected
@@ -430,13 +437,15 @@ export async function compactSessionNow(options: ContextCompactionOptions): Prom
   if (earlyCount <= 0) {
     options.onLifecycle?.({ status: 'noop', message: '当前上下文较小，暂时无需压缩。' })
     // 已判定需要压缩却无早期消息可压：把静默空转变成可诊断事实。
+    // targetKeepTokens 必须是保留目标本身（窗口 20%），不是低水位提交上限——
+    // 两者数值不同，记录错值会让「保留目标过大」与「预算被非历史部分占满」难以区分。
     try {
       if (options.audit) {
         appendContextCompactionAudit({
           ...options.audit,
           compactionSkipped: {
             estimatedHistoryTokens: estimateOutgoingContextTokens({ historyMessages }),
-            targetKeepTokens: options.targetInputTokens ?? 0,
+            targetKeepTokens: trigger.targetKeepTokens,
           },
         })
       }
