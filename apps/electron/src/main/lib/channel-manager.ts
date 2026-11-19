@@ -7,7 +7,7 @@
  */
 
 import { enrichModelContexts, modelContextEndpoint } from './model-context-capability'
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readFileSync, writeFileSync, existsSync, renameSync, rmSync } from 'node:fs'
 import { safeStorage } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { getChannelsPath } from './config-paths'
@@ -60,10 +60,12 @@ function readConfig(): ChannelsConfig {
 
   try {
     const raw = readFileSync(configPath, 'utf-8')
-    return JSON.parse(raw) as ChannelsConfig
+    const config = JSON.parse(raw) as ChannelsConfig
+    if (!config || !Array.isArray(config.channels)) throw new Error('渠道配置格式无效')
+    return config
   } catch (error) {
     console.error('[渠道管理] 读取配置文件失败:', error)
-    return { version: CONFIG_VERSION, channels: [] }
+    throw new Error('读取渠道配置失败，原文件已保留')
   }
 }
 
@@ -72,10 +74,13 @@ function readConfig(): ChannelsConfig {
  */
 function writeConfig(config: ChannelsConfig): void {
   const configPath = getChannelsPath()
+  const tempPath = `${configPath}.${randomUUID()}.tmp`
 
   try {
-    writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf-8')
+    writeFileSync(tempPath, JSON.stringify(config, null, 2), { encoding: 'utf-8', mode: 0o600 })
+    renameSync(tempPath, configPath)
   } catch (error) {
+    rmSync(tempPath, { force: true })
     console.error('[渠道管理] 写入配置文件失败:', error)
     throw new Error('写入渠道配置失败')
   }

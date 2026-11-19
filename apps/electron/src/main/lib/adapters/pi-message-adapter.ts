@@ -299,6 +299,8 @@ export function convertSDKMessagesToPiMessages(messages: SDKMessage[]): PiAgentM
       }
     } else if (isSDKAssistantMessage(message)) {
       pendingToolCalls.clear()
+      // 失败记录供界面查阅，不属于模型生成的有效历史。
+      if (message.error) continue
       for (const block of message.message.content) {
         if (block.type === 'tool_use' && typeof block.id === 'string') {
           pendingToolCalls.set(block.id, typeof block.name === 'string' ? block.name : 'tool')
