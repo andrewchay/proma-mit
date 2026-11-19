@@ -4,6 +4,14 @@ import type { AssistantMessage, AssistantMessage as PiAssistantMessage, ToolResu
 import { convertPiMessageToSDKMessage, convertPiMessagesToSDKMessages, convertSDKMessagesToPiMessages } from './pi-message-adapter'
 
 describe('pi-message-adapter', () => {
+  test('恢复历史时不把 provider 错误作为助手回答发给模型', () => {
+    const messages: SDKMessage[] = [
+      { type: 'user', message: { content: [{ type: 'text', text: '你好' }] }, parent_tool_use_id: null },
+      { type: 'assistant', message: { content: [{ type: 'text', text: 'provider error' }] }, parent_tool_use_id: null, error: { message: 'provider error' } },
+      { type: 'user', message: { content: [{ type: 'text', text: '继续' }] }, parent_tool_use_id: null },
+    ]
+    expect(convertSDKMessagesToPiMessages(messages).map((message) => message.role)).toEqual(['user', 'user'])
+  })
   test('converts Pi assistant text, thinking and tool call blocks to SDK assistant messages', () => {
     const piMessage: AssistantMessage = {
       role: 'assistant',

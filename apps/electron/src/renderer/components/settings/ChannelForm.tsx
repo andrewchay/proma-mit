@@ -185,6 +185,7 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
   const [fetchingModels, setFetchingModels] = React.useState(false)
   const [fetchResult, setFetchResult] = React.useState<FetchModelsResult | null>(null)
   const [apiKeyLoaded, setApiKeyLoaded] = React.useState(false)
+  const [apiKeyLoadFailed, setApiKeyLoadFailed] = React.useState(false)
   const [showExitDialog, setShowExitDialog] = React.useState(false)
 
   const setChannelFormDirty = useSetAtom(channelFormDirtyAtom)
@@ -202,6 +203,7 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
         setApiKeyLoaded(true)
       }).catch((error) => {
         console.error('[模型配置表单] 解密 API Key 失败:', error)
+        setApiKeyLoadFailed(true)
         setApiKeyLoaded(true)
       })
     }
@@ -255,6 +257,7 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
     if (!isEdit || !initializedRef.current) return
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
     autoSaveTimerRef.current = setTimeout(() => {
+      autoSaveTimerRef.current = null
       doAutoSave(nextModels, nextName, nextProvider, nextBaseUrl, nextApiKey, nextEnabled)
     }, AUTO_SAVE_DELAY)
   }, [isEdit, doAutoSave])
@@ -545,12 +548,17 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
   const hasNoModels = !isEdit && models.length === 0
 
   /** 返回按钮：创建模式下有未保存内容时拦截 */
-  const handleBack = (): void => {
+  const handleBack = async (): Promise<void> => {
     if (!isEdit && isDirty) {
       setShowExitDialog(true)
       return
     }
     if (isEdit) {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current)
+        autoSaveTimerRef.current = null
+        await doAutoSave(models, name, provider, baseUrl, apiKey, enabled)
+      }
       onSaved()
     } else {
       onCancel()
@@ -730,6 +738,9 @@ export function ChannelForm({ channel, onSaved, onAgentEligibilityChange, onCanc
                 {showApiKey ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
+            {apiKeyLoadFailed && (
+              <p role="alert" className="text-xs text-destructive">无法解密已保存的密钥，原密文仍在。请检查系统钥匙串权限，或重新输入密钥。</p>
+            )}
             {testResult && (
               <div className={cn(
                 'flex items-center gap-1.5 text-xs',
