@@ -252,6 +252,34 @@ export function buildPiHistorySessionEntries(messages: PiAgentMessage[]): PiFile
 }
 
 /**
+ * 用压缩后的 SDK 历史替换 SessionManager 中的既有条目。
+ *
+ * 压缩发生在 Pi 会话建立之后（上下文超限恢复），此时 SessionManager 仍持有压缩前的
+ * 条目链。`prepareRequest` 每次都从 `buildSessionProjection()` 重建模型上下文，
+ * 因此不替换掉旧条目，重跑仍会投影出超限历史。
+ *
+ * 走公开 API：`newSession` 重置条目并保留 session id，再逐条 `appendMessage`。
+ */
+export function resetPiSessionHistory(
+  sessionManager: {
+    newSession(options?: { id?: string }): unknown
+    appendMessage(message: PiAgentMessage): string
+    getSessionId(): string
+  },
+  historyMessages: readonly SDKMessage[],
+  excludedMessageId?: string,
+): void {
+  const sessionId = sessionManager.getSessionId()
+  sessionManager.newSession({ id: sessionId })
+  const replayHistory = excludedMessageId
+    ? historyMessages.filter(message => (message as { uuid?: string }).uuid !== excludedMessageId)
+    : [...historyMessages]
+  for (const message of convertSDKMessagesToPiMessages(replayHistory)) {
+    sessionManager.appendMessage(message)
+  }
+}
+
+/**
  * SDK 历史恢复到 Pi：
  * - compact_boundary 转成模型可见的历史摘要，避免压缩后只剩最近消息；
  * - 仅恢复能匹配前序 assistant tool_use 的 tool_result，自动丢弃旧坏历史中的孤儿结果；

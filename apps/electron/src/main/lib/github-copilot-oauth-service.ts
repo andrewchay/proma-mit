@@ -9,7 +9,6 @@
  * @earendil-works/pi-coding-agent 0.82.x 的 ModelRuntime API。
  */
 
-import { shell } from 'electron'
 import type {
   GithubCopilotOAuthCredentials,
   GithubCopilotOAuthDeviceCode,
@@ -20,6 +19,19 @@ type OAuthCredential = GithubCopilotOAuthCredentials & { type: 'oauth'; [key: st
 
 let piSdkPromise: Promise<PiSdk> | undefined
 let activeLoginAbort: AbortController | undefined
+
+/**
+ * 惰性获取 Electron shell。
+ *
+ * 顶层 `import { shell } from 'electron'` 会让任何间接依赖本模块的测试文件在
+ * bun 下整文件炸掉（占位 electron 模块没有 shell 导出），而登录流程只有真正
+ * 打开浏览器时才需要它。
+ */
+function openExternal(url: string): void {
+  void import('electron')
+    .then(({ shell }) => shell.openExternal(url))
+    .catch((error: unknown) => console.error('[GitHub Copilot OAuth] 打开授权页面失败:', error))
+}
 
 function loadPiSdk(): Promise<PiSdk> {
   piSdkPromise ??= import('@earendil-works/pi-coding-agent')
@@ -104,9 +116,7 @@ export async function loginGithubCopilotOAuth(options?: GithubCopilotLoginOption
         if (event.type === 'device_code') {
           console.log(`[GitHub Copilot OAuth] 请在浏览器中授权（设备码：${event.userCode}）`)
           options?.onDeviceCode?.({ userCode: event.userCode, verificationUri: event.verificationUri })
-          shell.openExternal(event.verificationUri).catch((error) => {
-            console.error('[GitHub Copilot OAuth] 打开授权页面失败:', error)
-          })
+          openExternal(event.verificationUri)
         } else if (event.type === 'progress' || event.type === 'info') {
           console.log(`[GitHub Copilot OAuth] ${event.message}`)
         }

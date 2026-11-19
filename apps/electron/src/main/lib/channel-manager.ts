@@ -8,7 +8,7 @@
 
 import { enrichModelContexts, modelContextEndpoint } from './model-context-capability'
 import { readFileSync, writeFileSync, existsSync, renameSync, rmSync } from 'node:fs'
-import { safeStorage } from 'electron'
+import type { safeStorage as SafeStorage } from 'electron'
 import { randomUUID } from 'node:crypto'
 import { getChannelsPath } from './config-paths'
 import type {
@@ -97,13 +97,31 @@ function writeConfig(config: ChannelsConfig): void {
  * @returns base64 编码的加密字符串
  */
 function encryptApiKey(plainKey: string): string {
-  if (!safeStorage.isEncryptionAvailable()) {
+  const storage = getSafeStorage()
+  if (!storage) {
     console.warn('[渠道管理] safeStorage 加密不可用，将以明文存储')
     return plainKey
   }
 
-  const encrypted = safeStorage.encryptString(plainKey)
+  const encrypted = storage.encryptString(plainKey)
   return encrypted.toString('base64')
+}
+
+/**
+ * 惰性解析 Electron safeStorage。
+ *
+ * 顶层 `import { safeStorage } from 'electron'` 会让任何间接依赖本模块的测试文件
+ * 在 bun 下整文件炸掉（占位 electron 模块没有 safeStorage 导出）。只有真正读写
+ * 加密 API Key 时才需要它；不可用时保持既有的「明文存储」降级语义。
+ */
+function getSafeStorage(): typeof SafeStorage | undefined {
+  try {
+    // 主进程打包为 CommonJS，直接惰性加载 Electron，避免依赖 import.meta.url。
+    const { safeStorage: storage } = require('electron') as typeof import('electron')
+    return storage?.isEncryptionAvailable() ? storage : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -113,14 +131,15 @@ function encryptApiKey(plainKey: string): string {
  * @returns 明文 API Key
  */
 function decryptKey(encryptedKey: string): string {
-  if (!safeStorage.isEncryptionAvailable()) {
+  const storage = getSafeStorage()
+  if (!storage) {
     // 如果加密不可用，假设存储的是明文
     return encryptedKey
   }
 
   try {
     const buffer = Buffer.from(encryptedKey, 'base64')
-    return safeStorage.decryptString(buffer)
+    return storage.decryptString(buffer)
   } catch (error) {
     console.error('[渠道管理] 解密 API Key 失败:', error)
     throw new Error('解密 API Key 失败')

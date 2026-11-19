@@ -13,7 +13,7 @@ import { buildElectronMock } from '../testing/electron-mock'
 import type { Context, Model } from '@earendil-works/pi-ai'
 import { normalizeContext } from '@earendil-works/pi-ai'
 import { streamSimple } from '@earendil-works/pi-ai/api/openai-completions'
-import type { AgentEvent } from '@gravitas/shared'
+import type { AgentEvent, SDKMessage } from '@gravitas/shared'
 
 
 mock.module('electron', () => buildElectronMock())
@@ -43,12 +43,48 @@ mock.module('../attachment-service', () => ({
   saveAttachment: async () => ({ path: '/tmp/mock', fileName: 'mock.png', mimeType: 'image/png', size: 1 }),
 }))
 
+// 上下文压缩的摘要调用走 @gravitas/core 的 ProviderAdapter + streamSSE；
+// 这里给出固定 ContextPacket，避免溢出恢复测试打到真实网络。
+mock.module('@gravitas/core', () => ({
+  getAdapter: () => ({
+    providerType: 'deepseek',
+    buildStreamRequest: () => ({ url: 'http://mock', headers: {}, body: '{}' }),
+    parseSSELine: () => [],
+  }),
+  streamSSE: async (opts: { onEvent: (event: { type: string; delta?: string }) => void }) => {
+    opts.onEvent({
+      type: 'chunk',
+      delta: JSON.stringify({
+        version: 1,
+        summary: '较早历史已压缩为摘要。',
+        facts: ['用户要求继续任务。'],
+        decisions: ['保留最近消息。'],
+        openTasks: ['继续当前回合。'],
+        importantFiles: [],
+        toolState: [],
+      }),
+    })
+    opts.onEvent({ type: 'done' })
+  },
+}))
+
 mock.module('../document-parser', () => ({
   isDocumentAttachment: (mediaType: string) => mediaType === 'text/plain',
   extractTextFromAttachment: async (localPath: string) => `文档内容：${localPath}`,
 }))
 
 let capturedSessionOptions: { noTools?: 'builtin'; customTools?: Array<{ name: string }> } | undefined
+interface MockPiSessionManager {
+  sessionId: string
+  messages: Array<{ role?: string; content?: unknown }>
+  getSessionId(): string
+  newSession(options?: { id?: string }): undefined
+  appendMessage(message: { role?: string; content?: unknown }): string
+}
+let capturedPiSessionManager: MockPiSessionManager | undefined
+function getCapturedPiSessionManager(): MockPiSessionManager | undefined {
+  return capturedPiSessionManager
+}
 let capturedAgent: {
   toolExecution: string
   prepareRequest?: (request: { context: { messages: unknown[] } }, signal?: AbortSignal) => Promise<unknown>
@@ -89,6 +125,22 @@ interface CapturedPiPrompt {
 }
 let capturedPrompts: CapturedPiPrompt[] = []
 
+/**
+ * 构造足以触发压缩的早期历史。
+ *
+ * 规模必须同时满足两条：早期文本超过 MIN_SUMMARY_SOURCE_CHARS（2,000 字符，否则
+ * 「可压缩内容过少」直接 noop），且历史总量明显超过 256K 窗口的保留目标（51,200 token，
+ * 否则 keepRecent 会吃下全部历史、earlyCount 归零）。
+ */
+function makeLargeHistory(tag: string): SDKMessage[] {
+  return Array.from({ length: 400 }, (_, index) => ({
+    type: index % 2 === 0 ? 'user' : 'assistant',
+    message: { content: [{ type: 'text', text: `消息 ${index}（${tag}）：${'较早的历史内容。'.repeat(20)}` }] },
+    parent_tool_use_id: null,
+    uuid: `${tag}-${index}`,
+  } as unknown as SDKMessage))
+}
+
 function getCapturedSessionOptions(): typeof capturedSessionOptions {
   return capturedSessionOptions
 }
@@ -110,14 +162,26 @@ mock.module('./pi-sdk-loader', () => ({
       async reload(): Promise<void> {}
       getExtensions() { return { extensions: unverifiedExtension ? [{}] : [], errors: [] } }
     },
-    SessionManager: { inMemory: () => ({}) },
+    SessionManager: {
+      inMemory: (_cwd?: string, options?: { id?: string }, entries?: Array<{ message: { role?: string; content?: unknown } }>) => {
+        const manager: MockPiSessionManager = {
+          sessionId: options?.id ?? 'pi-mock-session',
+          messages: entries?.map(entry => entry.message) ?? [],
+          getSessionId() { return this.sessionId },
+          newSession(newOptions) { this.sessionId = newOptions?.id ?? 'pi-mock-session'; this.messages = []; return undefined },
+          appendMessage(message) { this.messages.push(message); return `entry-${this.messages.length}` },
+        }
+        capturedPiSessionManager = manager
+        return manager
+      },
+    },
     SettingsManager: {
       inMemory: (settings: NonNullable<typeof capturedSettings>) => {
         capturedSettings = settings
         return {}
       },
     },
-    createAgentSession: async (options: { noTools?: 'builtin'; customTools?: Array<{ name: string }> }) => {
+    createAgentSession: async (options: { noTools?: 'builtin'; customTools?: Array<{ name: string }>; sessionManager?: MockPiSessionManager }) => {
       if (sessionCreationError) throw sessionCreationError
       capturedSessionOptions = options
       sessionActivated = true
@@ -142,6 +206,7 @@ mock.module('./pi-sdk-loader', () => ({
           async prompt(text: string, options?: CapturedPiPrompt['options']) {
             if (mockBeforePrompt) await mockBeforePrompt()
             capturedPrompts.push({ text, options })
+            capturedPiSessionManager?.appendMessage({ role: 'user', content: [{ type: 'text', text }] })
             const promptError = promptErrors.shift()
             if (promptError) {
               promptCallCount += 1
@@ -172,8 +237,24 @@ mock.module('./pi-model-registry', () => ({
   registerPiModelFromChannel: async () => {
     registrationStarted = true
     await registrationGate
-    return { agentDir: '/tmp/pi-agent', modelRuntime: {}, model: {} }
+    return { agentDir: '/tmp/pi-agent', modelRuntime: {}, model: { contextWindow: 256_000 } }
   },
+}))
+
+// 压缩落盘走会话 JSONL；这里用内存实现，避免测试依赖真实文件系统时序。
+const piSessionHistory = new Map<string, SDKMessage[]>()
+mock.module('../agent-session-manager', () => ({
+  getAgentSessionSDKMessages: (id: string): SDKMessage[] => piSessionHistory.get(id) ?? [],
+  compactSDKMessages: (id: string, summary: string, keepRecent: number, contextPacket?: unknown): SDKMessage[] => {
+    const all = piSessionHistory.get(id) ?? []
+    const kept = all.slice(Math.max(0, all.length - Math.max(0, Math.min(keepRecent, all.length))))
+    const boundary = { type: 'system', subtype: 'compact_boundary', session_id: id, summary, contextPacket } as unknown as SDKMessage
+    const result = [boundary, ...kept]
+    piSessionHistory.set(id, result)
+    return result
+  },
+  getAgentSessionMeta: () => undefined,
+  updateAgentSessionMeta: () => {},
 }))
 
 const { PiAgentAdapter, resolveFirstTokenTimeoutMs, resolvePromptIdleTimeoutMs, shouldTreatStreamAsIdle, PI_PROMPT_FIRST_TOKEN_MAX_TIMEOUT_MS } = await import('./pi-agent-adapter')
@@ -429,6 +510,124 @@ describe('PiAgentAdapter', () => {
 
     expect(() => adapter.abort('s-pi')).not.toThrow()
     expect(() => adapter.dispose()).not.toThrow()
+  })
+
+  test('Given Pi 回合因上下文超限失败 When 有历史可压 Then 压缩后重跑本回合', async () => {
+    capturedPrompts = []
+    promptEvents = []
+    promptErrors = [new Error('maximum context length exceeded: 300000 tokens')]
+    const events: AgentEvent[] = []
+    const adapter = new PiAgentAdapter()
+    // 历史必须足够大，否则压缩会因「可压缩早期内容过少」直接 noop。
+    const history = makeLargeHistory('overflow')
+    const currentUserMessage = {
+      type: 'user',
+      message: { content: [{ type: 'text', text: '继续' }] },
+      parent_tool_use_id: null,
+      uuid: 'overflow-current-user',
+    } as unknown as SDKMessage
+    piSessionHistory.set('s-pi-overflow-recovery', [...history, currentUserMessage])
+    capturedPiSessionManager = undefined
+
+    try {
+      for await (const _message of adapter.query({
+        sessionId: 's-pi-overflow-recovery',
+        prompt: '继续',
+        agentRuntime: 'pi',
+        provider: 'deepseek',
+        apiKey: 'test-key',
+        baseUrl: 'https://example.test',
+        model: 'test-model',
+        cwd: '/tmp',
+        historyMessages: history,
+        currentUserMessage,
+        canUseTool: async () => ({ allowed: true }),
+        onAgentEvent: (event) => events.push(event),
+      })) { /* 溢出后应压缩并重跑一次 */ }
+    } finally {
+      promptErrors = []
+      promptEvents = []
+    }
+
+    // 首次失败 + 压缩后重跑成功 = 两次 prompt。
+    expect(capturedPrompts).toHaveLength(2)
+    expect(events.some((event) => event.type === 'compaction_status' && event.status === 'succeeded')).toBe(true)
+    const currentTurnEntries = getCapturedPiSessionManager()?.messages.filter(message => {
+      if (message.role !== 'user') return false
+      if (message.content === '继续') return true
+      if (!Array.isArray(message.content)) return false
+      return message.content.some(block => typeof block === 'object' && block !== null && 'text' in block && block.text === '继续')
+    })
+    expect(currentTurnEntries).toHaveLength(1)
+    piSessionHistory.delete('s-pi-overflow-recovery')
+  })
+
+  test('Given Pi 回合因上下文超限失败 When 已恢复过一次 Then 不再重复压缩', async () => {
+    capturedPrompts = []
+    promptEvents = []
+    promptErrors = [
+      new Error('maximum context length exceeded: 300000 tokens'),
+      new Error('maximum context length exceeded: 300000 tokens'),
+    ]
+    const adapter = new PiAgentAdapter()
+    const history = makeLargeHistory('overflow-twice')
+
+    try {
+      await expect(async () => {
+        for await (const _message of adapter.query({
+          sessionId: 's-pi-overflow-once',
+          prompt: '继续',
+          agentRuntime: 'pi',
+          provider: 'deepseek',
+          apiKey: 'test-key',
+          baseUrl: 'https://example.test',
+          model: 'test-model',
+          cwd: '/tmp',
+          historyMessages: history,
+          canUseTool: async () => ({ allowed: true }),
+        })) { /* 第二次溢出应向上抛出，不再递归压缩 */ }
+      }).toThrow('maximum context length exceeded')
+    } finally {
+      promptErrors = []
+      promptEvents = []
+    }
+
+    // 只允许一次恢复：两次 prompt（原始 + 恢复后的重跑）。
+    expect(capturedPrompts).toHaveLength(2)
+  })
+
+  test('Given 有限费用门禁中的 Pi 回合超出上下文 When 失败 Then 不发起门禁外的摘要请求', async () => {
+    capturedPrompts = []
+    promptEvents = []
+    promptErrors = [new Error('maximum context length exceeded: 300000 tokens')]
+    const events: AgentEvent[] = []
+    const adapter = new PiAgentAdapter()
+    const history = makeLargeHistory('overflow-budget-gated')
+
+    try {
+      await expect(async () => {
+        for await (const _message of adapter.query({
+          sessionId: 's-pi-overflow-budget-gated',
+          prompt: '继续',
+          agentRuntime: 'pi',
+          provider: 'deepseek',
+          apiKey: 'test-key',
+          baseUrl: 'https://example.test',
+          model: 'test-model',
+          cwd: '/tmp',
+          historyMessages: history,
+          runtimeBudgetLimitUsd: 0.5,
+          canUseTool: async () => ({ allowed: true }),
+          onAgentEvent: (event) => events.push(event),
+        })) { /* 费用门禁不允许发出额外摘要请求 */ }
+      }).toThrow('maximum context length exceeded')
+    } finally {
+      promptErrors = []
+      promptEvents = []
+    }
+
+    expect(capturedPrompts).toHaveLength(1)
+    expect(events.some(event => event.type === 'compaction_status')).toBe(false)
   })
 
   test('given the user requests compact when Pi handles the turn then compaction runs directly without prompting the model', async () => {
