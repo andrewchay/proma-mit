@@ -65,6 +65,25 @@ describe('两档召回', () => {
     expect(result.tokens).toContain('bug')
   })
 
+  it('长任务提示仍按全部词匹配，不触发 SQLite 表达式深度上限', () => {
+    const tokens = Array.from({ length: 1200 }, (_, index) => `owner${index.toString().padStart(4, '0')}`)
+    const query = tokens.join(' ')
+    const entity = { entityType: 'run' as const, sourceType: 'run_store', occurredAt: 1700000000000 }
+    handle.entities.upsert({ ...entity, id: 'recall:full', sourceId: 'full', title: tokens[0]!, content: tokens.slice(1).join(' ') })
+    handle.entities.upsert({ ...entity, id: 'recall:partial', sourceId: 'partial', title: '无完整记录', content: tokens.slice(0, -1).join(' ') })
+    const result = handle.search.recall(query)
+    expect(result.tokens).toHaveLength(1200)
+    expect(result.hits.map(hit => hit.entity.id)).toEqual(['recall:full'])
+    expect(result.hits[0]?.rank).toBe(0)
+  })
+
+  it('查询中的下划线按字面匹配，不当作单字符通配符', () => {
+    const entity = { entityType: 'run' as const, sourceType: 'run_store', occurredAt: 1700000000000 }
+    handle.entities.upsert({ ...entity, id: 'recall:exact', sourceId: 'exact', title: 'project_owner' })
+    handle.entities.upsert({ ...entity, id: 'recall:wildcard', sourceId: 'wildcard', title: 'projectXowner' })
+    expect(handle.search.recall('project_owner').hits.map(hit => hit.entity.id)).toEqual(['recall:exact'])
+  })
+
   it('空查询返回空结果', () => {
     const result = handle.search.recall('')
     expect(result.hits).toHaveLength(0)

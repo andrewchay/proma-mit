@@ -72,15 +72,11 @@ export class SearchRepository {
   ): ContextSearchHit[] {
     if (tokens.length === 0) return []
 
-    // 每个 token 都必须命中 title/content/detail 之一（AND 语义）
-    const termClauses = tokens.map(() => `(e.title LIKE ? ESCAPE '\\' OR e.content LIKE ? ESCAPE '\\' OR e.detail LIKE ? ESCAPE '\\')`)
-    const params: (string | number)[] = []
-    for (const term of tokens) {
-      params.push(`%${term}%`, `%${term}%`, `%${term}%`)
-    }
-
-    // 评分：标题前缀命中 > 标题子串命中 > 内容/详情命中
-    const firstTerm = tokens[0]!
+    // 把词表作为数据传入，避免完整任务提示生成深层 AND 表达式。
+    const escapeLike = (term: string): string => term.replace(/[\\%_]/g, '\\$&')
+    const escaped = tokens.map(escapeLike)
+    const params: (string | number)[] = [JSON.stringify(escaped)]
+    const firstTerm = escaped[0]!
     const scoreCase = `
       CASE
         WHEN e.title LIKE ? ESCAPE '\\' THEN 0
@@ -100,9 +96,17 @@ export class SearchRepository {
     params.push(limit)
 
     const sql = `
+      WITH terms(pattern) AS (SELECT '%' || value || '%' FROM json_each(?))
       SELECT e.*, (${scoreCase}) AS score
       FROM context_entities e
-      WHERE ${termClauses.join(' AND ')} ${typeClause}
+      WHERE NOT EXISTS (
+        SELECT 1 FROM terms
+        WHERE NOT COALESCE(
+          e.title LIKE terms.pattern ESCAPE '\\'
+          OR e.content LIKE terms.pattern ESCAPE '\\'
+          OR e.detail LIKE terms.pattern ESCAPE '\\', 0
+        )
+      ) ${typeClause}
       ORDER BY score ASC, e.occurred_at DESC
       LIMIT ?
     `
