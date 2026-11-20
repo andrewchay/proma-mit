@@ -14,7 +14,7 @@ mock.module('./agent-service', () => ({ isAgentSessionActive: () => false }))
 const store = await import('./project-sqlite-store')
 const employees = await import('./agent-employee-service')
 const { createAgentWorkspace } = await import('./agent-workspace-manager')
-const { createChannel } = await import('./channel-manager')
+const { createChannel, getChannelById } = await import('./channel-manager')
 const { bindWorkspaceToProject } = await import('./project-workspace-bindings')
 const { saveProjectOwnerGoalDraft } = await import('./project-owner-goal-service')
 const plans = await import('./project-owner-plan-service')
@@ -39,16 +39,16 @@ beforeAll(async () => {
     calls++
     if (localConfigurationError) throw new Error(localConfigurationError)
     const source = resolveOwnerPlanningSession(input.sessionId)!
-    const body = JSON.stringify({ model: source.binding.modelId, stream: true, max_tokens: source.link.maxOutputTokens, response_format: { type: 'json_object' }, messages: [{ role: 'system', content: source.request.systemPrompt }, { role: 'user', content: source.request.userPrompt }] })
-    claimOwnerPlanningProviderRequest(input.sessionId, body, new URL('https://example.invalid/v1/chat/completions'))
+    const body = JSON.stringify({ model: source.binding.modelId, stream: true, max_tokens: source.link.maxOutputTokens, ...(source.link.reasoningEffort ? { reasoning_effort: source.link.reasoningEffort } : {}), response_format: { type: 'json_object' }, messages: [{ role: 'system', content: source.request.systemPrompt }, { role: 'user', content: source.request.userPrompt }] })
+    claimOwnerPlanningProviderRequest(input.sessionId, body, new URL(getChannelById(source.binding.channelId)!.baseUrl + '/chat/completions'))
     callbacks.set(input.sessionId, handlers)
   })
 })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
-function fixture(modelId = 'deepseek-flash', provider: ProviderType = 'openai', apiKey = 'fake', goal: unknown = { objective: '形成产品定位建议', constraints: [] }) {
+function fixture(modelId = 'deepseek-flash', provider: ProviderType = 'openai', apiKey = 'fake', goal: unknown = { objective: '形成产品定位建议', constraints: [] }, baseUrl = 'https://example.invalid/v1') {
   const project = store.createProject({ title: '委托项目', description: '' })
   const workspace = createAgentWorkspace(`委托-${randomUUID()}`); bindWorkspaceToProject(project.id, workspace.id)
-  const channel = createChannel({ name: 'fake', provider, baseUrl: 'https://example.invalid/v1', apiKey, enabled: true, models: [{ id: modelId, name: modelId, enabled: true }] })
+  const channel = createChannel({ name: 'fake', provider, baseUrl, apiKey, enabled: true, models: [{ id: modelId, name: modelId, enabled: true }] })
   const employee = employees.createAgentEmployee({ name: 'Owner', role: '规划', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId, workspaceIds: [workspace.id] })
   saveProjectOwnerGoalDraft(project.id, 0, goal)
   saveOwnerRuntimeBinding(project.id, 0, { ownerName: 'Owner', carrierId: employee.id, workspaceId: workspace.id, changeReason: '隔离测试' })
@@ -114,6 +114,46 @@ test('Given 配置了DeepSeek V4 Pro When 核对项目管理预算 Then按官方
   expect(preview.perRequestCeilingMicros).toBeGreaterThan(1_300_000)
   expect(preview.perRequestCeilingMicros).toBeLessThan(1_400_000)
   expect(calls).toBe(before)
+})
+
+test.each([
+  { baseUrl: 'https://api.z.ai/api/paas/v4', knownUsage: true, rated: true },
+  { baseUrl: 'https://open.bigmodel.cn/api/paas/v4', knownUsage: true, rated: true },
+  { baseUrl: 'https://open.bigmodel.cn/api/paas/v4', knownUsage: false, rated: false },
+  { baseUrl: 'https://example.invalid/v1', knownUsage: true, rated: false },
+])('Given GLM 规划完成 When 核对渠道与用量 %j Then 只按可核验费率上界计入额度', async ({ baseUrl, knownUsage, rated }) => {
+  const f = fixture('glm-5.3-flash', 'zhipu', 'fake', undefined, baseUrl)
+  f.input.maxCostMicros = 650000
+  const grant = issue(f)
+  try {
+    await startDelegatedOwnerPlanningTask(f.taskId)
+    await until(() => Boolean(store.listAgentExecutionsByProject(f.project.id)[0]?.sessionId && callbacks.has(store.listAgentExecutionsByProject(f.project.id)[0]!.sessionId)))
+    expect(service.getOwnerModelBudgetUsage(f.project.id, grant.maxCostMicros).ownerModelInFlightMicros).toBe(grant.perRequestCeilingMicros)
+    clarify(f.taskId, knownUsage)
+    await until(() => store.listAgentExecutionsByProject(f.project.id)[0]?.status === 'completed')
+    const expected = rated ? 12 : grant.perRequestCeilingMicros
+    expect(service.getOwnerModelBudgetUsage(f.project.id, grant.maxCostMicros)).toMatchObject({
+      ownerModelMicros: expected, ownerModelSettledMicros: 0, ownerModelRatedUsageMicros: rated ? expected : 0,
+      ownerModelInFlightMicros: rated ? 0 : grant.perRequestCeilingMicros,
+    })
+    expect(service.getOwnerManagementDelegation(f.project.id).reservedCostMicros).toBe(expected)
+    if (rated) {
+      const runs = await import('./project-owner-planning-run-service')
+      const execution = store.listAgentExecutionsByProject(f.project.id)[0]!
+      const outcome = runs.getOwnerPlanningRunOutcome(execution.id)!
+      const first = runs.getOwnerPlanningRunReceipt(outcome.receiptId)!
+      const runtimeResult = first.runtimeResult!
+      expect(runs.recordOwnerPlanningRun(execution.id, 'ai-sdk', {
+        ...runtimeResult, usage: { ...runtimeResult.usage, input_tokens: 1, output_tokens: 1 },
+        owner_planning_usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: null, cacheWriteTokens: null },
+      })?.receiptId).toBe(first.id)
+      expect(service.getOwnerModelBudgetUsage(f.project.id, grant.maxCostMicros)).toMatchObject({
+        ownerModelMicros: grant.perRequestCeilingMicros, ownerModelRatedUsageMicros: 0,
+      })
+    }
+  } finally {
+    service.revokeOwnerManagementDelegation(f.project.id, grant.id)
+  }
 })
 
 test('Given GLM项目总预算1.40美元 When采用64KiB发送硬包络 Then预留可覆盖多轮管理但不把估价称为结算', () => {

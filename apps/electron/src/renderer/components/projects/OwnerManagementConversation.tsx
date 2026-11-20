@@ -488,7 +488,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
             <div><dt className="text-xs text-muted-foreground">项目模型预算上限</dt><dd>{dollars.format(delegation.view.delegation.maxCostMicros / 1_000_000)}</dd></div>
             <div><dt className="text-xs text-muted-foreground">Owner 请求次数</dt><dd>{delegation.view.usedRequests}</dd></div>
             <div><dt className="text-xs text-muted-foreground">项目预算占用</dt><dd>{dollars.format(delegation.view.reservedCostMicros / 1_000_000)}</dd></div>
-            {ownerBudget && <div><dt className="text-xs text-muted-foreground">Owner 已结算 / 保留占额</dt><dd>{dollars.format(ownerBudget.settledMicros / 1_000_000)} / {dollars.format(ownerBudget.inFlightMicros / 1_000_000)}</dd></div>}
+            {ownerBudget && <div><dt className="text-xs text-muted-foreground">Owner 已结算 / 用量上界 / 保留占额</dt><dd>{dollars.format(ownerBudget.settledMicros / 1_000_000)} / {dollars.format((ownerBudget.ratedUsageMicros ?? 0) / 1_000_000)} / {dollars.format(ownerBudget.inFlightMicros / 1_000_000)}</dd></div>}
             {teamUsage && <div><dt className="text-xs text-muted-foreground">执行已记账 / 预留</dt><dd>{dollars.format(teamUsage.committedCostMicros / 1_000_000)} / {dollars.format(teamUsage.reservedCostMicros / 1_000_000)}</dd></div>}
           </dl> : <p className="mt-2 text-sm text-muted-foreground">{delegation.view ? '尚未确认项目模型预算。' : '暂无预算数据。'}</p>}
           <p className="mt-2 text-xs text-muted-foreground">预算占用含预留，实际费用以服务商账单为准。{workspaceName && `资料工作区：${workspaceName}。`}</p>

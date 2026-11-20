@@ -74,6 +74,18 @@ function handleTeamChange(event: OwnerManagementEvent): void {
   }
 }
 
+function isVerifiedDevelopmentNarrowing(proposed: NonNullable<ReturnType<typeof getProjectOwnerPlanDraft>>, delegation: NonNullable<ReturnType<typeof getOwnerManagementDelegation>['delegation']>): boolean {
+  const feedback = proposed.proposal.deliveryFeedbackAssessment
+  if (feedback?.authorizationImpact !== 'additional_confirmation' || delegation.autonomousWorkspaceEditVersion !== 1
+    || !/收窄|缩小/.test(feedback.authorizationRationale)
+    || /(?:新增|扩大)(?:预算|费用|资料|工作区|外发|发布|验证)/.test(feedback.authorizationRationale)) return false
+  const binding = getOwnerRuntimeBinding(proposed.projectId)
+  if (!binding) return false
+  const { readOwnerDevelopmentRevisionLimit } = require('./project-owner-development-artifact') as typeof import('./project-owner-development-artifact')
+  try { return readOwnerDevelopmentRevisionLimit(proposed, binding.workspaceId, true)?.onlyNarrowing === true }
+  catch { return false }
+}
+
 function acceptPlanAndArrange(event: OwnerManagementEvent, proposed: NonNullable<ReturnType<typeof getProjectOwnerPlanDraft>>): void {
   const delegation = getOwnerManagementDelegation(event.projectId, event.taskId)
   if (delegation.state !== 'active' || !delegation.delegation) return
@@ -82,7 +94,8 @@ function acceptPlanAndArrange(event: OwnerManagementEvent, proposed: NonNullable
     return
   }
   const feedback = proposed.proposal.deliveryFeedbackAssessment
-  if (feedback && feedback.authorizationImpact !== 'within_confirmed_boundary') {
+  const scopeNarrowed = isVerifiedDevelopmentNarrowing(proposed, delegation.delegation)
+  if (feedback && feedback.authorizationImpact !== 'within_confirmed_boundary' && !scopeNarrowed) {
     appendOwnerManagementMessage({ projectId: event.projectId, eventId: `owner-feedback-scope:${event.id}:${proposed.revision}`,
       ...(event.taskId ? { taskId: event.taskId } : {}), goalRevision: proposed.goalRevision,
       role: 'assistant', kind: 'attention', content: `这次修订涉及需要你决定的范围：${feedback.authorizationRationale}` })
@@ -225,8 +238,17 @@ export function reconcileOwnerManagement(projectId: string): void {
   const subjects = store.getProjectDb().prepare('SELECT DISTINCT subject_key FROM project_owner_revisions WHERE project_id = ?').all(projectId) as { subject_key: string }[]
   for (const { subject_key: key } of subjects) {
     const taskId = key === 'project' ? undefined : key.startsWith('task:') ? key.slice(5) : null
-    if (taskId === null || !hasUnstartedOwnerConversation(projectId, taskId)) continue
-    preparePendingOwnerConversation(projectId, taskId)
+    if (taskId === null) continue
+    if (hasUnstartedOwnerConversation(projectId, taskId)) {
+      preparePendingOwnerConversation(projectId, taskId)
+      continue
+    }
+    // 兼容旧版已判需确认的路径缩减，只复核当前精确反馈。
+    const pending = getProjectOwnerPlanDraft(projectId, taskId)
+    if (pending?.state !== 'proposed' || pending.proposal.deliveryFeedbackAssessment?.authorizationImpact !== 'additional_confirmation') continue
+    const view = getOwnerManagementDelegation(projectId, taskId)
+    if (view.state !== 'active' || !view.delegation?.autonomousExecution || !isVerifiedDevelopmentNarrowing(pending, view.delegation)) continue
+    confirmProjectOwnerPlanDraftForOwner(projectId, pending.goalRevision, pending.revision, taskId)
   }
   recoverMissingOwnerDefaultTeams(projectId)
   recoverMissingProposedPlanAssignment(projectId)

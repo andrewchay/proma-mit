@@ -36,6 +36,7 @@ export function assertOwnerDispatchManagementCurrent(projectId: string, grantId:
   if (!grant?.owner_management_delegation_id) throw new Error('自主执行未绑定可核验的项目管理授权')
   const management = (require('./project-owner-management-delegation') as typeof import('./project-owner-management-delegation')).getOwnerManagementDelegation(projectId, grant.task_id ?? undefined)
   if (management.delegation?.id !== grant.owner_management_delegation_id || !['active', 'exhausted'].includes(management.state)) throw new Error('原项目管理授权已变化或失效，不能继续派工')
+  if (management.reservedCostMicros > management.delegation.maxCostMicros) throw new Error('项目累计占额超过授权预算，不能继续派工')
 }
 
 export function setOwnerDispatchPaused(input: { projectId: string; grantId: string; expectedRevision: number; paused: boolean }): OwnerDispatchControl {

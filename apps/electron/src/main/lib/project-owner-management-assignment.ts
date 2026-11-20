@@ -112,7 +112,9 @@ export function prepareOwnerManagementAssignment(event: OwnerManagementEvent): v
     return
   }
   trace('assignment_preparation', 'completed', 'team_check', source.context.contextFingerprint)
-  if (event.kind === 'plan_confirmed') {
+  // 已核对的路径收窄从确认版本重新安排，避免停在旧待确认版本的执行边界。
+  const independentlyConfirmedNarrowing = plan.actor === 'system:owner-manager' && plan.proposal.deliveryFeedbackAssessment?.authorizationImpact === 'additional_confirmation'
+  if (event.kind === 'plan_confirmed' && !independentlyConfirmedNarrowing) {
     const prepared = store.getProjectDb().prepare("SELECT planning_task_id, assignment_snapshot FROM project_owner_planning_links WHERE project_id = ? AND json_extract(payload, '$.purpose') = 'owner_execution_assignment' AND json_extract(payload, '$.targetTaskId') IS ? AND json_extract(payload, '$.planRevision') = ? ORDER BY rowid DESC").all(event.projectId, event.taskId ?? null, plan.revision - 1) as Array<{ planning_task_id: string; assignment_snapshot: string | null }>
     const reusable = prepared.some(row => {
       if (!row.assignment_snapshot) return false
@@ -247,6 +249,24 @@ export function projectOwnerManagementAssignmentResult(event: OwnerManagementEve
       appendOwnerManagementMessage({ projectId: event.projectId, eventId: `${event.id}:approved-start-budget`, role: 'assistant', kind: 'attention', ...(event.taskId ? { taskId: event.taskId } : {}), content: '团队安排已完成，但管理费用额度已无可用余额，因此我没有启动员工。方案和安排都已保留；请核对已用额度后再决定是否继续。' })
       return
     }
+    let developmentScope = outcome.assignmentProposal.developmentScope
+    if (developmentScope && plan.proposal.deliveryFeedbackAssessment) {
+      const { readOwnerDevelopmentRevisionLimit } = require('./project-owner-development-artifact') as typeof import('./project-owner-development-artifact')
+      try {
+        const limit = readOwnerDevelopmentRevisionLimit(plan, outcome.assignmentProposal.workspaceId, plan.actor === 'system:owner-manager')
+        if (limit) {
+          const commands = new Set(limit.commands)
+          if (!developmentScope.targetPaths.includes(limit.path)
+            || !developmentScope.verificationCommands.every(command => commands.has(command))
+            || developmentScope.verificationCommands.length !== commands.size) throw new Error('安排的目标或验证命令不符合用户的修订范围')
+          developmentScope = { ...developmentScope, targetPaths: [limit.path], allowedPaths: [limit.path] }
+        }
+      } catch (cause) {
+        appendOwnerManagementMessage({ projectId: event.projectId, eventId: `${event.id}:revision-path-blocked`, ...(event.taskId ? { taskId: event.taskId } : {}),
+          role: 'assistant', kind: 'attention', content: cause instanceof Error ? cause.message : '无法核对研发修订路径，员工尚未启动。' })
+        return
+      }
+    }
     const input: OwnerExecutionPreparationInput = {
       requestId: randomUUID(), expectedPreparationRevision: executionPreparation.revision,
       expectedPolicyRevision: policy?.revision ?? null, expectedGoalRevision: plan.goalRevision, expectedPlanRevision: plan.revision,
@@ -259,7 +279,7 @@ export function projectOwnerManagementAssignmentResult(event: OwnerManagementEve
       // 自主管理额度仅覆盖当前项目已绑定工作区；该绑定来自项目预设或用户刚批准的团队范围。
       // 将其作为工作区覆盖确认，避免启动门禁再次要求用户批准同一资料/团队边界。
       ...(withinAutonomousProjectGrant ? { acknowledgeOwnerWorkspaceOverride: true } : {}),
-      ...(outcome.assignmentProposal.developmentScope ? { developmentScope: { workspaceId: outcome.assignmentProposal.workspaceId, targetPaths: outcome.assignmentProposal.developmentScope.targetPaths, allowedPaths: outcome.assignmentProposal.developmentScope.allowedPaths, verificationCommands: outcome.assignmentProposal.developmentScope.verificationCommands } } : {}),
+      ...(developmentScope ? { developmentScope: { workspaceId: outcome.assignmentProposal.workspaceId, targetPaths: developmentScope.targetPaths, allowedPaths: developmentScope.allowedPaths, verificationCommands: developmentScope.verificationCommands } } : {}),
       executorEmployeeId: firstExecutor.employeeId, reviewerEmployeeId: outcome.assignmentProposal.reviewerEmployeeId, roleAssignments,
       workspaceId: outcome.assignmentProposal.workspaceId, knowledgeSourceIds: executionPreparation.choices.knowledgeSources.map(source => source.id), maxCostMicros: remainingCost,
       // 研发每轮需为读取/写入/收尾与独立评审留额，覆盖首轮及两轮返工；费用仍由原总额约束。

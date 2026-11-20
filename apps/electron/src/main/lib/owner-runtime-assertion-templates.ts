@@ -174,7 +174,7 @@ export const OWNER_RUNTIME_ASSERTION_TEMPLATES: readonly OwnerRuntimeAssertionTe
   },
   {
     id: 'text-counter.behavior',
-    title: '文本计数器输入、Unicode 码点、分词、换行及清空正确',
+    title: '文本计数器输入、非空白 Unicode 码点、分词、换行及清空正确',
     intentKeywords: ['文本计数器', '码点数', '词数', 'unicode'],
     script: `(() => {
       const input = document.querySelector('textarea#input')
@@ -195,11 +195,53 @@ export const OWNER_RUNTIME_ASSERTION_TEMPLATES: readonly OwnerRuntimeAssertionTe
         input.value = value
         input.dispatchEvent(new Event('input', { bubbles: true }))
         const actual = observed()
-        if (actual !== expected) return { passed: false, detail: description + '：期望 ' + expected + '，实际 ' + actual }
+        if (actual !== expected) return { passed: false, detail: description + '，输入 ' + JSON.stringify(value) + '：非空白 Unicode 码点、词数、行数期望 ' + expected + '，实际 ' + actual }
       }
       clear.click()
       if (input.value !== '' || observed() !== '0,0,0') return { passed: false, detail: '清空按钮未清除输入或未将计数归零' }
       return { passed: true, detail: '初始为空，Unicode、分词、CRLF 空行和组合 emoji 的计数正确，实际点击清空后输入为空且三项归零' }
+    })()`,
+  },
+  {
+    id: 'calculator.scientific',
+    title: '科学计算器运算优先级、角度模式、除零提示和清空正确',
+    intentKeywords: ['科学计算器', 'scientific calculator'],
+    script: `(async () => {
+      const input = document.querySelector('input#expression')
+      const angle = document.querySelector('select#angle')
+      const calculate = document.querySelector('button#calculate')
+      const clear = document.querySelector('button#clear')
+      const result = document.getElementById('result')
+      const error = document.getElementById('error')
+      const usable = element => element && !element.disabled && element.getClientRects().length > 0 && getComputedStyle(element).visibility !== 'hidden'
+      if (![input, angle, calculate, clear, result].every(usable) || !error || input.readOnly) {
+        return { passed: false, detail: '缺少科学计算器的可操作表达式、角度单位、计算、清空、结果或错误控件' }
+      }
+      const pause = () => new Promise(resolve => setTimeout(resolve, 25))
+      const evaluate = async expression => {
+        input.value = expression
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        calculate.click()
+        await pause()
+        return result.textContent.trim()
+      }
+      angle.value = 'deg'
+      if (angle.value !== 'deg') return { passed: false, detail: '角度选择缺少 deg 选项' }
+      angle.dispatchEvent(new Event('change', { bubbles: true }))
+      const arithmetic = await evaluate('2+3*4')
+      if (!arithmetic || Number(arithmetic) !== 14 || error.textContent.trim()) return { passed: false, detail: '2+3*4 期望 14，实际 ' + arithmetic }
+      const sine = await evaluate('sin(30)')
+      if (!sine || !Number.isFinite(Number(sine)) || Math.abs(Number(sine) - 0.5) > 1e-9 || error.textContent.trim()) return { passed: false, detail: '角度模式 sin(30) 期望 0.5，实际 ' + sine }
+      const zero = await evaluate('1/0')
+      if (zero || !error.textContent.trim() || !usable(error)) return { passed: false, detail: '除零必须显示可见错误并清空计算结果' }
+      clear.click()
+      await pause()
+      if (input.value !== '' || result.textContent.trim() || error.textContent.trim()) return { passed: false, detail: '错误状态点击清空未同时清除表达式、结果与错误' }
+      await evaluate('2+3*4')
+      clear.click()
+      await pause()
+      if (input.value !== '' || result.textContent.trim() || error.textContent.trim()) return { passed: false, detail: '成功计算后点击清空未同时清除表达式、结果与错误' }
+      return { passed: true, detail: '实际输入、计算与点击验证通过：优先级 14、角度正弦 0.5、除零错误、成功及出错状态清空' }
     })()`,
   },
   {

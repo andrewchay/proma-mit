@@ -113,3 +113,15 @@ test('Given 断言被跳过 When 执行命令 Then 不算通过（跳过不能�
   expect(outcome.exitCode).toBe(1)
   expect(outcome.checks[0]?.status).toBe('skipped')
 })
+
+test('Given 本轮只修改脚本且上轮 HTML 已冻结 When 浏览器复验 Then 用原 HTML 加载本轮脚本', async () => {
+  setOwnerRuntimeBrowserRunner(async input => {
+    expect(input.filePath).toEndWith('/dist/app.html')
+    expect(input.resourcePaths).toHaveLength(1)
+    expect(input.resourcePaths?.[0]).toEndWith('/dist/app.js')
+    return { checks: [{ id: 'html.loads', title: '加载', status: 'passed', detail: 'ok' }], durationMs: 1, timedOut: false, relativePath: 'dist/app.html' }
+  })
+  const input = { workspaceRoot: root, targetPaths: ['dist/app.js'], command: 'browser:html.loads', timeoutMs: 30_000 }
+  await expect(executeBrowserVerificationCommand(input)).rejects.toThrow('没有可验证的 HTML 目标文件')
+  expect((await executeBrowserVerificationCommand({ ...input, inheritedBrowserTargets: ['dist/app.html'], inheritedResourcePaths: ['index.html'] })).exitCode).toBe(0)
+})

@@ -5,7 +5,7 @@ import { assertOwnerPlanningAdmission, type OwnerPlanningAdmission } from './pro
 import type { SDKResultMessage, OwnerExecutionAssignmentProposal, ProjectOwnerPlanProposal } from '@gravitas/shared'
 import { getOwnerRuntimeBinding } from './project-owner-runtime-binding'
 import { readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
-import { parseProjectOwnerPlanningResponse } from './project-owner-planning-protocol'
+import { parseProjectOwnerPlanningResponse, usesOwnerSourceInspectionRouting } from './project-owner-planning-protocol'
 import { isOwnerEvidenceGapRework } from './project-owner-quality-protocol'
 import { appendGeneratedOwnerPlan } from './project-owner-plan-service'
 import { parseOwnerExecutionAssignmentProposal, type OwnerExecutionAssignmentProtocolContext } from './project-owner-execution-assignment-protocol'
@@ -147,7 +147,7 @@ function readStoredOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRu
       } else {
         if (value.assignmentProposal !== undefined) throw new Error('Owner规划Run不能夹带人员安排结论')
         // 历史结论按原回执时间重验；新鲜度属于当时证据，不能在恢复读取时反向使已接受成果失效。
-        const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, receipt.capturedAt, !frozen.request || frozen.request.systemPrompt.includes('每个步骤必须包含deliveryKind'))
+        const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, receipt.capturedAt, !frozen.request || frozen.request.systemPrompt.includes('每个步骤必须包含deliveryKind'), usesOwnerSourceInspectionRouting(frozen.request))
         if (value.state === 'replied') {
           if (!['conversation_reply', 'conversation_change', 'quality_decision', 'employee_decision'].includes(response.kind) || !('message' in response) || value.reply !== response.message || value.planRevision !== undefined || value.clarification !== undefined || JSON.stringify(value.changeProposal) !== JSON.stringify(response.kind === 'conversation_change' ? response.change : undefined) || JSON.stringify(value.qualityDecision) !== JSON.stringify(response.kind === 'quality_decision' ? response.decision : undefined) || JSON.stringify(value.employeeDecision) !== JSON.stringify(response.kind === 'employee_decision' ? response.decision : undefined)) throw new Error('对话回应与原始响应不一致')
         } else if (value.employeeDecision !== undefined || value.qualityDecision !== undefined || value.reply !== undefined || value.changeProposal !== undefined || (value.state === 'proposed' ? response.kind !== 'plan_proposal' || !Number.isSafeInteger(value.planRevision) || value.planRevision !== frozen.link.planRevision + 1 || value.clarification !== undefined : response.kind !== 'needs_clarification' || JSON.stringify(response) !== JSON.stringify(value.clarification) || value.planRevision !== undefined)) throw new Error('结论与原始响应不一致')
@@ -263,7 +263,7 @@ export function verifyGeneratedOwnerPlan(sourceRun: { receiptId: string; executi
   if (!receipt || receipt.purpose !== 'owner_planning' || receipt.executionId !== sourceRun.executionId || receipt.responseHash !== sourceRun.responseHash || !receipt.validTerminal || receipt.stopped || receipt.error) throw new Error('Owner生成计划缺少可信Run证据')
   const frozen = readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true })
   if (!frozen || frozen.link.id !== receipt.linkId || frozen.link.goalRevision !== goalRevision || frozen.link.contextFingerprint !== contextFingerprint) throw new Error('Owner生成计划与Run资料不匹配')
-  const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, Date.now(), !frozen.request || frozen.request.systemPrompt.includes('每个步骤必须包含deliveryKind'))
+  const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, Date.now(), !frozen.request || frozen.request.systemPrompt.includes('每个步骤必须包含deliveryKind'), usesOwnerSourceInspectionRouting(frozen.request))
   if (response.kind !== 'plan_proposal' || JSON.stringify(response.proposal) !== JSON.stringify(proposal)) throw new Error('Owner计划不是该Run原始提案')
 }
 /** 仅用途检测，不接受此结果作为发送或生成许可；任一持久证据存在即不能降级。 */
@@ -339,7 +339,7 @@ export function recordOwnerPlanningRun(executionId: string, runtimeSource: strin
           outcome = { executionId, receiptId: receipt!.id, state: 'proposed', detail: 'Owner已提出执行安排，等待用户审核；不代表准备已保存或获得执行授权', assignmentProposal }
         } else {
           let response: ReturnType<typeof parseProjectOwnerPlanningResponse>
-          try { response = parseProjectOwnerPlanningResponse(responseText, frozen.context) }
+          try { response = parseProjectOwnerPlanningResponse(responseText, frozen.context, Date.now(), true, usesOwnerSourceInspectionRouting(frozen.request)) }
           catch (cause) { responseRejected = true; throw cause }
           if (response.kind === 'employee_decision') outcome = { executionId, receiptId: receipt!.id, state: 'replied', detail: 'Owner已形成员工问题决定，待权威回流核验', reply: response.message, employeeDecision: response.decision }
           else if (response.kind === 'quality_decision') outcome = { executionId, receiptId: receipt!.id, state: 'replied', detail: 'Owner已提出质量决定，等待权威服务核验执行', reply: response.message, qualityDecision: response.decision }

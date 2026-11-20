@@ -1,12 +1,12 @@
 import { lstat, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import type { DevelopmentSnapshot } from '@gravitas/shared'
+import type { DevelopmentSnapshot, DevelopmentTaskScope, ProjectOwnerPlanDraft } from '@gravitas/shared'
 import { getAgentWorkspace } from './agent-workspace-manager'
 import { getAgentSessionMeta } from './agent-session-manager'
 import { getAgentSessionWorkspacePath } from './config-paths'
 import { resolveDevelopmentWorktree } from './agent-development-worktree'
-import { createDevelopmentSnapshotAsync, developmentWorktreeMatchesSnapshotAsync, loadDevelopmentSnapshotAsync, readDevelopmentSnapshotContentsAsync } from './development-snapshot-service'
-import { validateDevelopmentScope } from './development-task-service'
+import { createDevelopmentSnapshotAsync, developmentWorktreeMatchesSnapshotAsync, loadDevelopmentSnapshotAsync, readDevelopmentSnapshotContentsAsync, type DevelopmentSnapshotScope } from './development-snapshot-service'
+import { isProtectedDevelopmentPath, normalizeRepoRelativePath, pathWithinAllowed, validateDevelopmentScope } from './development-task-service'
 import { applyOwnerDevelopmentSnapshot, mergeOwnerDevelopmentSnapshots, type OwnerDevelopmentHandoffInput } from './project-owner-development-handoff'
 import { ownerTaskDeliveryKind, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { ownerExecutionHash } from './project-owner-execution-hash'
@@ -145,7 +145,7 @@ export async function freezeOwnerDevelopmentArtifact(commandId: string, executio
   const workspace = meta?.workspaceId ? getAgentWorkspace(meta.workspaceId) : undefined
   if (!workspace?.rootPath || workspace.id !== source.workspaceId || workspace.id !== frozenTask.developmentScope.workspaceId
     || task.workspaceId !== workspace.id) throw new Error('Owner研发快照工作区与冻结任务不匹配')
-  const scope = validateDevelopmentScope(frozenTask.developmentScope, { getWorkspace: getAgentWorkspace })
+  const scope = ownerDevelopmentSnapshotScope(validateDevelopmentScope(frozenTask.developmentScope, { getWorkspace: getAgentWorkspace }), commandId)
   const sessionDirectory = getAgentSessionWorkspacePath(workspace.slug, execution.sessionId)
   const worktreePath = resolveDevelopmentWorktree(workspace.rootPath, sessionDirectory)
   if (!worktreePath) throw new Error('Owner研发快照缺少会话专属worktree')
@@ -210,7 +210,7 @@ export async function readOwnerDevelopmentArtifactForReview(reviewerCommandId: s
   const workspace = meta?.workspaceId ? getAgentWorkspace(meta.workspaceId) : undefined
   if (!workspace?.rootPath || workspace.id !== source.workspaceId || workspace.id !== frozenTask.developmentScope.workspaceId
     || task.workspaceId !== workspace.id) throw new Error('Owner代码Reviewer工作区与冻结来源不匹配')
-  const scope = validateDevelopmentScope(frozenTask.developmentScope, { getWorkspace: getAgentWorkspace })
+  const scope = ownerDevelopmentSnapshotScope(validateDevelopmentScope(frozenTask.developmentScope, { getWorkspace: getAgentWorkspace }), executor.id)
   const sessionDirectory = getAgentSessionWorkspacePath(workspace.slug, execution.sessionId)
   const worktreePath = resolveDevelopmentWorktree(workspace.rootPath, sessionDirectory)
   if (!worktreePath) throw new Error('Owner代码Reviewer缺少Executor会话worktree')
@@ -258,6 +258,104 @@ export async function readOwnerDevelopmentArtifactForReview(reviewerCommandId: s
 }
 
 
+function readOwnerDevelopmentRevisionSource(source: Pick<ReturnType<typeof readOwnerCommandFrozenSource>['source'], 'projectId' | 'taskId' | 'planRevision' | 'planFingerprint'>, workspaceId: string) {
+  const { readOwnerPriorDelivery } = require('./project-owner-execution-command') as typeof import('./project-owner-execution-command')
+  const prior = readOwnerPriorDelivery(source, true)
+  if (!prior?.development) return undefined
+  const { item, message } = prior
+  // readOwnerPriorDelivery 已核验代码正文及全部文件哈希；再核对原交付在账本中的身份。
+  const delivered = JSON.parse(item.content) as { executionId: string; workspaceId: string; baseCommit: string; contentHash: string; files: OwnerDevelopmentHandoffInput['files'] }
+  const original = store.getAgentExecution(delivered.executionId)
+  const originalCommand = original?.ownerCommandId
+    ? store.getProjectDb().prepare("SELECT grant_id FROM project_owner_execution_commands WHERE id=? AND execution_id=? AND project_id=? AND role='executor' AND state='settled'").get(original.ownerCommandId, original.id, source.projectId) as { grant_id: string } | undefined
+    : undefined
+  if (!original || !originalCommand || original.status !== 'completed' || !original.sessionId
+    || delivered.workspaceId !== workspaceId || !message.delivery
+    || message.eventId !== `owner-delivery:${originalCommand.grant_id}:${ownerExecutionHash(message.delivery)}`) throw new Error('Owner研发修订缺少可核验的原交付执行或工作区')
+  const { listOwnerTechnicalReviewEvidence } = require('./project-owner-technical-review') as typeof import('./project-owner-technical-review')
+  const { readOwnerQualityAction } = require('./project-owner-quality-actions') as typeof import('./project-owner-quality-actions')
+  const accepted = listOwnerTechnicalReviewEvidence(source.projectId, original.entityId).some(review =>
+    review.grantId === originalCommand.grant_id && review.executorCommandId === original.ownerCommandId
+      && review.executorExecutionId === original.id && review.artifactHash === item.artifactHash
+      && review.verdict === 'approved' && review.artifactVerified && review.validationEvidenceVerified
+      && readOwnerQualityAction(review.reviewerCommandId)?.state === 'accepted')
+  if (!accepted) throw new Error('Owner研发修订引用的源码未通过原批次验收')
+  return { item, delivered, original }
+}
+
+/** 从用户明确限定路径的反馈和原验收账本读取修订上限。禁止从模型的范围说明提取权限。 */
+export function readOwnerDevelopmentRevisionLimit(plan: ProjectOwnerPlanDraft, workspaceId: string, requireLatestFeedback = false): { path: string; commands: string[]; onlyNarrowing: boolean } | null {
+  if (!plan.sourceRun || !plan.proposal.deliveryFeedbackAssessment || plan.proposal.steps.length !== 1
+    || plan.proposal.steps[0]?.deliveryKind !== 'development') return null
+  const { getOwnerPlanningRunReceipt } = require('./project-owner-planning-run-service') as typeof import('./project-owner-planning-run-service')
+  const { readOwnerPlanningSnapshot } = require('./project-owner-planning-source') as typeof import('./project-owner-planning-source')
+  const receipt = getOwnerPlanningRunReceipt(plan.sourceRun.receiptId)
+  const source = receipt && readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true })
+  const conversation = source?.context.conversation
+  const feedback = conversation?.messages.find(item => item.role === 'user' && item.id === source?.link.conversationMessageId)
+  const paths = feedback?.content.matchAll(/(?:^|[。！？；\n])\s*(?:此次|本次|本轮)?目标路径和允许修改路径(?:只能|仅能|均)是\s*([A-Za-z0-9_./-]+)(?=\s*(?:[。！？；\n]|$))/g)
+  const matches = paths ? [...paths] : []
+  if (!feedback || !matches.length) return null
+  if (requireLatestFeedback) {
+    const latest = store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id=? AND json_extract(payload, '$.taskId') IS ? AND json_extract(payload, '$.role')='user' ORDER BY rowid DESC LIMIT 1").get(plan.projectId, plan.taskId ?? null) as { id: string } | undefined
+    if (latest?.id !== feedback.id) throw new Error('文件修订之后已收到新的用户反馈，先完成核对再启动')
+  }
+  if (matches.length !== 1) throw new Error('Owner修订反馈包含多个明确路径上限')
+  const path = normalizeRepoRelativePath(matches[0]![1]!)
+  if (isProtectedDevelopmentPath(path)) throw new Error('Owner修订反馈的目标涉及受保护文件')
+  const { projectId, taskId, revision: planRevision, planFingerprint } = plan
+  const prior = readOwnerDevelopmentRevisionSource({ projectId, taskId, planRevision, planFingerprint }, workspaceId)
+  const commandId = prior?.original.ownerCommandId
+  if (!prior || !commandId || !prior.delivered.files.some(entry => entry.file.path === path && entry.file.newSha256 !== null)) throw new Error('Owner修订指定的路径缺少同工作区已验收成果')
+  const original = readOwnerCommandFrozenSource(commandId)
+  const scope = original.source.tasks.find(item => item.taskId === original.taskId)?.developmentScope
+  if (!scope || scope.workspaceId !== workspaceId || !pathWithinAllowed(path, scope.allowedPaths)
+    || !scope.verificationCommands?.length) throw new Error('Owner修订指定的路径或验证不在原研发授权范围')
+  const withoutScope = feedback.content.replace(matches[0]![0], '。')
+  const [edit, ...constraints] = withoutScope.split(/[。！？；\n]+/).map(value => value.trim()).filter(Boolean)
+  const editPath = edit?.match(/^(?:请)?(?:基于[^，]{1,48}，)?只在\s*([A-Za-z0-9_./-]+)\s+[^，]{1,200}$/)?.[1]
+  const onlyNarrowing = editPath === path && !/(?:发布|外发|联网|采购|费用|预算|资料|工作区|授权追加|同步|上传|发送|共享|通知|部署|推送|付款|飞书)/.test(withoutScope)
+    && constraints.every(value => /^其余.{1,180}(?:逐字保留|保持不变)(?:，[^。]{1,140}只作为只读资源参加浏览器验收)?$/.test(value)
+      || scope.verificationCommands?.some(command => value === `继续使用 ${command}` || value === `继续使用 ${command}，按原授权提交完整交付`)
+      || value === '按原授权继续')
+  return { path, commands: scope.verificationCommands, onlyNarrowing }
+}
+
+/** 只读继承来自历史交付账本，不能据此扩大员工的路径权限。 */
+export function ownerDevelopmentSnapshotScope(scope: DevelopmentTaskScope, commandId?: string): DevelopmentSnapshotScope {
+  if (!commandId) return scope
+  const { source } = readOwnerCommandFrozenSource(commandId)
+  if (source.qualityManagementVersion !== 1) return scope
+  const revision = readOwnerDevelopmentRevisionSource(source, scope.workspaceId)
+  if (!revision) return scope
+  const priorDeliveryFiles = revision.delivered.files.map(entry => entry.file)
+  const inheritedFiles = priorDeliveryFiles.filter(file => !pathWithinAllowed(file.path, scope.allowedPaths))
+  let priorBrowserTargets: readonly string[] | undefined
+  if (scope.verificationCommands?.some(command => command.startsWith('browser:'))
+    && !scope.targetPaths.some(path => /\.html?$/i.test(path))) {
+    const originalCommandId = revision.original.ownerCommandId!
+    const original = readOwnerCommandFrozenSource(originalCommandId)
+    const originalScope = original.source.tasks.find(item => item.taskId === original.taskId)?.developmentScope
+    if (!originalScope || original.source.planRevision >= source.planRevision) throw new Error('Owner原浏览器验证入口无法核对')
+    const html = originalScope.targetPaths.filter(path => /\.html?$/i.test(path))
+    priorBrowserTargets = html.length ? html : ownerDevelopmentSnapshotScope(originalScope, originalCommandId).priorBrowserTargets
+  }
+  return { ...scope, priorDeliveryHash: revision.item.artifactHash, priorDeliveryFiles, priorBrowserTargets, ...(inheritedFiles.length ? { inheritedFiles } : {}) }
+}
+
+/** 同范围修订在私有工作树重放指定的已验收源码，仓库 HEAD 保持原样。 */
+async function readOwnerDevelopmentRevision(source: ReturnType<typeof readOwnerCommandFrozenSource>['source'], workspace: { id: string; slug: string }): Promise<OwnerDevelopmentHandoffInput | undefined> {
+  const revision = readOwnerDevelopmentRevisionSource(source, workspace.id)
+  if (!revision) return undefined
+  const { item, delivered, original } = revision
+  const directory = getAgentSessionWorkspacePath(workspace.slug, original.sessionId)
+  const snapshot = await loadDevelopmentSnapshotAsync(directory, original.id)
+  const files = await readDevelopmentSnapshotContentsAsync(directory, original.id)
+  if (snapshot.workspaceId !== workspace.id || snapshot.baseCommit !== delivered.baseCommit || snapshot.contentHash !== item.artifactHash
+    || JSON.stringify(files) !== JSON.stringify(delivered.files)) throw new Error('Owner研发修订原快照与交付正文不一致')
+  return { snapshot, files }
+}
+
 /** Owner返工创建新会话，只交接同授权上一轮的已冻结源码，不复用旧业务会话。 */
 export async function seedOwnerDevelopmentRework(commandId: string, worktreePath: string): Promise<string | undefined> {
   const database = store.getProjectDb()
@@ -285,16 +383,16 @@ export async function seedOwnerDevelopmentRework(commandId: string, worktreePath
   const previousDirectory = getAgentSessionWorkspacePath(workspace.slug, previous.session_id)
   const previousPath = resolveDevelopmentWorktree(workspace.rootPath, previousDirectory)
   const snapshot = await loadDevelopmentSnapshotAsync(previousDirectory, previous.execution_id)
-  const scope = validateDevelopmentScope(task.developmentScope, { getWorkspace: getAgentWorkspace })
+  const scope = ownerDevelopmentSnapshotScope(validateDevelopmentScope(task.developmentScope, { getWorkspace: getAgentWorkspace }), commandId)
   if (!previousPath || snapshot.workspaceId !== workspace.id || !await developmentWorktreeMatchesSnapshotAsync(previousPath,snapshot,scope)) throw new Error('Owner返工上一轮worktree与冻结快照不一致')
   if (revalidation && snapshot.contentHash !== revalidation.artifactHash) throw new Error('Owner复验交接前的原成果哈希已变化')
   const files = await readDevelopmentSnapshotContentsAsync(previousDirectory,previous.execution_id)
-  applyOwnerDevelopmentSnapshot(worktreePath, targetDirectory, snapshot, files, scope.allowedPaths)
+  applyOwnerDevelopmentSnapshot(worktreePath, targetDirectory, snapshot, files, [...scope.allowedPaths, ...scope.inheritedFiles?.map(file => file.path) ?? []])
   return previous.execution_id
 }
 
 /** 后继研发步骤继承已验收的上游快照，始终创建独立会话与worktree。 */
-export async function seedOwnerDevelopmentDependencies(commandId: string, worktreePath: string): Promise<string | undefined> {
+export async function seedOwnerDevelopmentBaseline(commandId: string, worktreePath: string): Promise<string | undefined> {
   const database = store.getProjectDb()
   const command = database.prepare('SELECT project_id,grant_id,source_task_id,source_hash,rework_ordinal,role,state,execution_id FROM project_owner_execution_commands WHERE id=?').get(commandId) as { project_id: string; grant_id: string; source_task_id: string; source_hash: string; rework_ordinal: number; role: string; state: string; execution_id: string } | undefined
   if (!command || command.state !== 'queued') throw new Error('Owner代码交接命令尚未处于可准备状态')
@@ -314,7 +412,6 @@ export async function seedOwnerDevelopmentDependencies(commandId: string, worktr
   }
   visit(command.source_task_id)
   const codeAncestors = [...ancestors].filter(id => ownerTaskDeliveryKind(source, id) === 'development')
-  if (!codeAncestors.length) return undefined
   // 只交接依赖链末端快照；它已经包含自身通过验收的代码祖先。
   const dependsOn = (id: string, predecessor: string, seen = new Set<string>()): boolean => {
     if (seen.has(id)) return false
@@ -323,12 +420,19 @@ export async function seedOwnerDevelopmentDependencies(commandId: string, worktr
     return Boolean(current?.dependencies.filter(edge => edge.taskId === id).some(edge => edge.dependsOnTaskId === predecessor || dependsOn(edge.dependsOnTaskId, predecessor, seen)))
   }
   const tips = codeAncestors.filter(candidate => !codeAncestors.some(other => candidate !== other && dependsOn(other, candidate)))
-  if (!tips.length) throw new Error('Owner代码依赖缺少可核验的上游版本')
+  if (codeAncestors.length && !tips.length) throw new Error('Owner代码依赖缺少可核验的上游版本')
   const targetDirectory = dirname(worktreePath)
   const targetBinding = JSON.parse(await readFile(join(targetDirectory, 'development-worktree.json'), 'utf8')) as { branch?: string }
   const targetExecution = store.getAgentExecution(command.execution_id)
   if (targetExecution?.ownerCommandId !== commandId || targetExecution.status !== 'queued' || targetExecution.sessionId !== ''
     || targetBinding.branch !== `employee/${command.execution_id}` || resolveDevelopmentWorktree(workspace.rootPath, targetDirectory) !== worktreePath) throw new Error('Owner代码交接目标工作树来源不一致')
+  const targetScope = validateDevelopmentScope(task.developmentScope, { getWorkspace: getAgentWorkspace })
+  if (!tips.length) {
+    const revision = await readOwnerDevelopmentRevision(source, workspace)
+    if (!revision) return undefined
+    applyOwnerDevelopmentSnapshot(worktreePath, targetDirectory, revision.snapshot, revision.files, [...targetScope.allowedPaths, ...revision.snapshot.files.map(file => file.path)])
+    return revision.snapshot.executionId
+  }
   const handoffs: OwnerDevelopmentHandoffInput[] = []
   const executionIds: string[] = []
   for (const tip of tips) {
@@ -350,14 +454,19 @@ export async function seedOwnerDevelopmentDependencies(commandId: string, worktr
     const previousDirectory = getAgentSessionWorkspacePath(workspace.slug, execution.sessionId)
     const previousPath = resolveDevelopmentWorktree(workspace.rootPath, previousDirectory)
     const snapshot = await loadDevelopmentSnapshotAsync(previousDirectory, execution.id)
-    const priorScope = predecessor.developmentScope && validateDevelopmentScope(predecessor.developmentScope, { getWorkspace: getAgentWorkspace })
+    const priorScope = predecessor.developmentScope && ownerDevelopmentSnapshotScope(validateDevelopmentScope(predecessor.developmentScope, { getWorkspace: getAgentWorkspace }), upstream?.id)
     if (!priorScope || !previousPath || snapshot.workspaceId !== workspace.id || snapshot.contentHash !== artifact.contentHash
       || !await developmentWorktreeMatchesSnapshotAsync(previousPath, snapshot, priorScope)) throw new Error('Owner代码交接快照来源不一致')
     handoffs.push({ snapshot, files: await readDevelopmentSnapshotContentsAsync(previousDirectory, execution.id) })
     executionIds.push(execution.id)
   }
-  const targetScope = validateDevelopmentScope(task.developmentScope, { getWorkspace: getAgentWorkspace })
   const merged = mergeOwnerDevelopmentSnapshots(handoffs)
-  applyOwnerDevelopmentSnapshot(worktreePath, targetDirectory, merged.snapshot, merged.files, targetScope.allowedPaths)
+  const scope = ownerDevelopmentSnapshotScope(targetScope, commandId)
+  const inherited = new Map(scope.inheritedFiles?.map(file => [file.path, file]))
+  for (const file of merged.snapshot.files) {
+    const expected = inherited.get(file.path)
+    if (expected && (expected.oldSha256 !== file.oldSha256 || expected.newSha256 !== file.newSha256)) throw new Error(`Owner上游变更与只读继承文件冲突：${file.path}`)
+  }
+  applyOwnerDevelopmentSnapshot(worktreePath, targetDirectory, merged.snapshot, merged.files, [...scope.allowedPaths, ...inherited.keys()])
   return executionIds.length === 1 ? executionIds[0] : undefined
 }

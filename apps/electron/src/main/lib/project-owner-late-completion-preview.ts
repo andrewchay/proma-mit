@@ -1,3 +1,4 @@
+import { ownerDevelopmentSnapshotScope } from './project-owner-development-artifact'
 /** 恢复前只读核对迟到终态；调用本函数不会修改执行、费用、授权或文件。 */
 import { getAgentSessionMeta, getAgentSessionSDKMessages } from './agent-session-manager'
 import { getAgentWorkspace } from './agent-workspace-manager'
@@ -59,7 +60,7 @@ export function assertOwnerLateCompletionPreviewCurrent(preview: OwnerLateComple
   const worktree = resolveDevelopmentWorktree(workspace.rootPath, sessionDirectory)
   if (!worktree) throw new Error('迟到终态工作树缺失')
   const snapshot = loadDevelopmentSnapshot(sessionDirectory, row.executionId)
-  const scope = validateDevelopmentScope(task.developmentScope, { getWorkspace: getAgentWorkspace })
+  const scope = ownerDevelopmentSnapshotScope(validateDevelopmentScope(task.developmentScope, { getWorkspace: getAgentWorkspace }), row.commandId)
   const settlements = requests(row.commandId)
   const evidence = buildOwnerLateCompletionEvidence(row.executionId, row.sessionId, getAgentSessionSDKMessages(row.sessionId), settlements)
   const proof = startProof(row)
@@ -146,7 +147,7 @@ export async function previewOwnerLateCompletion(commandId: string, isSessionAct
   const evidence = buildOwnerLateCompletionEvidence(row.executionId, row.sessionId, getAgentSessionSDKMessages(row.sessionId), settlements)
   if (!evidence || evidence.costMicros > row.reservedCostMicros) return null
   const snapshot = await loadDevelopmentSnapshotAsync(sessionDirectory, row.executionId)
-  const scope = validateDevelopmentScope(task.developmentScope, { getWorkspace: getAgentWorkspace })
+  const scope = ownerDevelopmentSnapshotScope(validateDevelopmentScope(task.developmentScope, { getWorkspace: getAgentWorkspace }), row.commandId)
   if (snapshot.workspaceId !== workspace.id || !await developmentWorktreeMatchesSnapshotAsync(worktree, snapshot, scope)) return null
   // 等待文件读取期间若账本、会话、授权或费用发生变化，则不返回过时预览。
   if (isSessionActive(row.sessionId) || isFinalizing(commandId)) return null

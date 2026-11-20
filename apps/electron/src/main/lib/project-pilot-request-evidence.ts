@@ -8,6 +8,7 @@ import type { PilotRequestEnvelope } from './project-pilot-request-envelope'
  */
 
 export type PilotProviderKind = 'openai' | 'anthropic' | 'google'
+export const OWNER_AI_SDK_MIN_OUTPUT_TOKENS = 1024
 
 export interface PilotReviewedPriceEvidence {
   /** 稳定 ID；包络与子预留通过它引用本记录。 */

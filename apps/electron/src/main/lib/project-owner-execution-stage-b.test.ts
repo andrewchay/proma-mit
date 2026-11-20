@@ -1418,12 +1418,10 @@ test('Given一次返工后Reviewer再次退回 When后台重复唤醒 Then最大
   expect(store.getTask(f.task.id)?.status).toBe('paused')
 })
 
-test('Given返工许可与剩余运行次数但两微美元授权费用耗尽 When重复唤醒 Then不得增加额度或排入返工', async () => {
+test('Given授权余额低于最小模型请求 When自主排队 Then拒绝排队且不占用预算', () => {
   const f = fixture('glm-5.3-flash', 'autonomous', false, 'https://example.invalid', false, 'openai', 1, 4, 2)
-  settleReviewFixture(f, 'executor'); settleReviewFixture(f, 'reviewer', 0, 'changes_requested')
-  const state = await assertNoAutonomousDispatch(f, 2)
-  expect(state).toMatchObject({ state: 'waiting', committedCostMicros: 2, reservedCostMicros: 0, runReservations: 2, nextAction: 'human_decision' })
-  expect(state.reason).toContain('费用或运行次数已耗尽')
+  expect(() => settleReviewFixture(f, 'executor')).toThrow('当前余额不足以覆盖员工的最小模型请求')
+  expect(store.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_commands WHERE grant_id=?').get(f.grant.grantId)).toEqual({ count: 0 })
   expect(f.record.source.budget).toMatchObject({ maxRuns: 4, maxCostMicros: 2 })
 })
 

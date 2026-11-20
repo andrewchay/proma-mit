@@ -64,20 +64,26 @@ export interface BrowserVerificationOutcome {
 export async function executeBrowserVerificationCommand(input: {
   workspaceRoot: string
   targetPaths: readonly string[]
+  inheritedResourcePaths?: readonly string[]
+  inheritedBrowserTargets?: readonly string[]
   command: string
   timeoutMs: number
 }): Promise<BrowserVerificationOutcome> {
   const checkIds = parseBrowserVerificationCheckIds(input.command)
-  const targets = selectBrowserVerificationTargets(input.workspaceRoot, input.targetPaths)
+  const browserPaths = input.targetPaths.some(path => /\.html?$/i.test(path))
+    ? input.targetPaths : [...input.targetPaths, ...input.inheritedBrowserTargets ?? []]
+  const targets = selectBrowserVerificationTargets(input.workspaceRoot, browserPaths)
   const perFileBudget = Math.max(5_000, Math.floor(input.timeoutMs / targets.length))
   const templates = resolveOwnerRuntimeAssertionTemplates(checkIds)
+  const resourcePaths = [...new Set([...input.targetPaths, ...input.inheritedResourcePaths ?? []])]
+    .filter(path => ['.js', '.mjs', '.css'].includes(extname(path).toLowerCase()) && existsSync(resolve(input.workspaceRoot, path)))
   const collected: OwnerRuntimeBrowserCheckResult[] = []
   let timedOut = false
   for (const target of targets) {
     const result = await runOwnerRuntimeBrowserAssertions({
       workspaceRoot: input.workspaceRoot,
       relativePath: target,
-      resourcePaths: input.targetPaths.filter(path => ['.js', '.mjs', '.css'].includes(extname(path).toLowerCase()) && existsSync(resolve(input.workspaceRoot, path))),
+      resourcePaths,
       intents: [],
       timeoutMs: perFileBudget,
       templates,

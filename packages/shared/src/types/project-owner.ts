@@ -1100,7 +1100,7 @@ export interface OwnerTerminalEvidence {
   capturedAt: number
 }
 
-/** 本机保存的完整文本成果；正文来自准确Executor最终回复，不是外部事实验证。 */
+/** 本机保存的完整文本成果，绑定准确的 Executor 最终回复及可选的单行插入提案。 */
 export interface OwnerTextDelivery {
   schemaVersion: 1
   projectId: string
@@ -1114,6 +1114,8 @@ export interface OwnerTextDelivery {
   planRevision: number
   reworkOrdinal: number
   messageId: string
+  /** 系统按提案定位原文并执行固定单行插入时，保留模型返回提案的摘要。 */
+  insertionProposalSha256?: string
   content: string
   contentSha256: string
   byteLength: number

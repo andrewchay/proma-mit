@@ -6,6 +6,7 @@ import type { OwnerTextDelivery } from '@gravitas/shared'
 import { getProjectsDir } from './config-paths'
 import { ownerExecutionHash } from './project-owner-execution-hash'
 import { ownerTaskHasTextDelivery, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
+import { applyOwnerTextInsertionProposal, OWNER_TEXT_INSERTION_RESPONSE_INSTRUCTION } from './project-owner-delivery-content'
 import * as store from './project-sqlite-store'
 
 export const OWNER_TEXT_DELIVERY_MAX_BYTES = 64 * 1024
@@ -55,8 +56,8 @@ function readFile(path: string): OwnerTextDelivery | null {
     if (!stat.isFile() || stat.isSymbolicLink() || stat.size > MAX_FILE_BYTES) throw new Error('文本成果文件类型或大小无效')
     const value = JSON.parse(readFileSync(fd, 'utf8')) as OwnerTextDelivery
     const { integrityHash, ...body } = value
-    const fields = ['schemaVersion', 'projectId', 'grantId', 'commandId', 'executionId', 'sessionId', 'taskId', 'stepLinkId', 'sourceHash', 'planRevision', 'reworkOrdinal', 'messageId', 'content', 'contentSha256', 'byteLength', 'capturedAt', 'integrityHash']
-    if (Object.keys(value).length !== fields.length || Object.keys(value).some(key => !fields.includes(key)) || value.schemaVersion !== 1 || ownerExecutionHash(body) !== integrityHash || typeof value.content !== 'string' || !value.content.trim() || Buffer.byteLength(value.content, 'utf8') !== value.byteLength || value.byteLength > OWNER_TEXT_DELIVERY_MAX_BYTES || sha(value.content) !== value.contentSha256 || typeof value.messageId !== 'string' || !value.messageId || !Number.isSafeInteger(value.capturedAt) || value.capturedAt < 1) throw new Error('文本成果内容或完整性无效')
+    const fields = ['schemaVersion', 'projectId', 'grantId', 'commandId', 'executionId', 'sessionId', 'taskId', 'stepLinkId', 'sourceHash', 'planRevision', 'reworkOrdinal', 'messageId', 'content', 'contentSha256', 'byteLength', 'capturedAt', 'integrityHash', ...(value.insertionProposalSha256 === undefined ? [] : ['insertionProposalSha256'])]
+    if (Object.keys(value).length !== fields.length || Object.keys(value).some(key => !fields.includes(key)) || value.schemaVersion !== 1 || (value.insertionProposalSha256 !== undefined && !/^[a-f0-9]{64}$/.test(value.insertionProposalSha256)) || ownerExecutionHash(body) !== integrityHash || typeof value.content !== 'string' || !value.content.trim() || Buffer.byteLength(value.content, 'utf8') !== value.byteLength || value.byteLength > OWNER_TEXT_DELIVERY_MAX_BYTES || sha(value.content) !== value.contentSha256 || typeof value.messageId !== 'string' || !value.messageId || !Number.isSafeInteger(value.capturedAt) || value.capturedAt < 1) throw new Error('文本成果内容或完整性无效')
     return value
   } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error }
   finally { if (fd !== undefined) closeSync(fd) }
@@ -71,9 +72,16 @@ export function captureOwnerTextDelivery(commandId: string, executionId: string,
   if (!current) return null
   const { command, frozen, execution } = current
   if (execution.id !== executionId || execution.status !== 'running' || command.state !== 'running' || typeof message.content !== 'string' || !message.content.trim() || !message.id || !Number.isSafeInteger(capturedAt) || capturedAt < 1) throw new Error('文本成果捕获来源或运行状态无效')
-  const byteLength = Buffer.byteLength(message.content, 'utf8')
+  const commandUsesInsertion = execution.prompt.includes(OWNER_TEXT_INSERTION_RESPONSE_INSTRUCTION)
+  const rule = commandUsesInsertion
+    ? (require('./project-owner-execution-command') as typeof import('./project-owner-execution-command')).readOwnerExactTextInsertion(frozen)
+    : null
+  const inserted = rule && applyOwnerTextInsertionProposal(message.content, rule)
+  const content = inserted?.content ?? message.content
+  const insertionProposalSha256 = inserted ? sha(message.content) : undefined
+  const byteLength = Buffer.byteLength(content, 'utf8')
   if (byteLength > OWNER_TEXT_DELIVERY_MAX_BYTES) throw new Error('完整文本成果超出64KiB审阅上限，已拒绝截断后评审')
-  const body = { schemaVersion: 1 as const, projectId: command.project_id, grantId: command.grant_id, commandId, executionId, sessionId: execution.sessionId, taskId: command.source_task_id, stepLinkId: command.source_step_link_id, sourceHash: command.source_hash, planRevision: frozen.planRevision, reworkOrdinal: command.rework_ordinal, messageId: message.id, content: message.content, contentSha256: sha(message.content), byteLength, capturedAt }
+  const body = { schemaVersion: 1 as const, projectId: command.project_id, grantId: command.grant_id, commandId, executionId, sessionId: execution.sessionId, taskId: command.source_task_id, stepLinkId: command.source_step_link_id, sourceHash: command.source_hash, planRevision: frozen.planRevision, reworkOrdinal: command.rework_ordinal, messageId: message.id, content, contentSha256: sha(content), byteLength, capturedAt, ...(insertionProposalSha256 ? { insertionProposalSha256 } : {}) }
   const value: OwnerTextDelivery = { ...body, integrityHash: ownerExecutionHash(body) }
   const path = join(directory(command.project_id, true)!, `${sha(executionId)}.json`)
   let fd: number
@@ -83,7 +91,7 @@ export function captureOwnerTextDelivery(commandId: string, executionId: string,
     const existing = readFile(path)
     if (!existing) throw new Error('文本成果已存在但无法读取，保留原件核查')
     assertBinding(existing, current)
-    if (existing.messageId !== message.id || existing.content !== message.content) throw new Error('文本成果已捕获不同内容，拒绝覆盖')
+    if (existing.messageId !== message.id || existing.content !== content || existing.insertionProposalSha256 !== insertionProposalSha256) throw new Error('文本成果已捕获不同内容，拒绝覆盖')
     return existing
   }
   try { writeFileSync(fd, JSON.stringify(value)); fsyncSync(fd) } finally { closeSync(fd) }

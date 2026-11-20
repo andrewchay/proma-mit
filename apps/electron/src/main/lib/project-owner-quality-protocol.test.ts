@@ -68,6 +68,29 @@ test('Given代码快照和全部新鲜成功验证回执 When Owner提出accept 
   expect(protocol.parseOwnerQualityDecision(acceptDecision(), context())).toMatchObject({ verdict: 'accept', artifactHash: 'c'.repeat(64) })
 })
 
+test('Given Owner已判断明确验证命令通过且quote为空 When独立评审已引用同条完整成功回执 Then 复用真实引用', async () => {
+  const { parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
+  const c = context(), delivery = c.conversation!.deliveryReview!, check = delivery.developmentArtifact!.validationEvidence[0]!
+  check.rawOutputSha256 = createHash('sha256').update(check.outputTail!).digest('hex')
+  check.command = 'browser:html.loads+text-counter.behavior'
+  check.finishedAt = Date.now()
+  const criterion = check.command + ' 成功回执'
+  delivery.review!.criteria[0] = { criterion, status: 'met', evidence: '命令已通过', quote: check.command }
+  const decision = { ...acceptDecision(), criteria: [{ criterion, status: 'met', evidence: '核对命令终态及全部输出', quote: null }] }
+  expect(parseOwnerQualityDecision(decision, c).criteria[0]?.quote).toBe(check.command)
+  delivery.review!.criteria[0]!.quote = '虚构回执'
+  expect(() => parseOwnerQualityDecision(decision, c)).toThrow('引用不符')
+  delivery.review!.criteria[0]!.quote = 'browser:html.loads'
+  delivery.developmentArtifact!.validationEvidence.push({ ...check, command: 'browser:html.loads' })
+  expect(() => parseOwnerQualityDecision(decision, c)).toThrow('引用不符')
+  delivery.review!.criteria[0]!.quote = check.command
+  delete check.finishedAt
+  expect(() => parseOwnerQualityDecision(decision, c)).toThrow('引用不符')
+  check.finishedAt = Date.now()
+  check.outputTruncated = true
+  expect(() => parseOwnerQualityDecision(decision, c)).toThrow('引用不符')
+})
+
 test('GivenJSON快照含多行源码和引号 WhenOwner逐字引用文件正文 Then按解码原文核对且不接受拼接或虚构', async () => {
   const { parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
   const c = context(), source = 'const name = "2048";\nscore += gained;'

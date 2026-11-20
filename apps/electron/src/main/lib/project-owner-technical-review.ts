@@ -1,6 +1,6 @@
 import { assertOwnerReviewerTextDelivery } from './project-owner-text-delivery'
 import { isOwnerDevelopmentValidationArtifact, ownerDevelopmentArtifactFromPrompt } from './project-owner-development-artifact'
-import { containsOwnerValidationOutputQuote, isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
+import { containsOwnerValidationEvidenceQuote, isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
 import type { OwnerDevelopmentValidationArtifact } from './project-owner-development-artifact'
 import type { OwnerDevelopmentDeliveryArtifact } from '@gravitas/shared'
 import { ownerDevelopmentValidationId } from './development-validation-attempt'
@@ -122,7 +122,7 @@ function artifactContainsQuote(content: string | undefined, quote: string): bool
 }
 
 /** 只去掉包住整个回执的 Markdown 围栏，保留原文及摘要供审计。 */
-function unwrapReviewReceipt(raw: string): string {
+export function unwrapReviewReceipt(raw: string): string {
   return /^\s*```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*$/i.exec(raw)?.[1] ?? raw
 }
 
@@ -183,7 +183,7 @@ export function parseOwnerTechnicalReviewResponse(raw: string, frozenCriteria: s
       || !boundedText(value.evidence, 2000)) {
       throw new Error(`技术评审标准第 ${index + 1} 项无效或顺序不匹配`)
     }
-    if (expectedArtifactHash && (value.quote !== null && !boundedText(value.quote, 1000) || value.status === 'met' && !boundedText(value.quote, 1000) || typeof value.quote === 'string' && artifactContent !== undefined && !artifactContainsQuote(artifactContent, value.quote) && !(artifactKind === 'development' && value.status === 'met' && containsOwnerValidationOutputQuote(validationEvidence, value.quote)))) throw new Error('技术评审原文依据与完整成果不匹配')
+    if (expectedArtifactHash && (value.quote !== null && !boundedText(value.quote, 1000) || value.status === 'met' && !boundedText(value.quote, 1000) || typeof value.quote === 'string' && artifactContent !== undefined && !artifactContainsQuote(artifactContent, value.quote) && !(artifactKind === 'development' && value.status === 'met' && containsOwnerValidationEvidenceQuote(validationEvidence, value.quote)))) throw new Error('技术评审原文依据与完整成果不匹配')
     return { criterion: value.criterion as string, status: value.status as OwnerTechnicalReviewCriterionStatus, evidence: value.evidence, ...(expectedArtifactHash ? { quote: value.quote as string | null } : {}) }
   })
 
