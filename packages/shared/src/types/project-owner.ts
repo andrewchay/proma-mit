@@ -687,6 +687,14 @@ export interface OwnerTaskMaterializationPreview extends ProjectOwnerGoalSubject
   targetTaskHash?: string
   targetDependenciesHash?: string
   previewFingerprint: string
+  /**
+   * 混合批次接替时被复用的已验收步骤。
+   *
+   * 这些步骤仍在 `preparation.source.selectedStepKeys` 里，但**不进入 `projections`**：
+   * 旧任务与旧 link 原样保留，新批次不再为它们建可派发任务，因此不产生新的费用预留。
+   * 记录旧任务与已验收成果哈希，供界面说明「B 使用了哪份已验收成果」。
+   */
+  retainedSteps?: Array<{ stepKey: string; taskId: string; artifactHash: string }>
 }
 export interface OwnerTaskStepLink {
   id: string

@@ -15,7 +15,7 @@ import { getAdapter, streamSSE } from '@gravitas/core'
 import type { StreamEvent, ToolResult } from '@gravitas/core'
 import { getFetchFn } from '../proxy-fetch'
 import { getEffectiveProxyUrl } from '../proxy-settings-service'
-import { compactSDKMessages } from '../agent-session-manager'
+import { alignKeepStartToToolPairs, compactSDKMessages } from '../agent-session-manager'
 import type { RuntimeToolDefinition } from './types'
 import { appendContextCompactionAudit, type ContextCompactionAuditInput } from '../context-compaction-audit-service'
 import { estimateTokenCount } from '../agent-tool-token-estimator'
@@ -265,6 +265,10 @@ export function estimateOutgoingContextTokens(input: {
  * 历史总量本身小于目标时返回全部条数——调用方据此跳过压缩。
  *
  * 逐条累加，避免每轮重新序列化整个尾部切片（旧实现总字符量随条数平方增长）。
+ *
+ * 下限：最新一条本身就超目标时，回溯累加会在第一条就 break，返回 0——
+ * 压缩后活动历史只剩 boundary，本轮成果从模型视图消失。此时至少保留最后一条，
+ * 并让调用方用 compactOversizedToolResults 把它的正文降级成可续取的占位符。
  */
 export function resolveAdaptiveKeepRecent(input: {
   historyMessages: SDKMessage[]
@@ -281,7 +285,82 @@ export function resolveAdaptiveKeepRecent(input: {
     accumulatedTokens += messageTokens
     selected += 1
   }
-  return selected
+  if (selected === 0 && hardCap > 0) selected = Math.min(1, hardCap)
+  // 保留窗口不能从孤儿 tool_result 开始：向前扩到配对的 assistant。
+  // 否则 assistant(tool_use) 会同时进入摘要输入与保留窗口，模型看到重复内容。
+  return input.historyMessages.length - alignKeepStartToToolPairs(input.historyMessages, input.historyMessages.length - selected)
+}
+
+/**
+ * 把单条工具结果正文降级为可续取的占位符。
+ *
+ * 为什么需要：token 估算无法反映真实代价——一张 base64 截图按 ASCII 计就是数十万 token，
+ * 会让「保留窗口」和「预算校验」同时失真。降级只改模型视图中的正文，JSONL 原文与审计归档不动；
+ * 占位符保留原长度与工具名，模型据此知道结果存在且过大，可以选择更小的取数方式重试。
+ *
+ * 与 pruneOldToolResults 的分工：那个只裁剪保留窗口之外的旧结果，这个作用于**即将保留**的窗口内，
+ * 且必须发生在 token 预算校验之前——否则校验用的是未降级体积，压缩会以「仍超出预算」失败。
+ */
+export function compactOversizedToolResults(
+  historyMessages: SDKMessage[],
+  options: { perResultTokenBudget?: number } = {},
+): SDKMessage[] {
+  const budget = Math.max(1, options.perResultTokenBudget ?? DEFAULT_OVERSIZED_RESULT_TOKEN_BUDGET)
+  // 字符预算按最坏情况折算（1 char ≈ 1 token 的中文/混排），避免估算器本身的偏差再次放大。
+  const maxChars = budget
+  return historyMessages.map((message) => {
+    if (message.type !== 'user') return message
+    const content = (message as { message?: { content?: unknown } }).message?.content
+    if (!Array.isArray(content)) return message
+    let changed = false
+    const nextContent = content.map((rawBlock) => {
+      const block = rawBlock as { type?: string; content?: unknown; is_error?: boolean; tool_use_id?: string }
+      // 错误结果保留原文：失败原因与恢复状态比节省 token 更重要。
+      if (block.type !== 'tool_result' || block.is_error === true) return rawBlock
+      const serialized = typeof block.content === 'string' ? block.content : JSON.stringify(block.content ?? '')
+      const flatChars = countPayloadChars(block.content)
+      if (flatChars <= maxChars) return rawBlock
+      changed = true
+      const kind = Array.isArray(block.content)
+        ? (block.content as Array<{ type?: string }>).some((item) => item?.type === 'image') ? '图片或二进制内容' : '结构化内容'
+        : '正文'
+      return {
+        ...block,
+        content: `[较早工具结果已从模型视图降级；原始记录保留于会话 JSONL，可按需重新获取。${kind}约 ${flatChars} 字符，超过单条 ${budget} token 预算。serialized=${serialized.length}]`,
+      }
+    })
+    if (!changed) return message
+    return {
+      ...message,
+      message: {
+        ...(message as { message?: object }).message,
+        content: nextContent,
+      },
+    } as SDKMessage
+  })
+}
+
+/** 单条工具结果在模型视图中的 token 上限；超出即降级为占位符。 */
+export const DEFAULT_OVERSIZED_RESULT_TOKEN_BUDGET = 8_000
+
+/**
+ * 统计工具结果的实际载荷字符数。
+ *
+ * 图片块按 base64 长度计（它就是要占的上下文）；字符串直接取长度；
+ * 其余结构序列化后取长度。只用于判断“是否过大”，不参与 token 精确估算。
+ */
+function countPayloadChars(content: unknown): number {
+  if (typeof content === 'string') return content.length
+  if (!Array.isArray(content)) return 0
+  let total = 0
+  for (const rawItem of content) {
+    if (!rawItem || typeof rawItem !== 'object') continue
+    const item = rawItem as { type?: string; data?: unknown; text?: unknown }
+    if (item.type === 'image' && typeof item.data === 'string') total += item.data.length
+    else if (typeof item.text === 'string') total += item.text.length
+    else total += JSON.stringify(item).length
+  }
+  return total
 }
 
 export interface ToolResultPruningResult {
@@ -475,9 +554,15 @@ export async function compactSessionNow(options: ContextCompactionOptions): Prom
     throw error
   }
 
+  // 保留窗口内的超大工具结果先降级，再据同一份候选历史做预算校验：
+  // 校验用未降级体积、提交用降级体积，会出现「校验通过但写盘的是另一份历史」。
+  // 对齐必须在这里做——compactSDKMessages 内部会再次对齐，两边起点不同就会误报并发冲突。
+  const boundaryMessage = { type: 'system', subtype: 'compact_boundary', session_id: sessionId, summary: packet.summary, contextPacket: packet } as unknown as SDKMessage
+  const alignedStart = alignKeepStartToToolPairs(historyMessages, historyMessages.length - keepRecent)
+  const candidateTail = compactOversizedToolResults(historyMessages.slice(alignedStart))
   if (options.targetInputTokens !== undefined) {
     const projectedTokens = estimateOutgoingContextTokens({
-      historyMessages: [{ type: 'system', subtype: 'compact_boundary', session_id: sessionId, summary: packet.summary, contextPacket: packet } as unknown as SDKMessage, ...historyMessages.slice(historyMessages.length - keepRecent)],
+      historyMessages: [boundaryMessage, ...candidateTail],
       currentPrompt: options.currentPrompt, systemPrompt: options.systemPrompt, tools: options.tools,
     })
     if (projectedTokens > options.targetInputTokens) {
@@ -485,12 +570,11 @@ export async function compactSessionNow(options: ContextCompactionOptions): Prom
       options.onLifecycle?.({ status: 'failed', message: error.message })
       throw error
     }
-
   }
 
   let history: SDKMessage[]
   try {
-    history = compactSDKMessages(sessionId, packet.summary, keepRecent, packet)
+    history = compactSDKMessages(sessionId, packet.summary, keepRecent, packet, candidateTail)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     options.onLifecycle?.({ status: 'failed', message })

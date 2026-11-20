@@ -15,6 +15,7 @@ const { createChannel } = await import('./channel-manager')
 const { bindWorkspaceToProject } = await import('./project-workspace-bindings')
 const { saveProjectOwnerGoalDraft } = await import('./project-owner-goal-service')
 const plans = await import('./project-owner-plan-service')
+const goals = await import('./project-owner-goal-service')
 const prep = await import('./project-owner-execution-preparation')
 const policy = await import('./project-pilot-policy')
 let service: typeof import('./project-owner-task-materialization')
@@ -197,4 +198,75 @@ test('Given AO05原记录丢失但材料化残余 When 旧SourceGate消费 Then 
   store.getProjectDb().prepare('DELETE FROM project_owner_execution_preparations WHERE id=?').run(saved.preview.preparation.id)
   expect(evidence.hasOwnerExecutionPreparationEvidence(f.project.id)).toBe(true)
   expect(() => evidence.assertNoOwnerExecutionPreparation(f.project.id)).toThrow('Owner')
+})
+
+// ===== 混合批次接替：已验收步骤不得重跑 =====
+
+/**
+ * 在已有材料化的项目上，按给定 steps 再确认一版方案并保存新准备。
+ * 版本号全部从当前状态推导，避免硬编码。
+ */
+function rePrepare(
+  f: ReturnType<typeof fixture>,
+  steps: Array<{ key: string; title: string; outcome: string; acceptanceCriteria: string[]; dependencies: string[]; roleKey: string }>,
+  changeReason: string,
+) {
+  const context = plans.getProjectOwnerPlanningContext(f.project.id)
+  const plan = plans.getProjectOwnerPlanDraft(f.project.id, undefined)!
+  const goal = goals.getProjectOwnerGoalDraft(f.project.id, undefined)!
+  plans.saveProjectOwnerPlanDraft(f.project.id, goal.revision, plan.revision, { expectedContextFingerprint: context.fingerprint, summary: changeReason, assumptions: [], risks: [], steps, changeReason }, undefined)
+  const confirmed = plans.confirmProjectOwnerPlanDraft(f.project.id, goal.revision, plan.revision + 1, undefined)
+  const revision = prep.getOwnerExecutionPreparation(f.subject).revision
+  const preparationInput = {
+    requestId: randomUUID(), expectedPreparationRevision: revision, expectedPolicyRevision: f.preparation.policyRevision,
+    expectedGoalRevision: goal.revision, expectedPlanRevision: confirmed.revision,
+    selectedStepKeys: steps.map(step => step.key), executionKind: 'controlled' as const,
+    executorEmployeeId: f.executor.id, reviewerEmployeeId: f.reviewer.id,
+    roleAssignments: [...new Set(steps.map(step => step.roleKey))].map(roleKey => ({ roleKey, employeeId: f.executor.id })),
+    workspaceId: f.preparation.source.workspaceId, knowledgeSourceIds: [], maxCostMicros: 1000000, maxRuns: 2, maxRework: 0,
+    expiresAt: Date.now() + 3600000, changeReason,
+  }
+  const pv = prep.previewOwnerExecutionPreparation(f.subject, preparationInput)
+  const preparation = prep.saveOwnerExecutionPreparation(f.subject, preparationInput, pv.previewFingerprint)
+  return { requestId: randomUUID(), expectedMaterializationRevision: 1, expectedPreparationId: preparation.id, expectedPreparationRevision: preparation.revision, expectedPreparationHash: preparation.integrityHash, expectedPolicyRevision: preparation.policyRevision }
+}
+
+const TWO_STEPS = (roleKey: string, briefCriteria = ['范围明确']) => [
+  { key: 'brief', title: '研究', outcome: '材料', acceptanceCriteria: briefCriteria, dependencies: [], roleKey },
+  { key: 'report', title: '汇总', outcome: '方案', acceptanceCriteria: ['有依据'], dependencies: ['brief'], roleKey },
+]
+
+/** 造一个「旧批次已有材料化、其中 brief 已验收」的场景。 */
+function supersedeFixture() {
+  const f = fixture()
+  const previous = save(f)
+  const briefLink = previous.links.find(link => link.stepKey === 'brief')!
+  // 旧批次里 brief 已验收完成（走语义组判定，不硬编码状态串）。
+  store.updateTask(briefLink.taskId, { status: store.listTaskStatuses(f.project.id).find(status => status.stateGroup === 'completed')!.id })
+  const roleKey = f.preparation.source.roleAssignments![0]!.roleKey
+  return { ...f, previous, briefLink, roleKey }
+}
+
+test('Given 新方案重复列出已验收步骤 When 材料化 Then 只为失败步骤建任务', () => {
+  const f = supersedeFixture()
+  const tasksBefore = store.listTasks(f.project.id)
+  const baseline = restricted()
+  const input = rePrepare(f, TWO_STEPS(f.roleKey), '接替失败批次')
+  const pv = service.previewOwnerTaskMaterialization(f.subject, input)
+  // 预览阶段就已收窄：不会先建出 A 再删。
+  expect(pv.projections.map(item => item.stepKey)).toEqual(['report'])
+  const saved = service.materializeOwnerTasks(f.subject, input, pv.previewFingerprint)
+  expect(saved.links.map(link => link.stepKey)).toEqual(['report'])
+  // A 的任务原样保留，只多出 B 一个新任务；不产生任何执行/费用记录。
+  const tasksAfter = store.listTasks(f.project.id)
+  expect(tasksAfter).toHaveLength(tasksBefore.length + 1)
+  expect(tasksAfter.some(task => task.id === f.briefLink.taskId)).toBe(true)
+  expect(restricted()).toEqual(baseline)
+})
+
+test('Given 新方案收紧了已验收步骤的标准 When 材料化 Then 该步骤重新进入批次', () => {
+  const f = supersedeFixture()
+  const input = rePrepare(f, TWO_STEPS(f.roleKey, ['范围明确', '补充竞品对比']), '收紧标准')
+  const pv = service.previewOwnerTaskMaterialization(f.subject, input)
+  expect(pv.projections.map(item => item.stepKey)).toEqual(['brief', 'report'])
 })

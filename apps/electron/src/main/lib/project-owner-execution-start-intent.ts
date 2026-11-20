@@ -586,7 +586,7 @@ export function resumeOwnerExecutionStartIntent(intentId: string, expectedSubjec
     const grant = await dependencies.launch({ ...subject, input: materialization.input, previewFingerprint: materialization.preview.previewFingerprint })
     completeOwnerExecutionStartIntent({ ...subject, intentId, grantId: grant.grantId })
     // 确认后必须立刻在同一次对话出现可见回应，否则界面只显示空白，像被中断。
-    recordOwnerManagementStartAccepted(subject.projectId, intent.intentId, intent.expectedGoalRevision, subject.taskId)
+    recordOwnerManagementStartAccepted(subject.projectId, intent.intentId, intent.expectedGoalRevision, subject.taskId, materialization?.preview.retainedSteps)
     reportRecoveryResolved(intent)
     return grant
   })()

@@ -14,10 +14,13 @@ import * as store from './project-sqlite-store'
 /** 失败工作树的只读盘点结果；路径均为仓库相对 POSIX 路径。 */
 export interface FailedDevelopmentInventory {
   worktreePath: string
-  baseCommit: string
+  /** 旧工作树已被清理（用户删除、换机、临时目录回收）时为 null。 */
+  baseCommit: string | null
   changedFiles: string[]
   untrackedFiles: string[]
   hasChanges: boolean
+  /** 现场已不存在：没有半成品可交接，应从干净基线重试而不是永久阻塞。 */
+  worktreeMissing?: true
 }
 
 /** 交接入参：失败侧只读，目标侧必须是尚未运行的同基线干净工作树。 */
@@ -46,9 +49,25 @@ function gitRaw(cwd: string, ...args: string[]): string {
   })
 }
 
-/** `repository` 必须是主仓库根；它只用于校验 worktree 归属，不参与写入。 */
+/** 判断错误是否为「路径不存在」；权限、I/O 等其他错误不在此列。 */
+function isMissingPath(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT'
+}
+
+/**
+ * `repository` 必须是主仓库根；它只用于校验 worktree 归属，不参与写入。
+ *
+ * 旧工作树不存在时返回 `worktreeMissing`，而不是抛错：用户清理临时目录、
+ * 换机同步数据库都会留下这种状态，若按故障处理，恢复流程会每次都撞同一堵墙。
+ * 权限错误与仓库归属错误仍原样抛出——那是真实故障，不能当作「没有现场」。
+ */
 export function inspectFailedDevelopmentWorktree(worktreePath: string, repository: string): FailedDevelopmentInventory {
-  const worktree = realpathSync(worktreePath), repo = realpathSync(repository)
+  let worktree: string
+  try { worktree = realpathSync(worktreePath) } catch (error) {
+    if (isMissingPath(error)) return { worktreePath, baseCommit: null, changedFiles: [], untrackedFiles: [], hasChanges: false, worktreeMissing: true }
+    throw error
+  }
+  const repo = realpathSync(repository)
   const top = realpathSync(git(worktree, 'rev-parse', '--show-toplevel'))
   if (top !== worktree) throw new Error('失败研发工作树路径不是仓库根目录')
   const worktreeCommon = realpathSync(resolve(worktree, git(worktree, 'rev-parse', '--git-common-dir')))
@@ -71,7 +90,8 @@ export async function seedFailedDevelopmentWorktree(
   input: SeedFailedDevelopmentWorktreeInput,
 ): Promise<DevelopmentSnapshot | null> {
   const inventory = inspectFailedDevelopmentWorktree(input.failedWorktreePath, input.repository)
-  if (!inventory.hasChanges) return null
+  // 现场已不存在：没有半成品可接续，新工作树保持干净即可。
+  if (!inventory.hasChanges || inventory.baseCommit === null) return null
   const snapshot = await createDevelopmentSnapshotAsync({
     worktreePath: input.failedWorktreePath, sessionDirectory: input.failedSessionDirectory,
     executionId: input.failedExecutionId, workspaceId: input.workspaceId, scope: input.scope,

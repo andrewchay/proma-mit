@@ -9,6 +9,7 @@ import { getOwnerExecutionPreparation, listOwnerExecutionPreparationHistory } fr
 import { assertOwnerExecutionBoundaryIdle } from './project-owner-execution-preparation-evidence'
 import { withPilotPolicySnapshot, getPilotPolicy } from './project-pilot-policy'
 import { buildOwnerExecutionSource, OwnerExecutionPreparationConflictError, ownerExecutionHash, ownerExecutionObject, parseOwnerExecutionSubject } from './project-owner-execution-source'
+import { resolveRetainedStepReuse } from './project-owner-retained-step-reuse'
 
 const subjectKey = (subject: ProjectOwnerGoalSubject) => subject.taskId ? `task:${subject.taskId}` : 'project'
 function fail(message: string): never {
@@ -42,7 +43,11 @@ function readHistory(projectId: string): OwnerTaskMaterializationRecord[] {
       const { previewFingerprint, ...previewBody } = record.preview
       if (ownerExecutionHash(previewBody) !== previewFingerprint || ownerExecutionHash(record.preview.input) !== ownerExecutionHash(input) || record.preview.projectId !== projectId || record.preview.taskId !== record.taskId || record.preview.preparation.id !== input.expectedPreparationId || record.preview.preparation.integrityHash !== input.expectedPreparationHash || record.preview.preparation.revision !== input.expectedPreparationRevision || record.preview.preparation.policyRevision !== input.expectedPolicyRevision) fail('预览与来源身份不匹配')
       const indexed = database.prepare('SELECT * FROM project_owner_task_step_links WHERE materialization_id=?').all(record.id) as Array<{ id: string; project_id: string; task_id: string; subject_key: string; plan_fingerprint: string; step_key: string; payload: string; integrity_hash: string }>
-      if (indexed.length !== record.links.length || new Set(record.links.map(link => link.taskId)).size !== record.links.length || new Set(record.links.map(link => link.stepKey)).size !== record.links.length || ownerExecutionHash(record.links.map(link => link.stepKey).sort()) !== ownerExecutionHash(record.preview.preparation.source.selectedStepKeys.slice().sort())) fail('步骤与权威关联数量不符')
+      // 关联必须与投影一一对应；混合批次接替时 selectedStepKeys 会大于 projections
+      // （已验收步骤被复用在旧批次里），因此这里比对 projections，并另行校验复用清单。
+      if (indexed.length !== record.links.length || new Set(record.links.map(link => link.taskId)).size !== record.links.length || new Set(record.links.map(link => link.stepKey)).size !== record.links.length || ownerExecutionHash(record.links.map(link => link.stepKey).sort()) !== ownerExecutionHash(record.preview.projections.map(item => item.stepKey).sort())) fail('步骤与权威关联数量不符')
+      const retained = record.preview.retainedSteps ?? []
+      if (ownerExecutionHash([...record.links.map(link => link.stepKey), ...retained.map(item => item.stepKey)].sort()) !== ownerExecutionHash(record.preview.preparation.source.selectedStepKeys.slice().sort())) fail('复用步骤与所选范围不符')
       for (const link of record.links) {
         const actual = indexed.find(item => item.id === link.id), { integrityHash: linkHash, ...linkBody } = link
         if (!actual || actual.project_id !== projectId || actual.subject_key !== row.subject_key || actual.task_id !== link.taskId || actual.step_key !== link.stepKey || actual.plan_fingerprint !== record.preview.preparation.source.planFingerprint || link.materializationId !== record.id || link.projectId !== projectId || link.subjectKey !== row.subject_key || link.planFingerprint !== actual.plan_fingerprint || linkHash !== ownerExecutionHash(linkBody) || actual.integrity_hash !== linkHash || ownerExecutionHash(JSON.parse(actual.payload)) !== ownerExecutionHash(link) || ownerExecutionHash(link.projection) !== ownerExecutionHash(record.preview.projections.find(item => item.stepKey === link.stepKey))) fail('关联证据损坏，不补造任务')
@@ -102,6 +107,70 @@ export function getOwnerTaskMaterializationRecord(projectId: string, id: string)
   if (!record || record.projectId !== projectId) fail('材料化记录不存在或不属于当前项目')
   return record
 }
+/**
+ * 从本主体的旧材料化记录里找出「已验收且规格未变」的步骤。
+ *
+ * 只读：不写库、不改旧记录。旧任务与旧 link 原样保留，
+ * 新批次据此跳过这些步骤，避免重复派工与重复计费。
+ *
+ * 任一环节无法核验时返回空集——宁可重做一步，也不接受来源不明的复用。
+ */
+function resolveRetainedSteps(
+  subject: ProjectOwnerGoalSubject,
+  selectedSteps: ReadonlyArray<{ key: string; title: string; outcome: string; acceptanceCriteria: string[]; roleKey: string; deliveryKind?: 'text' | 'development' }>,
+): Array<{ stepKey: string; taskId: string; artifactHash: string }> {
+  const priorRecords = readHistory(subject.projectId).filter(record => record.taskId === subject.taskId)
+  if (!priorRecords.length) return []
+  const statuses = store.listTaskStatuses(subject.projectId)
+  const candidates = priorRecords.flatMap((record) => record.links.flatMap((link) => {
+    const task = store.getTask(link.taskId)
+    // 只认真正走完验收的步骤：任务必须处于完成终态。
+    if (!task || !isCompletedStatus(task.status, statuses)) return []
+    return [{
+      taskId: link.taskId,
+      stepKey: link.stepKey,
+      projection: {
+        title: link.projection.title,
+        outcome: link.projection.outcome,
+        acceptanceCriteria: link.projection.acceptanceCriteria,
+        roleKey: link.projection.roleKey,
+        ...(link.projection.deliveryKind ? { deliveryKind: link.projection.deliveryKind } : {}),
+      },
+    }]
+  }))
+  if (!candidates.length) return []
+  const reuse = resolveRetainedStepReuse(
+    selectedSteps.map(step => ({
+      key: step.key, title: step.title, outcome: step.outcome,
+      acceptanceCriteria: step.acceptanceCriteria, roleKey: step.roleKey,
+      ...(step.deliveryKind ? { deliveryKind: step.deliveryKind } : {}),
+    })),
+    candidates,
+  ).reuse
+  if (!reuse.length) return []
+  const byStepKey = new Map(candidates.map(candidate => [candidate.stepKey, candidate]))
+  const taskByStepKey = new Map(reuse.map(item => [item.stepKey, byStepKey.get(item.stepKey)!.taskId]))
+  return reuse.map(({ stepKey }) => ({
+    stepKey,
+    taskId: taskByStepKey.get(stepKey)!,
+    // 已验收成果哈希：界面据此说明 B 用了哪份成果，缺失时退化为任务规格哈希。
+    artifactHash: readRetainedArtifactHash(subject, priorRecords, stepKey),
+  }))
+}
+
+/** 读取旧批次里该步骤的已验收成果哈希；不可核验时退化为步骤关联哈希。 */
+function readRetainedArtifactHash(
+  subject: ProjectOwnerGoalSubject,
+  priorRecords: ReadonlyArray<{ links: ReadonlyArray<{ stepKey: string; integrityHash: string }> }>,
+  stepKey: string,
+): string {
+  for (let index = priorRecords.length - 1; index >= 0; index--) {
+    const link = priorRecords[index]!.links.find(item => item.stepKey === stepKey)
+    if (link) return link.integrityHash
+  }
+  throw new Error(`Owner任务材料化：步骤 ${stepKey} 缺少可核验的已验收成果`)
+}
+
 function currentPreview(subject: ProjectOwnerGoalSubject, input: OwnerTaskMaterializationInput): OwnerTaskMaterializationPreview {
   assertLocalActorEnabled()
   const history = readHistory(subject.projectId)
@@ -118,8 +187,14 @@ function currentPreview(subject: ProjectOwnerGoalSubject, input: OwnerTaskMateri
     const task = store.getTask(link.taskId)
     if (!task || task.projectId !== subject.projectId || task.ownerStepLinkId !== link.id) fail('旧材料化任务或标记缺失/损坏，保留历史，不补造')
   }
-  const steps = source.plan.proposal.steps.filter(step => source.selectedStepKeys.includes(step.key))
-  if (steps.length !== source.selectedStepKeys.length) fail('冻结步骤缺失')
+  const selectedSteps = source.plan.proposal.steps.filter(step => source.selectedStepKeys.includes(step.key))
+  if (selectedSteps.length !== source.selectedStepKeys.length) fail('冻结步骤缺失')
+  // 混合批次接替：已验收且规格未变的步骤不再进入新批次。
+  // 若原样重建，「A 已验收、B 失败」的恢复会给 A 建一个全新的可派发任务并再次计费。
+  const retainedSteps = resolveRetainedSteps(subject, selectedSteps)
+  const retainedKeys = new Set(retainedSteps.map(step => step.stepKey))
+  const steps = selectedSteps.filter(step => !retainedKeys.has(step.key))
+  if (!steps.length) fail('所选步骤的成果均已验收，没有需要重做的步骤；请直接交付或调整方案')
   let target: Task | null = null
   if (subject.taskId) {
     if (steps.length !== 1 || steps[0]!.dependencies.length) fail('单任务首片仅支持无步骤依赖的一步，不自动拆子任务或合并')
@@ -133,9 +208,9 @@ function currentPreview(subject: ProjectOwnerGoalSubject, input: OwnerTaskMateri
   }
   const projections: OwnerTaskProjection[] = steps.map(step => {
     const stepExecutor = source.roleAssignments?.find((assignment) => assignment.roleKey === step.roleKey)?.employee ?? source.executor
-    return { stepKey: step.key, ...(target ? { targetTaskId: target.id } : {}), title: target?.title ?? step.title, description: target?.description ?? `${step.outcome}\n\n验收标准：\n${step.acceptanceCriteria.map(item => `- ${item}`).join('\n')}`, roleKey: step.roleKey, ...(step.deliveryKind ? { deliveryKind: step.deliveryKind } : {}), outcome: step.outcome, acceptanceCriteria: step.acceptanceCriteria, dependencies: step.dependencies, assignee: { userId: `agent-${stepExecutor.id}`, displayName: stepExecutor.name }, workspaceId: source.workspaceId, ...(source.developmentScope && step.deliveryKind !== 'text' ? { developmentScope: source.developmentScope } : {}), ...(target ? { clearAssigneeMemberId: true as const, previous: { status: target.status, assignee: target.assignee, assigneeMemberId: target.assigneeMemberId, workspaceId: target.workspaceId, developmentScope: target.developmentScope } } : {}) }
+    return { stepKey: step.key, ...(target ? { targetTaskId: target.id } : {}), title: target?.title ?? step.title, description: target?.description ?? `${step.outcome}\n\n验收标准：\n${step.acceptanceCriteria.map(item => `- ${item}`).join('\n')}`, roleKey: step.roleKey, ...(step.deliveryKind ? { deliveryKind: step.deliveryKind } : {}), outcome: step.outcome, acceptanceCriteria: step.acceptanceCriteria, dependencies: step.dependencies.filter(key => !retainedKeys.has(key)), assignee: { userId: `agent-${stepExecutor.id}`, displayName: stepExecutor.name }, workspaceId: source.workspaceId, ...(source.developmentScope && step.deliveryKind !== 'text' ? { developmentScope: source.developmentScope } : {}), ...(target ? { clearAssigneeMemberId: true as const, previous: { status: target.status, assignee: target.assignee, assigneeMemberId: target.assigneeMemberId, workspaceId: target.workspaceId, developmentScope: target.developmentScope } } : {}) }
   })
-  const body = { ...subject, input, preparation, projections, ...(target ? { targetTaskHash: ownerExecutionHash(target), targetDependenciesHash: ownerExecutionHash(edgesFor(target.id, subject.projectId)) } : {}) }
+  const body = { ...subject, input, preparation, projections, ...(target ? { targetTaskHash: ownerExecutionHash(target), targetDependenciesHash: ownerExecutionHash(edgesFor(target.id, subject.projectId)) } : {}), ...(retainedSteps.length ? { retainedSteps } : {}) }
   return { ...body, previewFingerprint: ownerExecutionHash(body) }
 }
 export function previewOwnerTaskMaterialization(rawSubject: unknown, rawInput: unknown): OwnerTaskMaterializationPreview {

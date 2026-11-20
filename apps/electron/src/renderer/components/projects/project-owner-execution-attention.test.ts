@@ -50,3 +50,46 @@ test('Given失败命令没有executionId When推导 Then不提供重新核对入
   })
   expect(state?.recheckExecutionId).toBeUndefined()
 })
+
+// 真实状态转换：认领前准备失败（如研发工作区被占）会把**命令**单独写成 needs_reconcile，
+// 而授权仍是 active、调度也还没进入 needs_reconcile。共享推导漏了这一层，
+// 于是对话区说「暂无待你决定的事项」，执行区却在等用户处理。
+test('Given只有命令级needs_reconcile When推导 Then仍然报告阻塞', () => {
+  const state = deriveOwnerExecutionAttention({
+    grantState: 'active', scheduleState: 'ready', nextAction: null,
+    commands: [{ state: 'needs_reconcile', executionStatus: null, taskTitle: '实现页面', executionId: 'exec-7' }],
+    completed: false,
+  })
+  expect(state).toMatchObject({ blocked: true })
+  expect(state?.detail).toContain('实现页面')
+  expect(state?.recheckExecutionId).toBe('exec-7')
+})
+
+test('Given命令终态未知 When推导 Then报告需要核对而不是当作已结束', () => {
+  const state = deriveOwnerExecutionAttention({
+    grantState: 'active', scheduleState: null, nextAction: null,
+    commands: [{ state: 'unknown', executionStatus: null, taskTitle: '实现页面' }],
+    completed: false,
+  })
+  expect(state?.blocked).toBe(true)
+})
+
+test('Given命令失败但状态未结算 When推导 Then同样报告阻塞', () => {
+  const state = deriveOwnerExecutionAttention({
+    grantState: 'active', scheduleState: null, nextAction: null,
+    commands: [{ state: 'failed', executionStatus: 'failed', taskTitle: '实现页面' }],
+    completed: false,
+  })
+  expect(state?.blocked).toBe(true)
+})
+
+// released / cancelled 不需要用户介入：前者是被接替释放，后者是用户自己停的。
+test('Given命令已释放或已取消 When推导 Then不报告阻塞', () => {
+  for (const state of ['released', 'cancelled'] as const) {
+    expect(deriveOwnerExecutionAttention({
+      grantState: 'active', scheduleState: 'ready', nextAction: null,
+      commands: [{ state, executionStatus: null, taskTitle: '实现页面' }],
+      completed: false,
+    })).toBeNull()
+  }
+})

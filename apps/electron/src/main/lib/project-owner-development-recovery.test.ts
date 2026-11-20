@@ -74,6 +74,38 @@ test('Given路径不是仓库根 When盘点 Then拒绝', () => {
   expect(() => recovery.inspectFailedDevelopmentWorktree(join(root, 'sub'), root)).toThrow()
 })
 
+// 旧工作树被用户清理、或换机后只剩数据库时，realpathSync 会抛 ENOENT。
+// 这不是「有半成品要保护」，而是「没有现场可交接」——必须放行干净重试，否则恢复永久卡死。
+test('Given旧工作树已不存在 When盘点 Then报告现场缺失而不是抛错', () => {
+  const root = repo()
+  const missing = join(directory, 'removed-worktree')
+  const inventory = recovery.inspectFailedDevelopmentWorktree(missing, root)
+  expect(inventory).toMatchObject({ hasChanges: false, changedFiles: [], untrackedFiles: [] })
+  expect(inventory.worktreeMissing).toBe(true)
+})
+
+test('Given旧工作树已不存在 When交接 Then不抛错并返回null（从干净基线重试）', async () => {
+  const root = repo()
+  const targetDir = mkdtempSync(join(directory, 'target-missing-'))
+  const targetWorktree = createDevelopmentWorktree(root, targetDir, randomUUID()).path
+  await expect(recovery.seedFailedDevelopmentWorktree({
+    repository: root,
+    failedWorktreePath: join(directory, 'removed-worktree'),
+    failedSessionDirectory: join(directory, 'removed-session'),
+    failedExecutionId: randomUUID(),
+    workspaceId: 'ws-1',
+    targetWorktreePath: targetWorktree, targetSessionDirectory: targetDir,
+    scope: { workspaceId: 'ws-1', targetPaths: ['index.html'], allowedPaths: ['index.html'] },
+  })).resolves.toBeNull()
+})
+
+// 路径存在但不是 Git 仓库是真实故障，不能被「现场缺失」吞掉。
+test('Given路径存在但不是仓库 When盘点 Then保留原诊断而不是当作缺失', () => {
+  const root = repo()
+  const plain = mkdtempSync(join(directory, 'plain-dir-'))
+  expect(() => recovery.inspectFailedDevelopmentWorktree(plain, root)).toThrow()
+})
+
 test('Given失败工作树有改动 When交接 Then新工作树包含同样的文件内容', async () => {
   const root = repo()
   // 走生产路径建 worktree：会话目录必须带 development-worktree.json 基线绑定，执行 ID 必须是 UUID。
