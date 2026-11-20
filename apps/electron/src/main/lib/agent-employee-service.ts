@@ -791,7 +791,7 @@ async function seedMixedBatchFailure(
   if (!target) return
   const scope = source.tasks.find(item => item.taskId === taskId)?.developmentScope
   if (!scope) throw new Error('Owner研发执行缺少冻结文件范围')
-  const snapshot = await seedFailedDevelopmentWorktree({
+  const { snapshot, worktreeMissing } = await seedFailedDevelopmentWorktree({
     repository: workspace.rootPath,
     failedWorktreePath: target.failedWorktreePath,
     failedSessionDirectory: target.failedSessionDirectory,
@@ -807,6 +807,14 @@ async function seedMixedBatchFailure(
       actor: 'system:owner-runtime',
       summary: `已接续上次失败工作树（执行 ${target.failedExecutionId.slice(0, 8)}）的 ${snapshot.files.length} 个文件改动，未丢弃半成品。`,
       payload: { commandId, failedExecutionId: target.failedExecutionId, contentHash: snapshot.contentHash, files: snapshot.files.map(file => file.path) },
+    })
+  } else if (worktreeMissing) {
+    // 用户需要知道「这次是从干净基线开始的」——否则会以为上次的半成品被带进来了。
+    store.recordProjectActivity({
+      projectId, entityType: 'task', entityId: taskId, action: 'owner_development_handoff_missing',
+      actor: 'system:owner-runtime',
+      summary: `上次失败的工作树（执行 ${target.failedExecutionId.slice(0, 8)}）已不存在，本次从干净基线重新开始；未接续任何旧文件。`,
+      payload: { commandId, failedExecutionId: target.failedExecutionId, failedWorktreePath: target.failedWorktreePath },
     })
   }
 }

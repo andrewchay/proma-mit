@@ -10,6 +10,7 @@ import { assertOwnerExecutionBoundaryIdle } from './project-owner-execution-prep
 import { withPilotPolicySnapshot, getPilotPolicy } from './project-pilot-policy'
 import { buildOwnerExecutionSource, OwnerExecutionPreparationConflictError, ownerExecutionHash, ownerExecutionObject, parseOwnerExecutionSubject } from './project-owner-execution-source'
 import { resolveRetainedStepReuse } from './project-owner-retained-step-reuse'
+import { readLatestAcceptedArtifact } from './project-owner-accepted-artifact'
 
 const subjectKey = (subject: ProjectOwnerGoalSubject) => subject.taskId ? `task:${subject.taskId}` : 'project'
 function fail(message: string): never {
@@ -108,27 +109,34 @@ export function getOwnerTaskMaterializationRecord(projectId: string, id: string)
   return record
 }
 /**
- * 从本主体的旧材料化记录里找出「已验收且规格未变」的步骤。
+ * 从本主体最近一次旧材料化里找出「已验收且规格未变」的步骤。
  *
  * 只读：不写库、不改旧记录。旧任务与旧 link 原样保留，
  * 新批次据此跳过这些步骤，避免重复派工与重复计费。
+ *
+ * 复用必须建立在**可核验的验收证据**上，而不是任务状态：
+ * 扫描同主体全部历史、只看 completed 会把「人工标记完成」也当成已验收。
+ * 这里只认最近一次旧批次，并要求每条都解析出完整证据链（见 accepted-artifact）。
  *
  * 任一环节无法核验时返回空集——宁可重做一步，也不接受来源不明的复用。
  */
 function resolveRetainedSteps(
   subject: ProjectOwnerGoalSubject,
-  selectedSteps: ReadonlyArray<{ key: string; title: string; outcome: string; acceptanceCriteria: string[]; roleKey: string; deliveryKind?: 'text' | 'development' }>,
-): Array<{ stepKey: string; taskId: string; artifactHash: string }> {
+  selectedSteps: ReadonlyArray<{ key: string; title: string; outcome: string; acceptanceCriteria: string[]; roleKey: string; deliveryKind?: 'text' | 'development'; dependencies: readonly string[] }>,
+): OwnerTaskMaterializationPreview['retainedSteps'] {
   const priorRecords = readHistory(subject.projectId).filter(record => record.taskId === subject.taskId)
-  if (!priorRecords.length) return []
-  const statuses = store.listTaskStatuses(subject.projectId)
-  const candidates = priorRecords.flatMap((record) => record.links.flatMap((link) => {
+  const previous = priorRecords.at(-1)
+  if (!previous) return []
+  const candidates = previous.links.flatMap((link) => {
     const task = store.getTask(link.taskId)
-    // 只认真正走完验收的步骤：任务必须处于完成终态。
-    if (!task || !isCompletedStatus(task.status, statuses)) return []
+    if (!task || task.projectId !== subject.projectId || task.ownerStepLinkId !== link.id) return []
+    // 证据链先于状态：没有 accepted 决定与已核验成果，completed 也不构成复用依据。
+    const accepted = readLatestAcceptedArtifact(subject.projectId, link.taskId)
+    if (!accepted || accepted.stepLinkId !== link.id) return []
     return [{
       taskId: link.taskId,
       stepKey: link.stepKey,
+      artifactHash: accepted.artifactHash,
       projection: {
         title: link.projection.title,
         outcome: link.projection.outcome,
@@ -137,7 +145,7 @@ function resolveRetainedSteps(
         ...(link.projection.deliveryKind ? { deliveryKind: link.projection.deliveryKind } : {}),
       },
     }]
-  }))
+  })
   if (!candidates.length) return []
   const reuse = resolveRetainedStepReuse(
     selectedSteps.map(step => ({
@@ -149,26 +157,12 @@ function resolveRetainedSteps(
   ).reuse
   if (!reuse.length) return []
   const byStepKey = new Map(candidates.map(candidate => [candidate.stepKey, candidate]))
-  const taskByStepKey = new Map(reuse.map(item => [item.stepKey, byStepKey.get(item.stepKey)!.taskId]))
-  return reuse.map(({ stepKey }) => ({
-    stepKey,
-    taskId: taskByStepKey.get(stepKey)!,
-    // 已验收成果哈希：界面据此说明 B 用了哪份成果，缺失时退化为任务规格哈希。
-    artifactHash: readRetainedArtifactHash(subject, priorRecords, stepKey),
-  }))
-}
-
-/** 读取旧批次里该步骤的已验收成果哈希；不可核验时退化为步骤关联哈希。 */
-function readRetainedArtifactHash(
-  subject: ProjectOwnerGoalSubject,
-  priorRecords: ReadonlyArray<{ links: ReadonlyArray<{ stepKey: string; integrityHash: string }> }>,
-  stepKey: string,
-): string {
-  for (let index = priorRecords.length - 1; index >= 0; index--) {
-    const link = priorRecords[index]!.links.find(item => item.stepKey === stepKey)
-    if (link) return link.integrityHash
-  }
-  throw new Error(`Owner任务材料化：步骤 ${stepKey} 缺少可核验的已验收成果`)
+  return reuse.map(({ stepKey }) => {
+    const candidate = byStepKey.get(stepKey)!
+    // 记录谁依赖它：这些下游步骤启动时要把该成果作为上游交接带入。
+    const dependedOnBy = selectedSteps.filter(step => step.dependencies.includes(stepKey)).map(step => step.key)
+    return { stepKey, taskId: candidate.taskId, artifactHash: candidate.artifactHash, dependedOnBy }
+  })
 }
 
 function currentPreview(subject: ProjectOwnerGoalSubject, input: OwnerTaskMaterializationInput): OwnerTaskMaterializationPreview {
@@ -191,7 +185,7 @@ function currentPreview(subject: ProjectOwnerGoalSubject, input: OwnerTaskMateri
   if (selectedSteps.length !== source.selectedStepKeys.length) fail('冻结步骤缺失')
   // 混合批次接替：已验收且规格未变的步骤不再进入新批次。
   // 若原样重建，「A 已验收、B 失败」的恢复会给 A 建一个全新的可派发任务并再次计费。
-  const retainedSteps = resolveRetainedSteps(subject, selectedSteps)
+  const retainedSteps = resolveRetainedSteps(subject, selectedSteps) ?? []
   const retainedKeys = new Set(retainedSteps.map(step => step.stepKey))
   const steps = selectedSteps.filter(step => !retainedKeys.has(step.key))
   if (!steps.length) fail('所选步骤的成果均已验收，没有需要重做的步骤；请直接交付或调整方案')

@@ -247,21 +247,14 @@ function supersedeFixture() {
   return { ...f, previous, briefLink, roleKey }
 }
 
-test('Given 新方案重复列出已验收步骤 When 材料化 Then 只为失败步骤建任务', () => {
+// 任务状态是状态，不是验收：只把任务标成 completed 不构成复用依据。
+// 真实验收链路（Owner 质量决定 + 独立评审 + 成果哈希）在 mixed-batch-journey 里覆盖。
+test('Given 只把任务标成完成但没有验收证据 When 材料化 Then 不复用该步骤', () => {
   const f = supersedeFixture()
-  const tasksBefore = store.listTasks(f.project.id)
-  const baseline = restricted()
   const input = rePrepare(f, TWO_STEPS(f.roleKey), '接替失败批次')
   const pv = service.previewOwnerTaskMaterialization(f.subject, input)
-  // 预览阶段就已收窄：不会先建出 A 再删。
-  expect(pv.projections.map(item => item.stepKey)).toEqual(['report'])
-  const saved = service.materializeOwnerTasks(f.subject, input, pv.previewFingerprint)
-  expect(saved.links.map(link => link.stepKey)).toEqual(['report'])
-  // A 的任务原样保留，只多出 B 一个新任务；不产生任何执行/费用记录。
-  const tasksAfter = store.listTasks(f.project.id)
-  expect(tasksAfter).toHaveLength(tasksBefore.length + 1)
-  expect(tasksAfter.some(task => task.id === f.briefLink.taskId)).toBe(true)
-  expect(restricted()).toEqual(baseline)
+  expect(pv.projections.map(item => item.stepKey)).toEqual(['brief', 'report'])
+  expect(pv.retainedSteps ?? []).toEqual([])
 })
 
 test('Given 新方案收紧了已验收步骤的标准 When 材料化 Then 该步骤重新进入批次', () => {
@@ -270,3 +263,4 @@ test('Given 新方案收紧了已验收步骤的标准 When 材料化 Then 该�
   const pv = service.previewOwnerTaskMaterialization(f.subject, input)
   expect(pv.projections.map(item => item.stepKey)).toEqual(['brief', 'report'])
 })
+

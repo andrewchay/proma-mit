@@ -85,6 +85,8 @@ function buildRevalidationSource(subject: ProjectOwnerGoalSubject, input: OwnerE
     contextFingerprint: v1.contextFingerprint,
     selectedStepKeys: v1.selectedStepKeys,
     tasks,
+    // 跨批次上游成果：这些步骤不重建，但下游交接要能引用它们的已验收正文。
+    ...(materialization.preview.retainedSteps?.length ? { retainedSteps: materialization.preview.retainedSteps } : {}),
     ...(v1.textDeliveryVersion === 1 ? { textDeliveryVersion: 1 as const } : {}),
     ...(v1.qualityManagementVersion === 1 ? { qualityManagementVersion: 1 as const } : {}),
     ...(v1.autonomousWorkspaceEditVersion === 1 ? { autonomousWorkspaceEditVersion: 1 as const } : {}),

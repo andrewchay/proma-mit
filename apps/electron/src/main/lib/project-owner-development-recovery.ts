@@ -83,15 +83,31 @@ export function inspectFailedDevelopmentWorktree(worktreePath: string, repositor
 }
 
 /**
+ * 交接结果。
+ *
+ * `snapshot === null` 有两种含义，调用方必须能区分：
+ * - `worktreeMissing: true`：旧现场已不存在，本次从干净基线重试（应告知用户）；
+ * - 其余：旧工作树干净，没有半成品需要接续（正常情况，无需提示）。
+ */
+export interface SeedFailedDevelopmentWorktreeResult {
+  snapshot: DevelopmentSnapshot | null
+  worktreeMissing: boolean
+}
+
+/**
  * 把失败工作树的改动冻结成快照并应用到新工作树。
- * 无改动时返回 null（新工作树保持干净）；快照不可核验时抛错，绝不静默丢弃半成品。
+ *
+ * 无改动时返回 null 快照（新工作树保持干净）；快照不可核验时抛错，
+ * 绝不静默丢弃半成品。
  */
 export async function seedFailedDevelopmentWorktree(
   input: SeedFailedDevelopmentWorktreeInput,
-): Promise<DevelopmentSnapshot | null> {
+): Promise<SeedFailedDevelopmentWorktreeResult> {
   const inventory = inspectFailedDevelopmentWorktree(input.failedWorktreePath, input.repository)
-  // 现场已不存在：没有半成品可接续，新工作树保持干净即可。
-  if (!inventory.hasChanges || inventory.baseCommit === null) return null
+  // 现场已不存在：没有半成品可接续，新工作树保持干净。
+  // 注意这里只核实「路径不存在」，不断言旧现场从没有过改动——那需要额外证据。
+  if (inventory.worktreeMissing === true) return { snapshot: null, worktreeMissing: true }
+  if (!inventory.hasChanges || inventory.baseCommit === null) return { snapshot: null, worktreeMissing: false }
   const snapshot = await createDevelopmentSnapshotAsync({
     worktreePath: input.failedWorktreePath, sessionDirectory: input.failedSessionDirectory,
     executionId: input.failedExecutionId, workspaceId: input.workspaceId, scope: input.scope,
@@ -104,7 +120,7 @@ export async function seedFailedDevelopmentWorktree(
   applyOwnerDevelopmentSnapshot(
     input.targetWorktreePath, input.targetSessionDirectory, snapshot, files, input.scope.allowedPaths,
   )
-  return snapshot
+  return { snapshot, worktreeMissing: false }
 }
 
 /**

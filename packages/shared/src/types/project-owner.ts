@@ -694,7 +694,13 @@ export interface OwnerTaskMaterializationPreview extends ProjectOwnerGoalSubject
    * 旧任务与旧 link 原样保留，新批次不再为它们建可派发任务，因此不产生新的费用预留。
    * 记录旧任务与已验收成果哈希，供界面说明「B 使用了哪份已验收成果」。
    */
-  retainedSteps?: Array<{ stepKey: string; taskId: string; artifactHash: string }>
+  retainedSteps?: Array<{
+    stepKey: string
+    taskId: string
+    artifactHash: string
+    /** 依赖该步骤的新批次步骤键；成果交接据此判断谁是它的下游。 */
+    dependedOnBy: string[]
+  }>
 }
 export interface OwnerTaskStepLink {
   id: string
@@ -786,6 +792,20 @@ export interface OwnerExecutionRevalidationSource {
   contextFingerprint: string
   selectedStepKeys: string[]
   tasks: OwnerExecutionRevalidationTask[]
+  /**
+   * 混合批次接替时复用的已验收步骤（跨批次上游成果）。
+   *
+   * 这些步骤不在 `tasks` 里（不重建、不派工），但下游步骤的成果交接
+   * 必须能引用它们的已验收正文；否则跳过 A 就等于让 B 失去输入。
+   * 启动前会按 artifactHash 重新核验，不只信这份冻结记录。
+   */
+  retainedSteps?: Array<{
+    stepKey: string
+    taskId: string
+    artifactHash: string
+    /** 依赖该步骤的新批次步骤键；成果交接据此判断谁是它的下游。 */
+    dependedOnBy: string[]
+  }>
   employeeRuntimes?: OwnerEmployeeRuntime[]
   employeeInvocations?: OwnerExecutionPreparationSource['employeeInvocations']
   executor: { id: string; name: string; configurationHash: string }

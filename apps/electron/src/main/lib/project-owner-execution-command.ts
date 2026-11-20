@@ -1,4 +1,5 @@
 import { readOwnerQualityAction, readOwnerQualityActionByExecution, readOwnerQualityArtifact } from './project-owner-quality-actions'
+import { readLatestAcceptedArtifact } from './project-owner-accepted-artifact'
 import { ownerEmployeeRuntimeFromSource, ownerTaskDeliveryKind, ownerTaskHasTextDelivery, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { readOwnerTextDelivery } from './project-owner-text-delivery'
 import { readOwnerTerminalEvidence } from './project-owner-terminal-evidence'
@@ -114,6 +115,30 @@ function resolveUpstreamArtifactHandoffs(projectId: string, grantId: string, tas
     return { taskId: task.id, taskTitle: task.title, commandId: executorCommands[0]!.id, ownerExecutionId: latest.ownerExecutionId, artifactHash: artifact.contentHash, reworkOrdinal: artifact.reworkOrdinal, content: artifact.content, ...(validationEvidence ? { validationEvidence } : {}) }
   }
   const directIds = predecessors(taskId)
+  /**
+   * 跨批次上游成果：混合批次接替时，A 的已验收成果属于旧授权、不在本批 tasks 里，
+   * 冻结依赖也已被剔除。若只按冻结依赖取上游，B 会拿不到 A 的正文。
+   *
+   * 这里按 stepKey 把 retainedSteps 映射回任务，并**重新核验** artifactHash：
+   * 冻结记录只说明「当时验收过」，不能证明成果未被替换。
+   */
+  const crossBatchHandoffs = (): OwnerUpstreamArtifactHandoff[] => {
+    const retained = record.source.retainedSteps ?? []
+    const currentStepKey = tasksById.get(taskId)?.stepKey
+    if (!retained.length || !currentStepKey) return []
+    return retained.filter(step => step.dependedOnBy.includes(currentStepKey)).map((step) => {
+      const accepted = readLatestAcceptedArtifact(projectId, step.taskId)
+      if (!accepted || accepted.artifactHash !== step.artifactHash) fail('跨批次上游成果已变化或不可核验，需重新核对后再派工')
+      const task = store.getTask(step.taskId)
+      if (!task || task.projectId !== projectId || task.ownerStepLinkId !== accepted.stepLinkId) fail('跨批次上游任务归属已变化，不能交接成果')
+      return {
+        taskId: task.id, taskTitle: task.title, commandId: accepted.executorCommandId,
+        ownerExecutionId: accepted.ownerExecutionId, artifactHash: accepted.artifactHash,
+        reworkOrdinal: accepted.reworkOrdinal, content: accepted.content,
+        ...(accepted.validationEvidence?.length ? { validationEvidence: accepted.validationEvidence } : {}),
+      }
+    })
+  }
   const maxHandoffBytes = 64 * 1024
   const maxValidationBytes = 32 * 1024
   if (handoffVersion === 1 && includeLegacyAncestors) {
@@ -134,14 +159,15 @@ function resolveUpstreamArtifactHandoffs(projectId: string, grantId: string, tas
     return handoffs
   }
 
-  const handoffs = directIds.map(readHandoff)
+  // 直系依赖（本批）在前，跨批次已验收成果随后；两者共用同一预算与序列化口径。
+  const handoffs = [...directIds.map(readHandoff), ...crossBatchHandoffs()]
   const serializedBytes = () => Buffer.byteLength(serializeUpstreamHandoffs(handoffs.map(({ validationEvidence, ...artifact }) => artifact)), 'utf8')
   const validationBytes = () => Buffer.byteLength(serializeUpstreamHandoffs(handoffs), 'utf8') - serializedBytes()
   if (serializedBytes() > maxHandoffBytes) fail('上游成果交接超过64KiB上下文上限，需先拆分或缩小交付')
   if (validationBytes() > maxValidationBytes) fail('上游运行回执摘要超过32KiB上下文上限，需先缩小直接依赖范围')
   if (handoffVersion === CURRENT_UPSTREAM_HANDOFF_VERSION) {
     // 新命令直系依赖优先。间接成果按冻结依赖顺序补齐，只附带能完整放入预算的原文。
-    const visited = new Set([taskId, ...directIds])
+    const visited = new Set([taskId, ...directIds, ...handoffs.map(item => item.taskId)])
     const pending = [...directIds]
     for (const id of pending) {
       for (const predecessorId of predecessors(id)) {
