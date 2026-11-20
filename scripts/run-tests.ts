@@ -28,7 +28,10 @@ for (const path of files) {
         return match[1]!.split('%s').map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')
       })
       if (new Set(names).size !== names.length) throw new Error('质量测试名称重复，无法安全分组')
-      return Array.from({ length: Math.ceil(names.length / 8) }, (_, index) => `^(?:${names.slice(index * 8, index * 8 + 8).join('|')})$`)
+      const groups = Array.from({ length: Math.ceil(names.length / 8) }, (_, index) => `^(?:${names.slice(index * 8, index * 8 + 8).join('|')})$`)
+      // 动态生成的测试名称无法从静态声明中提取，补集确保它们也会执行。
+      groups.push(`^(?!(?:${names.join('|')})$).+$`)
+      return groups
     })()
     : path === 'apps/electron/src/renderer/atoms/owner-delivery-flow.integration.test.ts'
       ? ['^Given真实任务服务与旧手动', '^Given真实任务服务与Owner自主', '^(?!Given真实任务服务与(?:旧手动|Owner自主))']
