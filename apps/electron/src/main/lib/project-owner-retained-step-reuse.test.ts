@@ -79,3 +79,17 @@ test('Given没有任何复用 When收窄范围 Then范围与依赖都不变', ()
   const incoming = [{ ...step(), dependencies: [] }, { ...step({ key: 'build' }), dependencies: ['spec'] }]
   expect(narrowStepScope(incoming, [])).toEqual({ steps: incoming, reused: [] })
 })
+
+// 连续恢复时同一步骤可能在多个旧批次里都有验收记录。
+// 后批次的成果必须覆盖前批次，否则下游会拿到过期正文。
+test('Given同一步骤有多份候选 When解析复用 Then采用最后一份', () => {
+  const result = resolveRetainedStepReuse(
+    [step()],
+    [
+      { taskId: 'task-old', stepKey: 'spec', projection: step() },
+      { taskId: 'task-new', stepKey: 'spec', projection: step() },
+    ],
+  )
+  expect(result.reuse).toEqual([{ stepKey: 'spec', taskId: 'task-new' }])
+  expect(result.changed).toEqual([])
+})

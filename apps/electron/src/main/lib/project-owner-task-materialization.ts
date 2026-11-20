@@ -109,43 +109,50 @@ export function getOwnerTaskMaterializationRecord(projectId: string, id: string)
   return record
 }
 /**
- * 从本主体最近一次旧材料化里找出「已验收且规格未变」的步骤。
+ * 从本主体历次旧材料化里找出「已验收且规格未变」的步骤。
  *
  * 只读：不写库、不改旧记录。旧任务与旧 link 原样保留，
  * 新批次据此跳过这些步骤，避免重复派工与重复计费。
  *
  * 复用必须建立在**可核验的验收证据**上，而不是任务状态：
- * 扫描同主体全部历史、只看 completed 会把「人工标记完成」也当成已验收。
- * 这里只认最近一次旧批次，并要求每条都解析出完整证据链（见 accepted-artifact）。
+ * 只看 completed 会把「人工标记完成」也当成已验收。
  *
- * 任一环节无法核验时返回空集——宁可重做一步，也不接受来源不明的复用。
+ * 必须累积**所有**历史批次而不是只看最近一次：连续两次恢复时，
+ * 第一次恢复的记录只含当时失败的步骤，只看它会让更早已验收的步骤重新派工。
+ * 同一步骤在多批次出现时，后批次的验收覆盖前批次（成果更新）。
+ *
+ * 任一环节无法核验时跳过该步骤——宁可重做一步，也不接受来源不明的复用。
  */
 function resolveRetainedSteps(
   subject: ProjectOwnerGoalSubject,
   selectedSteps: ReadonlyArray<{ key: string; title: string; outcome: string; acceptanceCriteria: string[]; roleKey: string; deliveryKind?: 'text' | 'development'; dependencies: readonly string[] }>,
 ): OwnerTaskMaterializationPreview['retainedSteps'] {
   const priorRecords = readHistory(subject.projectId).filter(record => record.taskId === subject.taskId)
-  const previous = priorRecords.at(-1)
-  if (!previous) return []
-  const candidates = previous.links.flatMap((link) => {
-    const task = store.getTask(link.taskId)
-    if (!task || task.projectId !== subject.projectId || task.ownerStepLinkId !== link.id) return []
-    // 证据链先于状态：没有 accepted 决定与已核验成果，completed 也不构成复用依据。
-    const accepted = readLatestAcceptedArtifact(subject.projectId, link.taskId)
-    if (!accepted || accepted.stepLinkId !== link.id) return []
-    return [{
-      taskId: link.taskId,
-      stepKey: link.stepKey,
-      artifactHash: accepted.artifactHash,
-      projection: {
-        title: link.projection.title,
-        outcome: link.projection.outcome,
-        acceptanceCriteria: link.projection.acceptanceCriteria,
-        roleKey: link.projection.roleKey,
-        ...(link.projection.deliveryKind ? { deliveryKind: link.projection.deliveryKind } : {}),
-      },
-    }]
-  })
+  if (!priorRecords.length) return []
+  // stepKey -> 最新一份可核验候选；后遍历的批次覆盖先前的。
+  const candidatesByStep = new Map<string, { taskId: string; stepKey: string; artifactHash: string; projection: { title: string; outcome: string; acceptanceCriteria: string[]; roleKey: string; deliveryKind?: 'text' | 'development' } }>()
+  for (const record of priorRecords) {
+    for (const link of record.links) {
+      const task = store.getTask(link.taskId)
+      if (!task || task.projectId !== subject.projectId || task.ownerStepLinkId !== link.id) continue
+      // 证据链先于状态：没有 accepted 决定与已核验成果，completed 也不构成复用依据。
+      const accepted = readLatestAcceptedArtifact(subject.projectId, link.taskId)
+      if (!accepted || accepted.stepLinkId !== link.id) continue
+      candidatesByStep.set(link.stepKey, {
+        taskId: link.taskId,
+        stepKey: link.stepKey,
+        artifactHash: accepted.artifactHash,
+        projection: {
+          title: link.projection.title,
+          outcome: link.projection.outcome,
+          acceptanceCriteria: link.projection.acceptanceCriteria,
+          roleKey: link.projection.roleKey,
+          ...(link.projection.deliveryKind ? { deliveryKind: link.projection.deliveryKind } : {}),
+        },
+      })
+    }
+  }
+  const candidates = [...candidatesByStep.values()]
   if (!candidates.length) return []
   const reuse = resolveRetainedStepReuse(
     selectedSteps.map(step => ({
