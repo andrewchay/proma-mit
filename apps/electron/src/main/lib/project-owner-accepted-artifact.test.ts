@@ -98,3 +98,62 @@ test('Given 评审证据存在但成果未核验 When 解析 Then 返回 null', 
   // 评审记录未建立时同样不成立（上面的调用已隐含，这里显式确认没有评审行）。
   expect(reviews.listOwnerTechnicalReviewEvidence(project.id, task.id)).toEqual([])
 })
+
+// ===== P1-1：更新的拒绝必须使更早的验收失效 =====
+
+const qualityAction = (overrides: Partial<Parameters<typeof accepted.resolveAcceptedArtifact>[0]> = {}) => ({
+  ownerExecutionId: 'exec-new', ownerReceiptId: 'receipt-new', actor: 'local-user',
+  projectId: 'project-1', grantId: 'grant-1', taskId: 'task-1',
+  reviewerCommandId: 'reviewer-new', artifactHash: 'a'.repeat(64), reworkOrdinal: 1,
+  decision: {
+    reviewerCommandId: 'reviewer-new', artifactHash: 'a'.repeat(64),
+    verdict: 'rework' as const, reason: '', criteria: [], findings: [],
+  },
+  state: 'rework_authorized' as const, detail: '', createdAt: 2,
+  ...overrides,
+})
+
+test('Given最新决定是返工 When解析生效成果 Then不回退到更早的验收', () => {
+  // 更早那条是 accepted，但已被最新返工取代。
+  const older = qualityAction({ ownerExecutionId: 'exec-old', state: 'accepted', createdAt: 1,
+    decision: { reviewerCommandId: 'reviewer-old', artifactHash: 'b'.repeat(64), verdict: 'accept', reason: '', criteria: [], findings: [] } })
+  expect(accepted.resolveControllingAcceptedArtifact([qualityAction(), older])).toBeNull()
+})
+
+test('Given最新决定不可核验 When解析生效成果 Then不回退到更早的验收', () => {
+  const older = qualityAction({ ownerExecutionId: 'exec-old', state: 'accepted', createdAt: 1,
+    decision: { reviewerCommandId: 'reviewer-old', artifactHash: 'b'.repeat(64), verdict: 'accept', reason: '', criteria: [], findings: [] } })
+  // null 代表「这一轮有过决定但记录损坏」——不能当作没有决定而回看历史。
+  expect(accepted.resolveControllingAcceptedArtifact([null, older])).toBeNull()
+})
+
+test('Given没有任何决定 When解析生效成果 Then返回null', () => {
+  expect(accepted.resolveControllingAcceptedArtifact([])).toBeNull()
+})
+
+test('Given最新决定是accept但证据不完整 When解析生效成果 Then不回退', () => {
+  const incomplete = qualityAction({ state: 'accepted' })
+  const older = qualityAction({ ownerExecutionId: 'exec-old', state: 'accepted', createdAt: 1,
+    decision: { reviewerCommandId: 'reviewer-old', artifactHash: 'b'.repeat(64), verdict: 'accept', reason: '', criteria: [], findings: [] } })
+  // 任务/评审/成果都对不上，解析失败；不得回退。
+  expect(accepted.resolveControllingAcceptedArtifact([incomplete, older])).toBeNull()
+})
+
+// 质量决定表不可变（有触发器拒绝 UPDATE），因此只能靠写入顺序表达「更晚」。
+test('Given先验收后返工 When读取生效成果 Then以最新返工为准返回null', () => {
+  const project = store.createProject({ title: 'P1-1 回退', description: '' })
+  const task = store.createTask(project.id, { title: 'A', description: '' })
+  seedAction(project.id, task.id, 'accepted')
+  seedAction(project.id, task.id, 'rework_authorized')
+  expect(accepted.readLatestAcceptedArtifact(project.id, task.id)).toBeNull()
+})
+
+test('Given先返工后验收 When读取生效成果 Then返回最新验收', () => {
+  const project = store.createProject({ title: 'P1-1 正向', description: '' })
+  const task = store.createTask(project.id, { title: 'A', description: '' })
+  seedAction(project.id, task.id, 'rework_authorized')
+  seedAction(project.id, task.id, 'accepted')
+  // 证据链不完整（测试只落了决定行），但关键是「不会因为最新不可用就回退」。
+  expect(accepted.readLatestAcceptedArtifact(project.id, task.id)).toBeNull()
+  expect(accepted.listQualityDecisionsNewestFirst(project.id, task.id)).toHaveLength(2)
+})

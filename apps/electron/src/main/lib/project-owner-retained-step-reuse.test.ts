@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { describeSpecificationDrift, narrowStepScope, resolveRetainedStepReuse } from './project-owner-retained-step-reuse'
+import { accumulateRetainedCandidates, describeSpecificationDrift, narrowStepScope, resolveRetainedStepReuse } from './project-owner-retained-step-reuse'
 
 const step = (overrides: Partial<Parameters<typeof resolveRetainedStepReuse>[0][number]> = {}) => ({
   key: 'spec',
@@ -92,4 +92,57 @@ test('Given同一步骤有多份候选 When解析复用 Then采用最后一份',
   )
   expect(result.reuse).toEqual([{ stepKey: 'spec', taskId: 'task-new' }])
   expect(result.changed).toEqual([])
+})
+
+// ===== P1-2：新任务未通过验收必须使旧候选失效 =====
+
+const occurrence = (overrides: Partial<Parameters<typeof accumulateRetainedCandidates>[0][number][number]> = {}) => ({
+  taskId: 'task-old', stepKey: 'spec', accepted: true,
+  title: '形成规格', outcome: '输出规格', acceptanceCriteria: ['范围明确'], roleKey: 'planner',
+  deliveryKind: 'text' as const,
+  ...overrides,
+})
+
+test('Given旧批次已验收且新批次同名步骤失败 When累积 Then该步骤不可复用', () => {
+  const result = accumulateRetainedCandidates([
+    [occurrence()],
+    [occurrence({ taskId: 'task-retry', accepted: false })],
+  ])
+  expect(result).toEqual([])
+})
+
+test('Given旧批次已验收且新批次同名步骤也通过 When累积 Then采用新任务', () => {
+  const result = accumulateRetainedCandidates([
+    [occurrence()],
+    [occurrence({ taskId: 'task-retry', accepted: true })],
+  ])
+  expect(result).toHaveLength(1)
+  expect(result[0]).toMatchObject({ taskId: 'task-retry', stepKey: 'spec' })
+  // 投影只保留交付要求字段，不含任务身份。
+  expect(result[0]!.projection).not.toHaveProperty('taskId')
+})
+
+test('Given不同步骤互不影响 When累积 Then各自保留', () => {
+  const result = accumulateRetainedCandidates([
+    [occurrence()],
+    [occurrence({ taskId: 'task-build', stepKey: 'build', accepted: false })],
+  ])
+  expect(result.map(item => item.stepKey)).toEqual(['spec'])
+})
+
+test('Given新批次只含部分步骤 When累积 Then未出现的步骤保持原候选', () => {
+  const result = accumulateRetainedCandidates([
+    [occurrence(), occurrence({ taskId: 'task-b', stepKey: 'build' })],
+    [occurrence({ taskId: 'task-b2', stepKey: 'build', accepted: false })],
+  ])
+  // spec 不在新批次里，说明它没有被重新执行，仍可复用。
+  expect(result.map(item => item.stepKey)).toEqual(['spec'])
+})
+
+test('Given全部批次都未验收 When累积 Then没有候选', () => {
+  expect(accumulateRetainedCandidates([[occurrence({ accepted: false })]])).toEqual([])
+})
+
+test('Given没有任何批次 When累积 Then没有候选', () => {
+  expect(accumulateRetainedCandidates([])).toEqual([])
 })

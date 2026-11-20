@@ -31,28 +31,42 @@ export interface AcceptedArtifact {
 }
 
 /**
- * 读取某任务「最近一次」已验收成果。
+ * 读取某任务全部质量决定，最新在前。
  *
- * 只扫该项目下所有质量决定里 acceptance 成功的那条；不限定 grant，
- * 因为跨批次接替时成果属于旧授权——正是这里需要跨授权读取。
+ * 损坏的记录保留为 `null` 占位而不是丢弃——「这一轮有过决定但不可核验」
+ * 与「这一轮没有决定」是不同事实，后者才允许回看更早的记录。
+ *
+ * 不限定 grant：跨批次接替时成果属于旧授权，正是这里需要跨授权读取。
  */
-export function readLatestAcceptedArtifact(projectId: string, taskId: string): AcceptedArtifact | null {
+export function listQualityDecisionsNewestFirst(projectId: string, taskId: string): Array<OwnerQualityAction | null> {
   const rows = store.getProjectDb().prepare(`SELECT owner_execution_id FROM project_owner_quality_actions
     WHERE project_id=? AND task_id=? ORDER BY created_at DESC, rowid DESC`).all(projectId, taskId) as Array<{ owner_execution_id: string }>
-  for (const row of rows) {
-    // 记录损坏意味着这轮的验收不可核验；不能让它把整个复用判定炸掉，
-    // 也不能当作已验收——按「无证据」处理，交由上层重做该步骤。
-    let action: ReturnType<typeof readOwnerQualityActionByExecution>
-    try { action = readOwnerQualityActionByExecution(row.owner_execution_id) }
+  return rows.map((row) => {
+    try { return readOwnerQualityActionByExecution(row.owner_execution_id) }
     catch (error) {
       console.warn(`[Owner复用] 质量决定不可核验，按未验收处理: ${row.owner_execution_id}`, error instanceof Error ? error.message : error)
-      continue
+      return null
     }
-    if (!action || action.state !== 'accepted' || action.projectId !== projectId || action.taskId !== taskId) continue
-    const resolved = resolveAcceptedArtifact(action)
-    if (resolved) return resolved
-  }
-  return null
+  })
+}
+
+/**
+ * 最新一条决定控制复用。
+ *
+ * **不回退**是这里的关键：若最新决定是返工/升级/拒绝，说明该步骤已被重新打开，
+ * 更早那份「已验收」已被取代；若最新决定不可核验，也无法证明当前成果有效。
+ * 两种情况下都必须判为不可复用，否则会把用户明确要求重做的成果当成最终成果。
+ */
+export function resolveControllingAcceptedArtifact(
+  decisionsNewestFirst: ReadonlyArray<OwnerQualityAction | null>,
+): AcceptedArtifact | null {
+  const newest = decisionsNewestFirst[0]
+  return newest ? resolveAcceptedArtifact(newest) : null
+}
+
+/** 读取某任务当前生效的已验收成果；没有决定或最新决定不可复用时返回 null。 */
+export function readLatestAcceptedArtifact(projectId: string, taskId: string): AcceptedArtifact | null {
+  return resolveControllingAcceptedArtifact(listQualityDecisionsNewestFirst(projectId, taskId))
 }
 
 /**

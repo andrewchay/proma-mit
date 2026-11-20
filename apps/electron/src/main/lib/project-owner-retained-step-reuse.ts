@@ -28,6 +28,35 @@ export interface RetainedStepProjection {
   deliveryKind?: 'text' | 'development'
 }
 
+/** 某批次里的一个步骤出现：是否通过验收，决定它取代还是保留旧候选。 */
+export interface RetainedStepOccurrence extends RetainedStepProjection {
+  stepKey: string
+  taskId: string
+  /** 该任务当前是否持有可核验的已验收成果。 */
+  accepted: boolean
+}
+
+/**
+ * 按批次顺序累积候选：同一步骤以最后一次出现为准。
+ *
+ * 关键规则是**未通过验收也要覆盖**：新任务重做失败/被拒/证据损坏时，
+ * 它已经取代了旧任务，旧验收不再代表当前成果。若只在成功时写入映射，
+ * 失败的新任务会被静默跳过，旧候选继续生效——用过期成果跳过本该重做的步骤。
+ */
+export function accumulateRetainedCandidates(
+  batchesOldestFirst: ReadonlyArray<ReadonlyArray<RetainedStepOccurrence>>,
+): RetainedStepCandidate[] {
+  const latestByStep = new Map<string, RetainedStepOccurrence | null>()
+  for (const batch of batchesOldestFirst) {
+    for (const occurrence of batch) {
+      latestByStep.set(occurrence.stepKey, occurrence.accepted ? occurrence : null)
+    }
+  }
+  return [...latestByStep.values()]
+    .filter((occurrence): occurrence is RetainedStepOccurrence => occurrence !== null)
+    .map(({ taskId, stepKey, ...projection }) => ({ taskId, stepKey, projection }))
+}
+
 /** 新方案里的一个步骤；与 `RetainedStepProjection` 同构。 */
 export interface IncomingStep extends RetainedStepProjection {
   key: string

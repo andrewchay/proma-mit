@@ -9,7 +9,7 @@ import { getOwnerExecutionPreparation, listOwnerExecutionPreparationHistory } fr
 import { assertOwnerExecutionBoundaryIdle } from './project-owner-execution-preparation-evidence'
 import { withPilotPolicySnapshot, getPilotPolicy } from './project-pilot-policy'
 import { buildOwnerExecutionSource, OwnerExecutionPreparationConflictError, ownerExecutionHash, ownerExecutionObject, parseOwnerExecutionSubject } from './project-owner-execution-source'
-import { resolveRetainedStepReuse } from './project-owner-retained-step-reuse'
+import { accumulateRetainedCandidates, resolveRetainedStepReuse } from './project-owner-retained-step-reuse'
 import { readLatestAcceptedArtifact } from './project-owner-accepted-artifact'
 
 const subjectKey = (subject: ProjectOwnerGoalSubject) => subject.taskId ? `task:${subject.taskId}` : 'project'
@@ -119,9 +119,12 @@ export function getOwnerTaskMaterializationRecord(projectId: string, id: string)
  *
  * 必须累积**所有**历史批次而不是只看最近一次：连续两次恢复时，
  * 第一次恢复的记录只含当时失败的步骤，只看它会让更早已验收的步骤重新派工。
- * 同一步骤在多批次出现时，后批次的验收覆盖前批次（成果更新）。
  *
- * 任一环节无法核验时跳过该步骤——宁可重做一步，也不接受来源不明的复用。
+ * 但累积不能只做「有验收就覆盖」：同一 stepKey 的新任务若**没有**通过验收
+ * （重做失败、被拒、证据损坏），它已经取代了旧任务，旧候选必须一并失效，
+ * 否则会用一份已被替换的旧成果去跳过本该重做的步骤。
+ *
+ * 任一环节无法核验时该步骤不可复用——宁可重做，也不接受来源不明的复用。
  */
 function resolveRetainedSteps(
   subject: ProjectOwnerGoalSubject,
@@ -129,30 +132,29 @@ function resolveRetainedSteps(
 ): OwnerTaskMaterializationPreview['retainedSteps'] {
   const priorRecords = readHistory(subject.projectId).filter(record => record.taskId === subject.taskId)
   if (!priorRecords.length) return []
-  // stepKey -> 最新一份可核验候选；后遍历的批次覆盖先前的。
-  const candidatesByStep = new Map<string, { taskId: string; stepKey: string; artifactHash: string; projection: { title: string; outcome: string; acceptanceCriteria: string[]; roleKey: string; deliveryKind?: 'text' | 'development' } }>()
-  for (const record of priorRecords) {
-    for (const link of record.links) {
-      const task = store.getTask(link.taskId)
-      if (!task || task.projectId !== subject.projectId || task.ownerStepLinkId !== link.id) continue
-      // 证据链先于状态：没有 accepted 决定与已核验成果，completed 也不构成复用依据。
-      const accepted = readLatestAcceptedArtifact(subject.projectId, link.taskId)
-      if (!accepted || accepted.stepLinkId !== link.id) continue
-      candidatesByStep.set(link.stepKey, {
-        taskId: link.taskId,
-        stepKey: link.stepKey,
-        artifactHash: accepted.artifactHash,
-        projection: {
-          title: link.projection.title,
-          outcome: link.projection.outcome,
-          acceptanceCriteria: link.projection.acceptanceCriteria,
-          roleKey: link.projection.roleKey,
-          ...(link.projection.deliveryKind ? { deliveryKind: link.projection.deliveryKind } : {}),
-        },
-      })
+  // 每个批次产出该批的步骤出现；「是否通过验收」交给累积函数统一裁决，
+  // 避免这里再写一遍「失败要不要回退」的规则。
+  const artifactsByTask = new Map<string, string>()
+  const batches = priorRecords.map((record) => record.links.map((link) => {
+    const task = store.getTask(link.taskId)
+    // 任务与旧 link 绑定被破坏时，这一批的该步骤无法追溯；按未验收处理。
+    const bound = Boolean(task) && task!.projectId === subject.projectId && task!.ownerStepLinkId === link.id
+    // 证据链先于状态：没有 accepted 决定与已核验成果，completed 也不构成复用依据。
+    const accepted = bound ? readLatestAcceptedArtifact(subject.projectId, link.taskId) : null
+    const valid = Boolean(accepted) && accepted!.stepLinkId === link.id
+    if (valid) artifactsByTask.set(link.taskId, accepted!.artifactHash)
+    return {
+      taskId: link.taskId,
+      stepKey: link.stepKey,
+      accepted: valid,
+      title: link.projection.title,
+      outcome: link.projection.outcome,
+      acceptanceCriteria: link.projection.acceptanceCriteria,
+      roleKey: link.projection.roleKey,
+      ...(link.projection.deliveryKind ? { deliveryKind: link.projection.deliveryKind } : {}),
     }
-  }
-  const candidates = [...candidatesByStep.values()]
+  }))
+  const candidates = accumulateRetainedCandidates(batches)
   if (!candidates.length) return []
   const reuse = resolveRetainedStepReuse(
     selectedSteps.map(step => ({
@@ -168,7 +170,8 @@ function resolveRetainedSteps(
     const candidate = byStepKey.get(stepKey)!
     // 记录谁依赖它：这些下游步骤启动时要把该成果作为上游交接带入。
     const dependedOnBy = selectedSteps.filter(step => step.dependencies.includes(stepKey)).map(step => step.key)
-    return { stepKey, taskId: candidate.taskId, artifactHash: candidate.artifactHash, dependedOnBy }
+    // 成果哈希来自该任务通过验收时的记录；累积阶段已保证只有验收成立的任务会留下。
+    return { stepKey, taskId: candidate.taskId, artifactHash: artifactsByTask.get(candidate.taskId)!, dependedOnBy }
   })
 }
 
