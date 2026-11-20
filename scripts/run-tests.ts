@@ -2,7 +2,7 @@
  * 每个测试文件独立进程：隔离 Bun mock.module、环境变量和模块级单例。
  * 只要有一个子进程失败就返回非零；真实集成测试的 skip 仍原样输出。
  */
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -19,7 +19,17 @@ for (const path of files) {
   // Owner 集成测试会累积数据及后台调度；互补筛选保证每项只运行一次，
   // 分进程隔离数据库、浏览器和异步任务，避免前一批超时污染后一批。
   const patterns = path === 'apps/electron/src/main/lib/project-owner-quality-actions.test.ts'
-    ? ['恢复', '^(?!.*恢复)']
+    ? (() => {
+      const source = readFileSync(path, 'utf8')
+      const declarations = source.split('\n').filter(line => /^test(?:\.|\()/.test(line))
+      const names = declarations.map(line => {
+        const match = line.match(/^test(?:\.[^(]+\([^\n]*?\))?\('([^']+)'/)
+        if (!match) throw new Error(`无法识别质量测试名称：${line}`)
+        return match[1]!.split('%s').map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*')
+      })
+      if (new Set(names).size !== names.length) throw new Error('质量测试名称重复，无法安全分组')
+      return Array.from({ length: Math.ceil(names.length / 8) }, (_, index) => `^(?:${names.slice(index * 8, index * 8 + 8).join('|')})$`)
+    })()
     : path === 'apps/electron/src/renderer/atoms/owner-delivery-flow.integration.test.ts'
       ? ['^Given真实任务服务与旧手动', '^Given真实任务服务与Owner自主', '^(?!Given真实任务服务与(?:旧手动|Owner自主))']
       : [null]
