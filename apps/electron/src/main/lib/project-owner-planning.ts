@@ -3,6 +3,7 @@
  * 本模块无持久化与 Runtime 依赖；角色可用性须由调用方从权威目录提供。
  */
 import type { OwnerPlanningConversationContext, ProjectOwnerCodeFileMatch, ProjectOwnerDeliveryContext, ProjectOwnerDeliveryChangeAssessment, ProjectOwnerDeliveryFeedbackAssessment, ProjectOwnerGoalBrief, ProjectOwnerPlanProposal, ProjectOwnerPlanStep } from '@gravitas/shared'
+import { parseCriteriaTrace } from './project-owner-criteria-trace'
 export type { ProjectOwnerDeliveryFeedbackAssessment, ProjectOwnerGoalBrief, ProjectOwnerPlanProposal, ProjectOwnerPlanStep } from '@gravitas/shared'
 
 function record(input: unknown, fields: readonly string[], label: string): Record<string, unknown> {
@@ -123,7 +124,7 @@ export function parseProjectOwnerPlanProposal(
   /** v1：成果身份由主进程绑定，模型响应不得携带 messageId/artifactHash。 */
   hostBoundDeliveryFeedback = false,
 ): ProjectOwnerPlanProposal {
-  const value = record(input, ['projectId', 'taskId', 'goalVersion', 'summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment'], '计划提案')
+  const value = record(input, ['projectId', 'taskId', 'goalVersion', 'summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment', 'criteriaTrace'], '计划提案')
   const projectId = text(value.projectId, 'projectId', 200)
   const taskId = value.taskId === undefined ? undefined : text(value.taskId, 'taskId', 200)
   const goalVersion = version(value.goalVersion)
@@ -138,6 +139,8 @@ export function parseProjectOwnerPlanProposal(
   const steps = value.steps.map((step) => parseStep(step, roles, codeFiles, requireDeliveryKind))
   if (requireCodeReferences && codeFiles.length && !steps.some(step => (step.sourceReferences?.length ?? 0) > 0)) throw new Error('代码规划提案必须引用本次检索到的文件和行号')
   validateDependencies(steps)
+  // 逐项追溯可选；提出时必须逐条指向真实来源与真实步骤，否则视为伪造。
+  const criteriaTrace = value.criteriaTrace === undefined ? undefined : parseCriteriaTrace(value.criteriaTrace, goal, steps)
   let deliveryChangeAssessment: ProjectOwnerDeliveryChangeAssessment | undefined
   if (deliverySources.length) {
     const assessment = record(value.deliveryChangeAssessment, ['summary', 'commands'], '交付差异评估')
@@ -201,5 +204,6 @@ export function parseProjectOwnerPlanProposal(
     steps,
     ...(deliveryChangeAssessment ? { deliveryChangeAssessment } : {}),
     ...(deliveryFeedbackAssessment ? { deliveryFeedbackAssessment } : {}),
+    ...(criteriaTrace ? { criteriaTrace } : {}),
   }
 }

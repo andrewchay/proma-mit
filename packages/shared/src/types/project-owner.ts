@@ -62,6 +62,31 @@ export interface ProjectOwnerGoalApi {
   saveOwnerGoalDraft: (request: SaveProjectOwnerGoalRequest) => Promise<ProjectOwnerGoalResult<ProjectOwnerGoalDraft>>
 }
 
+/**
+ * 目标硬要求的逐项追溯记录（可选）。
+ *
+ * 只描述「这条要求从哪来、由谁负责、怎么验」，不是验收结果，也不授予执行权限。
+ * 冻结后由系统检查是否被后续环节遗漏；缺失时按未追溯处理，不阻断旧计划读取。
+ */
+export interface ProjectOwnerCriterionTrace {
+  /** 稳定键，同一目标修订内唯一。 */
+  key: string
+  /** 判定来源：目标正文、约束数组或验收标准数组。 */
+  source: 'objective' | 'constraint' | 'acceptance'
+  /** 来源数组中的下标；source 为 objective 时固定 0。 */
+  sourceIndex: number
+  /** 来源原文片段，用于人工核对提取是否忠实。 */
+  sourceText: string
+  /** 关键性：关键项缺失不得标记可交付；非关键项记录理由。 */
+  criticality: 'critical' | 'advisory'
+  /** 承接该要求的计划步骤 key。 */
+  stepKey: string
+  /** 检验方式；未配置验证器时如实记录为 unverified。 */
+  verification: 'automated' | 'manual_review' | 'user_decision' | 'unverified'
+  /** 执行时采用的默认条件（如纸张、边距、字号）；无则为空。 */
+  assumptions: string[]
+}
+
 /** 计划内步骤不是权威任务，roleKey仅为岗位能力建议。 */
 export interface ProjectOwnerPlanStep {
   key: string
@@ -85,6 +110,8 @@ export interface ProjectOwnerPlanProposal extends ProjectOwnerGoalSubject {
   steps: ProjectOwnerPlanStep[]
   deliveryChangeAssessment?: ProjectOwnerDeliveryChangeAssessment
   deliveryFeedbackAssessment?: ProjectOwnerDeliveryFeedbackAssessment
+  /** 目标硬要求的逐项追溯；缺省表示未提取，按未追溯处理。 */
+  criteriaTrace?: ProjectOwnerCriterionTrace[]
 }
 
 /** 对旧交付的拟议差异；不是已实施变更或新授权。 */

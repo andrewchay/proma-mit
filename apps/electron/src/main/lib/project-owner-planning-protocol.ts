@@ -378,6 +378,8 @@ export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningCo
     ...(independentReviewLane ? ['系统会在每个实现步骤后独立安排Reviewer检查、Owner质量验收及有限返工，这些是后置流程，不要再次列成普通实现任务。尊重目标约定的步骤数量；对明确要求单步的小型实现，只列一个实现交付步骤，不另列独立评审、测试、返工或汇总交付步骤。'] : []),
     '每个澄清问题必须标注reasonType：普通决定性信息不足用missing_information；不同来源的事实冲突用source_conflict。若是source_conflict，不得自行选择优先级或合并；必须包含sourceReferences，逐项提供本次JSON中实际存在的sourceId和原文quote，至少引用两个不同来源。可引用goal.objective、goal.constraints[i]、goal.acceptanceCriteria[i]、project.title/description、task.title/description及本次code.files[i].excerpts[j]。',
     '不要求用户先拆完任务、提供内部ID或文件路径。代码目标也不默认要求用户手填路径；未实际检索不得伪造代码定位。',
+    '目标原文中的硬要求（数量、页数、时限、人数、逐项复点、签字空间等）必须落到具体步骤，并在criteriaTrace中逐条登记来源与检验方式。source只能是objective、constraint或acceptance，sourceIndex是该数组下标（objective固定0），sourceText必须是该来源原文的真实子串，不得改写或总结。stepKey必须是本次steps中已存在的key。criticality为critical的要求缺失时不得声称可交付；暂无法验证的填unverified并如实说明，不要写成automated。没有硬要求时省略criteriaTrace。',
+    JSON.stringify({ criteriaTrace: [{ key: 'criterion-1', source: 'acceptance', sourceIndex: 0, sourceText: '从原始验收标准中逐字摘取的一段', criticality: 'critical', stepKey: 'step-1', verification: 'manual_review', assumptions: ['采用A4纸与四边15毫米边距'] }] }),
     ...(strictOutputHints ? [
       `严格输出可由JSON.parse解析的JSON。每个对象属性名后必须使用冒号；字符串使用双引号；acceptanceCriteria与dependencies必须是数组。步骤格式示例：${JSON.stringify({ key: 'step-1', title: '步骤标题', outcome: '明确交付物', acceptanceCriteria: ['明确的验收标准'], dependencies: [], roleKey: context.sources.roles[0]!.key, ...(requireDeliveryKind && correctStepExamples ? { deliveryKind: 'text' } : {}) })}`,
       `roleKey只能逐字使用本次资料roles数组中已有的key，不得自行发明岗位名或将岗位名称当作key。可用key：${JSON.stringify(context.sources.roles.map(role => role.key))}`,
