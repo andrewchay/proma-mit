@@ -59,7 +59,11 @@ function finish(f: ReturnType<typeof fixture>, kind: 'reply' | 'plan' | 'clarify
   const execution = active(f)!, source = resolveOwnerPlanningSession(execution.sessionId!)!
   const binding = { projectId: f.project.id, ...(f.taskId ? { taskId: f.taskId } : {}), goalVersion: source.context.goal.goal.goalVersion, contextFingerprint: source.context.fingerprint }
   const feedback = source.context.conversation?.deliveryFeedback
-  const result = kind === 'clarify' ? { schemaVersion: 1, kind: 'needs_clarification', binding, reason: '受众会改变定位', questions: [{ key: 'audience', reasonType: 'missing_information', question: '主要服务谁？', why: '确定定位', options: ['新用户', '现有用户'] }] } : kind === 'reply' ? { schemaVersion: 1, kind: 'conversation_reply', binding, messageId: source.context.conversation!.throughMessageId, message: replyMessage ?? '目前仍在方案讨论阶段，尚无真实成果证据。' } : { schemaVersion: 1, kind: 'plan_proposal', binding, proposal: { summary: '按反馈收敛方案', assumptions: [], risks: [], steps: [{ key: 'brief', title: '定位建议', outcome: '一页建议', acceptanceCriteria: ['说明取舍'], dependencies: [], roleKey: source.context.sources.roles[0]!.key, deliveryKind: 'text' }], ...(feedback ? { deliveryFeedbackAssessment: { messageId: feedback.messageId, artifactHash: feedback.artifactHash, ...(feedback.stepKey ? { stepKey: feedback.stepKey } : {}), summary: '在方案中增加目标用户分析', changes: feedback.acceptanceCriteria.map(criterion => ({ criterion, disposition: 'addressed', proposedChange: '增加对应分析' })), authorizationImpact: 'within_confirmed_boundary', authorizationRationale: '在当前确认范围内建议；旧执行许可不沿用' } } : {}) } }
+  // 宿主绑定模式下模型不接触成果身份；仅在历史契约下才回填标识。
+  const hostBoundFeedback = source.context.conversation?.deliveryFeedbackBindingVersion === 1
+  const feedbackIdentity = !feedback || hostBoundFeedback ? {}
+    : { messageId: feedback.messageId, artifactHash: feedback.artifactHash, ...(feedback.stepKey ? { stepKey: feedback.stepKey } : {}) }
+  const result = kind === 'clarify' ? { schemaVersion: 1, kind: 'needs_clarification', binding, reason: '受众会改变定位', questions: [{ key: 'audience', reasonType: 'missing_information', question: '主要服务谁？', why: '确定定位', options: ['新用户', '现有用户'] }] } : kind === 'reply' ? { schemaVersion: 1, kind: 'conversation_reply', binding, messageId: source.context.conversation!.throughMessageId, message: replyMessage ?? '目前仍在方案讨论阶段，尚无真实成果证据。' } : { schemaVersion: 1, kind: 'plan_proposal', binding, proposal: { summary: '按反馈收敛方案', assumptions: [], risks: [], steps: [{ key: 'brief', title: '定位建议', outcome: '一页建议', acceptanceCriteria: ['说明取舍'], dependencies: [], roleKey: source.context.sources.roles[0]!.key, deliveryKind: 'text' }], ...(feedback ? { deliveryFeedbackAssessment: { ...feedbackIdentity, summary: '在方案中增加目标用户分析', changes: feedback.acceptanceCriteria.map(criterion => ({ criterion, disposition: 'addressed', proposedChange: '增加对应分析' })), authorizationImpact: 'within_confirmed_boundary', authorizationRationale: '在当前确认范围内建议；旧执行许可不沿用' } } : {}) } }
   callbacks.get(execution.sessionId!)!.onComplete([], { runtimeResult: { type: 'result', subtype: 'success', session_id: execution.sessionId!, finish_reason: 'stop', result: JSON.stringify(result), usage: { input_tokens: 10, output_tokens: 20 }, owner_planning_usage: { inputTokens: 10, outputTokens: 20, cacheReadTokens: null, cacheWriteTokens: null } } })
   return execution
 }
@@ -315,6 +319,8 @@ test('Given用户在对话要求方案修改 WhenOwner生成提案 Then保存待
     const planningContext = readOwnerPlanningSnapshot(active(f)!.entityId)!.context
     expect(planningContext.conversation?.throughMessageId).toBe(feedback.id)
     expect(planningContext.conversation?.deliveryFeedback).toMatchObject({ messageId: delivery.id, artifactHash, title: '产品建议', content, acceptanceCriteria: ['说明依据'] })
+    // 新建修订走宿主绑定：模型响应无需回填身份，主进程仍应补齐正确版本。
+    expect(planningContext.conversation?.deliveryFeedbackBindingVersion).toBe(1)
     finish(f, 'plan')
     await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'plan_proposal'))
     const plan = plans.getProjectOwnerPlanDraft(f.project.id)!

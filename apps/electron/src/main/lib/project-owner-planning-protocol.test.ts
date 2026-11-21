@@ -132,6 +132,36 @@ test('Given反馈绑定准确成果 When Owner 提交修订方案 Then逐项评�
   expect(request.systemPrompt).toContain(artifactHash)
 })
 
+test('Given宿主绑定成果反馈 When 模型不回填标识 Then 主进程补齐身份且拒绝自带身份', async () => {
+  const protocol = await import('./project-owner-planning-protocol'), c = context()
+  const content = '已验收成果正文', artifactHash = createHash('sha256').update(content, 'utf8').digest('hex'), messageId = '3'.repeat(64)
+  c.conversation = { conversationId: 'conversation', throughMessageId: '4'.repeat(64), historyThroughMessageId: '4'.repeat(64),
+    messages: [{ id: '4'.repeat(64), role: 'user', content: '增加目标用户分析' }], truncated: false, currentPlan: null, tasks: [], tasksTruncated: false, deliveryFeedbackBindingVersion: 1,
+    deliveryFeedback: { version: 1, messageId, artifactHash, title: '已验收方案', acceptanceCriteria: ['说明依据', '指出取舍'], content, ownerDecision: '按标准接受', reviewerSummary: '逐项检查通过' } }
+  const base = proposal(c)
+  const feedback = c.conversation.deliveryFeedback!
+  // 模型只写内容，不写任何 64 位标识。
+  const bound = { ...base, proposal: { ...base.proposal, deliveryFeedbackAssessment: { summary: '补充目标用户分析',
+    changes: feedback.acceptanceCriteria.map(criterion => ({ criterion, disposition: 'addressed' as const, proposedChange: '新增对应分析' })),
+    authorizationImpact: 'within_confirmed_boundary' as const, authorizationRationale: '在当前确认范围内；旧执行许可不沿用' } } }
+  const parsed = protocol.parseProjectOwnerPlanningResponse(bound, c)
+  expect(parsed).toMatchObject({ kind: 'plan_proposal', proposal: { deliveryFeedbackAssessment: { messageId, artifactHash } } })
+
+  // 提示词不再向模型提供这两个标识。
+  const request = protocol.buildProjectOwnerPlanningRequest(c)
+  expect(request.systemPrompt).toContain('成果身份由主进程绑定')
+  expect(request.systemPrompt).not.toContain(messageId)
+  expect(request.systemPrompt).not.toContain(artifactHash)
+
+  // 模型擅自回填身份一律拒绝，包括抄错与抄对两种情况。
+  for (const injected of [{ ...bound.proposal.deliveryFeedbackAssessment, messageId }, { ...bound.proposal.deliveryFeedbackAssessment, artifactHash }]) {
+    expect(() => protocol.parseProjectOwnerPlanningResponse({ ...bound, proposal: { ...bound.proposal, deliveryFeedbackAssessment: injected } }, c)).toThrow()
+  }
+  // 缺少冻结反馈时绑定标记本身无效，不能静默退化为历史契约。
+  const orphan = { ...c, conversation: { ...c.conversation, deliveryFeedback: undefined } }
+  expect(() => protocol.buildProjectOwnerPlanningRequest(orphan)).toThrow()
+})
+
 test('Given普通对话要求修改交付 When Owner选择冻结目录项 Then核验版本身份及每条原标准', async () => {
   const protocol = await import('./project-owner-planning-protocol'), c = context()
   const messageId = '1'.repeat(64), userMessageId = '2'.repeat(64), artifactHash = '3'.repeat(64)

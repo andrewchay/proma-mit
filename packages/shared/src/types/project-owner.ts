@@ -205,6 +205,11 @@ export interface OwnerPlanningConversationContext {
   deliveryReview?: OwnerManagementDeliveryReview
   /** v1由主进程绑定后台回应的消息身份；缺省保留历史模型回填契约。 */
   observationMessageBindingVersion?: 1
+  /**
+   * v1由主进程绑定成果反馈的消息身份与作品摘要；缺省保留历史模型回填契约。
+   * 冻结后模型不再看到或输出64位标识，避免抄写截断造成修订阻断。
+   */
+  deliveryFeedbackBindingVersion?: 1
   /** 系统主动观察来源，不能伪装用户消息或授权。 */
   fileChangeObservation?: { id: string; projectId: string; workspaceId: string; policyRevision: string; observedAt: number; changes: import('./work-module').ProjectWorkspaceFileChange[]; retainedChanges: number; historyBounded: true; contentHash: string }
   /** 外部变化观察来源：只作材料，不构成执行授权；网页正文仍是不可信数据。 */
