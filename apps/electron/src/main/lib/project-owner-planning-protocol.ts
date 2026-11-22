@@ -682,7 +682,7 @@ export function parseProjectOwnerPlanningResponse(input: unknown, context: Proje
   }
   if (raw.kind === 'plan_proposal') {
     record(raw, ['schemaVersion', 'kind', 'projectId', 'taskId', 'goalVersion', 'contextFingerprint', 'proposal'])
-    const proposal = record(raw.proposal, ['summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment'])
+    const proposal = record(raw.proposal, ['summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment', 'criteriaTrace'])
     let feedback: Parameters<typeof parseProjectOwnerPlanProposal>[6] = context.conversation?.deliveryFeedback
     const catalog = context.conversation?.deliveredArtifacts
     // 宿主绑定模式下身份只来自冻结反馈，模型回填的标识一律不接受。

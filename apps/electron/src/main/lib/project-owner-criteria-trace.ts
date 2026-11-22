@@ -65,7 +65,7 @@ export function parseCriteriaTrace(input: unknown, goal: ProjectOwnerGoalBrief, 
   const sources = collectSources(goal)
   const stepKeys = new Set(steps.map((step) => step.key))
   const seen = new Set<string>()
-  return input.map((raw) => {
+  const trace: ProjectOwnerCriterionTrace[] = input.map((raw) => {
     const value = record(raw, ['key', 'source', 'sourceIndex', 'sourceText', 'criticality', 'stepKey', 'verification', 'assumptions'], '目标追溯项')
     const key = text(value.key, '追溯键', 200)
     if (seen.has(key)) throw new Error(`目标追溯键重复：${key}`)
@@ -83,16 +83,24 @@ export function parseCriteriaTrace(input: unknown, goal: ProjectOwnerGoalBrief, 
     const stepKey = text(value.stepKey, '承接步骤', 200)
     if (!stepKeys.has(stepKey)) throw new Error(`目标追溯指向的计划步骤不存在：${stepKey}`)
     if (!VERIFICATIONS.includes(value.verification as typeof VERIFICATIONS[number])) throw new Error('目标追溯检验方式无效')
-    if (!Array.isArray(value.assumptions) || value.assumptions.length > MAX_ASSUMPTIONS
-      || value.assumptions.some((item) => typeof item !== 'string' || !item.trim() || item.length > 500)) throw new Error('目标追溯默认条件无效')
+    // 没有默认条件时模型会省略该字段，与空数组等价，不视为错误。
+    const assumptions = value.assumptions === undefined ? [] : value.assumptions
+    if (!Array.isArray(assumptions) || assumptions.length > MAX_ASSUMPTIONS
+      || assumptions.some((item) => typeof item !== 'string' || !item.trim() || item.length > 500)) throw new Error('目标追溯默认条件无效')
     return {
       key, source, sourceIndex, sourceText,
       criticality: value.criticality as ProjectOwnerCriterionTrace['criticality'],
       stepKey,
       verification: value.verification as ProjectOwnerCriterionTrace['verification'],
-      assumptions: [...value.assumptions] as string[],
+      assumptions: [...assumptions] as string[],
     }
   })
+  // 目标正文是整个任务的根。它若无任何步骤承接，说明计划没有对准用户真正要的东西，
+  // 即便约束与验收标准都登记齐全也不算完整，退回让模型重提。
+  if (goal.objective.trim() && !trace.some((item) => item.source === 'objective')) {
+    throw new Error('目标正文未被任何步骤承接：criteriaTrace 必须包含 source 为 objective 的条目')
+  }
+  return trace
 }
 
 /**
