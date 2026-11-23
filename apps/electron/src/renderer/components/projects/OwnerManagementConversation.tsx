@@ -228,6 +228,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     scheduleState: usage.schedule?.state,
     nextAction: usage.schedule?.nextAction,
     commands: usage.commands,
+    currentSchedule: usage.schedule?.grantId === grant.grant?.grantId ? usage.schedule : null,
     completed: Boolean(grant.grant?.dispatchMode === 'autonomous' && hasCompletedOwnerDelivery(messages, usage.commands, taskId, plan.snapshot?.planVersion, grant.grant?.grantId)),
   })
   // 已确认方案但当前版本没有任何「提出安排」结论时，重排入口必须可达：

@@ -32,7 +32,7 @@ const assignmentProposal={schemaVersion:1,contextFingerprint:'assignment-context
 const statusQuery=new URLSearchParams(location.search),hasStatus=value=>statusQuery.has(value);
 const priorSettledCommand={grantId:'grant-active',state:'settled',taskId:'task-old',role:'executor',reworkOrdinal:0};
 const priorReconcileCommand={grantId:'grant-active',state:'needs_reconcile',taskId:'task-old',role:'executor',reworkOrdinal:0};
-const currentCommand=state=>({grantId:'grant-active',state,taskId:'task-1',role:'executor',reworkOrdinal:0});
+const currentCommand=state=>({grantId:'grant-active',state,taskId:'task-1',taskTitle:'调研定位',role:'executor',reworkOrdinal:0});
 const commandHistory=()=>hasStatus('staleSettledQueued')?[priorSettledCommand,currentCommand('queued')]:hasStatus('staleReconcileRunning')?[priorReconcileCommand,currentCommand('running')]:hasStatus('staleSettledReconcile')?[priorSettledCommand,currentCommand('needs_reconcile')]:['waitingDecision','waitingQuality','waitingAcceptance','expiredDelivered'].some(hasStatus)?[currentCommand('settled')]:hasStatus('started')?[currentCommand('running')]:hasStatus('queued')?[currentCommand('queued')]:hasStatus('reconcile')?[currentCommand('needs_reconcile')]:[];
 const scheduleState=()=>hasStatus('expiredDelivered')||hasStatus('expired')?'expired':['waitingDecision','waitingQuality','waitingAcceptance'].some(hasStatus)?'waiting':hasStatus('started')||hasStatus('staleReconcileRunning')?'running':hasStatus('reconcile')||hasStatus('staleSettledReconcile')?'needs_reconcile':'ready';
 const scheduleNextAction=()=>hasStatus('waitingDecision')?'human_decision':hasStatus('waitingQuality')?'await_owner_quality':hasStatus('waitingAcceptance')?'await_business_acceptance':undefined;
@@ -232,7 +232,7 @@ window.fixture={remount,lastInput:()=>lastSavedInput,counts:()=>({previews,saves
     await page.goto(`http://127.0.0.1:${server.port}/?managed&owner&reconcile`)
     await page.getByRole('heading', { name: 'Owner 执行需要核对', exact: true }).waitFor()
     expect(await page.getByRole('alert', { name: '执行阻塞' }).count()).toBe(1)
-    expect(await page.getByText('当前授权不能继续派发新工作，已有记录保留。', { exact: true }).count()).toBe(1)
+    expect(await page.getByText('「调研定位」没有形成可用成果；已完成的步骤与费用记录都已保留。', { exact: true }).count()).toBe(1)
     expect(await page.getByText('授权已经生效，我正在核对执行队列；确认员工开始处理后会在这里更新。', { exact: true }).count()).toBe(0)
     await page.goto(`http://127.0.0.1:${server.port}/?managed&owner&started`)
     await page.getByRole('heading', { name: 'Owner 正在推进交付', exact: true }).waitFor()

@@ -4,7 +4,8 @@ export interface OwnerExecutionAttentionInput {
   grantState: string | null | undefined
   scheduleState: string | null | undefined
   nextAction: string | null | undefined
-  commands: ReadonlyArray<Pick<OwnerExecutionCommandView, 'state' | 'executionStatus' | 'taskTitle'> & { executionId?: string | null; terminalEvidence?: { reason: string } }>
+  commands: ReadonlyArray<Pick<OwnerExecutionCommandView, 'state' | 'executionStatus' | 'taskTitle'> & { grantId?: string; taskId?: string; role?: string; reworkOrdinal?: number; executionId?: string | null; terminalEvidence?: { reason: string } }>
+  currentSchedule?: { grantId?: string; taskId?: string; role?: string; reworkOrdinal?: number } | null
   completed: boolean
 }
 
@@ -30,7 +31,12 @@ const COMMAND_ATTENTION_STATES = new Set(['failed', 'needs_reconcile', 'unknown'
 export function deriveOwnerExecutionAttention(input: OwnerExecutionAttentionInput): OwnerExecutionAttention | null {
   if (input.completed) return null
   // 命令级事实比授权/调度级更具体，优先据此给出原因。
-  const blocked = input.commands.find(command =>
+  const schedule = input.currentSchedule
+  const hasScheduleIdentity = Boolean(schedule?.grantId && schedule.taskId && schedule.role && Number.isInteger(schedule.reworkOrdinal))
+  const commands = hasScheduleIdentity ? input.commands.filter(command =>
+    command.grantId === schedule?.grantId && command.taskId === schedule?.taskId &&
+    command.role === schedule?.role && command.reworkOrdinal === schedule?.reworkOrdinal) : input.commands
+  const blocked = commands.find(command =>
     COMMAND_ATTENTION_STATES.has(command.state) || (command.state === 'settled' && command.executionStatus === 'failed'))
   const blockedByGrant = input.grantState === 'paused' || input.grantState === 'needs_reconcile'
   const blockedBySchedule = input.scheduleState === 'needs_reconcile' || input.scheduleState === 'stale' || input.scheduleState === 'expired'

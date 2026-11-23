@@ -137,6 +137,7 @@ export function ProjectOwnerExecutionConversation({ projectId, taskId, ownerConv
     scheduleState,
     nextAction,
     commands: ownerCommands,
+    currentSchedule: scheduleMatchesGrant ? schedule : null,
     completed: ownerCompleted,
   })
   const ownerQueued = Boolean(ownerAutonomyManaged && grant.grant?.state === 'active' && commandProgress.loaded && scheduleMatchesGrant && scheduleState === 'ready' && currentOwnerCommand && ['queued', 'reserved'].includes(currentOwnerCommand.state))
