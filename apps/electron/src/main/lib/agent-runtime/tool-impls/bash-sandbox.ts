@@ -13,7 +13,7 @@ import { execFile } from 'node:child_process'
 import { existsSync, mkdirSync, realpathSync } from 'node:fs'
 import { lstat, readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises'
 import * as fsPromises from 'node:fs/promises'
-import { isAbsolute, join, relative, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { getConfigDir } from '../../config-paths'
 import { startPerformanceDiagnostic } from '../../performance-diagnostics'
@@ -125,7 +125,7 @@ export function resolveGitLayout(cwd: string): Promise<GitLayout | undefined> {
   return new Promise((resolve) => {
     execFile('git', ['-C', cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir', '--git-dir'], {
       encoding: 'utf8',
-      env: sanitizeBashGitEnvironment(process.env),
+      env: { ...sanitizeBashGitEnvironment(process.env), GIT_CEILING_DIRECTORIES: dirname(realOrSelf(cwd)) },
     }, (error, stdout) => {
       if (error) return resolve(undefined)
       const [common, own] = stdout.trim().split('\n')
@@ -278,6 +278,7 @@ export async function prepareBashSandbox(cwd: string, sessionId: string): Promis
     env: {
       ...sanitizeBashGitEnvironment(process.env),
       ...gitIdentity,
+      GIT_CEILING_DIRECTORIES: dirname(realOrSelf(cwd)),
       TMPDIR: scratchDir,
       BUN_INSTALL_CACHE_DIR: join(scratchDir, 'bun-cache'),
       npm_config_cache: join(scratchDir, 'npm-cache'),

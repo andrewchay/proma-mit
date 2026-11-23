@@ -638,6 +638,16 @@ describe('Git 间接环境隔离', () => {
       else process.env.GIT_DIR = previous
     }
   })
+
+  test('Given 工作区位于上级仓库内 When 解析布局 Then 不使用上级仓库', async () => {
+    const parent = join(root, 'parent-repository')
+    const workspace = join(parent, 'workspace')
+    mkdirSync(workspace, { recursive: true })
+    git(parent, ['init', '-q'])
+    expect(await resolveGitLayout(workspace)).toBeUndefined()
+    git(workspace, ['init', '-q'])
+    expect((await resolveGitLayout(workspace))?.ownDir).toBe(join(realpathSync(workspace), '.git'))
+  })
 })
 
 describe('硬链接启动前复核', () => {
