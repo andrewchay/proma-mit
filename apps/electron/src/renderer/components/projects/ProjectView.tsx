@@ -1,5 +1,7 @@
 import { ProjectWebWatchHistory, type ProjectWebWatchRunView } from './ProjectWebWatchHistory'
 import { OwnerConversationUpdates } from './OwnerConversationUpdates'
+import { OwnerProjectStatusList } from './OwnerProjectStatusList'
+import { ownerCommandProgressApiAtom } from '../../atoms/owner-command-progress-atoms'
 import { ownerConversationNavigationAtom } from '../../atoms/project-owner-management-atoms'
 import { ownerTaskListRefreshSignalAtom } from '../../atoms/project-owner-task-atoms'
 import { selectTaskExecution, executionStopMessage } from './project-task-execution-state'
@@ -509,6 +511,9 @@ export function ProjectView(): React.ReactElement {
   const [isLoading, _setIsLoading] = useState(false)
   const ownerNavigation = useAtomValue(ownerConversationNavigationAtom)
   const navigateToOwner = useSetAtom(ownerConversationNavigationAtom)
+  // 项目状态列表只读调度投影；失败保留错误而不是显示成「正常」。
+  const ownerStatusApi = useAtomValue(ownerCommandProgressApiAtom)
+  const loadOwnerStatus = useCallback((subject: { projectId: string }) => ownerStatusApi.getOwnerAutonomousScheduleStatus(subject), [ownerStatusApi])
   useEffect(() => {
     if (!ownerNavigation) return
     let cancelled = false
@@ -548,6 +553,12 @@ export function ProjectView(): React.ReactElement {
             }}
           />
           <OwnerConversationUpdates projects={projects.filter((project) => !project.archivedAt)} onOpen={(projectId, taskId) => navigateToOwner({ projectId, ...(taskId ? { taskId } : {}), at: Date.now() })} />
+          <OwnerProjectStatusList
+            projects={projects.filter((project) => !project.archivedAt)}
+            messagesByProject={new Map()}
+            loadStatus={loadOwnerStatus}
+            onOpen={(projectId) => navigateToOwner({ projectId, at: Date.now() })}
+          />
           <ProjectList
             projects={projects}
             isLoading={isLoading}

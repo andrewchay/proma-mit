@@ -1,64 +1,61 @@
 import { expect, test } from 'bun:test'
 import type { OwnerManagementMessage } from '@gravitas/shared'
-import { getOwnerWaitingLabel, hasCompletedOwnerDelivery, isOwnerWaitingForUser } from './project-owner-progress-state'
+import { summarizeOwnerProjectRow } from './project-owner-progress-state'
 
-function message(kind: OwnerManagementMessage['kind'], role: OwnerManagementMessage['role'] = 'assistant', taskId?: string): OwnerManagementMessage {
-  return { id: kind, projectId: 'project', conversationId: 'conversation', eventId: kind, role, kind, content: kind, createdAt: 1, ...(taskId ? { taskId } : {}) }
+function message(kind: OwnerManagementMessage['kind'], taskId?: string): OwnerManagementMessage {
+  return { id: `m-${kind}`, eventId: `e-${kind}`, projectId: 'p', conversationId: 'c', ...(taskId ? { taskId } : {}), role: 'assistant', kind, content: '', createdAt: 1 }
 }
 
-test('Given Owner最新消息是阻塞或配置请求 When 显示项目进度 Then 标记为等待用户决定', () => {
-  expect(isOwnerWaitingForUser([message('management_progress'), message('attention')])).toBe(true)
-  expect(isOwnerWaitingForUser([message('configuration_required')])).toBe(true)
+test('Given 最新消息在等用户 When 生成项目行 Then 优先显示等待你而不是调度状态', () => {
+  const summary = summarizeOwnerProjectRow([message('plan_proposal')], undefined, { state: 'running' })
+  expect(summary).toMatchObject({ stage: '等待你', waitingOn: '你', needsUser: true })
+  expect(summary.nextAction).toBe('方案待你审阅')
 })
 
-test('Given Owner在阻塞后已继续推进 When 显示项目进度 Then 不保留过期的暂停状态', () => {
-  expect(isOwnerWaitingForUser([message('attention'), message('management_progress')])).toBe(false)
+test('Given 预算耗尽且方案待审 When 生成项目行 Then 说明在等预算决定', () => {
+  const summary = summarizeOwnerProjectRow([message('plan_proposal')], undefined, { state: 'running' }, 'exhausted')
+  expect(summary.nextAction).toBe('等待项目预算决定')
+  expect(summary.needsUser).toBe(true)
 })
 
-test('Given 用户已回复但Owner尚未回应 When 显示项目进度 Then 仍提示等待处理', () => {
-  expect(isOwnerWaitingForUser([message('attention'), message('conversation', 'user')])).toBe(true)
+test('Given 无等待消息 When 按调度状态映射 Then 只有需要用户介入的状态才 needsUser', () => {
+  const cases: Array<[string, boolean, string]> = [
+    ['running', false, '进行中'],
+    ['ready', false, '进行中'],
+    ['paused', true, '已暂停'],
+    ['needs_reconcile', true, '待核对'],
+    ['stale', true, '待重新确认'],
+    ['expired', true, '已过期'],
+    ['archived', false, '已归档'],
+    ['manual', true, '手动模式'],
+    ['no_grant', false, '未开始'],
+  ]
+  for (const [state, needsUser, stage] of cases) {
+    const summary = summarizeOwnerProjectRow([], undefined, { state })
+    expect({ state, needsUser: summary.needsUser, stage: summary.stage }).toEqual({ state, needsUser, stage })
+  }
 })
 
-test('Given Owner已在阻塞后回复 When 显示项目进度 Then 清除旧的等待状态', () => {
-  expect(isOwnerWaitingForUser([message('attention'), message('reply')])).toBe(false)
+test('Given 等待中且下一动作是人工决策 When 生成项目行 Then 等待对象是你', () => {
+  const summary = summarizeOwnerProjectRow([], undefined, { state: 'waiting', reason: '等待权威依赖解除', nextAction: 'human_decision' })
+  expect(summary).toMatchObject({ stage: '等待中', waitingOn: '你', needsUser: true, nextAction: '等待权威依赖解除' })
 })
 
-test('Given Owner提出澄清问题或新方案 When 显示项目进度 Then 标记为等待用户审阅', () => {
-  expect(isOwnerWaitingForUser([message('clarification')])).toBe(true)
-  expect(isOwnerWaitingForUser([message('change_proposal')])).toBe(true)
-  expect(isOwnerWaitingForUser([message('execution_arranged')])).toBe(true)
+test('Given 等待中但下一动作不是人工决策 When 生成项目行 Then 不算需要用户处理', () => {
+  const summary = summarizeOwnerProjectRow([], undefined, { state: 'waiting', reason: '技术评审通过，等待业务验收', nextAction: 'await_business_acceptance' })
+  expect(summary).toMatchObject({ stage: '等待中', waitingOn: '系统核对', needsUser: false })
 })
 
-test('Given Owner等待用户处理 When 显示对话进度 Then 标签说明具体下一步', () => {
-  expect(getOwnerWaitingLabel([message('attention')], undefined, 'stale')).toBe('授权范围需要重新确认')
-  expect(getOwnerWaitingLabel([message('attention')])).toBe('Owner 提出需要关注的事项')
-  expect(getOwnerWaitingLabel([message('plan_proposal')])).toBe('方案待你审阅')
-  expect(getOwnerWaitingLabel([message('plan_proposal')], undefined, 'exhausted')).toBe('等待项目预算决定')
-  expect(getOwnerWaitingLabel([message('clarification')])).toBe('需要补充必要信息')
-  expect(getOwnerWaitingLabel([message('management_progress')])).toBeNull()
+test('Given 没有调度状态 When 生成项目行 Then 说明尚未建立授权且不打扰用户', () => {
+  expect(summarizeOwnerProjectRow([], undefined, undefined)).toEqual({ stage: '未开始', waitingOn: '', nextAction: '尚未建立管理授权', needsUser: false })
 })
 
-test('Given Owner把质量决定升级为需人工协商 When 显示项目进度 Then 必须提示等待用户', () => {
-  // 质量决定 escalated 时主进程写 attention；写成 reply 会让界面显示"暂无待你决定的事项"，
-  // 用户看不到任何待办，项目静默停住（真实事故：名称查重无法核验，Owner 提出需协商）。
-  expect(isOwnerWaitingForUser([message('attention')])).toBe(true)
-  expect(getOwnerWaitingLabel([message('attention')])).not.toBeNull()
-  // 对照：普通 reply 不应被当成待办，否则每次回应都会误报。
-  expect(isOwnerWaitingForUser([message('reply')])).toBe(false)
+test('Given 未知调度状态 When 生成项目行 Then 保留原因并提示打开核对', () => {
+  const summary = summarizeOwnerProjectRow([], undefined, { state: 'something_new', reason: '出现了未覆盖的状态' })
+  expect(summary).toMatchObject({ stage: '未知', nextAction: '出现了未覆盖的状态', needsUser: false })
 })
 
-test('Given 同一项目的不同任务有不同状态 When 加载某个任务进度 Then 只使用该任务自己的Owner消息', () => {
-  const messages = [message('attention', 'assistant', 'task-a'), message('management_progress', 'assistant', 'task-b')]
-  expect(isOwnerWaitingForUser(messages, 'task-a')).toBe(true)
-  expect(isOwnerWaitingForUser(messages, 'task-b')).toBe(false)
-  expect(isOwnerWaitingForUser([message('attention', 'assistant', 'task-a')])).toBe(false)
-})
-
-test('Given成果交付 When匹配当前授权与方案 Then仅全部命令结算后显示完成', () => {
-  const delivery: OwnerManagementMessage = { ...message('delivery'), eventId: 'owner-delivery:grant:hash', delivery: { schemaVersion: 1, planVersion: 2, items: [] } }
-  const commands = [{ grantId: 'grant', state: 'settled' as const }]
-  expect(hasCompletedOwnerDelivery([delivery], commands, undefined, 2, 'grant')).toBe(true)
-  expect(hasCompletedOwnerDelivery([delivery], commands, undefined, 3, 'grant')).toBe(false)
-  expect(hasCompletedOwnerDelivery([delivery], commands, undefined, 2, 'other')).toBe(false)
-  expect(hasCompletedOwnerDelivery([delivery], [...commands, { grantId: 'grant', state: 'running' }], undefined, 2, 'grant')).toBe(false)
+test('Given 任务级消息 When 生成另一任务的摘要 Then 不串到当前任务', () => {
+  const summary = summarizeOwnerProjectRow([message('plan_proposal', 'task-a')], 'task-b', { state: 'running' })
+  expect(summary.stage).toBe('进行中')
 })
