@@ -13,7 +13,6 @@ mock.module('./agent-service', () => ({ isAgentSessionActive: () => false }))
 
 const store = await import('./project-sqlite-store')
 const accepted = await import('./project-owner-accepted-artifact')
-const actions = await import('./project-owner-quality-actions')
 const reviews = await import('./project-owner-technical-review')
 
 beforeAll(async () => { await store.initProjectDb() })
