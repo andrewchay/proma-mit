@@ -129,8 +129,14 @@ export function getOwnerTaskMaterializationRecord(projectId: string, id: string)
 function resolveRetainedSteps(
   subject: ProjectOwnerGoalSubject,
   selectedSteps: ReadonlyArray<{ key: string; title: string; outcome: string; acceptanceCriteria: string[]; roleKey: string; deliveryKind?: 'text' | 'development'; dependencies: readonly string[] }>,
+  /** 本次材料化所依据的目标版本；旧批次的目标版本不同说明用户明确改了要求。 */
+  currentGoalRevision: number,
 ): OwnerTaskMaterializationPreview['retainedSteps'] {
-  const priorRecords = readHistory(subject.projectId).filter(record => record.taskId === subject.taskId)
+  // 只在同一目标版本内谈复用。用户改了目标就代表要不同的东西，
+  // 即便新计划的步骤文本与旧的一致，旧成果也不该被当作已满足新目标——
+  // 否则「改目标」会变成静默空操作：重新规划、确认、然后材料化时全部复用旧成果。
+  const priorRecords = readHistory(subject.projectId)
+    .filter(record => record.taskId === subject.taskId && record.preview.preparation.source.goalRevision === currentGoalRevision)
   if (!priorRecords.length) return []
   // 每个批次产出该批的步骤出现；「是否通过验收」交给累积函数统一裁决，
   // 避免这里再写一遍「失败要不要回退」的规则。
@@ -195,7 +201,7 @@ function currentPreview(subject: ProjectOwnerGoalSubject, input: OwnerTaskMateri
   if (selectedSteps.length !== source.selectedStepKeys.length) fail('冻结步骤缺失')
   // 混合批次接替：已验收且规格未变的步骤不再进入新批次。
   // 若原样重建，「A 已验收、B 失败」的恢复会给 A 建一个全新的可派发任务并再次计费。
-  const retainedSteps = resolveRetainedSteps(subject, selectedSteps) ?? []
+  const retainedSteps = resolveRetainedSteps(subject, selectedSteps, source.goalRevision) ?? []
   const retainedKeys = new Set(retainedSteps.map(step => step.stepKey))
   const steps = selectedSteps.filter(step => !retainedKeys.has(step.key))
   if (!steps.length) fail('所选步骤的成果均已验收，没有需要重做的步骤；请直接交付或调整方案')
