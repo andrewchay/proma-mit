@@ -269,6 +269,7 @@ export function estimateOutgoingContextTokens(input: {
  * 下限：最新一条本身就超目标时，回溯累加会在第一条就 break，返回 0——
  * 压缩后活动历史只剩 boundary，本轮成果从模型视图消失。此时至少保留最后一条，
  * 并让调用方用 compactOversizedToolResults 把它的正文降级成可续取的占位符。
+ * 只有一条历史时须交给摘要处理，否则没有早期消息可压缩。
  */
 export function resolveAdaptiveKeepRecent(input: {
   historyMessages: SDKMessage[]
@@ -285,7 +286,7 @@ export function resolveAdaptiveKeepRecent(input: {
     accumulatedTokens += messageTokens
     selected += 1
   }
-  if (selected === 0 && hardCap > 0) selected = Math.min(1, hardCap)
+  if (selected === 0 && hardCap > 0 && input.historyMessages.length > 1) selected = 1
   // 保留窗口不能从孤儿 tool_result 开始：向前扩到配对的 assistant。
   // 否则 assistant(tool_use) 会同时进入摘要输入与保留窗口，模型看到重复内容。
   return input.historyMessages.length - alignKeepStartToToolPairs(input.historyMessages, input.historyMessages.length - selected)
