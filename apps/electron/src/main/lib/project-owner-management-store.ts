@@ -289,11 +289,22 @@ export function recordOwnerManagementAnswer(goal: ProjectOwnerGoalDraft, questio
 }
 
 /** 用户确认结果范围并启动后，必须先在同一次对话给出可见回应；否则用户只看到对话空白。 */
-export function recordOwnerManagementStartAccepted(projectId: string, intentId: string, goalRevision: number, taskId?: string): void {
+export function recordOwnerManagementStartAccepted(
+  projectId: string,
+  intentId: string,
+  goalRevision: number,
+  taskId?: string,
+  /** 本次接替复用的已验收步骤；有值时说明只重做剩余步骤，避免用户以为整批重跑。 */
+  retainedSteps?: ReadonlyArray<{ stepKey: string; taskId: string; artifactHash: string }>,
+): void {
   if (!getOwnerManager(projectId)) return
   transaction(() => {
-    appendOwnerManagementMessage({ projectId, eventId: `execution-start-accepted:${intentId}`, ...(taskId ? { taskId } : {}), role: 'assistant', kind: 'management_progress', goalRevision,
-      content: '已按你确认的结果与边界开始组织执行。我会在关键进展、需要你决定的事项或成果交付时，继续在这里说明。' })
+    const base = '已按你确认的结果与边界开始组织执行。我会在关键进展、需要你决定的事项或成果交付时，继续在这里说明。'
+    // 复用说明必须点出「哪份成果」，否则用户无法判断新工作是否真在旧成果之上继续。
+    const content = retainedSteps?.length
+      ? `已按你确认的结果与边界开始组织执行。此前已验收的 ${retainedSteps.length} 个步骤（${retainedSteps.map(step => step.stepKey).join('、')}）直接沿用，只重做剩余步骤，不会重复派工或重复计费。我会在关键进展、需要你决定的事项或成果交付时，继续在这里说明。`
+      : base
+    appendOwnerManagementMessage({ projectId, eventId: `execution-start-accepted:${intentId}`, ...(taskId ? { taskId } : {}), role: 'assistant', kind: 'management_progress', goalRevision, content })
     return true
   })
 }

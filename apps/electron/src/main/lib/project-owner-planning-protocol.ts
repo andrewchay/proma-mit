@@ -189,7 +189,7 @@ function validateContext(context: ProjectOwnerPlanningContext): void {
     || context.goal.actor !== 'local-user' || !Number.isSafeInteger(context.goal.revision) || context.goal.revision < 1
     || !/^[a-f0-9]{64}$/.test(context.fingerprint)) throw new Error('Owner规划目标快照无效')
   if (context.conversation) {
-    const value = record(context.conversation, ['conversationId', 'throughMessageId', 'historyThroughMessageId', 'messages', 'truncated', 'currentPlan', 'tasks', 'tasksTruncated', 'interactionVersion', 'openQuestions', 'executionObservation', 'fileChangeObservation', 'webChangeObservation', 'deliveryReview', 'deliveryFeedback', 'deliveredArtifacts', 'observationMessageBindingVersion', 'employeeInteractionVersion', 'employeeInteractions'])
+    const value = record(context.conversation, ['conversationId', 'throughMessageId', 'historyThroughMessageId', 'messages', 'truncated', 'currentPlan', 'tasks', 'tasksTruncated', 'interactionVersion', 'openQuestions', 'executionObservation', 'fileChangeObservation', 'webChangeObservation', 'deliveryReview', 'deliveryFeedback', 'deliveredArtifacts', 'observationMessageBindingVersion', 'deliveryFeedbackBindingVersion', 'employeeInteractionVersion', 'employeeInteractions'])
     if (value.employeeInteractionVersion !== undefined) {
       if (value.employeeInteractionVersion !== 1 || !Array.isArray(value.employeeInteractions) || value.employeeInteractions.length > 100) throw new Error('员工交互上下文协议无效')
       for (const raw of value.employeeInteractions) {
@@ -198,6 +198,8 @@ function validateContext(context: ProjectOwnerPlanningContext): void {
       }
     } else if (value.employeeInteractions !== undefined) throw new Error('员工交互缺少版本')
     if (value.observationMessageBindingVersion !== undefined && (value.observationMessageBindingVersion !== 1 || !value.executionObservation)) throw new Error('Owner后台回应消息绑定协议无效')
+    // 成果反馈绑定只能配合已冻结的反馈出现；否则模型侧无从取得身份，必须拒绝而非静默退化为历史契约。
+    if (value.deliveryFeedbackBindingVersion !== undefined && (value.deliveryFeedbackBindingVersion !== 1 || !value.deliveryFeedback)) throw new Error('Owner成果反馈绑定协议无效')
     if (value.deliveryReview !== undefined) validateDeliveryReview(context)
     if (value.deliveredArtifacts !== undefined) {
       const catalog = record(value.deliveredArtifacts, ['version', 'messageId', 'planVersion', 'items'])
@@ -376,6 +378,8 @@ export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningCo
     ...(independentReviewLane ? ['系统会在每个实现步骤后独立安排Reviewer检查、Owner质量验收及有限返工，这些是后置流程，不要再次列成普通实现任务。尊重目标约定的步骤数量；对明确要求单步的小型实现，只列一个实现交付步骤，不另列独立评审、测试、返工或汇总交付步骤。'] : []),
     '每个澄清问题必须标注reasonType：普通决定性信息不足用missing_information；不同来源的事实冲突用source_conflict。若是source_conflict，不得自行选择优先级或合并；必须包含sourceReferences，逐项提供本次JSON中实际存在的sourceId和原文quote，至少引用两个不同来源。可引用goal.objective、goal.constraints[i]、goal.acceptanceCriteria[i]、project.title/description、task.title/description及本次code.files[i].excerpts[j]。',
     '不要求用户先拆完任务、提供内部ID或文件路径。代码目标也不默认要求用户手填路径；未实际检索不得伪造代码定位。',
+    '目标原文中的硬要求（数量、页数、时限、人数、逐项复点、签字空间等）必须落到具体步骤，并在criteriaTrace中逐条登记来源与检验方式。source只能是objective、constraint或acceptance，sourceIndex是该数组下标（objective固定0），sourceText必须是该来源原文的真实子串，不得改写或总结。stepKey必须是本次steps中已存在的key。criticality为critical的要求缺失时不得声称可交付；暂无法验证的填unverified并如实说明，不要写成automated。没有硬要求时省略criteriaTrace。',
+    JSON.stringify({ criteriaTrace: [{ key: 'criterion-1', source: 'acceptance', sourceIndex: 0, sourceText: '从原始验收标准中逐字摘取的一段', criticality: 'critical', stepKey: 'step-1', verification: 'manual_review', assumptions: ['采用A4纸与四边15毫米边距'] }] }),
     ...(strictOutputHints ? [
       `严格输出可由JSON.parse解析的JSON。每个对象属性名后必须使用冒号；字符串使用双引号；acceptanceCriteria与dependencies必须是数组。步骤格式示例：${JSON.stringify({ key: 'step-1', title: '步骤标题', outcome: '明确交付物', acceptanceCriteria: ['明确的验收标准'], dependencies: [], roleKey: context.sources.roles[0]!.key, ...(requireDeliveryKind && correctStepExamples ? { deliveryKind: 'text' } : {}) })}`,
       `roleKey只能逐字使用本次资料roles数组中已有的key，不得自行发明岗位名或将岗位名称当作key。可用key：${JSON.stringify(context.sources.roles.map(role => role.key))}`,
@@ -397,8 +401,10 @@ export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningCo
       '修订方案的 dependencies 只写本轮 steps 已声明的步骤 key。上一轮已验收的内容由原成果提供，旧步骤不重做，也不写入 dependencies。用户明确要求只新增一行时，针对该份已验收文本安排一个修订步骤，保留其他正文和位置约束。',
     ] : []),
     ...(context.conversation?.deliveryFeedback ? [
-      '针对已验收成果提出新计划时，proposal必须包含deliveryFeedbackAssessment，且messageId、artifactHash及存在时的stepKey必须逐字对应本次deliveryFeedback；changes必须按顺序逐字覆盖原全部acceptanceCriteria，每项写明addressed、still_open或not_applicable及拟议改动。授权影响只可为within_confirmed_boundary、additional_confirmation或cannot_determine；不能判断时返回needs_clarification。within_confirmed_boundary仅表示未发现超出当前已确认边界，不继承旧执行许可；本计划仍须由用户确认后才执行。additional_confirmation时，authorizationRationale须写明具体新增范围及其原因，并在方案交付/标准中体现，使用户能据此批准或修改。',
-      JSON.stringify({ deliveryFeedbackAssessment: { messageId: context.conversation.deliveryFeedback.messageId, artifactHash: context.conversation.deliveryFeedback.artifactHash, ...(context.conversation.deliveryFeedback.stepKey ? { stepKey: context.conversation.deliveryFeedback.stepKey } : {}), summary: '相对原成果的修改建议', changes: context.conversation.deliveryFeedback.acceptanceCriteria.map(criterion => ({ criterion, disposition: 'addressed', proposedChange: '尚待确认和实施的改动' })), authorizationImpact: 'within_confirmed_boundary', authorizationRationale: '依据当前目标和约束判断；旧执行许可不沿用' } }),
+      context.conversation.deliveryFeedbackBindingVersion === 1
+        ? '针对已验收成果提出新计划时，proposal必须包含deliveryFeedbackAssessment；changes必须按顺序逐字覆盖原全部acceptanceCriteria，每项写明addressed、still_open或not_applicable及拟议改动。成果身份由主进程绑定，不得输出messageId、artifactHash或stepKey，也不要猜测这些值。授权影响只可为within_confirmed_boundary、additional_confirmation或cannot_determine；不能判断时返回needs_clarification。within_confirmed_boundary仅表示未发现超出当前已确认边界，不继承旧执行许可；本计划仍须由用户确认后才执行。additional_confirmation时，authorizationRationale须写明具体新增范围及其原因，并在方案交付/标准中体现，使用户能据此批准或修改。'
+        : '针对已验收成果提出新计划时，proposal必须包含deliveryFeedbackAssessment，且messageId、artifactHash及存在时的stepKey必须逐字对应本次deliveryFeedback；changes必须按顺序逐字覆盖原全部acceptanceCriteria，每项写明addressed、still_open或not_applicable及拟议改动。授权影响只可为within_confirmed_boundary、additional_confirmation或cannot_determine；不能判断时返回needs_clarification。within_confirmed_boundary仅表示未发现超出当前已确认边界，不继承旧执行许可；本计划仍须由用户确认后才执行。additional_confirmation时，authorizationRationale须写明具体新增范围及其原因，并在方案交付/标准中体现，使用户能据此批准或修改。',
+      JSON.stringify({ deliveryFeedbackAssessment: { ...(context.conversation.deliveryFeedbackBindingVersion === 1 ? {} : { messageId: context.conversation.deliveryFeedback.messageId, artifactHash: context.conversation.deliveryFeedback.artifactHash, ...(context.conversation.deliveryFeedback.stepKey ? { stepKey: context.conversation.deliveryFeedback.stepKey } : {}) }), summary: '相对原成果的修改建议', changes: context.conversation.deliveryFeedback.acceptanceCriteria.map(criterion => ({ criterion, disposition: 'addressed', proposedChange: '尚待确认和实施的改动' })), authorizationImpact: 'within_confirmed_boundary', authorizationRationale: '依据当前目标和约束判断；旧执行许可不沿用' } }),
     ] : []),
     '岗位键只能来自提供的目录，是能力建议而非已创建员工或派发。仅使用计划内key表示依赖，成果与验收标准必须具体，依赖不得循环。',
     'summary是给用户审阅的结果承诺：用一句话说明最终交付什么及其用途，不写先后步骤、人员/岗位、工具、工作区或内部安排；避免“先…再…最后…”流程描述。用户只据此确认结果和边界，内部步骤由Owner自行决定。控制输出长度：计划默认3步、最多5步；summary不超过80字；assumptions和risks各不超过3条；每步title不超过40字、outcome不超过80字、acceptanceCriteria为1–2条且每条不超过40字。避免重复目标与来源原文；source_conflict澄清除外必须精确引用。不要扩展范围或输出额外解释。',
@@ -676,9 +682,11 @@ export function parseProjectOwnerPlanningResponse(input: unknown, context: Proje
   }
   if (raw.kind === 'plan_proposal') {
     record(raw, ['schemaVersion', 'kind', 'projectId', 'taskId', 'goalVersion', 'contextFingerprint', 'proposal'])
-    const proposal = record(raw.proposal, ['summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment'])
+    const proposal = record(raw.proposal, ['summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment', 'criteriaTrace'])
     let feedback: Parameters<typeof parseProjectOwnerPlanProposal>[6] = context.conversation?.deliveryFeedback
     const catalog = context.conversation?.deliveredArtifacts
+    // 宿主绑定模式下身份只来自冻结反馈，模型回填的标识一律不接受。
+    const hostBoundFeedback = context.conversation?.deliveryFeedbackBindingVersion === 1
     if (!feedback && catalog?.version === 2 && proposal.deliveryFeedbackAssessment !== undefined) {
       const assessment = record(proposal.deliveryFeedbackAssessment, ['messageId', 'artifactHash', 'stepKey', 'summary', 'changes', 'authorizationImpact', 'authorizationRationale'])
       const item = catalog.items.find(item => item.stepKey === assessment.stepKey && item.artifactHash === assessment.artifactHash)
@@ -701,7 +709,7 @@ export function parseProjectOwnerPlanningResponse(input: unknown, context: Proje
       }
     }
     const validated = parseProjectOwnerPlanProposal({ ...proposal, steps, projectId: binding.projectId,
-      ...(binding.taskId === undefined ? {} : { taskId: binding.taskId }), goalVersion: binding.goalVersion }, context.goal.goal, context.sources.roles.map((role) => role.key), context.sources.code?.files ?? [], true, context.sources.delivery ?? [], feedback, requireDeliveryKind)
+      ...(binding.taskId === undefined ? {} : { taskId: binding.taskId }), goalVersion: binding.goalVersion }, context.goal.goal, context.sources.roles.map((role) => role.key), context.sources.code?.files ?? [], true, context.sources.delivery ?? [], feedback, requireDeliveryKind, hostBoundFeedback)
     return { kind: 'plan_proposal', ...binding, proposal: scopedSourceInspection ? routeSourceInspections(validated, context) : validated }
   }
   if (raw.kind === 'needs_clarification') {

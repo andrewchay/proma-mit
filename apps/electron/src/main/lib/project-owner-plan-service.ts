@@ -246,7 +246,7 @@ function parseRow(row: PlanRow, projectId: string, taskId: string | undefined, g
     if ((goal.goal.codeSourceAccess === 'bound_workspace') !== Boolean(sources.code)) throw new Error('计划中的代码资料授权与冻结来源不一致')
     const contextFingerprint = digest(value.contextFingerprint)
     if (contextFingerprint !== fingerprint(goal, sources)) throw new Error('计划来源指纹不匹配')
-    const rawProposal = record(value.proposal, ['projectId', 'taskId', 'goalVersion', 'mode', 'summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment'])
+    const rawProposal = record(value.proposal, ['projectId', 'taskId', 'goalVersion', 'mode', 'summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment', 'criteriaTrace'])
     if (value.origin === 'manual' && rawProposal.deliveryFeedbackAssessment !== undefined) throw new Error('手动计划不能伪造Owner成果反馈评估')
     if (rawProposal.mode !== 'proposal_only') throw new Error('计划夹带执行模式')
     const { mode: _mode, ...proposalInput } = rawProposal
@@ -351,7 +351,7 @@ export function saveProjectOwnerPlanDraft(projectId: string, expectedGoalRevisio
     const current = readCurrent(context)
     checkVersions(context, current, expectedGoalRevision, expectedRevision)
     assertLocalActorEnabled()
-    const value = record(input, ['expectedContextFingerprint', 'summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'changeReason'])
+    const value = record(input, ['expectedContextFingerprint', 'summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'criteriaTrace', 'changeReason'])
     if (digest(value.expectedContextFingerprint) !== context.fingerprint) throw new ProjectOwnerPlanConflictError()
     const changeReason = text(value.changeReason, '变更原因').trim()
     const { expectedContextFingerprint: _fingerprint, changeReason: _reason, ...proposalInput } = value

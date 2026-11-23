@@ -1205,14 +1205,21 @@ export function alignKeepStartToToolPairs(messages: SDKMessage[], startIndex: nu
  * system(compact_boundary) 摘要消息。返回新的消息列表（含 boundary）。
  *
  * 供 Gravitas 管理的 Proma / Pi / AI SDK runtime 压缩使用。
+ *
+ * `preparedTail`：调用方已按预算降级过的保留窗口。传入时以它为准，
+ * 保证「预算校验用的历史」与「写盘的历史」是同一份；条数必须与磁盘历史尾部对齐，
+ * 否则说明调用期间会话被并发追加，宁可报错也不写入错位结果。
  */
-export function compactSDKMessages(id: string, summary: string, keepRecent: number, contextPacket?: ContextPacket): SDKMessage[] {
+export function compactSDKMessages(id: string, summary: string, keepRecent: number, contextPacket?: ContextPacket, preparedTail?: readonly SDKMessage[]): SDKMessage[] {
   const messages = getAgentSessionSDKMessages(id)
   const keepCount = Math.max(0, Math.min(keepRecent, messages.length))
   // 保留窗口不能从孤儿 tool_result 开始；必要时向前扩展到配对的 assistant
   const keepStart = alignKeepStartToToolPairs(messages, messages.length - keepCount)
-  const kept = messages.slice(keepStart)
   const compacted = messages.slice(0, keepStart)
+  if (preparedTail !== undefined && preparedTail.length !== messages.length - keepStart) {
+    throw new Error('压缩保留窗口与当前会话历史不一致，已拒绝写入（会话可能被并发追加）')
+  }
+  const kept = preparedTail !== undefined ? [...preparedTail] : messages.slice(keepStart)
 
   // C02 原文/修订定位：boundary 携带压缩前消息数、内容摘要哈希与归档文件名。
   const filePath = getAgentSessionMessagesPath(id)

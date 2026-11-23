@@ -23,11 +23,26 @@ const inMemorySdk = new Map<string, SDKMessage[]>()
 let compactPersistenceMode: 'success' | 'fail' = 'success'
 mock.module('../agent-session-manager', () => ({
   getAgentSessionSDKMessages: (id: string): SDKMessage[] => inMemorySdk.get(id) ?? [],
-  compactSDKMessages: (id: string, summary: string, keepRecent: number, contextPacket?: unknown): SDKMessage[] => {
+  // 与生产实现同款语义：保留窗口不能从孤儿 tool_result 开始。
+  alignKeepStartToToolPairs: (messages: SDKMessage[], startIndex: number): number => {
+    let start = Math.max(0, Math.min(startIndex, messages.length))
+    const hasToolResult = (message: SDKMessage): boolean => {
+      if (message.type !== 'user') return false
+      const content = (message as { message?: { content?: unknown } }).message?.content
+      return Array.isArray(content) && content.some((block) => (block as { type?: string })?.type === 'tool_result')
+    }
+    while (start > 0 && start < messages.length) {
+      const message = messages[start]
+      if (!message || !hasToolResult(message)) break
+      start -= 1
+    }
+    return start
+  },
+  compactSDKMessages: (id: string, summary: string, keepRecent: number, contextPacket?: unknown, preparedTail?: readonly SDKMessage[]): SDKMessage[] => {
     if (compactPersistenceMode === 'fail') throw new Error('模拟压缩落盘失败')
     const all = inMemorySdk.get(id) ?? []
     const keepCount = Math.max(0, Math.min(keepRecent, all.length))
-    const kept = all.slice(all.length - keepCount)
+    const kept = preparedTail !== undefined ? [...preparedTail] : all.slice(all.length - keepCount)
     const boundary = {
       type: 'system',
       subtype: 'compact_boundary',
@@ -92,6 +107,7 @@ const {
   resolveAdaptiveKeepRecent,
   resolveAutoCompactionTrigger,
   resolveKeepRecentTokenTarget,
+  compactOversizedToolResults,
 } = await import('./context-compaction')
 const { getContextCompactionMetrics } = await import('../context-compaction-audit-service')
 
@@ -322,6 +338,65 @@ describe('上下文压缩（Proma / AI SDK）', () => {
     expect(serializedChars).toBeLessThan(singlePassChars * 4)
   })
 
+  test('最新一条超出保留目标时不得归零：至少保留它并对齐工具对', () => {
+    // 回归：base64 截图被按 ASCII 估算成数十万 token，回溯累加在第一条就 break，
+    // keepRecent 变成 0——压缩后活动历史只剩 boundary，本轮成果从模型视图消失。
+    const huge: SDKMessage = {
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'shot', content: 'A'.repeat(1_400_000) }] },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage
+    const history = [...makeHistory(6), huge]
+    const keep = resolveAdaptiveKeepRecent({ historyMessages: history, targetKeepTokens: 25_600 })
+    // 末条 user(tool_result) 与它前面的 assistant(tool_use) 必须一起保留。
+    expect(keep).toBeGreaterThanOrEqual(2)
+    expect(keep).toBeLessThan(history.length)
+  })
+
+  test('最新一条是独立消息时至少保留 1 条', () => {
+    const huge: SDKMessage = {
+      type: 'assistant',
+      message: { content: [{ type: 'text', text: 'B'.repeat(1_400_000) }] },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage
+    expect(resolveAdaptiveKeepRecent({ historyMessages: [...makeHistory(4), huge], targetKeepTokens: 25_600 })).toBe(1)
+  })
+
+  test('超大工具结果在选取前降级为可续取占位符，原始 JSONL 不变', () => {
+    const hugeToolResult: SDKMessage = {
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'shot', content: 'A'.repeat(1_400_000) }] },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage
+    const history = [
+      { type: 'assistant', message: { content: [{ type: 'tool_use', id: 'shot', name: 'WebBridgeScreenshot', input: {} }] }, parent_tool_use_id: null } as unknown as SDKMessage,
+      hugeToolResult,
+    ]
+    const view = compactOversizedToolResults(history, { perResultTokenBudget: 8_000 })
+    const block = (view[1] as unknown as { message: { content: Array<{ content: unknown }> } }).message.content[0]!
+    expect(typeof block.content).toBe('string')
+    expect(String(block.content)).toContain('已从模型视图降级')
+    expect(String(block.content).length).toBeLessThan(2_000)
+    // 入参不被修改：原始历史仍保有完整正文，供审计与恢复。
+    expect((history[1] as unknown as { message: { content: Array<{ content: string }> } }).message.content[0]!.content).toHaveLength(1_400_000)
+  })
+
+  test('小结果与错误结果不被降级', () => {
+    const small: SDKMessage = {
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'a', content: 'ok' }] },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage
+    const failed: SDKMessage = {
+      type: 'user',
+      message: { content: [{ type: 'tool_result', tool_use_id: 'b', content: 'E'.repeat(400_000), is_error: true }] },
+      parent_tool_use_id: null,
+    } as unknown as SDKMessage
+    const view = compactOversizedToolResults([small, failed], { perResultTokenBudget: 8_000 })
+    expect(view[0]).toBe(small)
+    expect(view[1]).toBe(failed)
+  })
+
   test('工具结果裁剪的保护边界独立于保留窗口硬顶', async () => {
     // 回归：曾把两者共用 DEFAULT_KEEP_RECENT_MESSAGES，硬顶放宽到 200 后
     // 20 余条历史全部进入保护范围，超大工具结果不再被裁剪。
@@ -343,6 +418,46 @@ describe('上下文压缩（Proma / AI SDK）', () => {
     })
 
     expect(result).toMatchObject({ compacted: false, pruned: true })
+  })
+
+  test('末条是超大截图时压缩后仍保留该轮工具调用，而不是只剩 boundary', async () => {
+    const sessionId = 's-huge-tail'
+    const history = [
+      ...makeHistory(40),
+      {
+        type: 'assistant',
+        message: { content: [{ type: 'tool_use', id: 'shot', name: 'WebBridgeScreenshot', input: {} }] },
+        parent_tool_use_id: null,
+        uuid: 'shot-call',
+      } as unknown as SDKMessage,
+      {
+        type: 'user',
+        message: { content: [{ type: 'tool_result', tool_use_id: 'shot', content: 'A'.repeat(1_400_000) }] },
+        parent_tool_use_id: null,
+        uuid: 'shot-result',
+      } as unknown as SDKMessage,
+    ]
+    inMemorySdk.set(sessionId, history)
+
+    const result = await maybeAutoCompact({
+      sessionId,
+      provider: 'deepseek',
+      apiKey: 'k',
+      baseUrl: 'http://mock',
+      model: 'm',
+      historyMessages: history,
+      observedUsage: { contextTokens: 220_000, modelId: 'm', recordedAt: Date.now() },
+      contextWindowOverride: 128_000,
+    })
+
+    expect(result.compacted).toBe(true)
+    // boundary + 至少一对 tool_use/tool_result：本轮成果必须还看得见。
+    expect(result.history.length).toBeGreaterThanOrEqual(3)
+    const tail = result.history.slice(1)
+    expect(tail.some((m) => m.type === 'assistant')).toBe(true)
+    expect(tail.some((m) => m.type === 'user')).toBe(true)
+    // 落盘的是降级后的正文，不是 1.4MB 原文。
+    expect(JSON.stringify(result.history).length).toBeLessThan(100_000)
   })
 
   test('保留目标不超过低水位', () => {

@@ -33,15 +33,46 @@ const BACKGROUND_CLAIM_PATTERNS: RegExp[] = [
   /(?:已|正在)(?:在后台)?(?:安排|派发)/,
 ]
 
+/**
+ * 分句内的否定词。
+ *
+ * 命中说明这一句在说“不会做 / 没在做”，而不是声称后台有工作——
+ * 这类句子恰恰是最该原样保留的停手说明。`不过` 是转折词，不算否定。
+ */
+const CLAUSE_NEGATION = /(?:不(?!过)|没|未|别|勿|无法|不能|不再|无需|不必)/
+
+/**
+ * 把文本切成“否定只作用于自己”的判定单位。
+ *
+ * 转折连词 `但` 之外（`不但` 除外），否定不跨句生效：
+ * 「我不会重新安排，但我会立即启动下一步」里，前半句在否定，后半句才是承诺。
+ *
+ * 两种粒度：检测用 `clause`（逗号/分号也切开，否定只覆盖本分句）；
+ * 剔除用 `sentence`（只按句末标点和转折切），避免一句话被拆成多条 removed 记录。
+ */
+function splitClaimUnits(content: string, granularity: 'clause' | 'sentence'): string[] {
+  const boundary = granularity === 'clause'
+    ? /(?<=[。！？!?\n；;，,])|(?<!不)(?=但)/
+    : /(?<=[。！？!?\n])|(?<!不)(?=但)/
+  return content.split(boundary).filter((unit) => unit.length > 0)
+}
+
+/** 该单位是否在否定；否定句不构成“声称后台在工作”。 */
+function isNegatedUnit(unit: string): boolean {
+  return CLAUSE_NEGATION.test(unit)
+}
+
 export function claimsBackgroundWork(content: string): boolean {
-  return BACKGROUND_CLAIM_PATTERNS.some(pattern => pattern.test(content))
+  return splitClaimUnits(content, 'clause').some(
+    (unit) => !isNegatedUnit(unit) && BACKGROUND_CLAIM_PATTERNS.some((pattern) => pattern.test(unit)),
+  )
 }
 
 /** 按句子剔除没有事实支撑的后台说法；保留原意中可核对的部分。 */
 export function stripUnsupportedClaims(content: string, facts: OwnerClaimFacts): { content: string; removed: string[] } {
   const hasBackgroundWork = facts.pendingEvents > 0 || facts.runningExecutions > 0 || facts.queuedCommands > 0
   if (hasBackgroundWork) return { content, removed: [] }
-  const sentences = content.split(/(?<=[。！？!?\n])/).map(item => item.trim()).filter(Boolean)
+  const sentences = splitClaimUnits(content, 'sentence').map(item => item.trim()).filter(Boolean)
   const removed: string[] = []
   const kept = sentences.filter(sentence => {
     if (!claimsBackgroundWork(sentence)) return true
@@ -49,8 +80,9 @@ export function stripUnsupportedClaims(content: string, facts: OwnerClaimFacts):
     return false
   })
   if (removed.length === 0) return { content, removed }
-  const rest = kept.join('')
-  return { content: rest.trim() ? rest : '当前没有正在进行的后台任务；具体状态以上面的记录为准。', removed }
+  // 删掉的若是末句，残余文本会以逗号/分号结尾；去掉断口再返回。
+  const rest = kept.join('').trim().replace(/[，,；;、]+$/, '')
+  return { content: rest || '当前没有正在进行的后台任务；具体状态以上面的记录为准。', removed }
 }
 
 /** 返回违反“说法对应事实”的消息；空数组表示当前可见说法都有事实支撑。 */

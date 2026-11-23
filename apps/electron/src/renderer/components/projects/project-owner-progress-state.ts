@@ -36,3 +36,49 @@ export function getOwnerWaitingLabel(messages: readonly OwnerManagementMessage[]
 export function isOwnerWaitingForUser(messages: readonly OwnerManagementMessage[], taskId?: string): boolean {
   return getOwnerWaitingLabel(messages, taskId) !== null
 }
+
+/** 项目列表一行要回答的问题：现在什么状态、在等谁、下一步是谁的事。 */
+export interface OwnerProjectRowSummary {
+  /** 阶段标签，用于列表主行。 */
+  stage: string
+  /** 等待对象；空字符串表示没有人在等。 */
+  waitingOn: string
+  /** 下一动作，给用户的操作提示。 */
+  nextAction: string
+  /** 是否正在等我处理——列表据此排序或高亮。 */
+  needsUser: boolean
+}
+
+/**
+ * 把调度状态与对话消息折叠成一行摘要。
+ *
+ * 优先看「是否有人在等用户」：等待用户的项目必须浮到列表上方，
+ * 否则多项目并行时用户只能逐个点开才能发现卡点。
+ *
+ * 调度状态与对话消息可能不同步——消息是用户可见的事实，
+ * 调度状态是系统内部投影。两者冲突时以消息为准：用户看到过提示，
+ * 就不该因为内部状态已推进而认为没事。
+ */
+export function summarizeOwnerProjectRow(
+  messages: readonly OwnerManagementMessage[],
+  taskId: string | undefined,
+  schedule: { state: string; reason?: string; nextAction?: string } | undefined,
+  authorizationState?: string,
+): OwnerProjectRowSummary {
+  const waitingLabel = getOwnerWaitingLabel(messages, taskId, authorizationState)
+  if (waitingLabel) return { stage: '等待你', waitingOn: '你', nextAction: waitingLabel, needsUser: true }
+  if (!schedule) return { stage: '未开始', waitingOn: '', nextAction: '尚未建立管理授权', needsUser: false }
+  switch (schedule.state) {
+    case 'running': return { stage: '进行中', waitingOn: '', nextAction: 'Owner 与团队正在推进', needsUser: false }
+    case 'ready': return { stage: '进行中', waitingOn: '', nextAction: '即将安排下一步', needsUser: false }
+    case 'waiting': return { stage: '等待中', waitingOn: schedule.nextAction === 'human_decision' ? '你' : '系统核对', nextAction: schedule.reason ?? '等待前置条件满足', needsUser: schedule.nextAction === 'human_decision' }
+    case 'paused': return { stage: '已暂停', waitingOn: '你', nextAction: schedule.reason ?? '恢复后才会继续派工', needsUser: true }
+    case 'needs_reconcile': return { stage: '待核对', waitingOn: '你', nextAction: schedule.reason ?? '费用或停止状态需人工核对', needsUser: true }
+    case 'stale': return { stage: '待重新确认', waitingOn: '你', nextAction: schedule.reason ?? '来源或授权已变化，需重新确认', needsUser: true }
+    case 'expired': return { stage: '已过期', waitingOn: '你', nextAction: schedule.reason ?? '授权期限已过', needsUser: true }
+    case 'archived': return { stage: '已归档', waitingOn: '', nextAction: '本次授权已结束', needsUser: false }
+    case 'manual': return { stage: '手动模式', waitingOn: '你', nextAction: '需逐条确认后才会派工', needsUser: true }
+    case 'no_grant': return { stage: '未开始', waitingOn: '', nextAction: '尚未建立管理授权', needsUser: false }
+    default: return { stage: '未知', waitingOn: '', nextAction: schedule.reason ?? '请打开项目核对', needsUser: false }
+  }
+}

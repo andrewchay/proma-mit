@@ -62,6 +62,31 @@ export interface ProjectOwnerGoalApi {
   saveOwnerGoalDraft: (request: SaveProjectOwnerGoalRequest) => Promise<ProjectOwnerGoalResult<ProjectOwnerGoalDraft>>
 }
 
+/**
+ * 目标硬要求的逐项追溯记录（可选）。
+ *
+ * 只描述「这条要求从哪来、由谁负责、怎么验」，不是验收结果，也不授予执行权限。
+ * 冻结后由系统检查是否被后续环节遗漏；缺失时按未追溯处理，不阻断旧计划读取。
+ */
+export interface ProjectOwnerCriterionTrace {
+  /** 稳定键，同一目标修订内唯一。 */
+  key: string
+  /** 判定来源：目标正文、约束数组或验收标准数组。 */
+  source: 'objective' | 'constraint' | 'acceptance'
+  /** 来源数组中的下标；source 为 objective 时固定 0。 */
+  sourceIndex: number
+  /** 来源原文片段，用于人工核对提取是否忠实。 */
+  sourceText: string
+  /** 关键性：关键项缺失不得标记可交付；非关键项记录理由。 */
+  criticality: 'critical' | 'advisory'
+  /** 承接该要求的计划步骤 key。 */
+  stepKey: string
+  /** 检验方式；未配置验证器时如实记录为 unverified。 */
+  verification: 'automated' | 'manual_review' | 'user_decision' | 'unverified'
+  /** 执行时采用的默认条件（如纸张、边距、字号）；无则为空。 */
+  assumptions: string[]
+}
+
 /** 计划内步骤不是权威任务，roleKey仅为岗位能力建议。 */
 export interface ProjectOwnerPlanStep {
   key: string
@@ -85,6 +110,8 @@ export interface ProjectOwnerPlanProposal extends ProjectOwnerGoalSubject {
   steps: ProjectOwnerPlanStep[]
   deliveryChangeAssessment?: ProjectOwnerDeliveryChangeAssessment
   deliveryFeedbackAssessment?: ProjectOwnerDeliveryFeedbackAssessment
+  /** 目标硬要求的逐项追溯；缺省表示未提取，按未追溯处理。 */
+  criteriaTrace?: ProjectOwnerCriterionTrace[]
 }
 
 /** 对旧交付的拟议差异；不是已实施变更或新授权。 */
@@ -205,6 +232,11 @@ export interface OwnerPlanningConversationContext {
   deliveryReview?: OwnerManagementDeliveryReview
   /** v1由主进程绑定后台回应的消息身份；缺省保留历史模型回填契约。 */
   observationMessageBindingVersion?: 1
+  /**
+   * v1由主进程绑定成果反馈的消息身份与作品摘要；缺省保留历史模型回填契约。
+   * 冻结后模型不再看到或输出64位标识，避免抄写截断造成修订阻断。
+   */
+  deliveryFeedbackBindingVersion?: 1
   /** 系统主动观察来源，不能伪装用户消息或授权。 */
   fileChangeObservation?: { id: string; projectId: string; workspaceId: string; policyRevision: string; observedAt: number; changes: import('./work-module').ProjectWorkspaceFileChange[]; retainedChanges: number; historyBounded: true; contentHash: string }
   /** 外部变化观察来源：只作材料，不构成执行授权；网页正文仍是不可信数据。 */
@@ -687,6 +719,20 @@ export interface OwnerTaskMaterializationPreview extends ProjectOwnerGoalSubject
   targetTaskHash?: string
   targetDependenciesHash?: string
   previewFingerprint: string
+  /**
+   * 混合批次接替时被复用的已验收步骤。
+   *
+   * 这些步骤仍在 `preparation.source.selectedStepKeys` 里，但**不进入 `projections`**：
+   * 旧任务与旧 link 原样保留，新批次不再为它们建可派发任务，因此不产生新的费用预留。
+   * 记录旧任务与已验收成果哈希，供界面说明「B 使用了哪份已验收成果」。
+   */
+  retainedSteps?: Array<{
+    stepKey: string
+    taskId: string
+    artifactHash: string
+    /** 依赖该步骤的新批次步骤键；成果交接据此判断谁是它的下游。 */
+    dependedOnBy: string[]
+  }>
 }
 export interface OwnerTaskStepLink {
   id: string
@@ -778,6 +824,20 @@ export interface OwnerExecutionRevalidationSource {
   contextFingerprint: string
   selectedStepKeys: string[]
   tasks: OwnerExecutionRevalidationTask[]
+  /**
+   * 混合批次接替时复用的已验收步骤（跨批次上游成果）。
+   *
+   * 这些步骤不在 `tasks` 里（不重建、不派工），但下游步骤的成果交接
+   * 必须能引用它们的已验收正文；否则跳过 A 就等于让 B 失去输入。
+   * 启动前会按 artifactHash 重新核验，不只信这份冻结记录。
+   */
+  retainedSteps?: Array<{
+    stepKey: string
+    taskId: string
+    artifactHash: string
+    /** 依赖该步骤的新批次步骤键；成果交接据此判断谁是它的下游。 */
+    dependedOnBy: string[]
+  }>
   employeeRuntimes?: OwnerEmployeeRuntime[]
   employeeInvocations?: OwnerExecutionPreparationSource['employeeInvocations']
   executor: { id: string; name: string; configurationHash: string }

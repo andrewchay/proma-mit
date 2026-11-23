@@ -104,7 +104,7 @@ async function fixture() {
   const delegationInput = { projectId: project.id, requestId: randomUUID(), maxRequests: 12, maxCostMicros: 15_000_000, expiresAt: Date.now() + 3_600_000 }
   const delegationPreview = delegation.previewOwnerManagementDelegation(delegationInput)
   delegation.confirmOwnerManagementDelegation({ input: delegationInput, previewHash: delegationPreview.previewHash })
-  return { project, subject, workspace, repo, executor, reviewer, materializationInput }
+  return { project, subject, workspace, repo, executor, reviewer, materializationInput, preparationRoleKey: roleKey }
 }
 
 /** 替身 Runner：业务执行走真实受控出口，Owner 规划返回质量决定或普通回应。 */
@@ -274,3 +274,264 @@ test('Given真实混合批次（规格完成+评审通过+研发失败）When接
     if (manager?.status === 'active') managementStore.setOwnerManagerStatus(f.project.id, manager.revision, 'paused')
   }
 }, 90_000)
+
+/**
+ * 在已跑完失败步骤的批次上，按给定步骤再确认一版方案并准备新批次。
+ * 版本号全部从当前状态推导，避免硬编码。
+ */
+async function prepareSupersedingBatch(
+  f: Awaited<ReturnType<typeof fixture>>,
+  steps: Array<{ key: string; title: string; outcome: string; acceptanceCriteria: string[]; dependencies: string[]; roleKey: string; deliveryKind?: 'text' | 'development' }>,
+  changeReason: string,
+) {
+  const context = plans.getProjectOwnerPlanningContext(f.project.id)
+  const plan = plans.getProjectOwnerPlanDraft(f.project.id)!
+  const goal = goals.getProjectOwnerGoalDraft(f.project.id)!
+  plans.saveProjectOwnerPlanDraft(f.project.id, goal.revision, plan.revision, {
+    expectedContextFingerprint: context.fingerprint, summary: changeReason, assumptions: [], risks: [], steps, changeReason,
+  })
+  const confirmed = plans.confirmProjectOwnerPlanDraft(f.project.id, goal.revision, plan.revision + 1)
+  const previousPreparation = prep.getOwnerExecutionPreparation(f.subject).preparation!
+  const { getPilotPolicy } = await import('./project-pilot-policy')
+  const preparationInput = {
+    requestId: randomUUID(),
+    expectedPreparationRevision: prep.getOwnerExecutionPreparation(f.subject).revision,
+    // 策略 revision 必须以当前值为准；旧准备记录里的那个只说明当时。
+    expectedPolicyRevision: getPilotPolicy(f.project.id)?.revision ?? null,
+    expectedGoalRevision: goal.revision,
+    expectedPlanRevision: confirmed.revision,
+    selectedStepKeys: steps.map(step => step.key),
+    executionKind: 'development' as const,
+    developmentScope: previousPreparation.source.developmentScope ?? { workspaceId: f.workspace.id, targetPaths: ['index.html'], allowedPaths: ['index.html', 'README.md'], verificationCommands: ['git status'] },
+    qualityManagementVersion: 1 as const, employeeRuntimeVersion: 2 as const,
+    executorEmployeeId: f.executor.id, reviewerEmployeeId: f.reviewer.id,
+    roleAssignments: [{ roleKey: previousPreparation.source.roleAssignments![0]!.roleKey, employeeId: f.executor.id }],
+    workspaceId: f.workspace.id, knowledgeSourceIds: [],
+    // 新批次授权不得晚于项目总预算期限，沿用旧准备的上界。
+    maxCostMicros: 1_000_000, maxRuns: 8, maxRework: 1,
+    expiresAt: Math.min(Date.now() + 3_600_000, previousPreparation.input.expiresAt), changeReason,
+  }
+  const prepPreview = prep.previewOwnerExecutionPreparation(f.subject, preparationInput)
+  const preparation = prep.saveOwnerExecutionPreparation(f.subject, preparationInput, prepPreview.previewFingerprint)
+  const materializationInput = {
+    requestId: randomUUID(),
+    expectedMaterializationRevision: material.getOwnerTaskMaterialization(f.subject).revision,
+    expectedPreparationId: preparation.id, expectedPreparationRevision: preparation.revision,
+    expectedPreparationHash: preparation.integrityHash, expectedPolicyRevision: preparation.policyRevision,
+  }
+  return { materializationInput, preview: material.previewOwnerTaskMaterialization(f.subject, materializationInput) }
+}
+
+const TWO_STEPS = (roleKey: string) => [
+  { key: 'brief', title: '形成规格', outcome: '规格说明', acceptanceCriteria: ['范围明确'], dependencies: [] as string[], roleKey, deliveryKind: 'text' as const },
+  { key: 'delivery', title: '实现页面', outcome: '可运行的页面', acceptanceCriteria: ['页面可打开'], dependencies: ['brief'], roleKey, deliveryKind: 'development' as const },
+]
+
+/** 等规格验收完成、研发步骤失败；返回规格任务。 */
+async function untilBriefAccepted(f: Awaited<ReturnType<typeof fixture>>) {
+  await until(() => {
+    const commands = executionCommand.listOwnerExecutionCommands(f.subject)
+    return commands.some(c => c.taskTitle === '形成规格' && c.role === 'reviewer' && c.state === 'settled')
+      && commands.some(c => c.taskTitle === '实现页面' && c.state === 'settled' && c.executionStatus === 'failed')
+  }, '规格验收完成且研发失败', 30_000, () => ({
+    calls: businessCalls,
+    commands: executionCommand.listOwnerExecutionCommands(f.subject)
+      .map(c => ({ title: c.taskTitle, role: c.role, state: c.state, executionStatus: c.executionStatus })),
+    schedule: scheduler.getOwnerAutonomousScheduleStatus(f.project.id),
+  }))
+  return store.listTasks(f.project.id).find(task => task.title === '形成规格')!
+}
+
+/**
+ * 复用的完整验收：真实验收后新批次只重做失败步骤，
+ * 且下游能拿到上游已验收正文、上游不产生新命令与费用预留。
+ */
+test('Given真实接替 When新批次材料化 Then只重做失败步骤且下游拿到已验收成果', async () => {
+  installRunner()
+  const f = await fixture()
+  for (const event of managementStore.listPendingOwnerManagementEvents(f.project.id)) managementStore.consumeOwnerManagementEvent(event)
+  const stopWake = scheduleEvents.onOwnerAutonomousScheduleWake(projectId => { if (projectId === f.project.id) void scheduler.runOwnerAutonomousSchedule(projectId) })
+  const stopManagement = management.startOwnerManagementLoop()
+  try {
+    const preview = material.previewOwnerTaskMaterialization(f.subject, f.materializationInput)
+    const grant = await executionLaunch.launchOwnerPreparedExecution(
+      { ...f.subject, input: f.materializationInput, previewFingerprint: preview.previewFingerprint },
+      { schedule: async () => {} },
+    )
+    await scheduler.runOwnerAutonomousSchedule(f.project.id)
+    // 等规格步骤走完真实验收、研发步骤失败。
+    await until(() => {
+      const commands = executionCommand.listOwnerExecutionCommands(f.subject)
+      return commands.some(c => c.taskTitle === '形成规格' && c.role === 'reviewer' && c.state === 'settled')
+        && commands.some(c => c.taskTitle === '实现页面' && c.state === 'settled' && c.executionStatus === 'failed')
+    }, '规格验收完成且研发失败')
+
+    const briefTask = store.listTasks(f.project.id).find(task => task.title === '形成规格')!
+    const commandsBefore = executionCommand.listOwnerExecutionCommands(f.subject)
+    const briefCommandsBefore = commandsBefore.filter(c => c.taskId === briefTask.id)
+    expect(briefCommandsBefore.length).toBeGreaterThan(0)
+
+    // 生产路径：先经接替核对暂停旧授权，再为新批次重新准备。
+    const plan0 = recovery.planMixedBatchSupersession(f.subject, grant.materializationId)
+    expect(plan0.retainedTaskIds).toContain(briefTask.id)
+
+    // 新方案仍列出两步（模拟模型重复规划），材料化应只保留失败步骤。
+    const context = plans.getProjectOwnerPlanningContext(f.project.id)
+    const plan = plans.getProjectOwnerPlanDraft(f.project.id)!
+    const goal = goals.getProjectOwnerGoalDraft(f.project.id)!
+    plans.saveProjectOwnerPlanDraft(f.project.id, goal.revision, plan.revision, {
+      expectedContextFingerprint: context.fingerprint,
+      summary: '接替失败步骤', assumptions: [], risks: [],
+      steps: [
+        { key: 'brief', title: '形成规格', outcome: '规格说明', acceptanceCriteria: ['范围明确'], dependencies: [], roleKey: context.sources.roles[0]!.key, deliveryKind: 'text' as const },
+        { key: 'delivery', title: '实现页面', outcome: '可运行的页面', acceptanceCriteria: ['页面可打开'], dependencies: ['brief'], roleKey: context.sources.roles[0]!.key, deliveryKind: 'development' as const },
+      ],
+      changeReason: '接替失败步骤',
+    })
+    const confirmed = plans.confirmProjectOwnerPlanDraft(f.project.id, goal.revision, plan.revision + 1)
+    const previousPreparation = prep.getOwnerExecutionPreparation(f.subject).preparation!
+    const { getPilotPolicy } = await import('./project-pilot-policy')
+    const preparationInput = {
+      requestId: randomUUID(),
+      expectedPreparationRevision: prep.getOwnerExecutionPreparation(f.subject).revision,
+      // 策略 revision 必须以当前值为准；旧准备记录里的那个只说明当时。
+      expectedPolicyRevision: getPilotPolicy(f.project.id)?.revision ?? null,
+      expectedGoalRevision: goal.revision,
+      expectedPlanRevision: confirmed.revision,
+      selectedStepKeys: ['brief', 'delivery'],
+      executionKind: 'development' as const,
+      developmentScope: previousPreparation.source.developmentScope ?? { workspaceId: f.workspace.id, targetPaths: ['index.html'], allowedPaths: ['index.html', 'README.md'], verificationCommands: ['git status'] },
+      qualityManagementVersion: 1 as const, employeeRuntimeVersion: 2 as const,
+      executorEmployeeId: f.executor.id, reviewerEmployeeId: f.reviewer.id,
+      roleAssignments: [{ roleKey: previousPreparation.source.roleAssignments![0]!.roleKey, employeeId: f.executor.id }],
+      workspaceId: f.workspace.id, knowledgeSourceIds: [],
+      maxCostMicros: 1_000_000, maxRuns: 8, maxRework: 1, expiresAt: Date.now() + 3_600_000, changeReason: '接替失败步骤',
+    }
+    const prepPreview = prep.previewOwnerExecutionPreparation(f.subject, preparationInput)
+    const preparation = prep.saveOwnerExecutionPreparation(f.subject, preparationInput, prepPreview.previewFingerprint)
+    const nextInput = {
+      requestId: randomUUID(), expectedMaterializationRevision: 1,
+      expectedPreparationId: preparation.id, expectedPreparationRevision: preparation.revision,
+      expectedPreparationHash: preparation.integrityHash, expectedPolicyRevision: preparation.policyRevision,
+    }
+    const nextPreview = material.previewOwnerTaskMaterialization(f.subject, nextInput)
+
+    // (a) 只为失败步骤建任务；已验收步骤进入复用清单并带真实成果哈希。
+    expect(nextPreview.projections.map(item => item.stepKey)).toEqual(['delivery'])
+    expect(nextPreview.retainedSteps).toHaveLength(1)
+    expect(nextPreview.retainedSteps![0]).toMatchObject({ stepKey: 'brief', taskId: briefTask.id })
+    const accepted = (await import('./project-owner-accepted-artifact')).readLatestAcceptedArtifact(f.project.id, briefTask.id)!
+    expect(nextPreview.retainedSteps![0]!.artifactHash).toBe(accepted.artifactHash)
+    // 下游依赖记录完整：delivery 依赖 brief 的已验收成果。
+    expect(nextPreview.retainedSteps![0]!.dependedOnBy).toEqual(['delivery'])
+    // 交接内容就是已验收正文，不是链接哈希。
+    expect(accepted.content).toContain(BRIEF_QUOTE)
+
+    material.materializeOwnerTasks(f.subject, nextInput, nextPreview.previewFingerprint)
+    // (b) 上游任务与命令原样保留：没有新增命令，费用预留也没变。
+    const briefCommandsAfter = executionCommand.listOwnerExecutionCommands(f.subject).filter(c => c.taskId === briefTask.id)
+    const identity = (c: (typeof briefCommandsAfter)[number]) => `${c.commandId}:${c.role}:${c.reworkOrdinal}:${c.actualCostMicros}:${c.reservedCostMicros}`
+    expect(briefCommandsAfter.map(identity).sort()).toEqual(briefCommandsBefore.map(identity).sort())
+    expect(briefCommandsAfter).toHaveLength(briefCommandsBefore.length)
+    // 旧任务仍归属旧 link，不被新批次改写。
+    expect(store.getTask(briefTask.id)!.ownerStepLinkId).toBe(briefTask.ownerStepLinkId)
+  } finally {
+    await stopManagement()
+    stopWake()
+    const manager = managementStore.getOwnerManager(f.project.id)
+    if (manager?.status === 'active') managementStore.setOwnerManagerStatus(f.project.id, manager.revision, 'paused')
+  }
+}, 90_000)
+
+/**
+ * 场景二：连续两次恢复。
+ *
+ * 第一次恢复后，最新一批记录只含当时失败的步骤；若复用判定只看最近一批，
+ * 更早已验收的步骤会被重新派工。这里验证累积语义：两轮之后 A 仍然不被重做。
+ */
+test('Given连续两次恢复 When第二次材料化 Then更早已验收的步骤仍不复用重做', async () => {
+  installRunner()
+  const f = await fixture()
+  for (const event of managementStore.listPendingOwnerManagementEvents(f.project.id)) managementStore.consumeOwnerManagementEvent(event)
+  const stopWake = scheduleEvents.onOwnerAutonomousScheduleWake(projectId => { if (projectId === f.project.id) void scheduler.runOwnerAutonomousSchedule(projectId) })
+  const stopManagement = management.startOwnerManagementLoop()
+  try {
+    const preview = material.previewOwnerTaskMaterialization(f.subject, f.materializationInput)
+    const grant = await executionLaunch.launchOwnerPreparedExecution(
+      { ...f.subject, input: f.materializationInput, previewFingerprint: preview.previewFingerprint },
+      { schedule: async () => {} },
+    )
+    await scheduler.runOwnerAutonomousSchedule(f.project.id)
+    const briefTask = await untilBriefAccepted(f)
+    recovery.planMixedBatchSupersession(f.subject, grant.materializationId)
+
+    // 第一次恢复：只重做 delivery。
+    const first = await prepareSupersedingBatch(f, TWO_STEPS(f.preparationRoleKey), '第一次接替')
+    expect(first.preview.retainedSteps?.map(step => step.stepKey)).toEqual(['brief'])
+    material.materializeOwnerTasks(f.subject, first.materializationInput, first.preview.previewFingerprint)
+
+    // 第二次恢复：新方案的 brief 仍在，但已验收成果必须继续沿用。
+    const second = await prepareSupersedingBatch(f, TWO_STEPS(f.preparationRoleKey), '第二次接替')
+    expect(second.preview.retainedSteps?.map(step => step.stepKey)).toEqual(['brief'])
+    expect(second.preview.retainedSteps![0]).toMatchObject({ taskId: briefTask.id })
+    // 仍指向最新一次验收，而不是第一次恢复时的过期记录。
+    const latest = (await import('./project-owner-accepted-artifact'))
+      .readLatestAcceptedArtifact(f.project.id, briefTask.id)!
+    expect(second.preview.retainedSteps![0]!.artifactHash).toBe(latest.artifactHash)
+  } finally {
+    await stopManagement()
+    stopWake()
+    const manager = managementStore.getOwnerManager(f.project.id)
+    if (manager?.status === 'active') managementStore.setOwnerManagerStatus(f.project.id, manager.revision, 'paused')
+  }
+}, 120_000)
+
+/**
+ * 场景三：新 B 实际收到旧 A 的正文。
+ *
+ * 只断言 retainedSteps 存在不足以证明交接真的发生——必须看 B 启动时的
+ * 冻结提示里是否含 A 的已验收正文。
+ */
+test('Given接替批次 WhenB实际启动 Then提示里带A的已验收正文', async () => {
+  installRunner()
+  const f = await fixture()
+  for (const event of managementStore.listPendingOwnerManagementEvents(f.project.id)) managementStore.consumeOwnerManagementEvent(event)
+  const stopWake = scheduleEvents.onOwnerAutonomousScheduleWake(projectId => { if (projectId === f.project.id) void scheduler.runOwnerAutonomousSchedule(projectId) })
+  const stopManagement = management.startOwnerManagementLoop()
+  try {
+    const preview = material.previewOwnerTaskMaterialization(f.subject, f.materializationInput)
+    const grant = await executionLaunch.launchOwnerPreparedExecution(
+      { ...f.subject, input: f.materializationInput, previewFingerprint: preview.previewFingerprint },
+      { schedule: async () => {} },
+    )
+    await scheduler.runOwnerAutonomousSchedule(f.project.id)
+    await untilBriefAccepted(f)
+    recovery.planMixedBatchSupersession(f.subject, grant.materializationId)
+
+    const next = await prepareSupersedingBatch(f, TWO_STEPS(f.preparationRoleKey), '接替失败步骤')
+    const materialized = material.materializeOwnerTasks(f.subject, next.materializationInput, next.preview.previewFingerprint)
+    const deliveryTaskId = materialized.links.find(link => link.stepKey === 'delivery')!.taskId
+
+    // 走真实启动路径：新批次发行授权后由调度器派工，
+    // B 的命令提示由 resolveUpstreamArtifactHandoffs 构造。
+    await executionLaunch.launchOwnerPreparedExecution(
+      { ...f.subject, input: next.materializationInput, previewFingerprint: next.preview.previewFingerprint },
+      { schedule: async () => {} },
+    )
+    await scheduler.runOwnerAutonomousSchedule(f.project.id)
+    await until(() => executionCommand.listOwnerExecutionCommands(f.subject)
+      .some(c => c.taskId === deliveryTaskId && c.role === 'executor'), 'B 命令已排队')
+    const commands = executionCommand.listOwnerExecutionCommands(f.subject)
+    const deliveryCommand = commands.find(c => c.taskId === deliveryTaskId && c.role === 'executor')!
+    expect(deliveryCommand).toBeDefined()
+    const execution = store.getAgentExecution(deliveryCommand.executionId!)!
+    // 交接块必须存在且含 A 的已验收正文。
+    expect(execution.prompt).toContain('<untrusted-upstream-artifacts>')
+    expect(execution.prompt).toContain(BRIEF_QUOTE)
+  } finally {
+    await stopManagement()
+    stopWake()
+    const manager = managementStore.getOwnerManager(f.project.id)
+    if (manager?.status === 'active') managementStore.setOwnerManagerStatus(f.project.id, manager.revision, 'paused')
+  }
+}, 120_000)

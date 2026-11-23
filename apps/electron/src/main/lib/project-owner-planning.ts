@@ -3,6 +3,7 @@
  * 本模块无持久化与 Runtime 依赖；角色可用性须由调用方从权威目录提供。
  */
 import type { OwnerPlanningConversationContext, ProjectOwnerCodeFileMatch, ProjectOwnerDeliveryContext, ProjectOwnerDeliveryChangeAssessment, ProjectOwnerDeliveryFeedbackAssessment, ProjectOwnerGoalBrief, ProjectOwnerPlanProposal, ProjectOwnerPlanStep } from '@gravitas/shared'
+import { parseCriteriaTrace } from './project-owner-criteria-trace'
 export type { ProjectOwnerDeliveryFeedbackAssessment, ProjectOwnerGoalBrief, ProjectOwnerPlanProposal, ProjectOwnerPlanStep } from '@gravitas/shared'
 
 function record(input: unknown, fields: readonly string[], label: string): Record<string, unknown> {
@@ -120,8 +121,10 @@ export function parseProjectOwnerPlanProposal(
   deliverySources: readonly ProjectOwnerDeliveryContext[] = [],
   expectedDeliveryFeedback?: Pick<NonNullable<OwnerPlanningConversationContext['deliveryFeedback']>, 'messageId' | 'artifactHash' | 'stepKey' | 'acceptanceCriteria'>,
   requireDeliveryKind = false,
+  /** v1：成果身份由主进程绑定，模型响应不得携带 messageId/artifactHash。 */
+  hostBoundDeliveryFeedback = false,
 ): ProjectOwnerPlanProposal {
-  const value = record(input, ['projectId', 'taskId', 'goalVersion', 'summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment'], '计划提案')
+  const value = record(input, ['projectId', 'taskId', 'goalVersion', 'summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment', 'criteriaTrace'], '计划提案')
   const projectId = text(value.projectId, 'projectId', 200)
   const taskId = value.taskId === undefined ? undefined : text(value.taskId, 'taskId', 200)
   const goalVersion = version(value.goalVersion)
@@ -136,6 +139,8 @@ export function parseProjectOwnerPlanProposal(
   const steps = value.steps.map((step) => parseStep(step, roles, codeFiles, requireDeliveryKind))
   if (requireCodeReferences && codeFiles.length && !steps.some(step => (step.sourceReferences?.length ?? 0) > 0)) throw new Error('代码规划提案必须引用本次检索到的文件和行号')
   validateDependencies(steps)
+  // 逐项追溯可选；提出时必须逐条指向真实来源与真实步骤，否则视为伪造。
+  const criteriaTrace = value.criteriaTrace === undefined ? undefined : parseCriteriaTrace(value.criteriaTrace, goal, steps)
   let deliveryChangeAssessment: ProjectOwnerDeliveryChangeAssessment | undefined
   if (deliverySources.length) {
     const assessment = record(value.deliveryChangeAssessment, ['summary', 'commands'], '交付差异评估')
@@ -163,7 +168,10 @@ export function parseProjectOwnerPlanProposal(
   }
   let deliveryFeedbackAssessment: ProjectOwnerDeliveryFeedbackAssessment | undefined
   if (expectedDeliveryFeedback || value.deliveryFeedbackAssessment !== undefined) {
-    const assessment = record(value.deliveryFeedbackAssessment, ['messageId', 'artifactHash', 'stepKey', 'summary', 'changes', 'authorizationImpact', 'authorizationRationale'], '成果反馈影响评估')
+    // 宿主绑定模式下，模型不再被允许输出身份字段：身份一律取自本次冻结的反馈。
+    const assessment = record(value.deliveryFeedbackAssessment, hostBoundDeliveryFeedback
+      ? ['summary', 'changes', 'authorizationImpact', 'authorizationRationale']
+      : ['messageId', 'artifactHash', 'stepKey', 'summary', 'changes', 'authorizationImpact', 'authorizationRationale'], '成果反馈影响评估')
     if (!Array.isArray(assessment.changes) || assessment.changes.length < 1 || assessment.changes.length > 64
       || (assessment.authorizationImpact !== 'within_confirmed_boundary' && assessment.authorizationImpact !== 'additional_confirmation' && assessment.authorizationImpact !== 'cannot_determine')) throw new Error('成果反馈影响评估字段无效')
     const changes = assessment.changes.map((rawChange) => {
@@ -171,13 +179,18 @@ export function parseProjectOwnerPlanProposal(
       if (change.disposition !== 'addressed' && change.disposition !== 'still_open' && change.disposition !== 'not_applicable') throw new Error('成果标准差异状态无效')
       return { criterion: text(change.criterion, '原成果标准', 2000), disposition: change.disposition as ProjectOwnerDeliveryFeedbackAssessment['changes'][number]['disposition'], proposedChange: text(change.proposedChange, '拟议改动') }
     })
-    if (typeof assessment.messageId !== 'string' || !/^[a-f0-9]{64}$/.test(assessment.messageId) || typeof assessment.artifactHash !== 'string' || !/^[a-f0-9]{64}$/.test(assessment.artifactHash)) throw new Error('成果反馈影响评估缺少准确版本身份')
-    if (assessment.stepKey !== undefined && (typeof assessment.stepKey !== 'string' || !assessment.stepKey.trim() || assessment.stepKey.length > 100)) throw new Error('成果反馈步骤身份无效')
-    if (expectedDeliveryFeedback && (assessment.messageId !== expectedDeliveryFeedback.messageId || assessment.artifactHash !== expectedDeliveryFeedback.artifactHash
-      || assessment.stepKey !== expectedDeliveryFeedback.stepKey
+    // 宿主绑定模式下，身份与标准来自冻结反馈；模型只负责改动内容与授权影响。
+    if (hostBoundDeliveryFeedback && !expectedDeliveryFeedback) throw new Error('成果反馈身份必须由主进程绑定')
+    const messageId = hostBoundDeliveryFeedback ? expectedDeliveryFeedback!.messageId : assessment.messageId
+    const artifactHash = hostBoundDeliveryFeedback ? expectedDeliveryFeedback!.artifactHash : assessment.artifactHash
+    const stepKey = hostBoundDeliveryFeedback ? expectedDeliveryFeedback!.stepKey : assessment.stepKey
+    if (typeof messageId !== 'string' || !/^[a-f0-9]{64}$/.test(messageId) || typeof artifactHash !== 'string' || !/^[a-f0-9]{64}$/.test(artifactHash)) throw new Error('成果反馈影响评估缺少准确版本身份')
+    if (stepKey !== undefined && (typeof stepKey !== 'string' || !stepKey.trim() || stepKey.length > 100)) throw new Error('成果反馈步骤身份无效')
+    if (expectedDeliveryFeedback && (messageId !== expectedDeliveryFeedback.messageId || artifactHash !== expectedDeliveryFeedback.artifactHash
+      || stepKey !== expectedDeliveryFeedback.stepKey
       || changes.length !== expectedDeliveryFeedback.acceptanceCriteria.length || changes.some((change, index) => change.criterion !== expectedDeliveryFeedback.acceptanceCriteria[index]))) throw new Error('成果反馈评估与准确成果版本或原完成标准不匹配')
     if (expectedDeliveryFeedback && assessment.authorizationImpact === 'cannot_determine') throw new Error('成果反馈影响无法判定，必须先向用户澄清而不能直接提交方案')
-    deliveryFeedbackAssessment = { messageId: assessment.messageId, artifactHash: assessment.artifactHash, ...(typeof assessment.stepKey === 'string' ? { stepKey: assessment.stepKey } : {}), summary: text(assessment.summary, '成果反馈改动摘要'), changes,
+    deliveryFeedbackAssessment = { messageId, artifactHash, ...(typeof stepKey === 'string' ? { stepKey } : {}), summary: text(assessment.summary, '成果反馈改动摘要'), changes,
       authorizationImpact: assessment.authorizationImpact, authorizationRationale: text(assessment.authorizationRationale, '授权影响说明') }
   }
   return {
@@ -191,5 +204,6 @@ export function parseProjectOwnerPlanProposal(
     steps,
     ...(deliveryChangeAssessment ? { deliveryChangeAssessment } : {}),
     ...(deliveryFeedbackAssessment ? { deliveryFeedbackAssessment } : {}),
+    ...(criteriaTrace ? { criteriaTrace } : {}),
   }
 }

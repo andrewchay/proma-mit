@@ -71,7 +71,10 @@ function buildRevalidationSource(subject: ProjectOwnerGoalSubject, input: OwnerE
     if (v1.roleAssignments && (!roleAssignment || task.assignee?.userId !== `agent-${roleAssignment.employee.id}`)) fail('权威Task负责人与冻结roleKey员工映射不一致')
     return { taskId: task.id, stepKey: link.stepKey, ...(link.projection.deliveryKind ? { deliveryKind: link.projection.deliveryKind } : {}), linkId: link.id, linkKind: link.kind, linkIntegrityHash: link.integrityHash, taskSpecificationHash: link.taskSpecificationHash, status: 'paused' as const, assignee: task.assignee ?? { userId: '', displayName: '' }, ...(roleAssignment ? { executor: { id: roleAssignment.employee.id, name: roleAssignment.employee.name, roleKey, configurationHash: roleAssignment.employee.configurationHash } } : {}), workspaceId: task.workspaceId ?? '', ...(task.developmentScope ? { developmentScope: task.developmentScope } : {}), dependencies }
   })
-  if (ownerExecutionHash(tasks.map(task => task.stepKey).sort()) !== ownerExecutionHash(v1.selectedStepKeys.slice().sort())) fail('步骤与真实任务数量不符，请保留原件核查')
+  // 混合批次接替时，已验收步骤不在本批 tasks 里（它们保留在旧批次），
+  // 因此比对的是「本批任务 + 复用清单」而不是 selectedStepKeys 全量。
+  const retained = materialization.preview.retainedSteps ?? []
+  if (ownerExecutionHash([...tasks.map(task => task.stepKey), ...retained.map(step => step.stepKey)].sort()) !== ownerExecutionHash(v1.selectedStepKeys.slice().sort())) fail('步骤与真实任务数量不符，请保留原件核查')
   return {
     schemaVersion: 2,
     stage: 'paused_task_links',
@@ -85,6 +88,8 @@ function buildRevalidationSource(subject: ProjectOwnerGoalSubject, input: OwnerE
     contextFingerprint: v1.contextFingerprint,
     selectedStepKeys: v1.selectedStepKeys,
     tasks,
+    // 跨批次上游成果：这些步骤不重建，但下游交接要能引用它们的已验收正文。
+    ...(materialization.preview.retainedSteps?.length ? { retainedSteps: materialization.preview.retainedSteps } : {}),
     ...(v1.textDeliveryVersion === 1 ? { textDeliveryVersion: 1 as const } : {}),
     ...(v1.qualityManagementVersion === 1 ? { qualityManagementVersion: 1 as const } : {}),
     ...(v1.autonomousWorkspaceEditVersion === 1 ? { autonomousWorkspaceEditVersion: 1 as const } : {}),

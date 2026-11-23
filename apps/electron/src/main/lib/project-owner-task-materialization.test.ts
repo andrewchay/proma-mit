@@ -15,6 +15,7 @@ const { createChannel } = await import('./channel-manager')
 const { bindWorkspaceToProject } = await import('./project-workspace-bindings')
 const { saveProjectOwnerGoalDraft } = await import('./project-owner-goal-service')
 const plans = await import('./project-owner-plan-service')
+const goals = await import('./project-owner-goal-service')
 const prep = await import('./project-owner-execution-preparation')
 const policy = await import('./project-pilot-policy')
 let service: typeof import('./project-owner-task-materialization')
@@ -198,3 +199,96 @@ test('Given AO05原记录丢失但材料化残余 When 旧SourceGate消费 Then 
   expect(evidence.hasOwnerExecutionPreparationEvidence(f.project.id)).toBe(true)
   expect(() => evidence.assertNoOwnerExecutionPreparation(f.project.id)).toThrow('Owner')
 })
+
+// ===== 混合批次接替：已验收步骤不得重跑 =====
+
+/**
+ * 在已有材料化的项目上，按给定 steps 再确认一版方案并保存新准备。
+ * 版本号全部从当前状态推导，避免硬编码。
+ */
+function rePrepare(
+  f: ReturnType<typeof fixture>,
+  steps: Array<{ key: string; title: string; outcome: string; acceptanceCriteria: string[]; dependencies: string[]; roleKey: string }>,
+  changeReason: string,
+) {
+  const context = plans.getProjectOwnerPlanningContext(f.project.id)
+  const plan = plans.getProjectOwnerPlanDraft(f.project.id, undefined)!
+  const goal = goals.getProjectOwnerGoalDraft(f.project.id, undefined)!
+  plans.saveProjectOwnerPlanDraft(f.project.id, goal.revision, plan.revision, { expectedContextFingerprint: context.fingerprint, summary: changeReason, assumptions: [], risks: [], steps, changeReason }, undefined)
+  const confirmed = plans.confirmProjectOwnerPlanDraft(f.project.id, goal.revision, plan.revision + 1, undefined)
+  const revision = prep.getOwnerExecutionPreparation(f.subject).revision
+  const preparationInput = {
+    requestId: randomUUID(), expectedPreparationRevision: revision, expectedPolicyRevision: f.preparation.policyRevision,
+    expectedGoalRevision: goal.revision, expectedPlanRevision: confirmed.revision,
+    selectedStepKeys: steps.map(step => step.key), executionKind: 'controlled' as const,
+    executorEmployeeId: f.executor.id, reviewerEmployeeId: f.reviewer.id,
+    roleAssignments: [...new Set(steps.map(step => step.roleKey))].map(roleKey => ({ roleKey, employeeId: f.executor.id })),
+    workspaceId: f.preparation.source.workspaceId, knowledgeSourceIds: [], maxCostMicros: 1000000, maxRuns: 2, maxRework: 0,
+    expiresAt: Date.now() + 3600000, changeReason,
+  }
+  const pv = prep.previewOwnerExecutionPreparation(f.subject, preparationInput)
+  const preparation = prep.saveOwnerExecutionPreparation(f.subject, preparationInput, pv.previewFingerprint)
+  return { requestId: randomUUID(), expectedMaterializationRevision: 1, expectedPreparationId: preparation.id, expectedPreparationRevision: preparation.revision, expectedPreparationHash: preparation.integrityHash, expectedPolicyRevision: preparation.policyRevision }
+}
+
+const TWO_STEPS = (roleKey: string, briefCriteria = ['范围明确']) => [
+  { key: 'brief', title: '研究', outcome: '材料', acceptanceCriteria: briefCriteria, dependencies: [], roleKey },
+  { key: 'report', title: '汇总', outcome: '方案', acceptanceCriteria: ['有依据'], dependencies: ['brief'], roleKey },
+]
+
+/** 造一个「旧批次已有材料化、其中 brief 已验收」的场景。 */
+function supersedeFixture() {
+  const f = fixture()
+  const previous = save(f)
+  const briefLink = previous.links.find(link => link.stepKey === 'brief')!
+  // 旧批次里 brief 已验收完成（走语义组判定，不硬编码状态串）。
+  store.updateTask(briefLink.taskId, { status: store.listTaskStatuses(f.project.id).find(status => status.stateGroup === 'completed')!.id })
+  const roleKey = f.preparation.source.roleAssignments![0]!.roleKey
+  return { ...f, previous, briefLink, roleKey }
+}
+
+// 任务状态是状态，不是验收：只把任务标成 completed 不构成复用依据。
+// 真实验收链路（Owner 质量决定 + 独立评审 + 成果哈希）在 mixed-batch-journey 里覆盖。
+test('Given 目标硬要求由某步骤承接 When 材料化 Then 该要求进入该步骤的验收标准', () => {
+  const project = store.createProject({ title: '硬要求并入', description: '' })
+  const workspace = createAgentWorkspace(`owner-trace-${randomUUID()}`)
+  bindWorkspaceToProject(project.id, workspace.id)
+  const channel = createChannel({ name: 'fake', provider: 'openai', baseUrl: 'https://example.invalid', apiKey: 'fake', enabled: true, models: [{ id: 'model', name: 'model', enabled: true }] })
+  const employee = employees.createAgentEmployee({ name: '执行者', role: '研究', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId: 'model', workspaceIds: [workspace.id] })
+  const reviewer = employees.createAgentEmployee({ name: '技术评审', role: '研究', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId: 'model', workspaceIds: [workspace.id] })
+  // 目标里写死了「一页」，但步骤标准只写了「范围明确」——这正是漏项的来源。
+  saveProjectOwnerGoalDraft(project.id, 0, { objective: '形成方案', acceptanceCriteria: ['打印后必须为一页'] })
+  const context = plans.getProjectOwnerPlanningContext(project.id)
+  const steps = [{ key: 'brief', title: '研究', outcome: '材料', acceptanceCriteria: ['范围明确'], dependencies: [], roleKey: context.sources.roles[0]!.key }]
+  plans.saveProjectOwnerPlanDraft(project.id, 1, 0, {
+    expectedContextFingerprint: context.fingerprint, summary: '形成方案', assumptions: [], risks: [], steps, changeReason: '建立计划',
+    criteriaTrace: [
+      { key: 'c1', source: 'objective', sourceIndex: 0, sourceText: '形成方案', criticality: 'critical', stepKey: 'brief', verification: 'manual_review', assumptions: [] },
+      { key: 'c2', source: 'acceptance', sourceIndex: 0, sourceText: '打印后必须为一页', criticality: 'critical', stepKey: 'brief', verification: 'manual_review', assumptions: [] },
+    ],
+  })
+  plans.confirmProjectOwnerPlanDraft(project.id, 1, 1)
+  const subject = { projectId: project.id }
+  const preparationInput = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: ['brief'], executionKind: 'controlled' as const, executorEmployeeId: employee.id, reviewerEmployeeId: reviewer.id, roleAssignments: [{ roleKey: steps[0]!.roleKey, employeeId: employee.id }], workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1000000, maxRuns: 2, maxRework: 0, expiresAt: Date.now() + 3600000, changeReason: '暂停准备' }
+  const pv = prep.previewOwnerExecutionPreparation(subject, preparationInput), preparation = prep.saveOwnerExecutionPreparation(subject, preparationInput, pv.previewFingerprint)
+  const view = service.previewOwnerTaskMaterialization(subject, { requestId: randomUUID(), expectedMaterializationRevision: 0, expectedPreparationId: preparation.id, expectedPreparationRevision: preparation.revision, expectedPreparationHash: preparation.integrityHash, expectedPolicyRevision: preparation.policyRevision })
+  // 关键硬要求进入验收清单，Reviewer 才会去检查它。
+  expect(view.projections[0]!.acceptanceCriteria).toEqual(['范围明确', '形成方案', '打印后必须为一页'])
+  expect(view.projections[0]!.description).toContain('打印后必须为一页')
+})
+
+test('Given 只把任务标成完成但没有验收证据 When 材料化 Then 不复用该步骤', () => {
+  const f = supersedeFixture()
+  const input = rePrepare(f, TWO_STEPS(f.roleKey), '接替失败批次')
+  const pv = service.previewOwnerTaskMaterialization(f.subject, input)
+  expect(pv.projections.map(item => item.stepKey)).toEqual(['brief', 'report'])
+  expect(pv.retainedSteps ?? []).toEqual([])
+})
+
+test('Given 新方案收紧了已验收步骤的标准 When 材料化 Then 该步骤重新进入批次', () => {
+  const f = supersedeFixture()
+  const input = rePrepare(f, TWO_STEPS(f.roleKey, ['范围明确', '补充竞品对比']), '收紧标准')
+  const pv = service.previewOwnerTaskMaterialization(f.subject, input)
+  expect(pv.projections.map(item => item.stepKey)).toEqual(['brief', 'report'])
+})
+

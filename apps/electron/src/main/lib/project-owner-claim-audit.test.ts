@@ -8,6 +8,7 @@ const CLAIMS = [
   '补充核查：上次启动未完成，原因是授权过期。该启动意图已暂停自动重试；核对后可重新确认启动。',
   '已按你确认的结果与边界开始组织执行。我会在关键进展时继续在这里说明。',
   '本次失败发生在发送模型请求之前，没有产生模型费用。',
+  '我不会立即执行任何操作，等你确认后再继续。',
 ]
 const CLAIM_ONLY = CLAIMS.slice(0, 2)
 
@@ -32,8 +33,8 @@ test('Given所有说法与事实组合 When穷举检查 Then只有无事实支�
       checked++
     }
   }
-  // 24 组事实 × 6 组消息：穷举覆盖而不是抽样。
-  expect(checked).toBe(144)
+  // 24 组事实 × 7 组消息：穷举覆盖而不是抽样。
+  expect(checked).toBe(168)
 })
 
 test('Given等待用户决定 When检查说法 Then不把用户待决当成后台处理事实', () => {
@@ -90,4 +91,29 @@ test('Given只有等待用户决定 When检查将来时承诺 Then仍判无依�
 test('Given普通说明或已结算说明 When检查 Then不误删', () => {
   const content = '本次失败发生在发送模型请求之前，没有产生模型费用。'
   expect(stripUnsupportedClaims(content, NO_FACTS)).toEqual({ content, removed: [] })
+})
+
+// 否定式不是“声称后台工作”：这些句子恰恰是最该保留的“我停下了，等你确认”。
+test('Given明确表示不会执行 When检查说法 Then不判编造也不删除', () => {
+  for (const content of [
+    '我不会立即执行任何操作，等你确认后再继续。',
+    '这一步不会重新安排，方案保持不变。',
+  ]) {
+    expect(claimsBackgroundWork(content)).toBe(false)
+    expect(findOwnerClaimViolations([{ role: 'assistant', kind: 'management_progress', content, createdAt: 1 }], NO_FACTS)).toHaveLength(0)
+    expect(stripUnsupportedClaims(content, NO_FACTS)).toEqual({ content, removed: [] })
+  }
+})
+
+// 否定只在当前分句内生效；给整句做豁免会放过后面真正的空头承诺。
+test('Given同一句先否定后承诺 When剔除 Then只拦截后半句并保留否定说明', () => {
+  const result = stripUnsupportedClaims('我不会重新安排，但我会立即启动下一步。', NO_FACTS)
+  expect(result.content).toBe('我不会重新安排')
+  expect(result.removed).toEqual(['但我会立即启动下一步。'])
+  expect(claimsBackgroundWork('我不会重新安排，但我会立即启动下一步。')).toBe(true)
+})
+
+test('Given确有排队事实 When同一句含否定与承诺 Then整句保留', () => {
+  const content = '我不会重新安排，但我会立即启动下一步。'
+  expect(stripUnsupportedClaims(content, { ...NO_FACTS, queuedCommands: 1 })).toEqual({ content, removed: [] })
 })
