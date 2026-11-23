@@ -126,6 +126,29 @@ export function getOwnerTaskMaterializationRecord(projectId: string, id: string)
  *
  * 任一环节无法核验时该步骤不可复用——宁可重做，也不接受来源不明的复用。
  */
+/**
+ * 把目标硬要求中由该步骤承接的部分并入验收标准。
+ *
+ * 为什么必须在材料化时并入：Reviewer 的检查清单来自 task 的 `acceptanceCriteria`。
+ * 如果「打印后为一页」只写在目标里、没进任何步骤的标准，整条验收链都不会检查它——
+ * 这正是「原需求写了一页、原验收数组漏了它、交付成了两页」的成因。
+ *
+ * 只并入关键项：advisory 项留给评审自行判断，避免把提示性要求变成硬门槛。
+ * 用原文而非改写：验收标准必须能从目标逐字追溯，改述会掩盖偏差。
+ */
+function withTracedCriteria(
+  step: { key: string; acceptanceCriteria: string[] },
+  trace: ReadonlyArray<{ sourceText: string; stepKey: string; criticality: 'critical' | 'advisory' }> | undefined,
+): string[] {
+  if (!trace?.length) return step.acceptanceCriteria
+  const traced = trace
+    .filter((item) => item.stepKey === step.key && item.criticality === 'critical')
+    .map((item) => item.sourceText.trim())
+    .filter((text) => text && !step.acceptanceCriteria.includes(text))
+  // 去重后保持「步骤原有标准在前、目标硬要求在后」，评审按原顺序逐项判断。
+  return traced.length ? [...step.acceptanceCriteria, ...new Set(traced)] : step.acceptanceCriteria
+}
+
 function resolveRetainedSteps(
   subject: ProjectOwnerGoalSubject,
   selectedSteps: ReadonlyArray<{ key: string; title: string; outcome: string; acceptanceCriteria: string[]; roleKey: string; deliveryKind?: 'text' | 'development'; dependencies: readonly string[] }>,
@@ -218,7 +241,8 @@ function currentPreview(subject: ProjectOwnerGoalSubject, input: OwnerTaskMateri
   }
   const projections: OwnerTaskProjection[] = steps.map(step => {
     const stepExecutor = source.roleAssignments?.find((assignment) => assignment.roleKey === step.roleKey)?.employee ?? source.executor
-    return { stepKey: step.key, ...(target ? { targetTaskId: target.id } : {}), title: target?.title ?? step.title, description: target?.description ?? `${step.outcome}\n\n验收标准：\n${step.acceptanceCriteria.map(item => `- ${item}`).join('\n')}`, roleKey: step.roleKey, ...(step.deliveryKind ? { deliveryKind: step.deliveryKind } : {}), outcome: step.outcome, acceptanceCriteria: step.acceptanceCriteria, dependencies: step.dependencies.filter(key => !retainedKeys.has(key)), assignee: { userId: `agent-${stepExecutor.id}`, displayName: stepExecutor.name }, workspaceId: source.workspaceId, ...(source.developmentScope && step.deliveryKind !== 'text' ? { developmentScope: source.developmentScope } : {}), ...(target ? { clearAssigneeMemberId: true as const, previous: { status: target.status, assignee: target.assignee, assigneeMemberId: target.assigneeMemberId, workspaceId: target.workspaceId, developmentScope: target.developmentScope } } : {}) }
+    const criteria = withTracedCriteria(step, source.plan.proposal.criteriaTrace)
+    return { stepKey: step.key, ...(target ? { targetTaskId: target.id } : {}), title: target?.title ?? step.title, description: target?.description ?? `${step.outcome}\n\n验收标准：\n${criteria.map(item => `- ${item}`).join('\n')}`, roleKey: step.roleKey, ...(step.deliveryKind ? { deliveryKind: step.deliveryKind } : {}), outcome: step.outcome, acceptanceCriteria: criteria, dependencies: step.dependencies.filter(key => !retainedKeys.has(key)), assignee: { userId: `agent-${stepExecutor.id}`, displayName: stepExecutor.name }, workspaceId: source.workspaceId, ...(source.developmentScope && step.deliveryKind !== 'text' ? { developmentScope: source.developmentScope } : {}), ...(target ? { clearAssigneeMemberId: true as const, previous: { status: target.status, assignee: target.assignee, assigneeMemberId: target.assigneeMemberId, workspaceId: target.workspaceId, developmentScope: target.developmentScope } } : {}) }
   })
   const body = { ...subject, input, preparation, projections, ...(target ? { targetTaskHash: ownerExecutionHash(target), targetDependenciesHash: ownerExecutionHash(edgesFor(target.id, subject.projectId)) } : {}), ...(retainedSteps.length ? { retainedSteps } : {}) }
   return { ...body, previewFingerprint: ownerExecutionHash(body) }
