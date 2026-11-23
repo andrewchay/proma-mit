@@ -5,6 +5,7 @@
  * 切换按钮在面板关闭时显示活动指示点。
  */
 
+import { hasSeparateRepositoryRoot } from './side-panel-file-roots'
 import * as React from 'react'
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { X, FolderOpen, ExternalLink, RefreshCw, ChevronRight, MoreHorizontal, FolderSearch, Pencil, FolderInput, Info, FolderHeart, MessageSquarePlus, FolderGit2 } from 'lucide-react'
@@ -670,7 +671,7 @@ export function SidePanel({ sessionId, sessionPath, activeTab, onTabChange, widt
 
 
                   {/* ===== 仓库文件区（绑定了本地 Git 仓库的工作区；文件委派入口） ===== */}
-                  {repoRoot && (
+                  {repoRoot && hasSeparateRepositoryRoot(sessionPath, repoRoot) && (
                     <div className="flex-1 min-h-0 flex flex-col mx-2 mb-2">
                       <div className="flex items-center gap-1 px-2 h-[32px] flex-shrink-0">
                         <FolderGit2 className="size-3 text-muted-foreground" />
