@@ -9,7 +9,7 @@ export function ownerPlanningOutputCeiling(modelId: string, provider: string): 8
 
 /** 有界管理委托：复用Owner零工具出口，永久占用每次保守上界；无退款或未知状态自动重试。 */
 import { createHash, randomUUID } from 'node:crypto'
-import type { OwnerManagementAttentionCheck, OwnerManagementDelegation, OwnerManagementDelegationInput, OwnerManagementDelegationPreview, OwnerManagementDelegationView, OwnerManagerProfile } from '@gravitas/shared'
+import type { OwnerInitialPlanningRecovery, OwnerManagementAttentionCheck, OwnerManagementDelegation, OwnerManagementDelegationInput, OwnerManagementDelegationPreview, OwnerManagementDelegationView, OwnerManagerProfile } from '@gravitas/shared'
 import { decideAttentionCarryover } from './project-owner-attention-carryover-policy'
 import { getAgentProviderProtocol } from '@gravitas/shared'
 import * as store from './project-sqlite-store'
@@ -20,7 +20,7 @@ import { assertLocalActorEnabled, confirmProjectOwnerPlanDraft, getProjectOwnerP
 import { getProjectOwnerGoalDraft } from './project-owner-goal-service'
 import { getOwnerManager, recordOwnerManagementDelegationConfirmed } from './project-owner-management-store'
 import { getPilotReviewedPriceEvidence, getPilotReviewedPriceEvidenceForModel } from './project-pilot-request-evidence'
-import { resolveOwnerPlanningTask } from './project-owner-planning-source'
+import { readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
 import { requestOwnerManagementWake } from './project-owner-management-events'
 import { readOwnerPlanningApiKey } from './owner-planning-configuration'
 import { OWNER_PLANNING_V6_INPUT_TOKEN_CEILING, usesBoundedOwnerPlanningEnvelope } from './project-owner-planning-envelope'
@@ -70,7 +70,7 @@ function object(raw: unknown, fields: string[]): Record<string, unknown> {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw) || Object.keys(raw).some(key => !fields.includes(key))) throw new Error('Owner管理委托字段无效')
   return raw as Record<string, unknown>
 }
-const fields = ['projectId', 'taskId', 'requestId', 'maxRequests', 'maxCostMicros', 'expiresAt', 'startApproval', 'autonomousExecution', 'autonomousWorkspaceEditVersion']
+const fields = ['projectId', 'taskId', 'requestId', 'maxRequests', 'maxCostMicros', 'expiresAt', 'startApproval', 'autonomousExecution', 'autonomousWorkspaceEditVersion', 'initialPlanningRecovery']
 const MAX_MANAGEMENT_REQUESTS = 12
 function parse(raw: unknown): OwnerManagementDelegationInput {
   const value = object(raw, fields)
@@ -91,7 +91,16 @@ function parse(raw: unknown): OwnerManagementDelegationInput {
       || typeof approval.contextFingerprint !== 'string' || !/^[a-f0-9]{64}$/.test(approval.contextFingerprint)) throw new Error('Owner方案启动确认绑定无效')
     startApproval = { expectedGoalRevision: Number(approval.expectedGoalRevision), expectedPlanRevision: Number(approval.expectedPlanRevision), planFingerprint: approval.planFingerprint, contextFingerprint: approval.contextFingerprint }
   }
-  return { projectId: value.projectId as string, ...(typeof value.taskId === 'string' ? { taskId: value.taskId } : {}), requestId: value.requestId as string,
+  let initialPlanningRecovery: OwnerInitialPlanningRecovery | undefined
+  if (value.initialPlanningRecovery !== undefined) {
+    const recovery = object(value.initialPlanningRecovery, ['delegationId', 'executionId', 'receiptId'])
+    const { delegationId, executionId, receiptId } = recovery
+    if (startApproval || typeof delegationId !== 'string' || !delegationId || delegationId.length > 128
+      || typeof executionId !== 'string' || !executionId || executionId.length > 128
+      || typeof receiptId !== 'string' || !/^[a-f0-9]{64}$/.test(receiptId)) throw new Error('首次规划恢复来源无效')
+    initialPlanningRecovery = { delegationId, executionId, receiptId }
+  }
+  return { ...(initialPlanningRecovery ? { initialPlanningRecovery } : {}), projectId: value.projectId as string, ...(typeof value.taskId === 'string' ? { taskId: value.taskId } : {}), requestId: value.requestId as string,
     maxRequests: Number(value.maxRequests), maxCostMicros: Number(value.maxCostMicros), expiresAt: Number(value.expiresAt), ...(value.autonomousExecution ? { autonomousExecution: true as const } : {}), ...(value.autonomousWorkspaceEditVersion === 1 ? { autonomousWorkspaceEditVersion: 1 as const } : {}), ...(startApproval ? { startApproval } : {}) }
 }
 function scope(projectId: string, taskId?: string, conversationEnabled = false, executionFollowupEnabled = false, fullDeliveryReviewEnabled = false, qualityDecisionEnabled = false) {
@@ -148,7 +157,15 @@ export function previewOwnerManagementDelegation(raw: unknown): OwnerManagementD
   assertOwnerModelBudgetAvailable({ projectBudgetMicros: input.maxCostMicros,
     ownerModelMicros: getOwnerModelBudgetUsage(input.projectId, input.maxCostMicros).ownerModelMicros,
     nextReservedMicros: current.perRequestCeilingMicros })
-  const body = { ...input, conversationEnabled: true as const, executionFollowupEnabled: true as const, fullDeliveryReviewEnabled: true as const, qualityDecisionEnabled: true as const, scopeHash: current.scopeHash, goalContentHash: hash(current.context.goal), bindingRevision: current.binding.revision, goalRevision: current.context.goal.revision, modelId: current.binding.modelId, workspaceName: getAgentWorkspace(current.binding.workspaceId)!.name, priceEvidenceId: current.priceEvidenceId, perRequestCeilingMicros: current.perRequestCeilingMicros, maxOutputTokens: current.outputCeiling }
+  let recoveryBudget: OwnerManagementDelegationPreview['recoveryBudget']
+  if (input.initialPlanningRecovery) {
+    const view = getOwnerManagementDelegation(input.projectId, input.taskId)
+    if (!view.initialPlanningRecovery || hash(view.initialPlanningRecovery) !== hash(input.initialPlanningRecovery))
+      throw new Error('首次规划恢复来源已变化，请重新核对当前项目')
+    recoveryBudget = { reservedMicros: prior.reservedCostMicros,
+      remainingMicros: input.maxCostMicros - prior.reservedCostMicros - current.perRequestCeilingMicros }
+  }
+  const body = { ...input, ...(recoveryBudget ? { recoveryBudget } : {}), conversationEnabled: true as const, executionFollowupEnabled: true as const, fullDeliveryReviewEnabled: true as const, qualityDecisionEnabled: true as const, scopeHash: current.scopeHash, goalContentHash: hash(current.context.goal), bindingRevision: current.binding.revision, goalRevision: current.context.goal.revision, modelId: current.binding.modelId, workspaceName: getAgentWorkspace(current.binding.workspaceId)!.name, priceEvidenceId: current.priceEvidenceId, perRequestCeilingMicros: current.perRequestCeilingMicros, maxOutputTokens: current.outputCeiling }
   return { ...body, previewHash: hash(body) }
 }
 function latest(projectId: string, taskId?: string): { delegation: OwnerManagementDelegation; row: GrantRow } | null {
@@ -328,6 +345,35 @@ function assertCurrent(delegation: OwnerManagementDelegation): void {
   if (!scopeMatches || current.perRequestCeilingMicros !== delegation.perRequestCeilingMicros) throw new Error('Owner管理委托的配置、资料或价格已变化')
   assertGoalLineage(delegation, current.context.goal.revision)
 }
+function canRecoverInitialPlanning(delegation: OwnerManagementDelegation, taskId: string): boolean {
+  const { projectId } = delegation
+  const db = store.getProjectDb()
+  if (getProjectOwnerPlanDraft(projectId, delegation.taskId)
+    || db.prepare('SELECT 1 FROM project_owner_execution_commands WHERE project_id = ? LIMIT 1').get(projectId)
+    || db.prepare("SELECT 1 FROM agent_executions WHERE project_id = ? AND status IN ('queued', 'running') LIMIT 1").get(projectId)) return false
+  const frozen = readOwnerPlanningSnapshot(taskId, { allowUnknownPromptForHistory: true })
+  return Boolean(frozen && !frozen.link.conversationMessageId && frozen.link.planRevision === 0)
+}
+
+/** 恢复前的对话仍可查阅，后续续签也不把这些旧消息重新加入待办。 */
+export function getOwnerInitialPlanningRecoveryCutoff(projectId: string, taskId?: string): number | undefined {
+  const row = store.getProjectDb().prepare(`SELECT payload, integrity_hash FROM project_owner_management_delegations
+    WHERE project_id = ? AND task_id IS ? AND json_type(payload, '$.initialPlanningRecovery') = 'object'
+    ORDER BY rowid DESC LIMIT 1`).get(projectId, taskId ?? null) as Row | undefined
+  return row ? read<OwnerManagementDelegation>(row).issuedAt : undefined
+}
+
+/** 恢复委托的首笔请求必须对应持久授权事件准备的规划。 */
+function pendingOwnerInitialPlanningRecovery(delegation: OwnerManagementDelegation): string | undefined {
+  if (!delegation.initialPlanningRecovery || claims(delegation.id).length > 0) return undefined
+  return `delegation:${delegation.id}`
+}
+
+export function getPendingOwnerInitialPlanningRecovery(projectId: string, taskId?: string): string | undefined {
+  const found = latest(projectId, taskId)
+  return found ? pendingOwnerInitialPlanningRecovery(found.delegation) : undefined
+}
+
 export function getOwnerManagementDelegation(projectId: string, taskId?: string): OwnerManagementDelegationView {
   const found = latest(projectId, taskId)
   if (!found) return { delegation: null, state: 'none', usedRequests: 0, reservedCostMicros: 0, detail: '' }
@@ -381,7 +427,13 @@ export function getOwnerManagementDelegation(projectId: string, taskId?: string)
         ...(typeof requestId === 'string' && requestId.trim() ? { providerRequestId: requestId } : {}),
         ...(typeof responseId === 'string' && responseId.trim() ? { providerResponseId: responseId } : {}),
       }
-      return { ...base, state: 'attention', detail: '上次管理请求没有满足继续处理所需的运行或用量证据；请查看原请求核对信息，不会自动重试。', attentionCheck }
+      const initialPlanningRecovery = entries.length === 1
+        && execution?.status === 'failed' && value?.state === 'failed' && receipt?.purpose === 'owner_planning'
+        && !receipt.validTerminal && !receipt.stopped && !receipt.responseText.trim() && receipt.cost.source === 'unknown'
+        && (reason === 'missing_usage' || (reason === 'invalid_usage' && receipt.usage?.inputTokens === null && receipt.usage.outputTokens === null))
+        && canRecoverInitialPlanning(delegation, entry.taskId)
+        ? { delegationId: delegation.id, executionId: execution.id, receiptId: receipt.id } : undefined
+      return { ...base, ...(initialPlanningRecovery ? { initialPlanningRecovery } : {}), state: 'attention', detail: '上次管理请求没有满足继续处理所需的运行或用量证据；请查看原请求核对信息，不会自动重试。', attentionCheck }
     }
   }
   // 未知或失败请求的费用核对优先于委托漂移提示，避免把实际中断原因藏在重新授权状态后面。
@@ -420,7 +472,7 @@ export function confirmOwnerManagementDelegation(raw: unknown): OwnerManagementD
     if (current.delegation && hasActiveOwnerManagementRequest(current.delegation.id)) throw new Error('上次管理请求仍在运行，请先核对请求状态')
     const increasesExhaustedBudget = current.state === 'exhausted' && current.delegation
       && input.maxCostMicros > current.delegation.maxCostMicros
-    if (current.delegation && (current.state === 'stale' || increasesExhaustedBudget)) {
+    if (current.delegation && (current.state === 'stale' || increasesExhaustedBudget || input.initialPlanningRecovery)) {
       // 在同一事务中关闭旧授权并保存新额度，历史请求及占额继续计入。
       db.prepare('UPDATE project_owner_management_delegations SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ? AND project_id = ?').run(Date.now(), current.delegation.id, input.projectId)
     } else if (current.delegation && !currentRevoked && !['revoked', 'expired'].includes(current.state)) {
@@ -584,6 +636,10 @@ export function claimOwnerManagementTask(taskId: string, executionId: string): v
   // 与对话层、调度器共用同一判定：上一条请求只是「结论不可继续」且仍在预算内时，
   // 新消息照常占额发送。旧请求保持原记录、不重试、不补造用量。
   if ((view.state !== 'active' && decideAttentionCarryover(view) !== 'proceed') || !view.delegation) throw new Error(view.detail || '没有有效管理委托')
+  const recoveryRequest = pendingOwnerInitialPlanningRecovery(view.delegation)
+  if (recoveryRequest && (source.link.requestId !== recoveryRequest || source.link.purpose !== 'owner_planning'
+    || source.link.conversationMessageId || source.link.goalRevision !== view.delegation.goalRevision))
+    throw new Error('Owner须先按恢复确认的目标完成首次规划请求')
   if (source.context.conversation?.executionObservation && view.delegation.executionFollowupEnabled !== true) throw new Error('旧管理委托不包含业务结果主动跟进，请重新确认管理范围')
   if (source.context.conversation?.deliveryReview && view.delegation.fullDeliveryReviewEnabled !== true) throw new Error('旧管理委托未包含完整成果读取，请重新确认管理范围')
   if (source.context.conversation?.deliveryReview?.qualityDecisionVersion === 1 && view.delegation.qualityDecisionEnabled !== true) throw new Error('旧管理委托未包含质量决定')

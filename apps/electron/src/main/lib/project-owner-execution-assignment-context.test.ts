@@ -151,7 +151,12 @@ test('Given 无代码候选但工作区是git仓库 When 构造上下文 Then �
     for (const variant of ['current', 'registry-v4', 'registry-v3', 'registry-v2', 'registry-v1', 'legacy-6'] as const) {
       const request = protocol.buildOwnerExecutionAssignmentRequest(value, true, variant)
       expect(protocol.resolveOwnerExecutionAssignmentRequest(value, createHash('sha256').update(JSON.stringify(request)).digest('hex'))).toEqual(request)
-      if (variant === 'current') for (const item of OWNER_RUNTIME_ASSERTION_TEMPLATES) expect(request.systemPrompt).toContain(item.id)
+      if (variant === 'current') {
+        for (const item of OWNER_RUNTIME_ASSERTION_TEMPLATES) {
+          if (item.id === 'counter.increment-reset') expect(request.systemPrompt).not.toContain(item.id)
+          else expect(request.systemPrompt).toContain(item.id)
+        }
+      }
       if (variant === 'registry-v4') {
         expect(request.systemPrompt).toContain('text-counter.behavior')
         expect(request.systemPrompt).not.toContain('calculator.scientific')

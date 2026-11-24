@@ -24,7 +24,7 @@ function browserRegistryText(variant: OwnerBrowserRegistryVariant): string {
   if (variant === 'registry-v1') return BROWSER_REGISTRY_V1_TEXT
   if (variant === 'legacy-6') return BROWSER_REGISTRY_LEGACY_6_TEXT
   const templates = OWNER_RUNTIME_ASSERTION_TEMPLATES.filter(item =>
-    (variant === 'current' || item.id !== 'calculator.scientific') && (variant !== 'registry-v3' || item.id !== 'text-counter.behavior'))
+    item.id !== 'counter.increment-reset' && (variant === 'current' || item.id !== 'calculator.scientific') && (variant !== 'registry-v3' || item.id !== 'text-counter.behavior'))
   return templates.map(item => `${item.id}（${item.title}）`).join('、')
 }
 /** 原生/命令行项目的固定构建命令清单；空清单表示该变体发布时尚无此能力。 */

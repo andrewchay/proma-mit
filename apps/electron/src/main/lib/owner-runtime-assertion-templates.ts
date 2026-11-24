@@ -173,6 +173,27 @@ export const OWNER_RUNTIME_ASSERTION_TEMPLATES: readonly OwnerRuntimeAssertionTe
     })()`,
   },
   {
+    id: 'counter.increment-reset',
+    title: '计数器初值为 0，加一后为 1，重置后为 0',
+    intentKeywords: [],
+    script: `(() => {
+      const count = document.querySelector('#count')
+      const increment = document.querySelector('button#increment')
+      const reset = document.querySelector('button#reset')
+      const visible = element => element && element.getClientRects().length > 0 && getComputedStyle(element).visibility === 'visible'
+      if (!visible(count) || !visible(increment) || !visible(reset) || increment.disabled || reset.disabled) {
+        return { passed: false, detail: '需要可见的 #count 及可操作的 #increment、#reset' }
+      }
+      const observed = [count.textContent.trim()]
+      increment.click()
+      observed.push(count.textContent.trim())
+      reset.click()
+      observed.push(count.textContent.trim())
+      const errors = window.__ownerAssertionErrors || []
+      return { passed: observed.join(',') === '0,1,0' && errors.length === 0, detail: '观察到计数：' + observed.join(' → ') }
+    })()`,
+  },
+  {
     id: 'text-counter.behavior',
     title: '文本计数器输入、非空白 Unicode 码点、分词、换行及清空正确',
     intentKeywords: ['文本计数器', '码点数', '词数', 'unicode'],

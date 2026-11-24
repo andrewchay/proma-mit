@@ -4,7 +4,7 @@ import { containsOwnerValidationEvidenceQuote } from './development-validation-a
 import { getAgentSessionSDKMessages } from './agent-session-manager'
 import { getOwnerManagementMessage, appendOwnerManagementMessage } from './project-owner-management-store'
 import { assertOwnerReviewerTextDelivery } from './project-owner-text-delivery'
-import { recordOwnerTechnicalReviewEvidence, restoreVerbatimReviewQuotes, unwrapReviewReceipt } from './project-owner-technical-review'
+import { recordOwnerTechnicalReviewEvidence, normalizeOwnerTechnicalReviewQuotes, unwrapReviewReceipt } from './project-owner-technical-review'
 import * as store from './project-sqlite-store'
 
 export function recoverOwnerReviewEvidence(projectId: string, grantId: string, taskId: string, round: number): boolean {
@@ -34,18 +34,22 @@ export function recoverOwnerReviewEvidence(projectId: string, grantId: string, t
   if (raw !== row.result_summary) return false
   const development = ownerDevelopmentArtifactFromPrompt(row.prompt)
   if (development) {
-    let response: { criteria?: Array<{ status?: unknown; quote?: unknown }> } | null
-    try { response = JSON.parse(unwrapReviewReceipt(raw)) } catch { return false }
-    if (!Array.isArray(response?.criteria) || !response.criteria.some(item => item?.status === 'met' && typeof item.quote === 'string'
-      && containsOwnerValidationEvidenceQuote(development.validationEvidence, item.quote))) return false
+    const receipt = unwrapReviewReceipt(raw)
+    const normalized = normalizeOwnerTechnicalReviewQuotes(receipt, development.content)
+    if (normalized === receipt) {
+      let response: { criteria?: Array<{ status?: unknown; quote?: unknown }> } | null
+      try { response = JSON.parse(receipt) } catch { return false }
+      if (!Array.isArray(response?.criteria) || !response.criteria.some(item => item?.status === 'met' && typeof item.quote === 'string'
+        && containsOwnerValidationEvidenceQuote(development.validationEvidence, item.quote))) return false
+    }
     recordOwnerTechnicalReviewEvidence(row.id, row.execution_id, raw)
-    appendOwnerManagementMessage({ projectId, taskId, eventId: `owner-review-runtime-quote-recovered:${row.id}:${row.execution_id}`, role: 'assistant', kind: 'management_progress', content: '已从原评审及完整受管浏览器回执核对运行引用，恢复独立评审；无需重新运行评审。Owner 将继续判断成果。' })
+    appendOwnerManagementMessage({ projectId, taskId, eventId: `owner-review-runtime-quote-recovered:${row.id}:${row.execution_id}`, role: 'assistant', kind: 'management_progress', content: '已从原回执和冻结成果恢复独立评审记录，保留未验证的标准。Owner 将根据现有证据继续判断。' })
     return true
   }
   const artifact = assertOwnerReviewerTextDelivery(row.id)
   if (!artifact) return false
   let original: unknown, corrected: unknown
-  try { original = JSON.parse(raw); corrected = JSON.parse(restoreVerbatimReviewQuotes(raw, artifact.content)) } catch { return false }
+  try { original = JSON.parse(raw); corrected = JSON.parse(normalizeOwnerTechnicalReviewQuotes(raw, artifact.content)) } catch { return false }
   if (!original || !corrected || typeof original !== 'object' || typeof corrected !== 'object') return false
   const before = original as { criteria?: Array<{ quote?: unknown }> }, after = corrected as { criteria?: Array<{ quote?: unknown }> }
   if (!Array.isArray(before.criteria) || !Array.isArray(after.criteria) || before.criteria.length !== after.criteria.length) return false

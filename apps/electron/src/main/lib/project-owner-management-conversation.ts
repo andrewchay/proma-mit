@@ -9,7 +9,7 @@ import { assertLocalActorEnabled, getProjectOwnerPlanDraft, getProjectOwnerPlann
 import { getOwnerRuntimeBinding, prepareOwnerPlanning } from './project-owner-runtime-binding'
 import * as store from './project-sqlite-store'
 import { readOwnerExecutionObservation } from './project-owner-management-execution'
-import { getOwnerManagementDelegation } from './project-owner-management-delegation'
+import { getOwnerInitialPlanningRecoveryCutoff, getOwnerManagementDelegation } from './project-owner-management-delegation'
 import { decideAttentionCarryover } from './project-owner-attention-carryover-policy'
 
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -123,7 +123,8 @@ export function withOwnerConversationContext(context: ProjectOwnerPlanningContex
   const employeeInteractions = employeeInteractionVersion === 1
     ? frozenEmployeeInteractions ?? (require('./project-owner-employee-interactions') as typeof import('./project-owner-employee-interactions')).listOwnerEmployeeInteractions(projectId).filter(item => ['pending_owner', 'discussing_user'].includes(item.state))
     : undefined
-  const result = { ...context, conversation: { ...(fileObservation ? { fileChangeObservation: fileObservation } : {}), ...(webObservation ? { webChangeObservation: { id: webObservation.id, projectId: webObservation.projectId, runId: webObservation.runId, judgment: webObservation.judgment, facts: webObservation.facts.map(({ title, url, sourceId, snippetDigest, publishedAt, quote, isInference }) => ({ title, url, sourceId, snippetDigest, publishedAt, quote, isInference })), impact: webObservation.impact, suggestion: webObservation.suggestion, question: webObservation.question, uncertainty: webObservation.uncertainty, failureReason: webObservation.failureReason, createdAt: webObservation.createdAt, contentHash: webObservation.contentHash } } : {}), ...(deliveredArtifacts ? { deliveredArtifacts } : {}), ...(employeeInteractions ? { employeeInteractionVersion: 1 as const, employeeInteractions } : {}), ...(deliveryFeedback ? { deliveryFeedback, ...(deliveryFeedbackBindingVersion === 1 ? { deliveryFeedbackBindingVersion: 1 as const } : {}) } : {}), ...(observation ? { executionObservation: observation, ...(messageBindingVersion === 1 ? { observationMessageBindingVersion: 1 as const } : {}), ...(deliveryVersion === 1 ? { deliveryReview: readOwnerManagementDelivery(projectId, observation, frozenDeliveryReview === undefined ? undefined : { qualityRecovery: frozenDeliveryReview.qualityRecovery }) } : {}) } : interactionVersion === 2 ? { interactionVersion: 2 as const, openQuestions: questionSources.getOwnerConversationQuestionSources(context, latest.id) } : {}), conversationId: manager.conversationId, throughMessageId: messageId, historyThroughMessageId: latest.id, messages: messages.reverse(), truncated: messages.length < rows.length, currentPlan: plan ? { revision: plan.revision, state: plan.state, proposal: plan.proposal } : null, tasks: tasks.slice(0, 30).map(({ id, title, status }) => ({ id, title, status })), tasksTruncated: tasks.length > 30 } }
+  const frozenCounterSupplement = frozenDeliveryReview?.review?.validationEvidence?.find(item => item.command === 'browser:html.loads+counter.increment-reset')?.validationId ?? false
+  const result = { ...context, conversation: { ...(fileObservation ? { fileChangeObservation: fileObservation } : {}), ...(webObservation ? { webChangeObservation: { id: webObservation.id, projectId: webObservation.projectId, runId: webObservation.runId, judgment: webObservation.judgment, facts: webObservation.facts.map(({ title, url, sourceId, snippetDigest, publishedAt, quote, isInference }) => ({ title, url, sourceId, snippetDigest, publishedAt, quote, isInference })), impact: webObservation.impact, suggestion: webObservation.suggestion, question: webObservation.question, uncertainty: webObservation.uncertainty, failureReason: webObservation.failureReason, createdAt: webObservation.createdAt, contentHash: webObservation.contentHash } } : {}), ...(deliveredArtifacts ? { deliveredArtifacts } : {}), ...(employeeInteractions ? { employeeInteractionVersion: 1 as const, employeeInteractions } : {}), ...(deliveryFeedback ? { deliveryFeedback, ...(deliveryFeedbackBindingVersion === 1 ? { deliveryFeedbackBindingVersion: 1 as const } : {}) } : {}), ...(observation ? { executionObservation: observation, ...(messageBindingVersion === 1 ? { observationMessageBindingVersion: 1 as const } : {}), ...(deliveryVersion === 1 ? { deliveryReview: readOwnerManagementDelivery(projectId, observation, frozenDeliveryReview === undefined ? undefined : { qualityRecovery: frozenDeliveryReview.qualityRecovery, counterSupplement: frozenCounterSupplement }) } : {}) } : interactionVersion === 2 ? { interactionVersion: 2 as const, openQuestions: questionSources.getOwnerConversationQuestionSources(context, latest.id) } : {}), conversationId: manager.conversationId, throughMessageId: messageId, historyThroughMessageId: latest.id, messages: messages.reverse(), truncated: messages.length < rows.length, currentPlan: plan ? { revision: plan.revision, state: plan.state, proposal: plan.proposal } : null, tasks: tasks.slice(0, 30).map(({ id, title, status }) => ({ id, title, status })), tasksTruncated: tasks.length > 30 } }
   if (JSON.stringify(result).length > 280000) throw new Error('Owner对话与资料合计过长，请精简当前资料后继续')
   return result
 }
@@ -160,16 +161,21 @@ export function findOwnerFollowupFuse(projectId: string, messageId: string): str
 }
 
 /** 已落库但尚未建立Owner请求的员工结果，重启后仍须补齐交接。 */
-function pendingOwnerObservation(projectId: string, taskId?: string): { id: string } | undefined {
-  return store.getProjectDb().prepare("SELECT m.id FROM project_owner_management_messages m WHERE m.project_id=? AND json_extract(m.payload, '$.kind') IN ('execution_observation','employee_interaction','file_change_observation','web_change_observation') AND json_extract(m.payload, '$.taskId') IS ? AND NOT EXISTS (SELECT 1 FROM project_owner_management_messages ignored WHERE ignored.project_id=m.project_id AND ignored.event_id='conversation-stale:' || m.id) AND NOT EXISTS (SELECT 1 FROM project_owner_planning_links l WHERE l.project_id=m.project_id AND json_extract(l.payload, '$.conversationMessageId')=m.id) ORDER BY m.rowid LIMIT 1").get(projectId, taskId ?? null) as { id: string } | undefined
+function pendingOwnerObservation(projectId: string, taskId: string | undefined, cutoff: number): { id: string } | undefined {
+  return store.getProjectDb().prepare("SELECT m.id FROM project_owner_management_messages m WHERE m.project_id=? AND json_extract(m.payload, '$.kind') IN ('execution_observation','employee_interaction','file_change_observation','web_change_observation') AND json_extract(m.payload, '$.taskId') IS ? AND json_extract(m.payload, '$.createdAt') > ? AND NOT EXISTS (SELECT 1 FROM project_owner_management_messages ignored WHERE ignored.project_id=m.project_id AND ignored.event_id='conversation-stale:' || m.id) AND NOT EXISTS (SELECT 1 FROM project_owner_planning_links l WHERE l.project_id=m.project_id AND json_extract(l.payload, '$.conversationMessageId')=m.id) ORDER BY m.rowid LIMIT 1").get(projectId, taskId ?? null, cutoff) as { id: string } | undefined
+}
+
+function pendingOwnerUserMessage(projectId: string, taskId: string | undefined, cutoff: number): { id: string } | undefined {
+  return store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id = ? AND json_extract(payload, '$.kind') = 'conversation' AND json_extract(payload, '$.role') = 'user' AND COALESCE(json_extract(payload, '$.deliveryReviewDecision'), '') <> 'deferred' AND COALESCE(json_extract(payload, '$.chainReview.choice'), '') <> 'later' AND json_extract(payload, '$.teamWorkspaceApproval') IS NULL AND json_extract(payload, '$.taskId') IS ? AND json_extract(payload, '$.createdAt') > ? AND NOT EXISTS (SELECT 1 FROM project_owner_management_messages ignored WHERE ignored.project_id=project_owner_management_messages.project_id AND ignored.event_id IN ('conversation-stale:' || project_owner_management_messages.id, 'conversation-resumed:' || project_owner_management_messages.id)) ORDER BY rowid DESC LIMIT 1").get(projectId, taskId ?? null, cutoff) as { id: string } | undefined
 }
 
 /** 新消息串行交给同一管理主体；运行期间只落消息，结果回调后再准备后续批次。 */
 export function preparePendingOwnerConversation(projectId: string, taskId?: string): boolean {
   const database = store.getProjectDb()
-  const user = database.prepare("SELECT id FROM project_owner_management_messages WHERE project_id = ? AND json_extract(payload, '$.kind') = 'conversation' AND json_extract(payload, '$.role') = 'user' AND COALESCE(json_extract(payload, '$.deliveryReviewDecision'), '') <> 'deferred' AND COALESCE(json_extract(payload, '$.chainReview.choice'), '') <> 'later' AND json_extract(payload, '$.teamWorkspaceApproval') IS NULL AND json_extract(payload, '$.taskId') IS ? AND NOT EXISTS (SELECT 1 FROM project_owner_management_messages ignored WHERE ignored.project_id=project_owner_management_messages.project_id AND ignored.event_id IN ('conversation-stale:' || project_owner_management_messages.id, 'conversation-resumed:' || project_owner_management_messages.id)) ORDER BY rowid DESC LIMIT 1").get(projectId, taskId ?? null) as { id: string } | undefined
+  const cutoff = getOwnerInitialPlanningRecoveryCutoff(projectId, taskId) ?? 0
+  const user = pendingOwnerUserMessage(projectId, taskId, cutoff)
   const prepared = (id: string) => Boolean(database.prepare("SELECT 1 FROM project_owner_planning_links WHERE project_id=? AND json_extract(payload, '$.conversationMessageId')=? LIMIT 1").get(projectId, id))
-  const observation = pendingOwnerObservation(projectId, taskId)
+  const observation = pendingOwnerObservation(projectId, taskId, cutoff)
   // 公平性：上一轮若处理的是用户对话，下一轮优先员工待决事项，避免连续对话把员工问题永久饿死。
   const previous = database.prepare("SELECT json_extract(payload, '$.conversationMessageId') AS messageId FROM project_owner_planning_links WHERE project_id = ? AND json_extract(payload, '$.targetTaskId') IS ? ORDER BY rowid DESC LIMIT 1").get(projectId, taskId ?? null) as { messageId: string | null } | undefined
   const previousKind = previous?.messageId
@@ -241,7 +247,7 @@ export function preparePendingOwnerConversation(projectId: string, taskId?: stri
             : delegation.state === 'revoked'
               ? '管理授权已撤销'
               : '当前没有有效的持续管理授权'
-    const recovery = delegation.state === 'attention'
+    const recovery = delegation.initialPlanningRecovery ? ' 可在原对话授权并重新规划一次，原费用预留仍会计入预算。' : delegation.state === 'attention'
       ? '重新确认授权范围不会解除这次暂停；请先核对上次请求的运行和费用状态。当前应用不能登记外部账单核对结果并恢复授权。'
       : '请在项目对话中的Owner授权卡核对当前范围并重新确认；确认后我会自动继续处理这条消息。'
     appendOwnerManagementMessage({ projectId, eventId: `conversation-blocked:${message.id}:${delegation.state}:${hash(delegation.detail)}`, role: 'assistant', kind: 'attention', ...(taskId ? { taskId } : {}), content: `${message.kind === 'file_change_observation' ? '文件变化观察已保存' : '你的消息已保存'}，但我暂停了后续处理：${detail}。我没有为这条消息发送模型请求。${recovery}已有预算预留只是保守上界，不是实际账单。` })
@@ -283,8 +289,9 @@ export function preparePendingOwnerConversation(projectId: string, taskId?: stri
 
 /** 重启或旧版本遗留的消息链接尚未创建执行时，允许在恢复授权后重新准备。 */
 export function hasUnstartedOwnerConversation(projectId: string, taskId?: string): boolean {
-  if (pendingOwnerObservation(projectId, taskId)) return true
-  const row = store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id = ? AND json_extract(payload, '$.kind') = 'conversation' AND json_extract(payload, '$.role') = 'user' AND COALESCE(json_extract(payload, '$.deliveryReviewDecision'), '') <> 'deferred' AND COALESCE(json_extract(payload, '$.chainReview.choice'), '') <> 'later' AND json_extract(payload, '$.teamWorkspaceApproval') IS NULL AND json_extract(payload, '$.taskId') IS ? AND NOT EXISTS (SELECT 1 FROM project_owner_management_messages ignored WHERE ignored.project_id=project_owner_management_messages.project_id AND ignored.event_id IN ('conversation-stale:' || project_owner_management_messages.id, 'conversation-resumed:' || project_owner_management_messages.id)) ORDER BY rowid DESC LIMIT 1").get(projectId, taskId ?? null) as { id: string } | undefined
+  const cutoff = getOwnerInitialPlanningRecoveryCutoff(projectId, taskId) ?? 0
+  if (pendingOwnerObservation(projectId, taskId, cutoff)) return true
+  const row = pendingOwnerUserMessage(projectId, taskId, cutoff)
   if (!row) return false
   const link = store.getProjectDb().prepare("SELECT planning_task_id, payload FROM project_owner_planning_links WHERE project_id = ? AND json_extract(payload, '$.conversationMessageId') = ? ORDER BY rowid DESC LIMIT 1").get(projectId, row.id) as { planning_task_id: string; payload: string } | undefined
   if (!link) return true

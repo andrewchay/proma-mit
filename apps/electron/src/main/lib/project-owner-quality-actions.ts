@@ -13,6 +13,8 @@ import { getPilotPolicy } from './project-pilot-policy'
 import { readOwnerGrantUsage } from './project-owner-execution-settlement'
 import { requestOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
 import { matchesOwnerExactTextInsertion } from './project-owner-delivery-content'
+import { isOwnerCounterSupplementCurrent, readOwnerCounterSupplement } from './project-owner-counter-supplement'
+import { OWNER_COUNTER_SUPPLEMENT_COMMAND } from './development-validation-service'
 import { isCompletedStatus } from './task-status-logic'
 import { isOwnerEvidenceGapRework, OWNER_ACCEPT_WITH_FINDINGS, parseOwnerQualityDecision } from './project-owner-quality-protocol'
 
@@ -78,11 +80,18 @@ export function getOwnerQualityConditionFingerprint(projectId: string, reviewerC
   const blockers = store.listTaskBlockers(projectId).filter(item => item.taskId === command.source_task_id)
   const artifact = (() => { try { return readOwnerQualityArtifact(reviewerCommandId)?.contentHash ?? null } catch { return null } })()
   const revalidation = getOwnerExecutionRevalidation({ projectId, ...(typeof command.grant_task_id === 'string' ? { taskId: command.grant_task_id } : {}) })
-  return ownerExecutionHash({ command, task: task ? { id: task.id, status: task.status, ownerStepLinkId: task.ownerStepLinkId, completionNotes: task.completionNotes ?? null } : null,
+  const supplement = readOwnerCounterSupplement(reviewerCommandId)
+  return ownerExecutionHash({ command, ...(supplement ? { counterValidationId: supplement.validation.id } : {}), task: task ? { id: task.id, status: task.status, ownerStepLinkId: task.ownerStepLinkId, completionNotes: task.completionNotes ?? null } : null,
     manager: manager ? { ownerId: manager.ownerId, revision: manager.revision, status: manager.status } : null,
     management: { id: management.delegation?.id ?? null, state: management.state, qualityDecisionEnabled: management.delegation?.qualityDecisionEnabled === true },
     policyRevision: policy?.revision ?? null, usage, blockers, artifact,
     revalidation: { status: revalidation.status, id: revalidation.revalidation?.id ?? null, integrityHash: revalidation.revalidation?.integrityHash ?? null, sourceHash: revalidation.revalidation ? ownerExecutionHash(revalidation.revalidation.source) : null } })
+}
+function canReconsiderQualityAction(action: OwnerQualityAction): boolean {
+  if (action.state === 'blocked') return true
+  if (action.state !== 'escalated') return false
+  const supplement = readOwnerCounterSupplement(action.reviewerCommandId)
+  return Boolean(supplement && supplement.validation.finishedAt >= action.createdAt && isOwnerCounterSupplementCurrent(supplement))
 }
 function isRecoverableOwnerQualityProtocolError(detail: string): boolean {
   return detail === 'Owner规划响应与目标或资料版本不匹配' || detail === OWNER_ACCEPT_WITH_FINDINGS
@@ -118,7 +127,7 @@ export function getOwnerQualityRecovery(projectId: string, reviewerCommandId: st
   const candidateId = smokeFailureId ?? lastRun?.id
   const candidate = !latest && candidateId ? readFailedOwnerQualityRecovery(projectId, reviewerCommandId, candidateId) : null
   const failed = candidate && (smokeFailureId || isRecoverableOwnerQualityProtocolError(candidate.previousDetail)) ? candidate : null
-  if (!failed && (!latest || latest.projectId !== projectId || latest.state !== 'blocked' || !latest.conditionFingerprint)) return null
+  if (!failed && (!latest || latest.projectId !== projectId || !canReconsiderQualityAction(latest) || !latest.conditionFingerprint)) return null
   const targetTaskId = latest ? managementTaskId(latest.ownerExecutionId) : failed!.targetTaskId
   const management = getOwnerManagementDelegation(projectId, targetTaskId)
   if (management.state !== 'active' || management.delegation?.qualityDecisionEnabled !== true
@@ -171,6 +180,11 @@ function execute(value: OwnerQualityAction, planningTaskId: string): Pick<OwnerQ
   // 历史决定可读不代表现在可执行；首次验收必须重新核对当前时效与完整协议。
   const planning = readOwnerPlanningSnapshot(planningTaskId)
   if (!planning) throw new Error('Owner质量决定的冻结来源缺失')
+  const counterValidation = planning.context.conversation?.deliveryReview?.review?.validationEvidence?.find(item => item.command === OWNER_COUNTER_SUPPLEMENT_COMMAND)
+  if (counterValidation) {
+    const supplement = readOwnerCounterSupplement(value.reviewerCommandId, counterValidation.validationId)
+    if (!supplement || !isOwnerCounterSupplementCurrent(supplement)) throw new Error('计数器交互补测已过期或成果已变化')
+  }
   parseOwnerQualityDecision(value.decision, planning.context)
   const completed = store.listTaskStatuses(value.projectId).find(item => item.stateGroup === 'completed')?.id
   if (!completed) throw new Error('项目没有明确完成状态，需核对配置')
@@ -193,7 +207,7 @@ export function applyOwnerQualityDecision(projectId: string, ownerExecutionId: s
     let recoveryFingerprint: string | undefined
     if (existing) {
       const currentFingerprint = getOwnerQualityConditionFingerprint(projectId, observation.commandId, frozen?.link.targetTaskId)
-      if (existing.state !== 'blocked' || !existing.conditionFingerprint || !recovery || recovery.previousExecutionId !== existing.ownerExecutionId || recovery.conditionFingerprint !== currentFingerprint || currentFingerprint === existing.conditionFingerprint) throw new Error('同一评审已有决定；只有阻断条件发生变化并重新核对后才能形成新决定')
+      if (!canReconsiderQualityAction(existing) || !existing.conditionFingerprint || !recovery || recovery.previousExecutionId !== existing.ownerExecutionId || recovery.conditionFingerprint !== currentFingerprint || currentFingerprint === existing.conditionFingerprint) throw new Error('同一评审已有决定；只有阻断条件发生变化并重新核对后才能形成新决定')
       recoveryFingerprint = recovery.conditionFingerprint
     } else if (recovery) {
       const failed = readFailedOwnerQualityRecovery(projectId, observation.commandId, recovery.previousExecutionId)

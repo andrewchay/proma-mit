@@ -1992,6 +1992,7 @@ export interface ElectronAPI {
       launchOwnerPreparedExecution: import('@gravitas/shared').ProjectOwnerExecutionLaunchApi['launchOwnerPreparedExecution']
       saveOwnerExecutionStartIntent: import('@gravitas/shared').ProjectOwnerExecutionLaunchApi['saveOwnerExecutionStartIntent']
       resumeOwnerExecutionStartIntent: import('@gravitas/shared').ProjectOwnerExecutionLaunchApi['resumeOwnerExecutionStartIntent']
+      supplementOwnerCounterReview: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['supplementOwnerCounterReview']
       recheckOwnerDevelopmentWorkspace: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['recheckOwnerDevelopmentWorkspace']
       getOwnerExecutionPreparation: import('@gravitas/shared').ProjectOwnerExecutionPreparationApi['getOwnerExecutionPreparation']
       listOwnerExecutionPreparationHistory: import('@gravitas/shared').ProjectOwnerExecutionPreparationApi['listOwnerExecutionPreparationHistory']
@@ -4843,6 +4844,7 @@ const electronAPI: ElectronAPI = {
       launchOwnerPreparedExecution: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LAUNCH_OWNER_PREPARED_EXECUTION, request),
       saveOwnerExecutionStartIntent: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_OWNER_EXECUTION_START_INTENT, request),
       resumeOwnerExecutionStartIntent: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.RESUME_OWNER_EXECUTION_START_INTENT, request),
+      supplementOwnerCounterReview: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SUPPLEMENT_OWNER_COUNTER_REVIEW, request),
       recheckOwnerDevelopmentWorkspace: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.RECHECK_OWNER_DEVELOPMENT_WORKSPACE, request),
       getOwnerExecutionPreparation: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.GET_OWNER_EXECUTION_PREPARATION, request),
       listOwnerExecutionPreparationHistory: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LIST_OWNER_EXECUTION_PREPARATION_HISTORY, request),

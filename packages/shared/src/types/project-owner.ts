@@ -1226,6 +1226,7 @@ export interface ProjectOwnerExecutionCommandApi {
   previewOwnerPreflightReconciliation: (request: OwnerPreflightReconciliationPreviewRequest) => Promise<ProjectOwnerGoalResult<OwnerPreflightReconciliationPreview>>
   confirmOwnerPreflightReconciliation: (request: ConfirmOwnerPreflightReconciliationRequest) => Promise<ProjectOwnerGoalResult<OwnerPreflightReconciliationResult>>
   /** 重新核对研发工作区；清理后调用可恢复「从未认领」的排队准备。 */
+  supplementOwnerCounterReview: (request: { projectId: string; reviewerCommandId: string }) => Promise<ProjectOwnerGoalResult<import('./development-review').DevelopmentValidationResult>>
   recheckOwnerDevelopmentWorkspace: (request: ProjectOwnerGoalSubject & { executionId: string }) => Promise<ProjectOwnerGoalResult<OwnerDevelopmentWorkspaceRecheck>>
 }
 

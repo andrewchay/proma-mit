@@ -35,9 +35,11 @@ const rendererPlan = await import('../../renderer/atoms/project-owner-plan-atoms
 const rendererGoal = await import('../../renderer/atoms/project-owner-goal-atoms')
 const ipcHandlers = new Map<string, (event: unknown, request: unknown) => unknown>()
 registerProjectOwnerExecutionIpcHandlers({ handle: (channel, handler) => { ipcHandlers.set(channel, handler) } })
-interface Scenario { exactInsertion?: boolean; verificationHandoff?: boolean; developmentRevision?: boolean; acceptWithFindings?: boolean; invalidQualityBinding?: boolean; ordinaryFeedback?: boolean; feedbackOutOfScope?: boolean; answerBlockedQuestion?: boolean; escalate?: boolean; blockedContinuation?: boolean; fencedReview?: boolean; missingReviewQuote?: 'verbatim' | 'paraphrase'; invalidReviewQuote?: boolean; queueOnly?: boolean; extraQualityCriteria?: boolean; omitQualityKind?: boolean; invalidQualityQuote?: boolean; rework?: boolean; evidenceGap?: boolean; ownerDefect?: boolean; dependent?: boolean; transitiveText?: boolean; hold?: boolean; maxRework?: number; legacy?: boolean; development?: boolean; nestedCode?: boolean; mixedDelivery?: boolean; separateRoles?: boolean; forkedCode?: boolean; checkInherited?: boolean; browserValidation?: boolean; validationFails?: boolean; durableStartIntent?: boolean; emptyReview?: boolean; localConfigurationError?: string; localConfigurationRuntimeResult?: boolean; localConfigurationNonZeroUsage?: boolean }
+interface Scenario { counterSupplement?: boolean; exactInsertion?: boolean; verificationHandoff?: boolean; developmentRevision?: boolean; acceptWithFindings?: boolean; invalidQualityBinding?: boolean; ordinaryFeedback?: boolean; feedbackOutOfScope?: boolean; answerBlockedQuestion?: boolean; escalate?: boolean; blockedContinuation?: boolean; fencedReview?: boolean; missingReviewQuote?: 'verbatim' | 'paraphrase'; invalidReviewQuote?: boolean; queueOnly?: boolean; extraQualityCriteria?: boolean; omitQualityKind?: boolean; invalidQualityQuote?: boolean; rework?: boolean; evidenceGap?: boolean; ownerDefect?: boolean; dependent?: boolean; transitiveText?: boolean; hold?: boolean; maxRework?: number; legacy?: boolean; development?: boolean; nestedCode?: boolean; mixedDelivery?: boolean; separateRoles?: boolean; forkedCode?: boolean; checkInherited?: boolean; browserValidation?: boolean; validationFails?: boolean; durableStartIntent?: boolean; emptyReview?: boolean; localConfigurationError?: string; localConfigurationRuntimeResult?: boolean; localConfigurationNonZeroUsage?: boolean }
 interface Trace { role: string; taskId: string; round: number; prompt: string }
 const scenarios = new Map<string, Scenario>(), traces = new Map<string, Trace[]>()
+const counterCriteria = ['打开文件后初值显示0', '点击加一后为1，再点重置后为0']
+const counterSource = '<!doctype html><span id="count">0</span><button id="increment">加一</button><button id="reset">重置</button>'
 const pending = new Map<string, { finish: () => void; executionId: string }>()
 beforeAll(async () => {
   await store.initProjectDb()
@@ -72,7 +74,7 @@ beforeAll(async () => {
           expect(readFileSync(join(cwd, 'src/branch-b.cjs'), 'utf8')).toBe('乙成果\n')
         }
       }
-      if (development && command.role === 'executor' && !(scenario.developmentRevision && input.userMessage.includes('<untrusted-prior-delivery>'))) writeFileSync(join(workspaces.getAgentWorkspaceCwd(workspace, input.sessionId), solutionPath), `module.exports = { answer: ${scenario.validationFails ? 0 : 42} }\n`)
+      if (development && !scenario.counterSupplement && command.role === 'executor' && !(scenario.developmentRevision && input.userMessage.includes('<untrusted-prior-delivery>'))) writeFileSync(join(workspaces.getAgentWorkspaceCwd(workspace, input.sessionId), solutionPath), `module.exports = { answer: ${scenario.validationFails ? 0 : 42} }\n`)
       if (scenario.browserValidation && command.role === 'executor') {
         const path = join(workspaces.getAgentWorkspaceCwd(workspace, input.sessionId), 'src/index.html')
         if (scenario.developmentRevision && input.userMessage.includes('<untrusted-prior-delivery>')) {
@@ -80,7 +82,7 @@ beforeAll(async () => {
           const delivered = readFileSync(path, 'utf8')
           expect(delivered).toContain('<h1>已交付页面</h1>')
           writeFileSync(path, delivered.replace('<body>', '<body data-revised="true">'))
-        } else writeFileSync(path, '<!doctype html><html><body><h1>已交付页面</h1></body></html>')
+        } else writeFileSync(path, scenario.counterSupplement ? counterSource : '<!doctype html><html><body><h1>已交付页面</h1></body></html>')
       }
       const transport = Object.assign(async () => new Response(JSON.stringify({ choices: [], usage: { prompt_tokens: 2, completion_tokens: 3 } }), { headers: { 'content-type': 'application/json' } }), { preconnect: () => {} }) as typeof globalThis.fetch
       const fetch = boundary.createControlledProviderFetch(input.sessionId, () => ({ runtime: 'ai-sdk', cwd: workspaces.getAgentWorkspaceCwd(workspace, input.sessionId), modelId: input.modelId!, permissionMode: 'safe' }), transport)
@@ -123,7 +125,12 @@ beforeAll(async () => {
       if (command.role === 'reviewer') {
         if (development) {
           const artifact = (await import('./project-owner-development-artifact')).ownerDevelopmentArtifactFromPrompt(input.userMessage)!
-          content = JSON.stringify({ schemaVersion: 3, artifactHash: artifact.contentHash, verdict: scenario.evidenceGap ? 'blocked' : 'approved', summary: scenario.evidenceGap ? '缺少运行验证。' : '代码快照及成功验证符合范围。', criteria: [{ criterion: '代码输出固定42', status: scenario.evidenceGap ? 'not_verified' : 'met', evidence: scenario.evidenceGap ? '缺少运行验证' : '冻结快照包含实现，白名单验证成功', quote: scenario.evidenceGap ? null : scenario.validationFails ? 'answer: 0' : 'answer: 42' }], findings: [], blockerReason: scenario.evidenceGap ? '缺少运行验证' : null })
+          if (scenario.counterSupplement) content = JSON.stringify({
+            schemaVersion: 3, artifactHash: artifact.contentHash, verdict: 'blocked', summary: '交互未验证', blockerReason: '只有页面加载验证', findings: [],
+            criteria: [{ criterion: counterCriteria[0], status: 'met', evidence: '源码与加载证据', quote: '<span id="count">0</span>' },
+              { criterion: counterCriteria[1], status: 'not_verified', evidence: '缺少运行证据', quote: null }],
+          })
+          else content = JSON.stringify({ schemaVersion: 3, artifactHash: artifact.contentHash, verdict: scenario.evidenceGap ? 'blocked' : 'approved', summary: scenario.evidenceGap ? '缺少运行验证。' : '代码快照及成功验证符合范围。', criteria: [{ criterion: '代码输出固定42', status: scenario.evidenceGap ? 'not_verified' : 'met', evidence: scenario.evidenceGap ? '缺少运行验证' : '冻结快照包含实现，白名单验证成功', quote: scenario.evidenceGap ? '仅通过页面加载检查，未执行交互验证' : scenario.validationFails ? 'answer: 0' : 'answer: 42' }], findings: [], blockerReason: scenario.evidenceGap ? '缺少运行验证' : null })
         } else {
           const artifact = (await import('./project-owner-text-delivery')).assertOwnerReviewerTextDelivery(execution.ownerCommandId)!
           const change = scenario.rework && !scenario.ownerDefect && command.rework_ordinal === 0
@@ -168,7 +175,7 @@ beforeAll(async () => {
     const catalog = scenario.ordinaryFeedback ? conversation.deliveredArtifacts : undefined
     const catalogItem = catalog?.items[0]
     const ordinaryFeedback = catalog?.version === 2 && catalogItem?.acceptanceCriteria ? { ...catalogItem, messageId: catalog.messageId, acceptanceCriteria: catalogItem.acceptanceCriteria } : undefined
-    if (conversation.deliveryFeedback || ordinaryFeedback || ((scenario.escalate || scenario.blockedContinuation) && !conversation.executionObservation)) {
+    if (conversation.deliveryFeedback || ordinaryFeedback || ((scenario.counterSupplement || scenario.escalate || scenario.blockedContinuation) && !conversation.executionObservation)) {
       const feedback = conversation.deliveryFeedback ?? ordinaryFeedback
       const roleKey = current.context.sources.roles[0]!.key
       const response = { schemaVersion: 1, kind: 'plan_proposal', binding: { projectId: execution.projectId, goalVersion: current.context.goal.goal.goalVersion, contextFingerprint: current.context.fingerprint }, proposal: {
@@ -193,6 +200,11 @@ beforeAll(async () => {
     const responseBinding = { projectId: scenario.invalidQualityBinding ? 'incorrect-project-id' : execution.projectId, goalVersion: current.context.goal.goal.goalVersion, contextFingerprint: current.context.fingerprint }
     const defect = Boolean(scenario.rework && artifactRound === 0)
     const decision = { reviewerCommandId: observed.commandId, artifactHash, verdict: scenario.escalate && !log.some(item => item.role === 'owner_feedback') ? 'escalate' : defect ? 'rework' : 'accept', reason: defect ? '受众依据仍缺，不能只看格式通过' : '已按准确范围标准核对完整成果与独立检查', criteria: [{ criterion: delivery?.developmentArtifact ? '代码输出固定42' : '明确目标范围与受众依据', status: defect ? 'not_met' : 'met', evidence: defect ? '正文未说明受众依据' : '范围与依据对应', quote: (scenario.invalidQualityQuote ? 'var bestKey = \'best-score-2048\';' : delivery?.developmentArtifact ? 'answer: 42' : artifactContent) as string | null | undefined }], findings: defect ? [{ severity: 'high', description: '受众依据未交代', requestedChange: '补充受众依据并保留明确范围' }] : [] }
+    if (scenario.counterSupplement && delivery?.review) {
+      const review = delivery.review
+      decision.verdict = review.verdict === 'approved' ? 'accept' : 'escalate'
+      decision.criteria = review.criteria.map(item => ({ ...item, evidence: item.evidence }))
+    }
     if (scenario.acceptWithFindings) decision.findings = [{ severity: 'low', description: '可选的行文调整', requestedChange: '下次可调整标点' }]
     if (scenario.evidenceGap) {
       decision.verdict = 'rework'
@@ -248,10 +260,10 @@ async function fixture(scenario: Scenario = {}) {
     ? [{ key: 'a', title: '分支甲', outcome: '代码甲', acceptanceCriteria: [criterion], dependencies: [] as string[], roleKey }, { key: 'b', title: '分支乙', outcome: '代码乙', acceptanceCriteria: [criterion], dependencies: [] as string[], roleKey }, { key: 'merge', title: '合并实现', outcome: '完整代码', acceptanceCriteria: [criterion], dependencies: ['a', 'b'], roleKey }]
     : scenario.mixedDelivery
     ? [{ key: 'brief', title: '形成建议', outcome: '定位材料', acceptanceCriteria: ['明确目标范围与受众依据'], dependencies: [] as string[], roleKey: textRoleKey, deliveryKind: 'text' as const }, { key: 'delivery', title: '修复代码', outcome: '代码实现', acceptanceCriteria: ['代码输出固定42'], dependencies: ['brief'], roleKey, deliveryKind: 'development' as const }, ...(scenario.verificationHandoff ? [{ key: 'report', title: '编写交付验证说明', outcome: '按可信回执整理结果', acceptanceCriteria: ['明确目标范围与受众依据'], dependencies: ['delivery'], roleKey: textRoleKey, deliveryKind: 'text' as const }] : [])]
-    : [{ key: 'brief', title: scenario.development ? '修复代码' : '形成建议', outcome: scenario.development ? '代码实现' : '定位材料', acceptanceCriteria: [criterion], dependencies: [] as string[], roleKey }, ...(scenario.dependent ? [{ key: 'delivery', title: '整理最终建议', outcome: '最终版本', acceptanceCriteria: [criterion], dependencies: ['brief'], roleKey }] : []), ...(scenario.transitiveText ? [{ key: 'final', title: '核对最终手册', outcome: '与原始资料一致的手册', acceptanceCriteria: [criterion], dependencies: ['delivery'], roleKey }] : [])]
+    : [{ key: 'brief', title: scenario.development ? '修复代码' : '形成建议', outcome: scenario.development ? '代码实现' : '定位材料', acceptanceCriteria: scenario.counterSupplement ? counterCriteria : [criterion], dependencies: [] as string[], roleKey }, ...(scenario.dependent ? [{ key: 'delivery', title: '整理最终建议', outcome: '最终版本', acceptanceCriteria: [criterion], dependencies: ['brief'], roleKey }] : []), ...(scenario.transitiveText ? [{ key: 'final', title: '核对最终手册', outcome: '与原始资料一致的手册', acceptanceCriteria: [criterion], dependencies: ['delivery'], roleKey }] : [])]
   plans.saveProjectOwnerPlanDraft(project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '计划', assumptions: [], risks: [], steps, changeReason: '建立' }); const confirmedPlan = plans.confirmProjectOwnerPlanDraft(project.id, 1, 1)
   const roleAssignments = [{ roleKey, employeeId: executor.id }, ...(writer ? [{ roleKey: textRoleKey, employeeId: writer.id }] : [])].sort((a, b) => a.roleKey.localeCompare(b.roleKey))
-  const subject = { projectId: project.id }, input = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: steps.map(item => item.key), executionKind: scenario.development ? 'development' : 'controlled', ...(!scenario.development ? { textDeliveryVersion: 1 } : { developmentScope: { workspaceId: workspace.id, targetPaths: scenario.nestedCode ? ['src/solution.cjs', 'diary/index.html'] : scenario.browserValidation ? [scenario.developmentRevision ? 'src/solution.js' : 'src/solution.cjs', 'src/index.html'] : ['src/solution.cjs'], allowedPaths: scenario.nestedCode ? ['src', 'diary/index.html'] : ['src'], verificationCommands: scenario.browserValidation ? ['browser:html.loads'] : ['node src/verify.cjs'] } }), ...(!scenario.legacy ? { qualityManagementVersion: 1 } : {}), employeeRuntimeVersion: 2, executorEmployeeId: roleAssignments[0]!.employeeId, reviewerEmployeeId: reviewer.id, roleAssignments, workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1_000_000, maxRuns: 8, maxRework: scenario.maxRework ?? 1, expiresAt: Date.now() + 3600000, changeReason: '测试质量委托' }
+  const subject = { projectId: project.id }, input = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: steps.map(item => item.key), executionKind: scenario.development ? 'development' : 'controlled', ...(!scenario.development ? { textDeliveryVersion: 1 } : { developmentScope: { workspaceId: workspace.id, targetPaths: scenario.counterSupplement ? ['src/index.html'] : scenario.nestedCode ? ['src/solution.cjs', 'diary/index.html'] : scenario.browserValidation ? [scenario.developmentRevision ? 'src/solution.js' : 'src/solution.cjs', 'src/index.html'] : ['src/solution.cjs'], allowedPaths: scenario.nestedCode ? ['src', 'diary/index.html'] : ['src'], verificationCommands: scenario.browserValidation ? ['browser:html.loads'] : ['node src/verify.cjs'] } }), ...(!scenario.legacy ? { qualityManagementVersion: 1 } : {}), employeeRuntimeVersion: 2, executorEmployeeId: roleAssignments[0]!.employeeId, reviewerEmployeeId: reviewer.id, roleAssignments, workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1_000_000, maxRuns: 8, maxRework: scenario.maxRework ?? 1, expiresAt: Date.now() + 3600000, changeReason: '测试质量委托' }
   const pv = prep.previewOwnerExecutionPreparation(subject, input), saved = prep.saveOwnerExecutionPreparation(subject, input, pv.previewFingerprint)
   const materialInput = { requestId: randomUUID(), expectedMaterializationRevision: 0, expectedPreparationId: saved.id, expectedPreparationRevision: saved.revision, expectedPreparationHash: saved.integrityHash, expectedPolicyRevision: saved.policyRevision }
   const permissionInput = { ...subject, requestId: randomUUID(), maxRequests: 12, maxCostMicros: 15_000_000, ...(scenario.escalate || scenario.blockedContinuation || scenario.ordinaryFeedback || scenario.invalidQualityBinding || scenario.developmentRevision || scenario.acceptWithFindings || scenario.exactInsertion ? { autonomousExecution: true } : {}), ...(scenario.developmentRevision ? { autonomousWorkspaceEditVersion: 1 as const } : {}), expiresAt: Date.now() + 3600000 }, permissionPreview = delegation.previewOwnerManagementDelegation(permissionInput)
@@ -1114,6 +1126,9 @@ test.each([false, true])('Given验证缺口阻断旧批次 When用户要求继�
   try {
     await until(() => actionRows(f.project.id).some(action => action.state === 'blocked'), f.project.id)
     const db = store.getProjectDb()
+    const receipt = db.prepare('SELECT response_json, original_response_text FROM project_owner_technical_reviews WHERE project_id=?').get(f.project.id) as { response_json: string; original_response_text: string }
+    expect(JSON.parse(receipt.response_json).criteria[0]).toMatchObject({ status: 'not_verified', quote: null })
+    expect(JSON.parse(receipt.original_response_text).criteria[0].quote).toBe('仅通过页面加载检查，未执行交互验证')
     if (unsettled) db.prepare("UPDATE project_owner_execution_request_reservations SET state='needs_reconcile' WHERE command_id IN (SELECT id FROM project_owner_execution_commands WHERE grant_id=?)").run(f.grant.grantId)
     const { getOwnerManager } = await import('./project-owner-management-store')
     const subject = { projectId: f.project.id }
@@ -1266,6 +1281,42 @@ test.skipIf(process.platform !== 'darwin')('Given代码交付需要浏览器验�
     } finally { writeFileSync(evidencePath, original) }
   } finally { if (f) await f.stop(); browser.setOwnerRuntimeBrowserRunner(null) }
 }, 120000)
+
+test('Given计数器已因交互缺口升级 When经IPC补测同一快照 Then Owner重新验收且交付绑定新回执', async () => {
+  const browser = await import('./owner-runtime-browser-verifier')
+  let supplementRuns = 0
+  browser.setOwnerRuntimeBrowserRunner(async input => {
+    const checks = input.templates!.map(template => ({ id: template.id, title: template.title, status: 'passed' as const, detail: '观察到计数：0 → 1 → 0' }))
+    if (checks.some(check => check.id === 'counter.increment-reset')) supplementRuns++
+    return { checks, timedOut: false, durationMs: 10, relativePath: 'src/index.html' }
+  })
+  let f: Awaited<ReturnType<typeof fixture>> | undefined
+  try {
+    f = await fixture({ development: true, browserValidation: true, counterSupplement: true })
+    await until(() => actionRows(f!.project.id)[0]?.state === 'escalated', f.project.id)
+    const initial = actionRows(f.project.id)[0]!
+    const invoke = ipcHandlers.get(PROJECT_IPC_CHANNELS.SUPPLEMENT_OWNER_COUNTER_REVIEW)!
+    const payload = { projectId: f.project.id, reviewerCommandId: initial.reviewerCommandId }
+    const [first, repeat] = await Promise.all([invoke(undefined, payload), invoke(undefined, payload)])
+    expect(first).toMatchObject({ ok: true, value: { status: 'passed', snapshotContentHash: initial.artifactHash } })
+    expect(first).toEqual(repeat)
+    expect(supplementRuns).toBe(1)
+    const supplemental = await import('./project-owner-counter-supplement')
+    expect(supplemental.isOwnerCounterSupplementCurrent(supplemental.readOwnerCounterSupplement(initial.reviewerCommandId)!)).toBe(true)
+    expect(actions.getOwnerQualityRecovery(f.project.id, initial.reviewerCommandId)).not.toBeNull()
+    const observations = await import('./project-owner-management-execution')
+    const reviewerExecution = store.getProjectDb().prepare('SELECT execution_id FROM project_owner_execution_commands WHERE id=?').get(initial.reviewerCommandId) as { execution_id: string }
+    expect(observations.readOwnerExecutionObservation(f.project.id, reviewerExecution.execution_id, 'terminal')?.observation.role).toBe('reviewer')
+    await until(() => managementConversation.getOwnerManagementConversation(f!.project.id).messages.some(message => message.kind === 'delivery'), f.project.id)
+    const decisions = actionRows(f.project.id)
+    expect(decisions.map(action => action.state)).toEqual(['escalated', 'accepted'])
+    expect(decisions[1]?.artifactHash).toBe(initial.artifactHash)
+    expect(traces.get(f.project.id)?.filter(item => item.role === 'executor' || item.role === 'reviewer').map(item => item.role)).toEqual(['executor', 'reviewer'])
+    expect(managementConversation.getOwnerManagementConversation(f.project.id).deliveryValidations?.[0]?.validations[0]).toMatchObject({
+      command: 'browser:html.loads+counter.increment-reset', freshness: 'fresh', checks: [{ id: 'html.loads' }, { id: 'counter.increment-reset' }],
+    })
+  } finally { if (f) await f.stop(); browser.setOwnerRuntimeBrowserRunner(null) }
+}, 30000)
 
 test('Given代码白名单验证失败且Reviewer仍声称通过 WhenOwner质量链续跑 Then拒绝保存通过评审与质量验收且不启动后继', async () => {
   const f = await fixture({ development: true, dependent: true, validationFails: true })
@@ -1581,6 +1632,33 @@ for (const compatibility of [
     expect(traces.get(f.project.id)).toHaveLength(before)
   } finally { await f.stop() }
 }, 60_000)
+
+test('Given历史代码评审因未验证项引用被拒 When从同一终态恢复 Then保留未验证项且不重跑评审', async () => {
+  const f = await fixture({ development: true, invalidReviewQuote: true })
+  try {
+    await until(() => managementConversation.getOwnerManagementConversation(f.project.id).messages.some(message => message.eventId.startsWith('owner-review-evidence-rejected:')), f.project.id)
+    await f.stop()
+    const db = store.getProjectDb()
+    const row = db.prepare("SELECT id,execution_id,grant_id,source_task_id FROM project_owner_execution_commands WHERE project_id=? AND role='reviewer'").get(f.project.id) as { id: string; execution_id: string; grant_id: string; source_task_id: string }
+    const execution = store.getAgentExecution(row.execution_id)!
+    const historical = JSON.parse(execution.resultSummary!)
+    historical.verdict = 'blocked'
+    historical.blockerReason = '缺少交互验证'
+    historical.criteria[0].status = 'not_verified'
+    const raw = JSON.stringify(historical)
+    const path = (await import('./config-paths')).getAgentSessionMessagesPath(execution.sessionId)
+    writeFileSync(path, [JSON.stringify({ type: 'assistant', session_id: execution.sessionId, message: { content: [{ type: 'text', text: raw }] } }), JSON.stringify({ type: 'result', subtype: 'success', session_id: execution.sessionId })].join('\n') + '\n')
+    db.prepare('UPDATE agent_executions SET result_summary=? WHERE id=?').run(raw, execution.id)
+    const recovery = await import('./project-owner-review-recovery')
+    expect(recovery.recoverOwnerReviewEvidence(f.project.id, row.grant_id, row.source_task_id, 0)).toBe(true)
+    expect(recovery.recoverOwnerReviewEvidence(f.project.id, row.grant_id, row.source_task_id, 0)).toBe(false)
+    const stored = db.prepare('SELECT response_json,original_response_text FROM project_owner_technical_reviews WHERE reviewer_command_id=?').get(row.id) as { response_json: string; original_response_text: string }
+    expect(stored.original_response_text).toBe(raw)
+    expect(JSON.parse(stored.response_json)).toMatchObject({ verdict: 'blocked', criteria: [{ status: 'not_verified', quote: null }] })
+    expect(traces.get(f.project.id)?.filter(item => item.role === 'reviewer')).toHaveLength(1)
+    expect(actionRows(f.project.id)).toHaveLength(0)
+  } finally { await f.stop() }
+}, 15000)
 
 test('Given验证缺口的Owner原判断被旧协议拒绝 When重验原回执 Then保留阻断并且不重派或验收', async () => {
   const f = await fixture({ hold: true, development: true, evidenceGap: true })

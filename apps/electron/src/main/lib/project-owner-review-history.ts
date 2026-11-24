@@ -1,6 +1,8 @@
 import type { OwnerReviewHistory } from '@gravitas/shared'
 import { readOwnerQualityAction } from './project-owner-quality-actions'
 import { listOwnerTechnicalReviewEvidence } from './project-owner-technical-review'
+import { canSupplementOwnerCounterReview, readOwnerCounterSupplement } from './project-owner-counter-supplement'
+import { isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
 import * as store from './project-sqlite-store'
 
 interface ReviewRound {
@@ -40,7 +42,7 @@ export function listOwnerReviewHistory(projectId: string): OwnerReviewHistory[] 
     ORDER BY x.created_at DESC, x.id`).all(projectId) as ReviewRound[]
   if (!rounds.length) return []
   let reviews: ReturnType<typeof listOwnerTechnicalReviewEvidence>
-  try { reviews = listOwnerTechnicalReviewEvidence(projectId, undefined, rounds.flatMap(round => round.reviewer_id ? [round.reviewer_id] : [])) } catch { reviews = [] }
+  try { reviews = listOwnerTechnicalReviewEvidence(projectId, undefined, rounds.flatMap(round => round.reviewer_id ? [round.reviewer_id] : []), false) } catch { reviews = [] }
   const reviewByCommand = new Map(reviews.map(review => [review.reviewerCommandId, review]))
   return rounds.map(round => {
     const review = round.reviewer_id ? reviewByCommand.get(round.reviewer_id) : undefined
@@ -62,7 +64,15 @@ export function listOwnerReviewHistory(projectId: string): OwnerReviewHistory[] 
       const action = round.reviewer_id ? readOwnerQualityAction(round.reviewer_id) : null
       if (action) { decision = `${action.detail}\n${action.decision.reason}`; decidedAt = action.createdAt; qualityState = action.state }
     } catch { decision = 'Owner 决定记录待核对。' }
+    let counterSupplementReviewerId: string | undefined
+    if (review && ['blocked', 'escalated'].includes(qualityState ?? '') && canSupplementOwnerCounterReview(review)) {
+      try {
+        const supplement = readOwnerCounterSupplement(review.reviewerCommandId)
+        if (!supplement || isOwnerValidationEvidenceExpired(supplement.validation)) counterSupplementReviewerId = review.reviewerCommandId
+        else steps.push({ label: '浏览器补测', detail: '原成果已通过初值、加一和重置验证，等待 Owner 核对。', at: supplement.validation.finishedAt })
+      } catch { steps.push({ label: '浏览器补测', detail: '补测记录需要核对。' }) }
+    }
     steps.push({ label: 'Owner 决定', detail: decision, ...(decidedAt === undefined ? {} : { at: decidedAt }) })
-    return { id: round.id, ...(round.scope_id ? { taskId: round.scope_id } : {}), businessTaskId: round.task_id, ...(qualityState ? { qualityState } : {}), title: store.getTask(round.task_id)?.title ?? '项目任务', reworkOrdinal: round.ordinal, steps }
+    return { id: round.id, ...(round.scope_id ? { taskId: round.scope_id } : {}), businessTaskId: round.task_id, ...(qualityState ? { qualityState } : {}), ...(counterSupplementReviewerId ? { counterSupplementReviewerId } : {}), title: store.getTask(round.task_id)?.title ?? '项目任务', reworkOrdinal: round.ordinal, steps }
   })
 }

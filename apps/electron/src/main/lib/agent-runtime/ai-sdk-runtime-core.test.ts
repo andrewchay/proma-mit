@@ -437,3 +437,24 @@ describe('AI SDK runtime core', () => {
     expect(String(denied.content)).toContain('安全模式下不允许执行写操作')
   })
 })
+
+test('Given 服务商流返回错误 When AI SDK 读取不到最终输出 Then Owner保留底层错误和请求编号', async () => {
+  const { OwnerPlanningRuntimeError } = await import('./owner-planning-runtime-error')
+  const fakeFetch = Object.assign(async () => new Response(
+    'data: {"error":{"message":"provider capacity exhausted","type":"capacity","code":"provider_capacity"}}\n\ndata: [DONE]\n\n',
+    { headers: { 'content-type': 'text/event-stream', 'x-request-id': 'owner-test-request' } },
+  ), { preconnect: () => {} })
+  const result = await new AISDKRuntimeCore().runAgentTurn({
+    sessionId: 'owner-stream-error', prompt: '规划', modelId: 'glm-5.3-flash', provider: 'zhipu',
+    protocol: 'openai-chat', apiKey: 'fake', baseUrl: 'https://example.invalid/v1', cwd: '/tmp',
+    runtimeTools: [], activeSession: { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false },
+    maxTurns: 1, maxRetries: 0, fetchFn: fakeFetch,
+    ownerPlanningRequest: { systemPrompt: '生成方案', userPrompt: '规划', maxOutputTokens: 32768 },
+  }).catch((cause: unknown) => cause)
+  expect(result).toBeInstanceOf(OwnerPlanningRuntimeError)
+  if (!(result instanceof OwnerPlanningRuntimeError)) throw new Error('未捕获Owner运行错误')
+  expect(result.runtimeResult.provider_request_id).toBe('owner-test-request')
+  expect(result.runtimeResult.errors?.join(' ')).toContain('provider capacity exhausted')
+  expect(result.runtimeResult.errors?.join(' ')).toContain('服务商响应流 · HTTP 200 · 服务商错误码 provider_capacity')
+  expect(result.runtimeResult.owner_planning_usage?.outputTokens).toBeNull()
+})

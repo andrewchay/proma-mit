@@ -140,6 +140,29 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const reviewHistory = editor.view?.reviewHistory?.filter(round => taskId === undefined || round.taskId === taskId) ?? []
   const escalatedReviews = reviewHistory.filter((round, index) => round.businessTaskId && round.qualityState === 'escalated' && reviewHistory.findIndex(item => item.businessTaskId === round.businessTaskId) === index)
   const blockedReviews = reviewHistory.filter((round, index) => round.businessTaskId && round.qualityState === 'blocked' && reviewHistory.findIndex(item => item.businessTaskId === round.businessTaskId) === index)
+  const [counterSupplement, setCounterSupplement] = useState<{ projectId: string; reviewerId: string; pending: boolean; message: string }>()
+  const supplementCounter = async (reviewerId: string) => {
+    setCounterSupplement({ projectId, reviewerId, pending: true, message: '' })
+    let message: string
+    try {
+      const result = await window.electronAPI.paa.project.supplementOwnerCounterReview({ projectId, reviewerCommandId: reviewerId })
+      if (!result.ok) throw new Error(result.error.message)
+      message = result.value.status === 'passed' ? '补测通过，已保存原成果的验证回执。' : '补测未通过。' + (result.value.checks?.find(check => check.status !== 'passed')?.detail ?? '')
+      await load(projectId)
+    } catch (error) {
+      message = error instanceof Error ? error.message : '补测失败，请刷新项目后再试。'
+    }
+    setCounterSupplement({ projectId, reviewerId, pending: false, message })
+  }
+  const counterSupplementControl = (round: typeof reviewHistory[number]) => {
+    const reviewerId = round.counterSupplementReviewerId
+    const state = counterSupplement?.projectId === projectId && counterSupplement.reviewerId === reviewerId ? counterSupplement : undefined
+    return reviewerId && <div className="mt-2 space-y-1">
+      <button type="button" className="text-primary underline" disabled={state?.pending} onClick={() => void supplementCounter(reviewerId)}>{state?.pending ? '正在验证…' : '补测加一和重置'}</button>
+
+    </div>
+  }
+  const counterSupplementNotice = counterSupplement?.projectId === projectId && counterSupplement.message
   const messages = editor.view?.messages.filter(message => message.taskId === taskId && message.kind !== 'goal') ?? []
   const timeline = ownerDiscussionTimeline(messages, plan.history, plan.snapshot, grant.history, grant.grant, dispatchEvents.events)
   const latestUserMessage = messages.findLast(message => message.role === 'user')
@@ -221,7 +244,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const waitingMessage = getOwnerWaitingMessage(messages, taskId)
   const decisionLabel = waitingMessage?.kind !== 'attention' ? getOwnerWaitingLabel(messages, taskId, delegation.view?.state) : null
   const waitingForDecision = decisionLabel !== null
-  const authorizationDecision = ['none', 'expired', 'stale', 'revoked', 'exhausted'].includes(delegation.view?.state ?? '')
+  const authorizationDecision = Boolean(delegation.view?.initialPlanningRecovery) || ['none', 'expired', 'stale', 'revoked', 'exhausted'].includes(delegation.view?.state ?? '')
   // 执行阻塞与执行区共用同一份推导：两处各自判断会出现“这里说暂无事项、那里说已阻塞”。
   const executionAttention = deriveOwnerExecutionAttention({
     grantState: grant.grant?.state,
@@ -404,7 +427,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
             && <p className="text-sm text-muted-foreground">暂无待你决定的事项。</p>}
           {acceptanceSchedule && <OwnerAcceptanceCard projectId={projectId} schedule={acceptanceSchedule} commands={usage.commands} onChanged={() => { void refreshCommandProgress(subject) }} feedbackDisabled={composer.sending || Boolean(composer.pending || composer.deliveryReference || composer.deliveryReviewDecision) || !editor.view?.manager} feedbackCapacity={Math.max(0, 3700 - composer.text.length)} onDiscuss={(delivery, excerpt, intent) => { const context = `交付「${delivery.title}」版本 ${delivery.version}（记录 ${delivery.id}）${excerpt ? `，${intent === 'question' ? '想询问' : '希望修改'}：\n“${excerpt}”` : '：'}\n`; const text = `${composer.text}${composer.text.trim() ? '\n\n' : ''}${context}`; if (text.length > 4000) return; edit({ subject, text }); focusReplyComposer() }} />}
           {acceptanceSchedule && (composer.deliveryReference || composer.deliveryReviewDecision) && <p className="text-xs text-muted-foreground">对话草稿已关联另一成果。请先发送或取消该关联，再对这个交付点选反馈。</p>}
-          {escalatedReviews.map(round => <div key={round.id} className="space-y-2 rounded-lg bg-amber-500/10 p-3 text-sm" aria-label="质量决定需协商"><p className="font-medium">{round.title} · 需要你决定</p><p className="whitespace-pre-wrap break-words">{round.steps.find(step => step.label === 'Owner 决定')?.detail ?? '请与 Owner 协商未解决的质量事项。'}</p><button type="button" className="text-primary underline" onClick={focusReplyComposer}>回复 Owner</button></div>)}
+          {escalatedReviews.map(round => <div key={round.id} className="space-y-2 rounded-lg bg-amber-500/10 p-3 text-sm" aria-label="质量决定需协商"><p className="font-medium">{round.title} · 需要你决定</p><p className="whitespace-pre-wrap break-words">{round.steps.find(step => step.label === 'Owner 决定')?.detail ?? '请与 Owner 协商未解决的质量事项。'}</p><button type="button" className="text-primary underline" onClick={focusReplyComposer}>回复 Owner</button>{counterSupplementControl(round)}</div>)}
           {waitingForDecision && <div className="flex flex-wrap items-center gap-3 rounded-lg bg-amber-500/10 p-3 text-sm">
             <p>{decisionLabel}</p>
             {waitingMessage?.kind === 'clarification' && !hasOpenQuestions && <button type="button" className="text-primary underline underline-offset-4" onClick={focusReplyComposer}>回复 Owner</button>}
@@ -450,8 +473,9 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
           <h4 className="text-sm font-semibold">风险与关注事项</h4>
           {evidenceBlocker && evidenceRisk && <div className="mt-3 rounded-xl bg-amber-500/10 p-3 text-sm" role="alert"><p className="font-medium">成果验证证据需要核对</p><p className="mt-1">{evidenceBlocker}</p><button type="button" className="mt-2 text-primary underline" onClick={() => selectDelivery(evidenceRisk.reference)}>查看成果和证据</button></div>}
           {planRisks.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-5 text-sm [overflow-wrap:anywhere]">{planRisks.map((risk, index) => <li key={index}>{risk}</li>)}</ul>}
-          {blockedReviews.map(round => <div key={round.id} className="mt-3 rounded-xl bg-amber-500/10 p-3 text-sm" aria-label="质量阻断"><p className="font-medium">{round.title} · 质量决定被阻断</p><p className="mt-1 whitespace-pre-wrap break-words">{round.steps.find(step => step.label === 'Owner 决定')?.detail ?? '请核对当前质量决定和恢复条件。'}</p></div>)}
-          {delegation.view?.state === 'attention' && children && <a href={`#${settingsId}`} className="mt-2 block text-sm text-primary underline underline-offset-4">上次请求待核对，查看请求记录</a>}
+          {counterSupplementNotice && <p role="status" className="mt-2 text-sm">{counterSupplementNotice}</p>}
+          {blockedReviews.map(round => <div key={round.id} className="mt-3 rounded-xl bg-amber-500/10 p-3 text-sm" aria-label="质量阻断"><p className="font-medium">{round.title} · 质量决定被阻断</p><p className="mt-1 whitespace-pre-wrap break-words">{round.steps.find(step => step.label === 'Owner 决定')?.detail ?? '请核对当前质量决定和恢复条件。'}</p>{counterSupplementControl(round)}</div>)}
+          {delegation.view?.state === 'attention' && !authorizationDecision && children && <a href={`#${settingsId}`} className="mt-2 block text-sm text-primary underline underline-offset-4">上次请求待核对，查看请求记录</a>}
           {!evidenceBlocker && !latestAttention && !priorAttention && blockedReviews.length === 0 && delegation.view?.state !== 'attention' && planRisks.length === 0 && <p className="mt-2 text-sm text-muted-foreground">暂无已记录的风险提示，不代表已完成全面风险检查。</p>}
           {priorAttention && <p className="mt-2 text-xs text-muted-foreground">此前 Owner 曾提出关注事项；后续进展是否解决该事项，请查看 <button type="button" className="text-primary underline" onClick={() => revealDiscussionTarget(`owner-message-${priorAttention.id}`)}>历史记录</button>核对。</p>}
           {latestAttention && <section className="mt-3 space-y-2 rounded-lg bg-amber-500/10 px-3 py-2" role="alert" aria-label="Owner最新处理结果">
@@ -526,7 +550,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
         {composer.deliveryReference && <div className={`flex items-center gap-2 px-[15px] pb-2 text-xs ${referencedDelivery ? 'text-muted-foreground' : 'text-destructive'}`}><p role={referencedDelivery ? 'status' : 'alert'}>{referencedDelivery ? `本条意见将关联已交付成果《${referencedDelivery.title}》及其准确版本。${composer.deliveryReviewDecision ? composer.deliveryReviewDecision === 'accepted' ? ' 审阅决定：认可。' : ' 审阅决定：需要修改。' : ''}` : '关联成果版本已无法核对；这条消息不会发送，请从当前交付卡重新选择成果。'}</p><button type="button" className="shrink-0 text-primary underline disabled:opacity-50" disabled={composer.sending || Boolean(composer.pending)} onClick={() => edit({ subject, text: composer.text, deliveryReference: null })}>取消关联</button></div>}
         {composer.error && <p role="alert" className="px-[15px] pb-2 text-sm text-destructive">{composer.error}。原消息已保留。</p>}
         <div className="flex items-center justify-between gap-3 border-t border-border/40 px-2.5 py-2">
-          <p role={delegation.view?.state === 'stale' ? 'alert' : undefined} className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">{editor.view.manager.status === 'paused' ? '管理已暂停，消息会保留，恢复后再处理。' : delegation.view?.state === 'stale' ? '管理授权因项目目标、配置、资料或费用依据变化而暂停。消息会保留且不会发送；请在授权设置中重新核对并确认当前范围，Owner随后会继续处理。' : delegation.view?.state === 'attention' ? '你的消息会保存，但 Owner 正暂停在上次请求核对；当前不会发送新模型请求。请勿重复提交，先在授权设置中核对原请求状态。' : '讨论会保留在项目记录中，不直接改变目标或授权。'}</p>
+          <p role={delegation.view?.state === 'stale' ? 'alert' : undefined} className="min-w-0 flex-1 text-xs leading-5 text-muted-foreground">{editor.view.manager.status === 'paused' ? '管理已暂停，消息会保留，恢复后再处理。' : delegation.view?.state === 'stale' ? '管理授权因项目目标、配置、资料或费用依据变化而暂停。消息会保留且不会发送；请在授权设置中重新核对并确认当前范围，Owner随后会继续处理。' : delegation.view?.initialPlanningRecovery ? '上次规划未完成，可在授权设置中确认重新规划。' : delegation.view?.state === 'attention' ? '你的消息会保存，但 Owner 正暂停在上次请求核对；当前不会发送新模型请求。请勿重复提交，先在授权设置中核对原请求状态。' : '讨论会保留在项目记录中，不直接改变目标或授权。'}</p>
           <Button type="submit" variant="ghost" size="icon" className={cn('size-[36px] rounded-full', canSendMessage ? 'text-primary hover:bg-primary/10' : 'cursor-not-allowed text-foreground/30')} disabled={!canSendMessage} aria-label={composer.pending ? '重新确认原消息已保存' : '发送给 Owner'} title={composer.pending ? '重新确认原消息已保存' : '发送给 Owner'}><CornerDownLeft className="size-[22px]" /></Button>
         </div>
       </div>

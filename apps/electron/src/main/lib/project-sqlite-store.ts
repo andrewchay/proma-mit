@@ -1228,6 +1228,11 @@ function migrate(database: SqliteCompat): void {
     response_json TEXT NOT NULL, response_sha256 TEXT NOT NULL CHECK (length(response_sha256) = 64),
     created_at INTEGER NOT NULL CHECK (created_at >= 0)
   )`)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_counter_supplements (
+    validation_id TEXT PRIMARY KEY, reviewer_command_id TEXT NOT NULL, created_at INTEGER NOT NULL,
+    payload TEXT NOT NULL, integrity_hash TEXT NOT NULL
+  )`)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_owner_counter_supplements_review ON project_owner_counter_supplements(reviewer_command_id, created_at)')
   const ownerReviewColumns = readColumnNames(database, 'project_owner_technical_reviews')
   if (!ownerReviewColumns.includes('validation_evidence_json')) database.exec("ALTER TABLE project_owner_technical_reviews ADD COLUMN validation_evidence_json TEXT NOT NULL DEFAULT '[]'")
   if (!ownerReviewColumns.includes('validation_evidence_sha256')) database.exec("ALTER TABLE project_owner_technical_reviews ADD COLUMN validation_evidence_sha256 TEXT NOT NULL DEFAULT '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945'")

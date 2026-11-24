@@ -33,7 +33,10 @@ export const loadOwnerDelegationAtom = atom(null, async (get, set, subject: Subj
     if (!result.ok) throw new Error(result.error.message)
     const next = new Map(get(ownerDelegationEditorsAtom)), current = getOwnerDelegationEditor(next, subject)
     if (current.generation !== generation) return current.view
-    next.set(key(subject), { ...current, view: result.value, ...(result.value.state === 'stale' ? { preview: null } : {}) }); set(ownerDelegationEditorsAtom, next)
+    next.set(key(subject), { ...current, view: result.value,
+      ...(!current.view && result.value.initialPlanningRecovery && result.value.delegation
+        ? { budgetUsd: String(result.value.delegation.maxCostMicros / 1_000_000) } : {}),
+      ...(result.value.state === 'stale' ? { preview: null } : {}) }); set(ownerDelegationEditorsAtom, next)
     return result.value
   } catch (cause) {
     const next = new Map(get(ownerDelegationEditorsAtom)), current = getOwnerDelegationEditor(next, subject)
@@ -53,14 +56,15 @@ export const actOwnerDelegationAtom = atom(null, async (get, set, input: { subje
       const binding = await api.ensureOwnerRuntimeBinding({ projectId: input.subject.projectId })
       if (!binding.ok) throw new Error(binding.error.message)
       if (!binding.value) throw new Error('Owner尚无有效模型和项目工作区配置；请先完成本地配置')
-      const request: OwnerManagementDelegationInput = { ...input.subject, requestId: crypto.randomUUID(), maxRequests: AUTONOMOUS_REQUEST_CEILING, autonomousExecution: true, autonomousWorkspaceEditVersion: 1, maxCostMicros: Math.round(Number(old.budgetUsd) * 1000000), expiresAt: Date.now() + Number(old.hours) * 3600000 }
+      const request: OwnerManagementDelegationInput = { ...input.subject, requestId: crypto.randomUUID(), maxRequests: AUTONOMOUS_REQUEST_CEILING, autonomousExecution: true, autonomousWorkspaceEditVersion: 1, maxCostMicros: Math.round(Number(old.budgetUsd) * 1000000), expiresAt: Date.now() + Number(old.hours) * 3600000,
+        ...(old.view?.initialPlanningRecovery ? { initialPlanningRecovery: old.view.initialPlanningRecovery } : {}) }
       const result = await api.previewOwnerManagementDelegation(request)
       if (!result.ok) throw new Error(result.error.message)
       update({ preview: result.value })
     } else if (input.action === 'confirm') {
       if (!old.preview) throw new Error('请先审阅本次管理范围')
-      const { projectId, taskId, requestId, maxRequests, autonomousExecution, autonomousWorkspaceEditVersion, maxCostMicros, expiresAt, previewHash } = old.preview
-      const result = await api.confirmOwnerManagementDelegation({ input: { projectId, ...(taskId ? { taskId } : {}), requestId, maxRequests, autonomousExecution, ...(autonomousWorkspaceEditVersion === 1 ? { autonomousWorkspaceEditVersion } : {}), maxCostMicros, expiresAt }, previewHash })
+      const { projectId, taskId, requestId, maxRequests, autonomousExecution, autonomousWorkspaceEditVersion, maxCostMicros, expiresAt, initialPlanningRecovery, previewHash } = old.preview
+      const result = await api.confirmOwnerManagementDelegation({ input: { projectId, ...(taskId ? { taskId } : {}), requestId, maxRequests, autonomousExecution, ...(autonomousWorkspaceEditVersion === 1 ? { autonomousWorkspaceEditVersion } : {}), maxCostMicros, expiresAt, ...(initialPlanningRecovery ? { initialPlanningRecovery } : {}) }, previewHash })
       if (!result.ok) throw new Error(result.error.message)
       update({ preview: null })
       await Promise.all([
@@ -77,7 +81,7 @@ export const actOwnerDelegationAtom = atom(null, async (get, set, input: { subje
     }
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : '管理委托未确认成功，请核对当前状态'
-    if (input.action === 'confirm' && /(配置、资料或价格已变化|目标内容已变化|目标已人工修订)/.test(message)) {
+    if (input.action === 'confirm' && /(配置、资料或价格已变化|目标内容已变化|目标已人工修订|首次规划恢复来源已变化|委托预览已变化)/.test(message)) {
       update({ preview: null })
       await set(loadOwnerDelegationAtom, input.subject)
     } else update({ error: message })

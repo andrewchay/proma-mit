@@ -106,6 +106,20 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
 
   const world = resolveValidationWorld(taskId, options.executionId)
   if (!world.scope.verificationCommands?.includes(trimmed)) throw new DevelopmentValidationError('验证命令授权已变化')
+  return runFrozenDevelopmentValidation(world, trimmed, options)
+}
+
+/** 只供 Owner 本机明确确认的计数器补测入口调用，命令参数由程序固定。 */
+export const OWNER_COUNTER_SUPPLEMENT_COMMAND = 'browser:html.loads+counter.increment-reset'
+export function runOwnerCounterSupplement(taskId: string, executionId: string, artifactHash: string): Promise<DevelopmentValidationResult> {
+  const world = resolveValidationWorld(taskId, executionId)
+  if (world.snapshot.contentHash !== artifactHash || world.scope.targetPaths.length !== 1 || !/\.html?$/i.test(world.scope.targetPaths[0]!))
+    throw new DevelopmentValidationError('补测必须绑定原执行的单一 HTML 成果')
+  const validationId = `val-${createHash('sha256').update(randomUUID()).digest('hex')}`
+  return runFrozenDevelopmentValidation(world, OWNER_COUNTER_SUPPLEMENT_COMMAND, { timeoutMs: 20_000, validationId })
+}
+
+async function runFrozenDevelopmentValidation(world: ValidationWorld, trimmed: string, options: { timeoutMs?: number; validationId?: string }): Promise<DevelopmentValidationResult> {
   if (!developmentWorktreeMatchesSnapshot(world.worktreePath, world.snapshot, world.snapshotScope)) {
     throw new DevelopmentValidationError('工作目录与冻结快照不一致，请先返工或重新交付')
   }
@@ -193,7 +207,7 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
 
   const result: DevelopmentValidationResult = {
     id: options.validationId ?? `val-${randomUUID()}`,
-    taskId,
+    taskId: world.taskId,
     executionId: world.executionId,
     command: trimmed,
     startedAt,
@@ -323,8 +337,15 @@ export function readDevelopmentValidationEvidence(taskId: string, executionId: s
   const world = resolveValidationWorld(taskId, executionId)
   const result = readValidationRecord(world.sessionDirectory, validationId, taskId, executionId)
   if (!result.binding) return { result, freshness: 'legacy', reason: '旧记录没有配置绑定，不补造可信新鲜度' }
+  const supplement = result.command === OWNER_COUNTER_SUPPLEMENT_COMMAND
+    ? getProjectDb().prepare('SELECT reviewer_command_id FROM project_owner_counter_supplements WHERE validation_id=?').get(validationId) as { reviewer_command_id: string } | undefined
+    : undefined
+  const supplementaryAuthority = supplement
+    ? (require('./project-owner-counter-supplement') as typeof import('./project-owner-counter-supplement')).readOwnerCounterSupplement(supplement.reviewer_command_id, validationId)
+    : null
+  const supplementalCommandMatches = supplementaryAuthority && ownerExecutionHash(supplementaryAuthority.validation) === ownerExecutionHash(result)
   if (hashJson(result.binding) !== hashJson(world.binding) || result.snapshotContentHash !== world.snapshot.contentHash
-    || !world.scope.verificationCommands?.includes(result.command) || result.startedAt < world.snapshot.createdAt) {
+    || (!supplementalCommandMatches && !world.scope.verificationCommands?.includes(result.command)) || result.startedAt < world.snapshot.createdAt) {
     return { result, freshness: 'stale', reason: '身份、快照或验证配置已变化' }
   }
   if (!developmentWorktreeMatchesSnapshot(world.worktreePath, world.snapshot, world.snapshotScope)) {

@@ -139,6 +139,7 @@ export interface OwnerReviewHistory {
   title: string
   reworkOrdinal: number
   qualityState?: 'accepted' | 'rework_authorized' | 'escalated' | 'blocked'
+  counterSupplementReviewerId?: string
   steps: Array<{ label: string; detail: string; at?: number }>
 }
 
@@ -295,6 +296,12 @@ export interface AnswerOwnerManagementQuestionRequest {
 }
 
 /** 管理委托只覆盖受限Owner推理；不授予员工执行或敏感操作许可。金额单位micro-USD。 */
+export interface OwnerInitialPlanningRecovery {
+  delegationId: string
+  executionId: string
+  receiptId: string
+}
+
 export interface OwnerManagementDelegationInput {
   projectId: string
   taskId?: string
@@ -306,6 +313,7 @@ export interface OwnerManagementDelegationInput {
   autonomousWorkspaceEditVersion?: 1
   maxCostMicros: number
   expiresAt: number
+  initialPlanningRecovery?: OwnerInitialPlanningRecovery
   /** 旧版委托兼容字段；新授权不绑定单份方案。 */
   startApproval?: { expectedGoalRevision: number; expectedPlanRevision: number; planFingerprint: string; contextFingerprint: string }
 }
@@ -318,6 +326,7 @@ export interface OwnerManagementDelegationPreview extends OwnerManagementDelegat
   fullDeliveryReviewEnabled?: true
   /** 允许Owner提出结构化质量决定；实际动作仍需当前业务授权。 */
   qualityDecisionEnabled?: true
+  recoveryBudget?: { reservedMicros: number; remainingMicros: number }
   scopeHash: string
   goalContentHash: string
   previewHash: string
@@ -405,6 +414,7 @@ export interface OwnerManagementDelegationView {
   reservedCostMicros: number
   detail: string
   attentionCheck?: OwnerManagementAttentionCheck
+  initialPlanningRecovery?: OwnerInitialPlanningRecovery
   /** Owner模型开销占项目总预算的占比上限用量；只读展示，不代表账单。 */
   ownerModelBudget?: { limitMicros: number; usedMicros: number; settledMicros: number; ratedUsageMicros?: number; inFlightMicros: number; remainingMicros: number; ratio: number }
 }
