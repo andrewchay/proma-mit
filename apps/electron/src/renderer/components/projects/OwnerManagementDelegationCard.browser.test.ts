@@ -12,14 +12,14 @@ browserTest('Given 管理范围许可卡 When 授权、失效后续授权及撤�
   writeFileSync(join(directory, 'entry.tsx'), `
 import React from 'react';import {createRoot} from 'react-dom/client';import {Provider} from 'jotai';
 import {OwnerManagementDelegationCard} from ${JSON.stringify(join(renderer, 'components/projects/OwnerManagementDelegationCard.tsx'))};
-const params=new URLSearchParams(location.search);let reauthorized=false,raceStale=false,current=params.has('stale')||params.has('attention')||params.has('exhausted')?{id:'stale-grant',maxCostMicros:2000000,expiresAt:Date.now()+3600000}:null,previews=[],confirms=[],revokes=[],reads=0,bindings=0;
+const params=new URLSearchParams(location.search);const recovery=params.has('recovery')?{delegationId:'stale-grant',executionId:'first-run',receiptId:'receipt'}:null;let reauthorized=false,raceStale=false,current=params.has('stale')||params.has('attention')||params.has('exhausted')||recovery?{id:'stale-grant',maxCostMicros:2000000,expiresAt:Date.now()+3600000}:null,previews=[],confirms=[],revokes=[],reads=0,bindings=0;
 const ok=value=>({ok:true,value});
 window.electronAPI={paa:{project:{
-getOwnerManagementDelegation:async()=>{reads++;return ok({delegation:current,state:current?(reauthorized?'active':raceStale||params.has('stale')?'stale':params.has('attention')?'attention':params.has('exhausted')?'exhausted':'active'):'none',usedRequests:current?1:0,reservedCostMicros:current?620000:0,detail:current?(reauthorized?'管理委托有效':raceStale||params.has('stale')?'来源已变化，需重新确认':params.has('attention')?'上次管理请求未得到可继续结果，请核对原运行；不会自动重试。':params.has('exhausted')?'当前预算不足以预留下一次 Owner 请求':'管理委托有效'):'',...(params.has('attention')?{attentionCheck:{executionStatus:'failed',outcomeState:'failed',reason:'output_limit',requestStartedAt:Date.now()-120000,receiptCapturedAt:Date.now()-60000,modelId:'deepseek-flash',providerResponseId:'d713371a-eb05-4a91-a53f-a2b8f46f94fb',outcomeDetail:'Owner安排输出达到本次请求上限',inputTokens:1849,outputTokens:4096,costSource:'unknown',costUsd:null}}:{})})},onOwnerManagementChanged:()=>()=>{},
+getOwnerManagementDelegation:async()=>{reads++;return ok({delegation:current,state:current?(reauthorized?'active':raceStale||params.has('stale')?'stale':(params.has('attention')||recovery)?'attention':params.has('exhausted')?'exhausted':'active'):'none',usedRequests:current?1:0,reservedCostMicros:current?620000:0,detail:current?(reauthorized?'管理委托有效':raceStale||params.has('stale')?'来源已变化，需重新确认':params.has('attention')?'上次管理请求未得到可继续结果，请核对原运行；不会自动重试。':params.has('exhausted')?'当前预算不足以预留下一次 Owner 请求':'管理委托有效'):'',...(recovery&&!reauthorized?{initialPlanningRecovery:recovery}:{}),...(params.has('attention')?{attentionCheck:{executionStatus:'failed',outcomeState:'failed',reason:'output_limit',requestStartedAt:Date.now()-120000,receiptCapturedAt:Date.now()-60000,modelId:'deepseek-flash',providerResponseId:'d713371a-eb05-4a91-a53f-a2b8f46f94fb',outcomeDetail:'Owner安排输出达到本次请求上限',inputTokens:1849,outputTokens:4096,costSource:'unknown',costUsd:null}}:{})})},onOwnerManagementChanged:()=>()=>{},
 ensureOwnerRuntimeBinding:async()=>{bindings++;return ok({revision:2})},
 
-previewOwnerManagementDelegation:async input=>{previews.push(input);if(params.has('bindingstale')&&previews.length===1)return {ok:false,error:{code:'conflict',message:'Owner管理配置已变化，请重新确认'}};return ok({...input,scopeHash:'scope',previewHash:'preview',bindingRevision:1,goalRevision:1,modelId:'deepseek-flash',workspaceName:'已授权资料',priceEvidenceId:'reviewed',perRequestCeilingMicros:310000,maxOutputTokens:8192})},
-confirmOwnerManagementDelegation:async input=>{confirms.push(input);current={...input.input,id:'grant',modelId:'deepseek-flash'};if(params.has('race')&&confirms.length===1){current={id:'stale-grant',maxCostMicros:2000000,expiresAt:Date.now()+3600000};raceStale=true;throw Error('Owner管理委托的配置、资料或价格已变化')}if(!params.has('stale')&&!params.has('exhausted')&&confirms.length===1)throw Error('回包丢失，请重提核对');reauthorized=true;return ok(current)},
+previewOwnerManagementDelegation:async input=>{previews.push(input);if(params.has('bindingstale')&&previews.length===1)return {ok:false,error:{code:'conflict',message:'Owner管理配置已变化，请重新确认'}};return ok({...input,...(recovery?{recoveryBudget:{reservedMicros:620000,remainingMicros:1070000}}:{}),scopeHash:'scope',previewHash:'preview',bindingRevision:1,goalRevision:1,modelId:'deepseek-flash',workspaceName:'已授权资料',priceEvidenceId:'reviewed',perRequestCeilingMicros:310000,maxOutputTokens:8192})},
+confirmOwnerManagementDelegation:async input=>{confirms.push(input);current={...input.input,id:'grant',modelId:'deepseek-flash'};if(params.has('race')&&confirms.length===1){current={id:'stale-grant',maxCostMicros:2000000,expiresAt:Date.now()+3600000};raceStale=true;throw Error('Owner管理委托的配置、资料或价格已变化')}if(!params.has('stale')&&!params.has('exhausted')&&!recovery&&confirms.length===1)throw Error('回包丢失，请重提核对');reauthorized=true;return ok(current)},
 revokeOwnerManagementDelegation:async input=>{revokes.push(input);return ok({delegation:current,state:'revoked',usedRequests:1,reservedCostMicros:310000,detail:'管理委托已撤销'})}
 }}};
 window.fixture={facts:()=>({previews,confirms,revokes,reads,bindings})};
@@ -101,6 +101,13 @@ createRoot(document.getElementById('root')).render(<Provider><OwnerManagementDel
     await page.getByRole('button', { name: '撤销授权', exact: true }).waitFor()
     expect(await page.evaluate<number>('window.fixture.facts().confirms[0].input.maxCostMicros')).toBe(2200000)
     expect(await page.evaluate<number>('window.fixture.facts().revokes.length')).toBe(0)
+    await page.goto(`http://127.0.0.1:${server.port}/?recovery`)
+    await page.getByRole('heading', { name: '恢复项目规划' }).waitFor()
+    await page.getByText('历史预留 $0.62 · 本次最多预留 $0.31 · 预留后项目预算余额 $1.07').waitFor()
+    expect(await page.evaluate<number>('window.fixture.facts().confirms.length')).toBe(0)
+    await page.getByRole('button', { name: '授权并重新规划一次' }).click()
+    await page.getByRole('button', { name: '撤销授权', exact: true }).waitFor()
+    expect(await page.evaluate<string>('window.fixture.facts().confirms[0].input.initialPlanningRecovery.executionId')).toBe('first-run')
     await page.goto(`http://127.0.0.1:${server.port}/?attention`)
     const attentionText = await page.locator('section[aria-label="Owner管理委托"]').innerText()
     expect(attentionText).toContain('Owner 已暂停：需要核对上次请求')

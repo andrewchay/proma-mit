@@ -45,7 +45,7 @@ export function ProjectOwnerConversation({ projectId, taskId, showProjectDetails
     && (!needsWorkspaceApproval || setup.authorizeWorkspace)
   const canSubmitGoal = !busy && !goal.loading && !goal.conflict && !goal.requiresReview && canSaveOwnerGoal(goal)
   const showSetupSummary = !configured || setup.editingConfiguration
-  const canAutoPrepare = goalReady && Boolean(facts) && !setup.needsRefresh && !setup.dirty && !setup.editingConfiguration
+  const canAutoPrepare = goalReady && !configured && Boolean(facts) && !setup.needsRefresh && !setup.dirty && !setup.editingConfiguration
     && !setup.newWorkspace && Boolean(selectedModel && workspace && workspaceBound)
   const autoPrepareKey = `${projectId}:${taskId ?? ''}:${goal.snapshot?.revision ?? 0}`
   useEffect(() => {

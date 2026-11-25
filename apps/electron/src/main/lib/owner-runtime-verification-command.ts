@@ -16,6 +16,17 @@ import { resolveOwnerRuntimeAssertionTemplates } from './owner-runtime-assertion
 import { runOwnerRuntimeBrowserAssertions, type OwnerRuntimeBrowserCheckResult } from './owner-runtime-browser-verifier'
 
 export const BROWSER_VERIFICATION_PREFIX = 'browser:'
+export const MARKDOWN_VERIFICATION_COMMAND = 'document:markdown'
+
+export const COUNTER_KEYBOARD_CHECK = 'counter.mouse-keyboard'
+export const COUNTER_KEYBOARD_VERIFICATION_COMMAND = `browser:html.loads+${COUNTER_KEYBOARD_CHECK}`
+
+/** 明确同时要求按钮式计数、重置和键盘时，页面可加载不能作为唯一验证。 */
+export function requiresOwnerCounterKeyboardVerification(steps: ReadonlyArray<{ acceptanceCriteria?: readonly string[] }>, targets: readonly string[]): boolean {
+  if (targets.length !== 1 || !/\.html?$/i.test(targets[0]!)) return false
+  const criteria = steps.flatMap(step => step.acceptanceCriteria ?? []).join(' ')
+  return /加一|递增|increment/i.test(criteria) && /重置|归零|reset/i.test(criteria) && /键盘|Enter|keyboard/i.test(criteria)
+}
 
 export function isBrowserVerificationCommand(command: string): boolean {
   return command.trim().startsWith(BROWSER_VERIFICATION_PREFIX)

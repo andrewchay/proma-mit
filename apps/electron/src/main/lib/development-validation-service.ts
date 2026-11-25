@@ -22,13 +22,13 @@ import { getAgentWorkspace } from './agent-workspace-manager'
 import { getAgentSessionMeta } from './agent-session-manager'
 import { getAgentSessionWorkspacePath } from './config-paths'
 import { resolveDevelopmentWorktree } from './agent-development-worktree'
-import { developmentWorktreeMatchesSnapshot, loadDevelopmentSnapshot, type DevelopmentSnapshotScope } from './development-snapshot-service'
+import { developmentWorktreeMatchesSnapshot, loadDevelopmentSnapshot, readDevelopmentSnapshotContentsAsync, type DevelopmentSnapshotScope } from './development-snapshot-service'
 import { normalizeRepoRelativePath } from './development-task-service'
 import { DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS, parseDevelopmentValidationRecord } from './development-validation-record'
 import { completeOwnerDevelopmentValidationAttempt, ownerDevelopmentValidationId, reserveOwnerDevelopmentValidationAttempt } from './development-validation-attempt'
 import { ownerExecutionHash } from './project-owner-execution-hash'
 import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
-import { executeBrowserVerificationCommand, isBrowserVerificationCommand } from './owner-runtime-verification-command'
+import { executeBrowserVerificationCommand, isBrowserVerificationCommand, MARKDOWN_VERIFICATION_COMMAND } from './owner-runtime-verification-command'
 import { isBuildVerificationCommand, resolveOwnerRuntimeBuildCommand } from './owner-runtime-build-command'
 import { buildSeatbeltProfile, SANDBOX_EXEC_PATH } from './pinned-verifier-sandbox'
 
@@ -106,6 +106,32 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
 
   const world = resolveValidationWorld(taskId, options.executionId)
   if (!world.scope.verificationCommands?.includes(trimmed)) throw new DevelopmentValidationError('验证命令授权已变化')
+  return runFrozenDevelopmentValidation(world, trimmed, options)
+}
+
+/** 只供 Owner 本机明确确认的计数器补测入口调用，命令参数由程序固定。 */
+export const OWNER_COUNTER_SUPPLEMENT_COMMAND = 'browser:html.loads+counter.increment-reset'
+export function runOwnerCounterSupplement(taskId: string, executionId: string, artifactHash: string): Promise<DevelopmentValidationResult> {
+  const world = resolveValidationWorld(taskId, executionId)
+  if (world.snapshot.contentHash !== artifactHash || world.scope.targetPaths.length !== 1 || !/\.html?$/i.test(world.scope.targetPaths[0]!))
+    throw new DevelopmentValidationError('补测必须绑定原执行的单一 HTML 成果')
+  const validationId = `val-${createHash('sha256').update(randomUUID()).digest('hex')}`
+  return runFrozenDevelopmentValidation(world, OWNER_COUNTER_SUPPLEMENT_COMMAND, { timeoutMs: 20_000, validationId })
+}
+
+export function runOwnerMarkdownSupplement(taskId: string, executionId: string, artifactHash: string, executorId: string): Promise<DevelopmentValidationResult> {
+  const world = resolveValidationWorld(taskId, executionId)
+  if (world.snapshot.contentHash !== artifactHash || !world.scope.targetPaths.length
+    || world.snapshotScope.priorBrowserTargets?.length || world.scope.targetPaths.some(path => !/\.md$/i.test(path))
+    || world.scope.verificationCommands?.length !== 1 || world.scope.verificationCommands[0] !== 'browser:html.loads') {
+    throw new DevelopmentValidationError('原成果必须是误配置网页验证的 Markdown 快照')
+  }
+  return runFrozenDevelopmentValidation(world, MARKDOWN_VERIFICATION_COMMAND, {
+    validationId: ownerDevelopmentValidationId(executorId, MARKDOWN_VERIFICATION_COMMAND, artifactHash),
+  })
+}
+
+async function runFrozenDevelopmentValidation(world: ValidationWorld, trimmed: string, options: { timeoutMs?: number; validationId?: string }): Promise<DevelopmentValidationResult> {
   if (!developmentWorktreeMatchesSnapshot(world.worktreePath, world.snapshot, world.snapshotScope)) {
     throw new DevelopmentValidationError('工作目录与冻结快照不一致，请先返工或重新交付')
   }
@@ -184,8 +210,9 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
       commandRun = await runCommand(trimmed, worktree, options.timeoutMs ?? DEFAULT_TIMEOUT_MS, argv, env)
     } finally { rmSync(scratch, { recursive: true, force: true }) }
   }
+  const documentRun = trimmed === MARKDOWN_VERIFICATION_COMMAND ? await verifyMarkdownSnapshot(world) : undefined
   const { exitCode, timedOut, output, rawOutputSha256, rawOutputByteLength } = browserRun
-    ?? commandRun ?? await runCommand(trimmed, world.worktreePath, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    ?? commandRun ?? documentRun ?? await runCommand(trimmed, world.worktreePath, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
   const finishedAt = Date.now()
 
   const staleAfter = !validationWorldStillMatches(world)
@@ -193,7 +220,7 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
 
   const result: DevelopmentValidationResult = {
     id: options.validationId ?? `val-${randomUUID()}`,
-    taskId,
+    taskId: world.taskId,
     executionId: world.executionId,
     command: trimmed,
     startedAt,
@@ -211,6 +238,26 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
   }
   writeJsonFileAtomic(join(world.sessionDirectory, `development-validation-${result.id}.json`), result)
   return result
+}
+
+/** 只读冻结的 Markdown 正文；业务完整性仍须独立评审。 */
+async function verifyMarkdownSnapshot(world: ValidationWorld) {
+  const paths = [...new Set(world.scope.targetPaths.map(normalizeRepoRelativePath))].filter(path => /\.md$/i.test(path))
+  if (!paths.length) throw new DevelopmentValidationError('研发范围内没有可验证的 Markdown 目标文件')
+  const files = new Map((await readDevelopmentSnapshotContentsAsync(world.sessionDirectory, world.executionId))
+    .map(entry => [entry.file.path, entry]))
+  const checks = paths.map(path => {
+    const entry = files.get(path)
+    const content = entry?.newContent
+    const passed = Boolean(content?.trim() && !content.includes('\0')
+      && createHash('sha256').update(content).digest('hex') === entry?.file.newSha256)
+    return { path, passed }
+  })
+  const output = JSON.stringify(checks)
+  return {
+    exitCode: checks.every(check => check.passed) ? 0 : 1, timedOut: false, output,
+    rawOutputSha256: createHash('sha256').update(output).digest('hex'), rawOutputByteLength: Buffer.byteLength(output),
+  }
 }
 
 /**
@@ -281,10 +328,29 @@ export async function runOwnerDevelopmentValidations(ownerCommandId: string): Pr
       if (reservation.kind === 'completed') throw new DevelopmentValidationError('Owner验证尝试已完成但回执丢失；保留记录且不重跑')
       throw new DevelopmentValidationError('Owner验证尝试终态未知；保留占位且不自动重跑')
     }
-    const result = await runDevelopmentValidation(command.source_task_id, verificationCommand, {
-      executionId: command.execution_id,
-      validationId,
-    })
+    let result: DevelopmentValidationResult
+    try {
+      result = await runDevelopmentValidation(command.source_task_id, verificationCommand, {
+        executionId: command.execution_id,
+        validationId,
+      })
+    } catch (cause) {
+      // 已返回的错误是失败终态。进程崩溃留下的占位仍按未知处理，不自动重跑。
+      const output = cause instanceof Error ? cause.message : '验证异常退出'
+      result = {
+        id: validationId, taskId: world.taskId, executionId: world.executionId, command: verificationCommand,
+        startedAt: attempt.startedAt, finishedAt: Date.now(), exitCode: null, timedOut: false,
+        status: validationWorldStillMatches(world) ? 'failed' : 'stale', snapshotContentHash: world.snapshot.contentHash,
+        outputTail: output.slice(-DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS),
+        outputTruncated: output.length > DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS,
+        rawOutputSha256: createHash('sha256').update(output).digest('hex'), rawOutputByteLength: Buffer.byteLength(output),
+        binding: world.binding,
+      }
+      writeJsonFileAtomic(join(world.sessionDirectory, `development-validation-${validationId}.json`), result)
+      completeOwnerDevelopmentValidationAttempt(world.sessionDirectory, attempt)
+      // 保留原错误通知，同时提供已持久化的失败回执。
+      throw cause
+    }
     completeOwnerDevelopmentValidationAttempt(world.sessionDirectory, attempt)
     results.push(result)
   }
@@ -323,8 +389,18 @@ export function readDevelopmentValidationEvidence(taskId: string, executionId: s
   const world = resolveValidationWorld(taskId, executionId)
   const result = readValidationRecord(world.sessionDirectory, validationId, taskId, executionId)
   if (!result.binding) return { result, freshness: 'legacy', reason: '旧记录没有配置绑定，不补造可信新鲜度' }
+  const supplement = result.command === OWNER_COUNTER_SUPPLEMENT_COMMAND
+    ? getProjectDb().prepare('SELECT reviewer_command_id FROM project_owner_counter_supplements WHERE validation_id=?').get(validationId) as { reviewer_command_id: string } | undefined
+    : undefined
+  const supplementaryAuthority = supplement
+    ? (require('./project-owner-counter-supplement') as typeof import('./project-owner-counter-supplement')).readOwnerCounterSupplement(supplement.reviewer_command_id, validationId)
+    : null
+  const supplementalCommandMatches = supplementaryAuthority && ownerExecutionHash(supplementaryAuthority.validation) === ownerExecutionHash(result)
+  const documentRetry = result.command === MARKDOWN_VERIFICATION_COMMAND
+    ? (require('./project-owner-document-review-retry') as typeof import('./project-owner-document-review-retry')).readOwnerDocumentReviewRetry({ validationId }) : null
+  const documentCommandMatches = documentRetry && ownerExecutionHash(documentRetry.validation) === ownerExecutionHash(result)
   if (hashJson(result.binding) !== hashJson(world.binding) || result.snapshotContentHash !== world.snapshot.contentHash
-    || !world.scope.verificationCommands?.includes(result.command) || result.startedAt < world.snapshot.createdAt) {
+    || (!supplementalCommandMatches && !documentCommandMatches && !world.scope.verificationCommands?.includes(result.command)) || result.startedAt < world.snapshot.createdAt) {
     return { result, freshness: 'stale', reason: '身份、快照或验证配置已变化' }
   }
   if (!developmentWorktreeMatchesSnapshot(world.worktreePath, world.snapshot, world.snapshotScope)) {

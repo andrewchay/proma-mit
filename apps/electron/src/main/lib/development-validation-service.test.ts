@@ -89,6 +89,22 @@ function fixture(options: { scriptName?: string; scriptContent?: string; baselin
 }
 
 describe('验证证据（T27/T28）', () => {
+  test('Given 纯 Markdown 交付快照 When 验证 Then 绑定完整正文且拒绝空文件', async () => {
+    for (const content of ['# 活动手册\n\n主持人负责时间管理。\n', ' \n']) {
+      const w = fixture()
+      const task = store.getTask(w.taskId)!
+      const command = 'document:markdown'
+      writeFileSync(join(w.worktreePath, 'src', 'handbook.md'), content)
+      store.updateTask(w.taskId, { developmentScope: { ...task.developmentScope!, targetPaths: ['src/handbook.md'], verificationCommands: [command] } })
+      submitDevelopmentDelivery(w.executionId)
+      const result = await runDevelopmentValidation(w.taskId, command)
+      expect(result.status).toBe(content.trim() ? 'passed' : 'failed')
+      expect(JSON.parse(result.outputTail)).toEqual([{ path: 'src/handbook.md', passed: Boolean(content.trim()) }])
+      expect(readDevelopmentValidationEvidence(w.taskId, w.executionId, result.id).freshness).toBe('fresh')
+      expect(readFileSync(join(w.worktreePath, 'src', 'handbook.md'), 'utf8')).toBe(content)
+    }
+  })
+
   test.skipIf(process.platform !== 'darwin')('Given Swift 验证缺少包清单 When 启动 Then 提示缺少 Package.swift', async () => {
     const w = fixture()
     const task = store.getTask(w.taskId)!

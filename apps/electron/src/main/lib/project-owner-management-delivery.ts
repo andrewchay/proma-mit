@@ -66,13 +66,13 @@ export function listOwnerDeliveryValidations(projectId: string, messages: readon
   return results
 }
 
-export function readOwnerManagementDelivery(projectId: string, observation: OwnerExecutionObservation, recoverySnapshot?: { qualityRecovery: OwnerManagementDeliveryReview['qualityRecovery'] }): OwnerManagementDeliveryReview {
+export function readOwnerManagementDelivery(projectId: string, observation: OwnerExecutionObservation, recoverySnapshot?: { qualityRecovery: OwnerManagementDeliveryReview['qualityRecovery']; counterSupplement: false | string }): OwnerManagementDeliveryReview {
   const base = { version: 1 as const }
   if (observation.trigger !== 'terminal' || observation.executionStatus !== 'completed') return { ...base, state: 'unavailable', detail: '本次工作没有完整完成成果，不能作质量结论。' }
   try {
     const frozen = readOwnerCommandFrozenSource(observation.commandId).source
     const development = ownerTaskDeliveryKind(frozen, observation.businessTaskId) === 'development'
-    const technicalReview = observation.role === 'reviewer' ? listOwnerTechnicalReviewEvidence(projectId, observation.businessTaskId).find(item => item.reviewerCommandId === observation.commandId && item.reviewerExecutionId === observation.executionId && item.artifactVerified === true) : undefined
+    const technicalReview = observation.role === 'reviewer' ? listOwnerTechnicalReviewEvidence(projectId, observation.businessTaskId, [observation.commandId], recoverySnapshot?.counterSupplement).find(item => item.reviewerCommandId === observation.commandId && item.reviewerExecutionId === observation.executionId && item.artifactVerified === true) : undefined
     const developmentArtifact = development && observation.role === 'reviewer' ? technicalReview?.developmentArtifact : undefined
     const artifact = developmentArtifact ? undefined : observation.role === 'reviewer' ? assertOwnerReviewerTextDelivery(observation.commandId) : readOwnerTextDelivery(observation.commandId, true)
     if (!artifact && !developmentArtifact) {

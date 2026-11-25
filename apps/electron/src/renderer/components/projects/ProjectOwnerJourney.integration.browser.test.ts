@@ -48,6 +48,7 @@ const browserTest = existsSync(chromium.executablePath()) ? test : test.skip
 const ipcHandlers = new Map<string, (event: unknown, request: unknown) => unknown>()
 const calls: string[] = []
 const employeeCalls: string[] = []
+let initialFailureProject: string | undefined
 const bridgeCalls: string[] = []
 const register = { handle: (channel: string, handler: (event: unknown, request: unknown) => unknown) => { ipcHandlers.set(channel, handler) } }
 registerProjectOwnerGoalIpcHandlers(register)
@@ -99,6 +100,11 @@ beforeAll(async () => {
       messages: [{ role: 'system', content: source.request.systemPrompt }, { role: 'user', content: source.request.userPrompt }],
     })
     claimOwnerPlanningProviderRequest(input.sessionId, body, new URL('https://example.invalid/v1/chat/completions'))
+    if (source.link.projectId === initialFailureProject && source.link.purpose === 'owner_planning') {
+      initialFailureProject = undefined
+      handlers.onError('No output generated. Check the stream for errors.')
+      return
+    }
     let result: Record<string, unknown>
     const deliveryReview = source.context.conversation?.deliveryReview
     const executionObservation = source.context.conversation?.executionObservation
@@ -199,7 +205,7 @@ afterAll(() => {
   rmSync(directory, { recursive: true, force: true })
 })
 
-browserTest('Given失效管理授权与未授权团队 When用户恢复范围并确认团队资料 Then Owner自动执行独立检查并交付回原对话', async () => {
+browserTest('Given首次规划无输出 When从原对话确认恢复 Then原项目完成独立检查并交付', async () => {
   const project = createProject({ title: '浏览器旅程隔离项目', description: '' })
   const workspace = createAgentWorkspace(`owner-journey-${randomUUID()}`)
   const teamWorkspace = createAgentWorkspace(`owner-team-journey-${randomUUID()}`)
@@ -215,9 +221,17 @@ browserTest('Given失效管理授权与未授权团队 When用户恢复范围并
   saveOwnerRuntimeBinding(project.id, 0, { ownerName: 'Owner', carrierId: owner.id, workspaceId: workspace.id, changeReason: '隔离连续旅程' })
   const oldDelegationInput = { projectId: project.id, requestId: randomUUID(), maxRequests: 8, maxCostMicros: 15_000_000, expiresAt: Date.now() + 24 * 3600000 }
   const oldDelegationPreview = managementDelegation.previewOwnerManagementDelegation(oldDelegationInput)
-  managementDelegation.confirmOwnerManagementDelegation({ input: oldDelegationInput, previewHash: oldDelegationPreview.previewHash })
-  saveProjectOwnerGoalDraft(project.id, 1, { objective: '为新项目整理一页产品定位建议', constraints: ['纳入当前授权的团队范围'] })
-  expect(managementDelegation.getOwnerManagementDelegation(project.id).state).toBe('stale')
+  const old = managementDelegation.confirmOwnerManagementDelegation({ input: oldDelegationInput, previewHash: oldDelegationPreview.previewHash })
+  initialFailureProject = project.id
+  const { reconcileOwnerManagement } = await import('../../../main/lib/project-owner-management-loop')
+  const { startDelegatedOwnerPlanningTask } = await import('../../../main/lib/controlled-project-task-service')
+  reconcileOwnerManagement(project.id)
+  const first = database.getProjectDb().prepare('SELECT planning_task_id FROM project_owner_planning_links WHERE project_id=? ORDER BY rowid DESC LIMIT 1').get(project.id) as { planning_task_id: string }
+  await startDelegatedOwnerPlanningTask(first.planning_task_id)
+  for (let i = 0; i < 100 && database.listAgentExecutionsByProject(project.id)[0]?.status !== 'failed'; i++) await new Promise(resolve => setTimeout(resolve, 20))
+  expect(database.listAgentExecutionsByProject(project.id).map(run => run.status)).toEqual(['failed'])
+  managementDelegation.revokeOwnerManagementDelegation(project.id, old.id)
+  expect(managementDelegation.getOwnerManagementDelegation(project.id).initialPlanningRecovery).toBeDefined()
   const scheduler = await import('../../../main/lib/project-owner-autonomous-scheduler')
   const scheduleEvents = await import('../../../main/lib/project-owner-autonomous-scheduler-events')
   const stopWake = scheduleEvents.onOwnerAutonomousScheduleWake(projectId => { if (projectId === project.id) void scheduler.runOwnerAutonomousSchedule(projectId) })
@@ -235,7 +249,8 @@ browserTest('Given失效管理授权与未授权团队 When用户恢复范围并
     ['previewOwnerExecutionRevalidation', PROJECT_IPC_CHANNELS.PREVIEW_OWNER_EXECUTION_REVALIDATION], ['saveOwnerExecutionRevalidation', PROJECT_IPC_CHANNELS.SAVE_OWNER_EXECUTION_REVALIDATION], ['previewOwnerTaskMaterialization', PROJECT_IPC_CHANNELS.PREVIEW_OWNER_TASK_MATERIALIZATION], ['materializeOwnerTasks', PROJECT_IPC_CHANNELS.MATERIALIZE_OWNER_TASKS],
     ['saveOwnerExecutionStartIntent', PROJECT_IPC_CHANNELS.SAVE_OWNER_EXECUTION_START_INTENT], ['resumeOwnerExecutionStartIntent', PROJECT_IPC_CHANNELS.RESUME_OWNER_EXECUTION_START_INTENT],
   ])
-  const entry = join(directory, 'entry.tsx')
+  const entry = join(directory, `${project.id}.tsx`)
+  const bundlePath = join(directory, `${project.id}.js`)
   writeFileSync(entry, `
 import React from 'react';import {createRoot} from 'react-dom/client';import {Provider,createStore} from 'jotai';
 import {ProjectOwnerConversation} from ${JSON.stringify(join(renderer, 'components/projects/ProjectOwnerConversation.tsx'))};
@@ -265,9 +280,8 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
     if (!handler) return Response.json({ ok: false, error: { code: 'failed', message: `未注册生产IPC：${body.name}` } })
     const value = await handler(undefined, body.payload)
     return Response.json(value)
-  }, routes: { '/entry.js': () => new Response(Bun.file(join(directory, 'entry.js'))) } })
-  const bundle = await build({ entryPoints: [entry], outfile: join(directory, 'entry.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.png': 'dataurl' }, absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
-  void bundle
+  }, routes: { '/entry.js': () => new Response(Bun.file(bundlePath)) } })
+  await build({ entryPoints: [entry], outfile: bundlePath, bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.png': 'dataurl' }, absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
   const browser = await chromium.launch({ headless: true })
   const page = await browser.newPage()
   page.setDefaultTimeout(10000)
@@ -278,22 +292,23 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
   try {
     await page.goto(`http://127.0.0.1:${server.port}`)
     await page.getByLabel('Owner管理委托').waitFor()
-    await page.getByRole('button', { name: '重新核对当前授权', exact: true }).waitFor()
+    await page.getByRole('heading', { name: '恢复项目规划' }).waitFor()
+    const confirmLabel = '授权并重新规划一次'
     // 初次预览可能暂时禁用表单；先等待结果，避免输入被异步重渲染打断。
-    const initialConfirm = page.getByRole('button', { name: '确认范围，让 Owner 自主推进', exact: true })
+    const initialConfirm = page.getByRole('button', { name: confirmLabel, exact: true })
     const initialRetry = page.getByRole('button', { name: '重新核对授权范围', exact: true })
     await initialConfirm.or(initialRetry).first().waitFor({ timeout: 30000 }).catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
     const budgetInput = page.getByLabel('项目总模型费用上限（美元）')
     await budgetInput.fill('15')
     expect(await budgetInput.inputValue()).toBe('15')
     // 初始预算不足时预览会要求重新核对；提高预算后沿用户可见的恢复路径继续。
-    const confirmScope = page.getByRole('button', { name: '确认范围，让 Owner 自主推进', exact: true })
+    const confirmScope = page.getByRole('button', { name: confirmLabel, exact: true })
     const retryScope = page.getByRole('button', { name: '重新核对授权范围', exact: true })
     await confirmScope.or(retryScope).first().waitFor().catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
     if (await retryScope.isVisible()) await retryScope.click()
     await page.getByText('项目总模型费用上限为 $15.00', { exact: false }).waitFor().catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
     await confirmScope.waitFor().catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
-    await page.getByRole('button', { name: '确认范围，让 Owner 自主推进', exact: true }).click()
+    await page.getByRole('button', { name: confirmLabel, exact: true }).click()
     await page.getByLabel('待查看团队工作区建议').getByRole('button', { name: '查看范围与确认选项' }).click()
     const teamScope = page.getByLabel('团队工作区范围建议').last()
     await teamScope.waitFor()
@@ -313,6 +328,7 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
     expect(calls).toContain('owner_execution_assignment')
     expect(calls).toContain('owner_quality')
     expect(employeeCalls).toEqual(['executor', 'reviewer'])
+    expect(calls.filter(call => call === 'owner_planning')).toHaveLength(1)
     await page.getByRole('button', { name: '暂停后续派工', exact: true }).click()
     await page.getByText('后续派工已暂停', { exact: true }).waitFor()
     await page.getByLabel('派工控制记录').getByText('你暂停了后续自主派工', { exact: true }).waitFor({ state: 'attached' })
@@ -361,7 +377,7 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
   } finally {
     await browser.close()
     server.stop(true)
-    stopManagement()
     stopWake()
+    await stopManagement()
   }
 }, 90000)

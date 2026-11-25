@@ -1218,21 +1218,57 @@ function migrate(database: SqliteCompat): void {
     BEFORE DELETE ON project_owner_quality_actions BEGIN SELECT RAISE(ABORT, 'owner quality actions are immutable'); END`)
   database.exec('CREATE INDEX IF NOT EXISTS idx_owner_commands_project ON project_owner_execution_commands(project_id, grant_id)')
   database.exec('CREATE INDEX IF NOT EXISTS idx_owner_commands_state ON project_owner_execution_commands(project_id, state)')
-  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_technical_reviews (
+  const ownerReviewTableSql = `CREATE TABLE IF NOT EXISTS project_owner_technical_reviews (
     reviewer_command_id TEXT PRIMARY KEY, project_id TEXT NOT NULL, grant_id TEXT NOT NULL,
     task_id TEXT NOT NULL, step_link_id TEXT NOT NULL, rework_ordinal INTEGER NOT NULL CHECK (rework_ordinal >= 0),
-    executor_command_id TEXT NOT NULL UNIQUE, executor_execution_id TEXT NOT NULL,
+    executor_command_id TEXT NOT NULL, executor_execution_id TEXT NOT NULL,
     reviewer_execution_id TEXT NOT NULL UNIQUE, source_hash TEXT NOT NULL,
     verdict TEXT NOT NULL CHECK (verdict IN ('approved', 'changes_requested', 'blocked')),
     validation_evidence_json TEXT NOT NULL DEFAULT '[]', validation_evidence_sha256 TEXT NOT NULL DEFAULT '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
     response_json TEXT NOT NULL, response_sha256 TEXT NOT NULL CHECK (length(response_sha256) = 64),
+    original_response_text TEXT, original_response_sha256 TEXT,
     created_at INTEGER NOT NULL CHECK (created_at >= 0)
+  )`
+  database.exec(ownerReviewTableSql)
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_counter_supplements (
+    validation_id TEXT PRIMARY KEY, reviewer_command_id TEXT NOT NULL, created_at INTEGER NOT NULL,
+    payload TEXT NOT NULL, integrity_hash TEXT NOT NULL
+  )`)
+  database.exec('CREATE INDEX IF NOT EXISTS idx_owner_counter_supplements_review ON project_owner_counter_supplements(reviewer_command_id, created_at)')
+  database.exec(`CREATE TABLE IF NOT EXISTS project_owner_document_review_retries (
+    previous_reviewer_id TEXT PRIMARY KEY, reviewer_id TEXT NOT NULL UNIQUE,
+    grant_id TEXT NOT NULL, task_id TEXT NOT NULL, ordinal INTEGER NOT NULL,
+    validation_id TEXT NOT NULL UNIQUE, payload TEXT NOT NULL, integrity_hash TEXT NOT NULL,
+    UNIQUE(grant_id, task_id, ordinal)
   )`)
   const ownerReviewColumns = readColumnNames(database, 'project_owner_technical_reviews')
   if (!ownerReviewColumns.includes('validation_evidence_json')) database.exec("ALTER TABLE project_owner_technical_reviews ADD COLUMN validation_evidence_json TEXT NOT NULL DEFAULT '[]'")
   if (!ownerReviewColumns.includes('validation_evidence_sha256')) database.exec("ALTER TABLE project_owner_technical_reviews ADD COLUMN validation_evidence_sha256 TEXT NOT NULL DEFAULT '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945'")
   if (!ownerReviewColumns.includes('original_response_text')) database.exec('ALTER TABLE project_owner_technical_reviews ADD COLUMN original_response_text TEXT')
   if (!ownerReviewColumns.includes('original_response_sha256')) database.exec('ALTER TABLE project_owner_technical_reviews ADD COLUMN original_response_sha256 TEXT')
+  const ownerReviewSchema = database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='project_owner_technical_reviews'").get() as { sql: string }
+  if (/executor_command_id\s+TEXT\s+NOT\s+NULL\s+UNIQUE/i.test(ownerReviewSchema.sql)) {
+    database.transaction(() => {
+      database.exec('ALTER TABLE project_owner_technical_reviews RENAME TO project_owner_technical_reviews_before_retry')
+      database.exec(ownerReviewTableSql)
+      const columns = readColumnNames(database, 'project_owner_technical_reviews').join(',')
+      database.exec(`INSERT INTO project_owner_technical_reviews (${columns}) SELECT ${columns} FROM project_owner_technical_reviews_before_retry`)
+      database.exec('DROP TABLE project_owner_technical_reviews_before_retry')
+    })()
+  }
+  database.exec('CREATE INDEX IF NOT EXISTS idx_owner_technical_reviews_executor ON project_owner_technical_reviews(executor_command_id)')
+  database.exec(`CREATE TRIGGER IF NOT EXISTS project_owner_technical_reviews_guard_insert
+    BEFORE INSERT ON project_owner_technical_reviews WHEN EXISTS (
+      SELECT 1 FROM project_owner_technical_reviews prior
+      WHERE prior.executor_command_id=NEW.executor_command_id AND NOT EXISTS (
+        SELECT 1 FROM project_owner_document_review_retries retry
+        WHERE retry.previous_reviewer_id=prior.reviewer_command_id AND retry.reviewer_id=NEW.reviewer_command_id
+          AND retry.grant_id=NEW.grant_id AND retry.task_id=NEW.task_id AND retry.ordinal=NEW.rework_ordinal
+          AND prior.project_id=NEW.project_id AND prior.grant_id=NEW.grant_id AND prior.task_id=NEW.task_id
+          AND prior.rework_ordinal=NEW.rework_ordinal AND prior.executor_execution_id=NEW.executor_execution_id
+          AND prior.verdict='blocked'
+      )
+    ) BEGIN SELECT RAISE(ABORT, 'owner technical review already exists for executor'); END`)
   database.exec('CREATE INDEX IF NOT EXISTS idx_owner_technical_reviews_task ON project_owner_technical_reviews(project_id, task_id, created_at)')
   database.exec(`CREATE TRIGGER IF NOT EXISTS project_owner_technical_reviews_immutable_update
     BEFORE UPDATE ON project_owner_technical_reviews BEGIN SELECT RAISE(ABORT, 'owner technical reviews are immutable'); END`)

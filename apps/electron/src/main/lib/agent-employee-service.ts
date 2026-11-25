@@ -1640,10 +1640,10 @@ async function finalizeOwnerCommandRunCallback(execution: AgentExecution, messag
         const { runOwnerDevelopmentValidations } = await import('./development-validation-service')
         await runOwnerDevelopmentValidations(commandId)
       } catch (cause) {
-        console.warn(`[AgentEmployee] Owner研发验证未能形成完整终态 command=${commandId}，保留验证状态供对账:`, cause instanceof Error ? cause.message : '未知验证错误')
+        console.warn(`[AgentEmployee] Owner研发验证未通过 command=${commandId}，保留验证状态供对账:`, cause instanceof Error ? cause.message : '未知验证错误')
         appendOwnerManagementMessage({ projectId: execution.projectId, taskId: command.source_task_id,
           eventId: `owner-development-validation-rejected:${commandId}:${execution.id}`, role: 'assistant', kind: 'attention',
-          content: `员工运行已经结束，但正式研发验证未能形成完整回执。原因：${ownerAssignmentFailureReason(cause instanceof Error ? cause.message : '验证失败')}。当前成果尚未通过运行验证，不能据此批准或交付；成果与运行记录保留，未自动重试。` })
+          content: `员工运行已经结束，但正式研发验证未通过。原因：${ownerAssignmentFailureReason(cause instanceof Error ? cause.message : '验证失败')}。当前成果尚未通过运行验证，不能据此批准或交付；成果与运行记录保留，未自动重试。` })
       }
     }
   }

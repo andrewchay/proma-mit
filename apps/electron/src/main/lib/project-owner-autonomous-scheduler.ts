@@ -68,8 +68,8 @@ type Action =
   | { kind: 'dispatch'; commandId: string; ackFingerprint: string; taskId: string; role: OwnerExecutionCommandRole }
   | { kind: 'queue'; subject: ProjectOwnerGoalSubject; input: { grantId: string; taskId: string; role: OwnerExecutionCommandRole; reworkOrdinal: number; expectedRevalidationRevision: number }; taskId: string; role: OwnerExecutionCommandRole }
 interface Evaluation { status: OwnerAutonomousScheduleStatus; action?: Action }
-function readTechnicalReview(projectId: string, grantId: string, taskId: string, stepLinkId: string, reworkOrdinal: number) {
-  const reviews = listOwnerTechnicalReviewEvidence(projectId, taskId).filter(review =>
+function readTechnicalReview(projectId: string, grantId: string, taskId: string, stepLinkId: string, reworkOrdinal: number, reviewerCommandId?: string) {
+  const reviews = listOwnerTechnicalReviewEvidence(projectId, taskId, reviewerCommandId ? [reviewerCommandId] : undefined).filter(review =>
     review.grantId === grantId && review.stepLinkId === stepLinkId && review.reworkOrdinal === reworkOrdinal)
   if (reviews.length > 1) throw new Error(`同一Owner Task/返工轮次存在多条技术评审证据（${taskId}/${reworkOrdinal}）`)
   if (reviews[0]?.artifactVerified === false) throw new Error('独立评审对应完整文本成果已缺失或变化，停止自动续派')
@@ -100,6 +100,14 @@ function getRoleCommand(projectId: string, grantId: string, taskId: string, role
     FROM project_owner_execution_commands c LEFT JOIN agent_executions e ON e.id=c.execution_id
     WHERE c.project_id=? AND c.grant_id=? AND c.source_task_id=? AND c.role=? AND c.rework_ordinal=? ORDER BY c.created_at`)
     .all(projectId, grantId, taskId, role, reworkOrdinal) as CommandRow[]
+  if (role === 'reviewer') {
+    const { readOwnerDocumentReviewRetry } = require('./project-owner-document-review-retry') as typeof import('./project-owner-document-review-retry')
+    const retry = readOwnerDocumentReviewRetry({ grantId, taskId, ordinal: reworkOrdinal })
+    if (retry) {
+      if (retry.projectId !== projectId || rows.some(row => row.id !== retry.previousReviewerId && row.id !== retry.reviewerId)) throw new Error('Markdown复核命令与原项目不匹配')
+      return rows.find(row => row.id === retry.reviewerId) ?? null
+    }
+  }
   if (rows.length > 1) throw new Error(`同一Owner Task/角色/返工轮次存在多条命令（${taskId}/${role}/${reworkOrdinal}），拒绝自动续派`)
   return rows[0] ?? null
 }
@@ -209,7 +217,9 @@ function evaluate(projectId: string, now = Date.now()): Evaluation {
         return reviewerProgress
       }
       let review
-      try { review = readTechnicalReview(projectId, grant.id, task.id, frozenTask.linkId, reworkOrdinal) }
+      try {
+        review = readTechnicalReview(projectId, grant.id, task.id, frozenTask.linkId, reworkOrdinal, reviewer!.id)
+      }
       catch (error) { return { status: status(projectId, 'stale', error instanceof Error ? error.message : '技术评审证据完整性错误；停止续派', { ...details, taskId: task.id, reworkOrdinal, nextAction: 'human_decision' }) } }
       if (!review) return { status: status(projectId, 'waiting', `Reviewer 第 ${reworkOrdinal} 轮已结束，但缺少可核验的结构化技术评审；停止自动续派`, { ...details, taskId: task.id, role: 'reviewer', reworkOrdinal, nextAction: 'human_decision' }) }
       if (record.source.qualityManagementVersion === 1) {
@@ -256,7 +266,14 @@ function pausedBeforeClaim(commandId: string, projectId: string): boolean {
 }
 export function getOwnerAutonomousScheduleStatus(projectId: string): OwnerAutonomousScheduleStatus {
   if (typeof projectId !== 'string' || !projectId.trim()) throw new Error('项目ID无效')
-  return evaluate(projectId).status
+  const execution = evaluate(projectId).status
+  if (execution.state !== 'no_grant') return execution
+  const { getOwnerManagementDelegation } = require('./project-owner-management-delegation') as typeof import('./project-owner-management-delegation')
+  const management = getOwnerManagementDelegation(projectId)
+  if (management.state !== 'attention') return execution
+  return status(projectId, 'needs_reconcile', management.initialPlanningRecovery
+    ? '上次管理请求费用待核对。可在 Owner 对话确认重新规划，保留原费用预留。'
+    : '上次管理请求的运行或费用待核对，请打开 Owner 对话查看。', { nextAction: 'human_decision' })
 }
 export async function runOwnerAutonomousSchedule(projectId: string, driver: OwnerAutonomousSchedulerDriver = defaultDriver): Promise<OwnerAutonomousScheduleStatus> {
   const pending = inFlight.get(projectId)

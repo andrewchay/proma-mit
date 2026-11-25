@@ -145,8 +145,8 @@ export interface AISDKRuntimeStreamInput {
   maxOutputTokens?: number
   /** Owner冻结的GLM-5.3低推理强度；普通Agent设置不受影响。 */
   reasoningEffort?: 'low'
-  /** 受控出口抛错时写入原始原因；AI SDK 会把它包成通用无输出错误。 */
-  fetchErrorHolder?: { error?: unknown }
+  /** 保留底层错误供流结束后的终态读取使用。 */
+  errorEvidence?: { fetchError?: unknown; streamError?: unknown }
   jsonOutput?: true
 }
 
@@ -243,12 +243,21 @@ export class AISDKRuntimeCore {
       ? resolveOwnerExecutionMaxOutputTokens(input.sessionId, input.modelId, input.provider)
       : undefined
     // 受控出口抛出的错误会被 AI SDK 包成通用 NoOutputGeneratedError；这里先记下原始原因再放行。
-    const capturedFetchError: { error?: unknown } = {}
+    const errorEvidence: NonNullable<AISDKRuntimeStreamInput['errorEvidence']> = {}
+    let providerHttpStatus: number | undefined
+    let failedProviderRequestId: string | undefined
     const baseFetch = input.fetchFn ?? pilotRuntime?.fetch
     const capturedFetch = baseFetch
       ? Object.assign(async (...args: Parameters<typeof fetch>): Promise<Response> => {
-        try { return await baseFetch(...args) }
-        catch (cause) { capturedFetchError.error ??= cause; throw cause }
+        try {
+          const response = await baseFetch(...args)
+          providerHttpStatus = response.status
+          failedProviderRequestId = getProviderRequestId(Object.fromEntries(response.headers))
+          return response
+        } catch (cause) {
+          errorEvidence.fetchError ??= cause
+          throw cause
+        }
       }, { preconnect: () => {} })
       : undefined
     const modelInstance = createAgentAISDKModel({
@@ -306,7 +315,7 @@ export class AISDKRuntimeCore {
       ...(owner || ownerExecutionMaxOutputTokens !== undefined ? { sdkMaxRetries: 0 as const } : {}),
       ...(owner ? { modelSilenceTimeoutMs: OWNER_MODEL_SILENCE_TIMEOUT_MS } : {}),
       signal: input.activeSession.controller.signal,
-      ...(baseFetch ? { fetchErrorHolder: capturedFetchError } : {}),
+      errorEvidence,
       estimatedContextTokens: estimateTokenCount(JSON.stringify({
         system: effectiveSystemPrompt,
         messages,
@@ -398,12 +407,25 @@ export class AISDKRuntimeCore {
     }
     return [...earlierMessages, ...sdkMessages, resultMessage as unknown as SDKMessage]
     } catch (cause) {
-      // 有些失败只在读取终态时才暴露成通用无输出错误；这里用受控出口记录的原始原因补全诊断。
-      const diagnostic = isGenericNoOutputError(cause) && capturedFetchError.error
-        ? new Error(`${getErrorMessage(cause)}；流错误：${safeRuntimeErrorDetail(capturedFetchError.error)}`, { cause: capturedFetchError.error })
+      const underlyingError = errorEvidence.streamError ?? errorEvidence.fetchError
+      const diagnostic = isGenericNoOutputError(cause) && underlyingError && !getErrorMessage(cause).includes('；流错误：')
+        ? new Error(`${getErrorMessage(cause)}；流错误：${safeRuntimeErrorDetail(underlyingError)}`, { cause: underlyingError })
         : cause
       if (!owner) throw diagnostic
-      throw new OwnerPlanningRuntimeError({ type: 'result', subtype: 'error_during_execution', session_id: input.sessionId, result: partialText, finish_reason: input.activeSession.controller.signal.aborted ? 'abort' : 'error', errors: [diagnostic instanceof Error ? diagnostic.message : 'Owner规划Runtime异常'], usage: { input_tokens: 0, output_tokens: 0 }, owner_planning_usage: { inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null } }, cause)
+      const errorCode = getProviderErrorCode(underlyingError ?? cause)
+      const failureStage = errorEvidence.fetchError ? '请求发送'
+        : errorEvidence.streamError ? '服务商响应流' : '读取运行结果'
+      const evidence = [failureStage,
+        ...(providerHttpStatus === undefined ? [] : [`HTTP ${providerHttpStatus}`]),
+        ...(errorCode ? [`服务商错误码 ${errorCode}`] : [])].join(' · ')
+      throw new OwnerPlanningRuntimeError({
+        type: 'result', subtype: 'error_during_execution', session_id: input.sessionId, result: partialText,
+        finish_reason: input.activeSession.controller.signal.aborted ? 'abort' : 'error',
+        errors: [`${diagnostic instanceof Error ? safeRuntimeErrorDetail(diagnostic) : 'Owner规划Runtime异常'}（${evidence}）`],
+        ...(failedProviderRequestId ? { provider_request_id: failedProviderRequestId } : {}),
+        usage: { input_tokens: 0, output_tokens: 0 },
+        owner_planning_usage: { inputTokens: null, outputTokens: null, cacheReadTokens: null, cacheWriteTokens: null },
+      }, diagnostic)
     }
   }
 
@@ -415,6 +437,10 @@ export class AISDKRuntimeCore {
       let stepHasModelActivity = false
       let estimatedContextTokens = input.estimatedContextTokens
       let streamError: unknown
+      if (input.errorEvidence) {
+        input.errorEvidence.streamError = undefined
+        input.errorEvidence.fetchError = undefined
+      }
       const executingToolCalls = new Set<string>()
       try {
         const attemptController = new AbortController()
@@ -431,7 +457,10 @@ export class AISDKRuntimeCore {
             stopWhen: isStepCount(input.maxTurns),
             ...(input.sdkMaxRetries !== undefined ? { maxRetries: input.sdkMaxRetries } : {}),
             abortSignal: attemptController.signal,
-            onError: ({ error }) => { streamError ??= error },
+            onError: ({ error }) => {
+              streamError ??= error
+              if (input.errorEvidence) input.errorEvidence.streamError ??= error
+            },
             ...(input.maxOutputTokens ? { maxOutputTokens: input.maxOutputTokens } : {}),
             ...(input.jsonOutput ? { output: Output.json() } : {}),
             ...(input.reasoningEffort && input.provider ? { providerOptions: { openai: { reasoningEffort: input.reasoningEffort } } } : {}),
@@ -482,7 +511,7 @@ export class AISDKRuntimeCore {
       } catch (error) {
         // AI SDK 在无终态输出时会抛通用 NoOutputGeneratedError；优先保留流回调捕获的 Provider 原因。
         // AI SDK 把受控出口抛出的错误包进通用 NoOutputGeneratedError 的 cause；不读 cause 就会丢失真实原因。
-        const causeChain = input.fetchErrorHolder?.error ? safeRuntimeErrorDetail(input.fetchErrorHolder.error) : collectErrorCauseDetail(error)
+        const causeChain = input.errorEvidence?.fetchError ? safeRuntimeErrorDetail(input.errorEvidence.fetchError) : collectErrorCauseDetail(error)
         const streamErrorDetail = streamError ? safeRuntimeErrorDetail(streamError) : causeChain
         const diagnostic = streamErrorDetail && isGenericNoOutputError(error) && !streamErrorDetail.includes(getErrorMessage(error))
           ? new Error(`${getErrorMessage(error)}；流错误：${streamErrorDetail}`, { cause: streamError ?? (error instanceof Error ? error.cause : undefined) })
@@ -849,6 +878,14 @@ export class AISDKRuntimeCore {
       message: `${toolName} 需要用户授权，但当前未配置权限回调。请在设置中将权限模式设为“允许所有”或启用交互式权限。`,
     }
   }
+}
+
+function getProviderErrorCode(error: unknown): string | undefined {
+  if (!isRecord(error)) return undefined
+  const data = isRecord(error.data) ? error.data : error
+  const code = isRecord(data.error) ? data.error.code : data.code
+  if (typeof code === 'number' && Number.isSafeInteger(code)) return String(code)
+  return typeof code === 'string' && /^[a-z0-9_.-]{1,64}$/i.test(code) ? code : undefined
 }
 
 function getProviderRequestId(headers: Record<string, string> | undefined): string | undefined {

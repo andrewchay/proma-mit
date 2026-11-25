@@ -251,6 +251,14 @@ export async function runOwnerRuntimeVerificationSmoke(configRoot: string): Prom
   const badCounter = await executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['counter.html'], command: 'browser:text-counter.behavior', timeoutMs: 20_000 })
   assert.equal(badCounter.checks.find(check => check.id === 'text-counter.behavior')?.status, 'failed', '未实际清空的计数器应拒绝验收')
 
+  const clickCounterPath = join(workspaceRoot, 'click-counter.html')
+  const clickCounterHtml = '<!doctype html><span id="count">0</span><button id="increment">加一</button><button id="reset">重置</button><script>const count=document.querySelector("#count");document.querySelector("#increment").onclick=()=>count.textContent=Number(count.textContent)+1;document.querySelector("#reset").onclick=()=>count.textContent=0;</script>'
+  const clickCounter = async () => executeBrowserVerificationCommand({ workspaceRoot, targetPaths: ['click-counter.html'], command: 'browser:html.loads+counter.increment-reset', timeoutMs: 20_000 })
+  writeFileSync(clickCounterPath, clickCounterHtml)
+  assert.equal((await clickCounter()).exitCode, 0, '计数器应经过真实的加一、重置')
+  writeFileSync(clickCounterPath, clickCounterHtml.replace('()=>count.textContent=0', '()=>count.textContent=1'))
+  assert.equal((await clickCounter()).checks.find(check => check.id === 'counter.increment-reset')?.status, 'failed', '错误的重置动作不得通过')
+
   const diaryHtml = '<!doctype html><section id="review"><input id="date" type="date"><button id="write">撰写日记</button><div id="years"></div></section><section id="edit" hidden><button id="back">返回</button><input id="edit-date" type="date"><textarea></textarea><button id="save">保存</button></section><script src="diary.js"></script>'
   const diaryScript = `
     const date = document.querySelector('#date'), years = document.querySelector('#years'), text = document.querySelector('textarea')

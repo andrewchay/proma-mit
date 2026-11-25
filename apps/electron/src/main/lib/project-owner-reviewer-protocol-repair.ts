@@ -1,5 +1,5 @@
 /** 同一Reviewer命令内最多补正一次输出；不重跑Executor、不修改原文或放宽校验。 */
-import { parseOwnerTechnicalReviewResponse, assertOwnerDevelopmentValidationForVerdict } from './project-owner-technical-review'
+import { parseOwnerTechnicalReviewResponse, assertOwnerDevelopmentValidationForVerdict, normalizeOwnerTechnicalReviewReceipt } from './project-owner-technical-review'
 import { ownerDevelopmentArtifactFromPrompt } from './project-owner-development-artifact'
 import { ownerTaskDeliveryKind, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { getOwnerTaskMaterializationRecord } from './project-owner-task-materialization'
@@ -32,14 +32,16 @@ export function ownerReviewerProtocolCorrection(sessionId: string, prompt: strin
   const text = development ? null : assertOwnerReviewerTextDelivery(execution.ownerCommandId)
   if (!development && !text) return null
   try {
-    const parsed = parseOwnerTechnicalReviewResponse(raw, link.projection.acceptanceCriteria,
-      development?.contentHash ?? text?.contentSha256, development?.content ?? text?.content,
+    const artifactContent = development?.content ?? text?.content
+    const receipt = normalizeOwnerTechnicalReviewReceipt(raw, artifactContent)
+    const parsed = parseOwnerTechnicalReviewResponse(receipt, link.projection.acceptanceCriteria,
+      development?.contentHash ?? text?.contentSha256, artifactContent,
       development ? 'development' : 'text', development?.validationEvidence)
     if (development?.validationEvidence) assertOwnerDevelopmentValidationForVerdict(parsed.verdict, development.validationEvidence)
     return null
   } catch (cause) {
     // 只把应用内置校验器的原因交回模型；原始回答仍保留，补正另计请求与费用。
     const reason = cause instanceof Error ? cause.message : '结构化评审校验失败'
-    return `主进程内部校验反馈（不是用户的新要求）：本轮评审没有通过校验：${reason}。请基于同一冻结成果和验证证据重新提交严格JSON。这是一次有界补正，不是已经验收；不要重做代码或更改验收标准。quote只能复制一段连续原文，禁止省略号拼接。验证失败时明确给出未满足项和可执行修改建议，不得强行approved。`
+    return `主进程内部校验反馈（不是用户的新要求）：本轮评审没有通过校验：${reason}。请基于同一冻结成果和验证证据重新提交严格JSON。这是一次有界补正，不是已经验收；不要重做代码或更改验收标准。quote只能复制一段连续原文，禁止省略号拼接。缺少验证证据时用blocked、not_verified与quote:null，将已有检查结果写入evidence。验证失败时明确给出未满足项和可执行修改建议，不得强行approved。`
   }
 }

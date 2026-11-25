@@ -1,3 +1,4 @@
+import { COUNTER_KEYBOARD_VERIFICATION_COMMAND, requiresOwnerCounterKeyboardVerification } from './owner-runtime-verification-command'
 import type { MaterializeOwnerTasksRequest, OwnerExecutionGrant, OwnerExecutionPreparationInput, OwnerExecutionStartIntent, OwnerExecutionStartIntentRequest, OwnerManagementMessage, OwnerTaskMaterializationRecord, ProjectOwnerGoalSubject, ProjectOwnerPlanDraft } from '@gravitas/shared'
 import { getProjectOwnerGoalDraft } from './project-owner-goal-service'
 import { confirmProjectOwnerPlanDraft, getProjectOwnerPlanDraft, getProjectOwnerPlanningContext, listProjectOwnerPlanHistory } from './project-owner-plan-service'
@@ -224,7 +225,26 @@ function readReviewedBatchForRevision(subject: ProjectOwnerGoalSubject, plan: Pr
         WHERE newer.grant_id=q.grant_id AND newer.task_id=q.task_id AND newer.rowid>q.rowid
       )
   `).all(subject.projectId, grant.grantId, message.createdAt) as { owner_execution_id: string }[]
-  return rows.some(row => ['escalated', 'blocked'].includes(readOwnerQualityActionByExecution(row.owner_execution_id)?.state ?? '')) ? grant : null
+  if (rows.some(row => ['escalated', 'blocked'].includes(readOwnerQualityActionByExecution(row.owner_execution_id)?.state ?? ''))) return grant
+
+  // 返工后的评审原文未通过校验时没有质量决定。只允许后续用户消息产生的修订接替，保留原评审。
+  if (plan.planFingerprint === source.planFingerprint) return null
+  const rejected = db.prepare(`
+    SELECT m.id FROM project_owner_execution_commands c
+    JOIN agent_executions e ON e.id=c.execution_id AND e.project_id=c.project_id AND e.owner_command_id=c.id
+    JOIN project_owner_management_messages m ON m.project_id=c.project_id
+      AND m.event_id='owner-review-evidence-rejected:' || c.id || ':' || e.id
+    WHERE c.project_id=? AND c.grant_id=? AND c.role='reviewer' AND c.rework_ordinal>0
+      AND c.state='settled' AND c.actual_cost_micros IS NOT NULL AND c.usage_record_key IS NOT NULL
+      AND e.status='completed' AND e.completed_at<=?
+      AND NOT EXISTS (SELECT 1 FROM project_owner_technical_reviews r WHERE r.reviewer_command_id=c.id)
+      AND NOT EXISTS (SELECT 1 FROM project_owner_execution_commands later
+        WHERE later.grant_id=c.grant_id AND later.source_task_id=c.source_task_id AND later.rowid>c.rowid)
+  `).all(subject.projectId, grant.grantId, message.createdAt) as { id: string }[]
+  return rejected.some(row => {
+    const rejection = getOwnerManagementMessage(subject.projectId, row.id)
+    return rejection?.kind === 'attention' && rejection.createdAt <= message.createdAt
+  }) ? grant : null
 }
 
 function supersedeEscalatedBatch(subject: ProjectOwnerGoalSubject, plan: ProjectOwnerPlanDraft, previous: OwnerTaskMaterializationRecord): boolean {
@@ -298,7 +318,7 @@ function supersedePreviousGoalBatch(subject: ProjectOwnerGoalSubject, plan: Proj
   return grant.state === 'paused' || grant.state === 'archived'
 }
 
-function getConfirmedPreparationInput(intent: OwnerExecutionStartIntent, plan: ProjectOwnerPlanDraft): OwnerExecutionPreparationInput {
+function getConfirmedPreparationInput(intent: OwnerExecutionStartIntent, plan: ProjectOwnerPlanDraft, upgradeCounterVerification = false): OwnerExecutionPreparationInput {
   const subject = { projectId: intent.projectId, ...(intent.taskId ? { taskId: intent.taskId } : {}) }
   const planRevision = plan.revision
   const requestId = planRevision === intent.expectedPlanRevision ? intent.input.requestId : `owner-start-preparation:${intent.intentId}:${planRevision}`
@@ -321,8 +341,15 @@ function getConfirmedPreparationInput(intent: OwnerExecutionStartIntent, plan: P
   const normalizedInput = canNormalizeLegacyExecutor && roleAssignments
     ? { ...intent.input, roleAssignments, executorEmployeeId: roleAssignments[0]!.employeeId }
     : intent.input
+  const scope = normalizedInput.developmentScope
+  const selectedSteps = plan.proposal.steps.filter(step => intent.input.selectedStepKeys.includes(step.key))
+  const correctedScope = upgradeCounterVerification && scope?.verificationCommands?.length === 1
+    && scope.verificationCommands[0] === 'browser:html.loads' && requiresOwnerCounterKeyboardVerification(selectedSteps, scope.targetPaths)
+    ? { ...scope, verificationCommands: [COUNTER_KEYBOARD_VERIFICATION_COMMAND] }
+    : scope
   return {
     ...normalizedInput,
+    ...(correctedScope ? { developmentScope: correctedScope } : {}),
     requestId,
     expectedPreparationRevision: current.revision,
     expectedPolicyRevision: policy?.state === 'paused' ? policy.revision : intent.input.expectedPolicyRevision,
@@ -545,7 +572,7 @@ export function resumeOwnerExecutionStartIntent(intentId: string, expectedSubjec
       || supersedePreviousGoalBatch(subject, plan, previousMaterialization)
       || supersedeEscalatedBatch(subject, plan, previousMaterialization)
       || supersedeFailedBatch(subject, plan, previousMaterialization, intent.input.executionKind === 'development'))))
-    const input = getConfirmedPreparationInput(intent, plan)
+    const input = getConfirmedPreparationInput(intent, plan, ownerConfirmed && replacingPreviousBatch && !plan.proposal.deliveryFeedbackAssessment)
     const preparationView = getOwnerExecutionPreparation(subject)
     let preparation = preparationView.preparation
     if (preparation) {
