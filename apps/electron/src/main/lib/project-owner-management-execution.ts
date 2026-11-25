@@ -92,7 +92,7 @@ function scanBlockedQualityRecoveries(projectId: string, now: number): void {
   for (const row of rows) {
     try {
       const action = readOwnerQualityAction(row.reviewer_command_id)
-      const recovery = !action || action.state === 'blocked' ? getOwnerQualityRecovery(projectId, row.reviewer_command_id) : null
+      const recovery = !action || action.state === 'blocked' || action.state === 'escalated' ? getOwnerQualityRecovery(projectId, row.reviewer_command_id) : null
       if (!recovery) continue
       const businessExecutionId = row.execution_id
       if (!businessExecutionId) continue

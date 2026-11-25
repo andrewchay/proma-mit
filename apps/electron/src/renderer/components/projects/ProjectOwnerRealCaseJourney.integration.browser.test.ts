@@ -582,7 +582,15 @@ createRoot(document.getElementById('root')).render(<Provider store={createStore(
       await new Promise(resolve => setTimeout(resolve, 50))
       if (attempt > 0 && attempt % 60 === 0) console.warn(`[真实案例旅程] 等待交付中 attempt=${attempt} calls=${JSON.stringify(calls.slice(windowStart.calls))} employees=${JSON.stringify(employeeCalls.slice(windowStart.employees))}`)
     }
-    await page.getByLabel('已交付成果').waitFor().catch(async cause => { throw new Error(`${String(cause)}\n${await debug()}`) })
+    const deliveryCard = page.getByRole('button', { name: /^查看成果：/, includeHidden: true }).first()
+    try {
+      await deliveryCard.waitFor({ state: 'attached', timeout: 30_000 })
+      const collapsedHistory = page.locator('details[data-owner-earlier-messages]:not([open])').filter({ has: deliveryCard })
+      if (await collapsedHistory.count()) await collapsedHistory.locator('summary').click()
+      await deliveryCard.waitFor()
+    } catch (cause) {
+      throw new Error(`${String(cause)}\n${await debug()}`)
+    }
     expect(calls.slice(windowStart.calls)).toContain('owner_execution_assignment')
     expect(calls.slice(windowStart.calls)).toContain('owner_quality')
     expect(employeeCalls.slice(windowStart.employees)).toEqual(['executor', 'reviewer'])

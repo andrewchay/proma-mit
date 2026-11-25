@@ -1,7 +1,7 @@
 import { findOwnerFollowupFuse, hasUnstartedOwnerConversation, preparePendingOwnerConversation } from './project-owner-management-conversation'
 import { decideAttentionCarryover } from './project-owner-attention-carryover-policy'
 import { prepareOwnerManagementAssignment, projectOwnerManagementAssignmentResult, queueOwnerAssignmentProtocolRetry, isRecoverableOwnerAssignmentRejection } from './project-owner-management-assignment'
-import { getOwnerManagementDelegation, hasActiveOwnerManagementRequest, renewExpiredOwnerManagementDelegation } from './project-owner-management-delegation'
+import { getOwnerInitialPlanningRecoveryCutoff, getPendingOwnerInitialPlanningRecovery, getOwnerManagementDelegation, hasActiveOwnerManagementRequest, renewExpiredOwnerManagementDelegation } from './project-owner-management-delegation'
 import type { OwnerManagementEvent } from '@gravitas/shared'
 import { prepareOwnerUnchangedAnswer, projectOwnerManagementRunResult } from './project-owner-management-questions'
 import { getProjectOwnerGoalDraft } from './project-owner-goal-service'
@@ -141,8 +141,11 @@ function handle(event: OwnerManagementEvent): void {
   }
   if (event.kind === 'delegation_confirmed') {
     const delegation = getOwnerManagementDelegation(event.projectId, event.taskId)
-    if (delegation.state !== 'active' || delegation.delegation?.id !== event.sourceId) return
-    if (hasUnstartedOwnerConversation(event.projectId, event.taskId)) {
+    const grant = delegation.delegation
+    if (delegation.state !== 'active' || !grant || grant.id !== event.sourceId) return
+    const recovery = grant.initialPlanningRecovery
+    if (recovery && (goal.revision !== grant.goalRevision || getProjectOwnerPlanDraft(event.projectId, event.taskId))) return
+    if (!recovery && hasUnstartedOwnerConversation(event.projectId, event.taskId)) {
       preparePendingOwnerConversation(event.projectId, event.taskId)
       return
     }
@@ -526,16 +529,26 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
         const subjectKey = subject.targetTaskId ?? 'project'
         return subject.conversationMessageId && getProjectOwnerGoalDraft(projectId, subject.targetTaskId)?.revision === subject.goalRevision ? [subjectKey] : []
       }))
+      const recoveryBySubject = new Map<string, { cutoff: number; requestId?: string }>()
       const subjects = new Set<string>()
       const conversations = new Set<string>()
       for (const link of links) {
         if (stopped) break
         const subject = JSON.parse(link.payload) as { targetTaskId?: string; conversationMessageId?: string; purpose?: string; requestId?: string; goalRevision?: number; planRevision?: number }
         const subjectKey = subject.targetTaskId ?? 'project'
+        if (subjects.has(subjectKey)) continue
+        let recovery = recoveryBySubject.get(subjectKey)
+        if (!recovery) {
+          const cutoff = getOwnerInitialPlanningRecoveryCutoff(projectId, subject.targetTaskId)
+          recovery = { cutoff: cutoff ?? 0, requestId: cutoff === undefined ? undefined : getPendingOwnerInitialPlanningRecovery(projectId, subject.targetTaskId) }
+          recoveryBySubject.set(subjectKey, recovery)
+        }
+        if (recovery.requestId && recovery.requestId !== subject.requestId) continue
         // 过时的对话/观察准备不能占用当前主体的调度位置；新的用户消息由对话恢复逻辑重建。
         if (subject.conversationMessageId && subject.planRevision !== (getProjectOwnerPlanDraft(projectId, subject.targetTaskId)?.revision ?? 0)) continue
         if (subject.conversationMessageId) {
           const message = getOwnerManagementMessage(projectId, subject.conversationMessageId)
+          if (message && message.createdAt <= recovery.cutoff) continue
           const conversationKey = `${subjectKey}:${message?.role === 'user' ? 'user' : 'observation'}`
           if (conversations.has(conversationKey)) continue
           // 用户消息和员工观察各保留最新链接，避免后到的观察掩盖尚未启动的用户消息。
@@ -551,11 +564,10 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
           const answerContinuation = subject.requestId?.startsWith('management:') && store.getProjectDb().prepare(
             "SELECT 1 FROM project_owner_management_events WHERE project_id = ? AND id = ? AND json_extract(payload, '$.kind') = 'answer_saved' AND json_extract(payload, '$.taskId') IS ? AND json_extract(payload, '$.sourceRevision') = ? AND consumed_at IS NOT NULL",
           ).get(projectId, subject.requestId.slice('management:'.length), subject.targetTaskId ?? null, subject.goalRevision ?? null)
-          if (conversationSubjects.has(subjectKey) && !answerContinuation) continue
+          if (conversationSubjects.has(subjectKey) && !answerContinuation && !recovery.requestId) continue
           const plan = getProjectOwnerPlanDraft(projectId, subject.targetTaskId)
           if (plan && ['proposed', 'confirmed'].includes(plan.state)) continue
         }
-        if (subjects.has(subjectKey)) continue
         const view = getOwnerManagementDelegation(projectId, subject.targetTaskId)
         if (view.state === 'stale') continue
         // 最新对话已有Run时不重复调用；后续内部安排仍可继续处理。

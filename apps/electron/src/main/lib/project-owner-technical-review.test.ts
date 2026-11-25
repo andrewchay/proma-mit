@@ -1,16 +1,16 @@
 import { createHash } from 'node:crypto'
 import { expect, test } from 'bun:test'
-import { assertOwnerDevelopmentValidationForVerdict, parseOwnerTechnicalReviewResponse, restoreVerbatimReviewQuotes } from './project-owner-technical-review'
+import { assertOwnerDevelopmentValidationForVerdict, parseOwnerTechnicalReviewResponse, normalizeOwnerTechnicalReviewQuotes, normalizeOwnerTechnicalReviewReceipt } from './project-owner-technical-review'
 
 const criteria = ['接口保持兼容', '回归测试通过']
 
 test('Given评审引用仅有引号排版差异 When唯一匹配成果原文 Then恢复逐字引用并保留其他差异的拒绝', () => {
   const content = '原文是"示例"，且结果正确。'
   const receipt = JSON.stringify({ criteria: [{ quote: '原文是“示例”，且结果正确。' }] })
-  expect(JSON.parse(restoreVerbatimReviewQuotes(receipt, content)).criteria[0].quote).toBe(content)
-  expect(restoreVerbatimReviewQuotes(receipt, `${content}\n${content}`)).toBe(receipt)
+  expect(JSON.parse(normalizeOwnerTechnicalReviewQuotes(receipt, content)).criteria[0].quote).toBe(content)
+  expect(normalizeOwnerTechnicalReviewQuotes(receipt, `${content}\n${content}`)).toBe(receipt)
   const fabricated = JSON.stringify({ criteria: [{ quote: '原文是“示例”，且结果错误。' }] })
-  expect(restoreVerbatimReviewQuotes(fabricated, content)).toBe(fabricated)
+  expect(normalizeOwnerTechnicalReviewQuotes(fabricated, content)).toBe(fabricated)
 })
 
 function response(verdict: string, overrides: Record<string, unknown> = {}): string {
@@ -121,4 +121,21 @@ test('Given代码评审同时引用说明缺陷与完整浏览器回执 Then接�
   expect(() => parse([])).toThrow('原文依据')
   expect(() => parse([{ ...validation, rawOutputSha256: 'f'.repeat(64) }])).toThrow('原文依据')
   expect(() => parseOwnerTechnicalReviewResponse(raw, criteria, artifactHash, content, 'development', [{ ...validation, outputTruncated: true }])).toThrow('原文依据')
+})
+
+test('Given代码评审明确有验证缺口 When证明材料不是逐字引用 Then保留阻断理由和真实引用', () => {
+  const artifactHash = 'a'.repeat(64)
+  const content = JSON.stringify({ files: [{ newContent: '<span id="count">0</span>' }] })
+  const input = { schemaVersion: 3, artifactHash, blockerReason: '尚无交互验证', criteria: [
+    { criterion: criteria[0], status: 'met', evidence: '初始值有源码依据', quote: '<span id="count">0</span>' },
+    { criterion: criteria[1], status: 'not_verified', evidence: '只有页面加载证据', quote: '页面加载通过，未执行交互验证' },
+  ] }
+  const parse = (raw: string) => parseOwnerTechnicalReviewResponse(normalizeOwnerTechnicalReviewReceipt(raw, content), criteria, artifactHash, content, 'development')
+  expect(parse(response('blocked', input))).toMatchObject({
+    verdict: 'blocked', blockerReason: input.blockerReason,
+    criteria: [input.criteria[0], { ...input.criteria[1], quote: null }],
+  })
+  expect(() => parse(response('approved', { ...input, blockerReason: null }))).toThrow()
+  input.criteria[1]!.status = 'met'
+  expect(() => parse(response('blocked', input))).toThrow('原文依据')
 })

@@ -6,7 +6,7 @@ import { prepareControlledTask } from './controlled-project-task-service'
 import { assertLocalActorEnabled } from './project-owner-plan-service'
 import { getCurrentOwnerExecutionAssignmentContext } from './project-owner-execution-assignment-context-service'
 import { resolveOwnerPlanningTask } from './project-owner-planning-source'
-import { buildOwnerExecutionAssignmentRequest } from './project-owner-execution-assignment-protocol'
+import { buildOwnerExecutionAssignmentRequest, resolveOwnerExecutionAssignmentRequest } from './project-owner-execution-assignment-protocol'
 import { parseOwnerExecutionSubject } from './project-owner-execution-source'
 import { listOwnerPlanningRuns } from './project-owner-runtime-ipc'
 import * as store from './project-sqlite-store'
@@ -93,7 +93,9 @@ export function prepareOwnerExecutionAssignment(rawSubject: unknown, rawInput: u
     if (current.context.contextFingerprint !== source.context.contextFingerprint || current.binding.revision !== source.binding.revision) throw new Error('Owner安排来源已更新，请重新读取')
     const existing = db.prepare('SELECT * FROM project_owner_planning_links WHERE project_id = ? AND request_id = ?').get(subject.projectId, input.requestId) as LinkRow | undefined
     if (existing) {
-      saved = verifyExisting(existing, input, inputHash, assignmentJson, sourceJson, link.promptHash, source.binding.carrierId, source.binding.workspaceId)
+      const { promptHash } = JSON.parse(existing.payload) as { promptHash: string }
+      saved = verifyExisting(existing, input, inputHash, assignmentJson, sourceJson, promptHash, source.binding.carrierId, source.binding.workspaceId)
+      if (promptHash !== link.promptHash) resolveOwnerExecutionAssignmentRequest(source.context, promptHash)
       return
     }
     const active = db.prepare("SELECT e.id FROM project_owner_planning_links l JOIN agent_executions e ON e.entity_type = 'task' AND e.entity_id = l.planning_task_id WHERE l.project_id = ? AND json_extract(l.payload, '$.purpose') = 'owner_execution_assignment' AND json_extract(l.payload, '$.targetTaskId') IS ? AND e.status IN ('queued', 'running') LIMIT 1").get(subject.projectId, subject.taskId ?? null)

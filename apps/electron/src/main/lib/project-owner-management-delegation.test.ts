@@ -238,6 +238,64 @@ test('Given硬上限错误已有准入或只有泛化无输出错误 When核对 
   service.revokeOwnerManagementDelegation(generic.project.id, genericGrant.id)
 })
 
+test.each(['到期', '撤销'])('Given首次规划无输出且授权%s When 确认恢复后重启 Then 仅启动一次新规划并保留历史预留', async (oldState) => {
+  const f = fixture('glm-5.3-flash', 'zhipu'), grant = issue(f)
+  await startDelegatedOwnerPlanningTask(f.taskId)
+  const original = store.listAgentExecutionsByProject(f.project.id)[0]!
+  callbacks.get(original.sessionId!)!.onError('No output generated. Check the stream for errors.')
+  await until(() => store.getAgentExecution(original.id)?.status === 'failed')
+  expireDelegation(grant.id)
+  if (oldState === '撤销') service.revokeOwnerManagementDelegation(f.project.id, grant.id)
+  const blocked = service.getOwnerManagementDelegation(f.project.id)
+  expect(blocked.state).toBe('attention')
+  const { getOwnerAutonomousScheduleStatus } = await import('./project-owner-autonomous-scheduler')
+  expect(getOwnerAutonomousScheduleStatus(f.project.id)).toMatchObject({
+    state: 'needs_reconcile', nextAction: 'human_decision', reason: expect.stringContaining('可在 Owner 对话确认重新规划'),
+  })
+  const recovery = blocked.initialPlanningRecovery!
+  expect(recovery).toMatchObject({ executionId: original.id, delegationId: grant.id })
+  const { sendOwnerManagementMessage } = await import('./project-owner-management-conversation')
+  const manager = managementStore.getOwnerManager(f.project.id)!
+  const oldMessage = sendOwnerManagementMessage({ projectId: f.project.id, conversationId: manager.conversationId,
+    expectedGoalRevision: grant.goalRevision, requestId: randomUUID(), content: '继续' })
+  reconcileOwnerManagement(f.project.id)
+  const input = { ...f.input, requestId: randomUUID(), initialPlanningRecovery: recovery }
+  expect(() => service.previewOwnerManagementDelegation({ ...input, maxCostMicros: grant.perRequestCeilingMicros })).toThrow('预算不足')
+  expect(() => service.previewOwnerManagementDelegation({ ...input, initialPlanningRecovery: { ...recovery, executionId: randomUUID() } })).toThrow('恢复来源已变化')
+  const preview = service.previewOwnerManagementDelegation(input)
+  expect(preview.recoveryBudget?.reservedMicros).toBe(grant.perRequestCeilingMicros)
+  const confirm = { input, previewHash: preview.previewHash }
+  const next = service.confirmOwnerManagementDelegation(confirm)
+  expect(service.confirmOwnerManagementDelegation(confirm)).toEqual(next)
+  expect(() => service.confirmOwnerManagementDelegation({ ...confirm, input: { ...input, requestId: randomUUID() } })).toThrow('恢复来源已变化')
+  await store.closeProjectDb()
+  await store.initProjectDb()
+  let stop = startOwnerManagementLoop()
+  try {
+    await until(() => store.listAgentExecutionsByProject(f.project.id).some(run => run.id !== original.id && callbacks.has(run.sessionId!)))
+    const retried = store.listAgentExecutionsByProject(f.project.id).find(run => run.id !== original.id)!
+    expect(service.getOwnerManagementClaim(retried.entityId)?.delegationId).toBe(next.id)
+    expect(resolveOwnerPlanningSession(retried.sessionId!)?.link.conversationMessageId).toBeUndefined()
+    const admitted = calls
+    await stop()
+    await store.closeProjectDb()
+    await store.initProjectDb()
+    stop = startOwnerManagementLoop()
+    reconcileOwnerManagement(f.project.id)
+    expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(2)
+    expect(calls).toBe(admitted)
+    clarify(retried.entityId)
+    await until(() => getOwnerManagementConversation(f.project.id).questions.some(q => q.state === 'open'))
+    reconcileOwnerManagement(f.project.id)
+    expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(2)
+    expect(service.getOwnerModelBudgetUsage(f.project.id, next.maxCostMicros).ownerModelInFlightMicros).toBe(grant.perRequestCeilingMicros + next.perRequestCeilingMicros)
+    expect(getOwnerManagementConversation(f.project.id).messages.some(message => message.id === oldMessage.id)).toBe(true)
+  } finally {
+    await stop()
+    service.revokeOwnerManagementDelegation(f.project.id, next.id)
+  }
+}, 15_000)
+
 test('Given失败回执使委托保持attention且用户已撤销 When确认新委托 Then持久撤销标记优先且不重发旧请求', async () => {
   const f = fixture(), grant = issue(f), before = calls
   await startDelegatedOwnerPlanningTask(f.taskId)

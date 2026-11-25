@@ -5,6 +5,7 @@ import type { OwnerDevelopmentValidationArtifact } from './project-owner-develop
 import type { OwnerDevelopmentDeliveryArtifact } from '@gravitas/shared'
 import { ownerDevelopmentValidationId } from './development-validation-attempt'
 import { ownerTaskDeliveryKind, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
+import { ownerExecutionHash } from './project-owner-execution-hash'
 import { createHash } from 'node:crypto'
 import { getOwnerExecutionRevalidation } from './project-owner-execution-revalidation'
 import { getOwnerTaskMaterializationRecord } from './project-owner-task-materialization'
@@ -126,8 +127,8 @@ export function unwrapReviewReceipt(raw: string): string {
   return /^\s*```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*$/i.exec(raw)?.[1] ?? raw
 }
 
-/** 仅把评审已经逐字引用的依据补入缺失的 quote 字段。 */
-export function restoreVerbatimReviewQuotes(receipt: string, artifactContent: string | undefined): string {
+/** 还原可核对的逐字引用，或将代码评审中未验证项的无效引用置空。原回执由记录服务保留。 */
+export function normalizeOwnerTechnicalReviewQuotes(receipt: string, artifactContent: string | undefined): string {
   if (artifactContent === undefined || receipt.length > MAX_RESPONSE_LENGTH) return receipt
   let value: unknown
   try { value = JSON.parse(receipt) } catch { return receipt }
@@ -142,11 +143,18 @@ export function restoreVerbatimReviewQuotes(receipt: string, artifactContent: st
     if (typeof item.quote !== 'string' || !item.quote || artifactContainsQuote(artifactContent, item.quote)) return item
     // 只修复直引号与排版引号的区别；找到唯一原文后仍保存真正的逐字引用。
     const quote = resolveOwnerTypographyQuote(artifactContent, item.quote)
-    if (quote === null) return item
+    if (quote === null && !(value.schemaVersion === 3 && value.verdict === 'blocked'
+      && item.status === 'not_verified' && boundedText(item.quote, 1000))) return item
     changed = true
     return { ...item, quote }
   })
   return changed ? JSON.stringify({ ...value, criteria }) : receipt
+}
+
+/** 历史回执和实时评审共同使用相同的长度限制及引用核对规则。 */
+export function normalizeOwnerTechnicalReviewReceipt(raw: string, artifactContent: string | undefined): string {
+  if (artifactContent === undefined || raw.length > MAX_RESPONSE_LENGTH) return raw
+  return normalizeOwnerTechnicalReviewQuotes(unwrapReviewReceipt(raw), artifactContent)
 }
 
 /**
@@ -291,6 +299,49 @@ function toEvidence(row: ReviewCommandRow, executor: ReviewCommandRow, response:
   }
 }
 
+/** 只核对明确写出保留人数、且逐个列全 A–D 座位的换桌表。 */
+export function findOwnerTableRotationConflict(markdown: string): string | null {
+  const content = markdown.replace(/^([ \t]*)(`{3,}|~{3,})[^\n]*\n[\s\S]*?^\1\2[ \t]*(?:\r?$|(?![\s\S]))/gm, '')
+  const rules = [...content.matchAll(/每桌(?:须|需|应)?保?留原组[ \t]*([0-4])[ \t]*人/g)]
+  if (rules.length !== 1) return null
+  const expected = Number(rules[0]![1])
+  const lines = content.split(/\r?\n/)
+  const headers = lines.flatMap((line, index) => /^\s*\|\s*原桌位\s*\|[^|]*(?:去向|目标桌)[^|]*\|\s*$/.test(line) ? [index] : [])
+  if (headers.length !== 1 || !/^\s*\|\s*:?-{3,}:?\s*\|\s*:?-{3,}:?\s*\|\s*$/.test(lines[headers[0]! + 1] ?? '')) return null
+
+  const tables = new Map<string, Map<string, string>>()
+  for (const line of lines.slice(headers[0]! + 2)) {
+    if (!line.trimStart().startsWith('|')) break
+    const row = /^\s*\|\s*(\d+)\s*桌\s*([A-D](?:\s*\/\s*[A-D])*)\s*\|\s*(\d+)\s*桌\s*\|\s*$/.exec(line)
+    if (!row) return null
+    const [, origin, seats, destination] = row
+    const assignments = tables.get(origin!) ?? new Map<string, string>()
+    for (const seat of seats!.split(/\s*\/\s*/)) {
+      if (assignments.has(seat)) return null
+      assignments.set(seat, destination!)
+    }
+    tables.set(origin!, assignments)
+  }
+  if (tables.size < 2 || [...tables.values()].some(seats => seats.size !== 4 || [...seats.values()].some(table => !tables.has(table)))) return null
+  const mismatches = [...tables].flatMap(([table, seats]) => {
+    const stays = [...seats.values()].filter(destination => destination === table).length
+    return stays === expected ? [] : [`${table} 桌实际保留 ${stays} 人`]
+  })
+  return mismatches.length ? `换桌表与正文冲突。正文要求每桌保留原组 ${expected} 人，表中${mismatches.join('、')}。请对齐规则和去向后重新评审。` : null
+}
+
+function readOwnerTableRotationConflict(text: string | undefined, development: boolean): string | null {
+  if (!text) return null
+  if (!development) return findOwnerTableRotationConflict(text)
+  const snapshot = JSON.parse(text) as { files?: Array<{ file?: { path?: string }; newContent?: string | null }> }
+  for (const file of snapshot.files ?? []) {
+    if (!file.file?.path?.toLowerCase().endsWith('.md') || !file.newContent) continue
+    const conflict = findOwnerTableRotationConflict(file.newContent)
+    if (conflict) return conflict
+  }
+  return null
+}
+
 /** 仅在Owner Reviewer命令已知结算且来源current时保存；调用方不能提交角色、费用或业务状态。 */
 export function recordOwnerTechnicalReviewEvidence(reviewerCommandId: string, reviewerExecutionId: string, rawResponse: string, createdAt = Date.now()): OwnerTechnicalReviewEvidence {
   if (!reviewerCommandId.trim() || !reviewerExecutionId.trim() || !Number.isSafeInteger(createdAt) || createdAt < 0) {
@@ -321,7 +372,12 @@ export function recordOwnerTechnicalReviewEvidence(reviewerCommandId: string, re
   let validationEvidence: OwnerDevelopmentValidationArtifact[] | undefined
   if (development) {
     const frozenTask = frozenSource.tasks.find(task => task.taskId === row.source_task_id && task.linkId === row.source_step_link_id)
-    const expectedCommands = frozenTask?.developmentScope?.verificationCommands ?? []
+    const { readOwnerDocumentReviewValidation } = require('./project-owner-document-review-retry') as typeof import('./project-owner-document-review-retry')
+    const documentValidation = developmentArtifact
+      ? readOwnerDocumentReviewValidation(row.id, executor.id, developmentArtifact.contentHash) : null
+    const expectedCommands = documentValidation ? [documentValidation.command] : frozenTask?.developmentScope?.verificationCommands ?? []
+    if (documentValidation && ownerExecutionHash(developmentArtifact?.validationEvidence?.[0]) !== ownerExecutionHash(documentValidation))
+      throw new Error('Markdown复核收到的文件验证和本地回执不一致')
     validationEvidence = developmentArtifact?.validationEvidence
     if (!developmentArtifact || !validationEvidence || expectedCommands.length === 0
       || validationEvidence.length !== expectedCommands.length
@@ -330,10 +386,16 @@ export function recordOwnerTechnicalReviewEvidence(reviewerCommandId: string, re
       throw new Error('Owner代码Reviewer缺少完整且绑定冻结命令的验证回执')
     }
   }
-  const receiptJson = artifactHash && rawResponse.length <= MAX_RESPONSE_LENGTH
-    ? restoreVerbatimReviewQuotes(unwrapReviewReceipt(rawResponse), artifactContent)
-    : rawResponse
-  const response = parseOwnerTechnicalReviewResponse(receiptJson, listFrozenCriteria(row), artifactHash, artifactContent, development ? 'development' : 'text', validationEvidence)
+  let receiptJson = artifactHash ? normalizeOwnerTechnicalReviewReceipt(rawResponse, artifactContent) : rawResponse
+  const criteria = listFrozenCriteria(row)
+  const parseReceipt = (receipt: string) => parseOwnerTechnicalReviewResponse(receipt, criteria, artifactHash, artifactContent, development ? 'development' : 'text', validationEvidence)
+  let response = parseReceipt(receiptJson)
+  const conflict = response.verdict === 'approved' ? readOwnerTableRotationConflict(artifactContent, development) : null
+  if (conflict) {
+    receiptJson = JSON.stringify({ ...response, verdict: 'blocked', summary: '本地核对发现换桌规则与表格不一致。', blockerReason: conflict,
+      criteria: response.criteria.map(item => ({ ...item, status: 'not_verified', evidence: conflict, ...(response.schemaVersion !== 1 ? { quote: null } : {}) })) })
+    response = parseReceipt(receiptJson)
+  }
   if (validationEvidence) assertOwnerDevelopmentValidationForVerdict(response.verdict, validationEvidence)
   const evidence = toEvidence(row, executor, response, receiptJson, createdAt, validationEvidence)
   const originalResponse = receiptJson === rawResponse ? null : rawResponse
@@ -357,15 +419,20 @@ export function recordOwnerTechnicalReviewEvidence(reviewerCommandId: string, re
   return evidence
 }
 
-export function listOwnerTechnicalReviewEvidence(projectId: string, taskId?: string, reviewerCommandIds?: string[]): OwnerTechnicalReviewEvidence[] {
+export function listOwnerTechnicalReviewEvidence(projectId: string, taskId?: string, reviewerCommandIds?: string[], counterSupplement?: false | string): OwnerTechnicalReviewEvidence[] {
   if (!projectId.trim() || (taskId !== undefined && !taskId.trim())) throw new Error('Owner 技术评审查询主体无效')
   const rows = store.getProjectDb().prepare(`SELECT reviewer_command_id, project_id, grant_id, task_id, step_link_id, rework_ordinal,
       executor_command_id, executor_execution_id, reviewer_execution_id, source_hash, verdict,
       validation_evidence_json, validation_evidence_sha256, response_json, response_sha256, original_response_text, original_response_sha256, created_at
     FROM project_owner_technical_reviews WHERE project_id=? AND (? IS NULL OR task_id=?)
       AND (? IS NULL OR reviewer_command_id IN (SELECT value FROM json_each(?)))
+      AND (? IS NOT NULL OR NOT EXISTS (
+        SELECT 1 FROM project_owner_document_review_retries d
+        JOIN project_owner_technical_reviews current_review ON current_review.reviewer_command_id=d.reviewer_id
+        WHERE d.previous_reviewer_id=project_owner_technical_reviews.reviewer_command_id
+      ))
     ORDER BY created_at, reviewer_command_id`)
-    .all(projectId, taskId ?? null, taskId ?? null, reviewerCommandIds ? 1 : null, JSON.stringify(reviewerCommandIds ?? [])) as Array<{
+    .all(projectId, taskId ?? null, taskId ?? null, reviewerCommandIds ? 1 : null, JSON.stringify(reviewerCommandIds ?? []), reviewerCommandIds ? 1 : null) as Array<{
       reviewer_command_id: string; project_id: string; grant_id: string; task_id: string; step_link_id: string; rework_ordinal: number
       executor_command_id: string; executor_execution_id: string; reviewer_execution_id: string; source_hash: string
       validation_evidence_json: string; validation_evidence_sha256: string
@@ -418,7 +485,7 @@ export function listOwnerTechnicalReviewEvidence(projectId: string, taskId?: str
     let validationEvidence: unknown
     try { validationEvidence = JSON.parse(row.validation_evidence_json) } catch { throw new Error('Owner验证回执不是有效JSON') }
     if (!Array.isArray(validationEvidence) || validationEvidence.some(item => !isOwnerDevelopmentValidationArtifact(item))) throw new Error('Owner验证回执结构无效')
-    return {
+    const review: OwnerTechnicalReviewEvidence = {
       ...response,
       ...(developmentArtifact && artifactVerified ? { developmentArtifact } : {}),
       ...(artifactKind === 'development' ? { validationEvidence: validationEvidence as OwnerDevelopmentValidationArtifact[], validationEvidenceVerified: true } : {}),
@@ -436,5 +503,8 @@ export function listOwnerTechnicalReviewEvidence(projectId: string, taskId?: str
       responseSha256: row.response_sha256,
       createdAt: row.created_at,
     }
+    if (counterSupplement === false || !developmentArtifact || response.verdict !== 'blocked') return review
+    const { applyOwnerCounterSupplement } = require('./project-owner-counter-supplement') as typeof import('./project-owner-counter-supplement')
+    return applyOwnerCounterSupplement(review, counterSupplement)
   })
 }
