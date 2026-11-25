@@ -94,8 +94,8 @@ export function prepareOwnerExecutionAssignment(rawSubject: unknown, rawInput: u
     const existing = db.prepare('SELECT * FROM project_owner_planning_links WHERE project_id = ? AND request_id = ?').get(subject.projectId, input.requestId) as LinkRow | undefined
     if (existing) {
       const { promptHash } = JSON.parse(existing.payload) as { promptHash: string }
-      if (promptHash !== link.promptHash) resolveOwnerExecutionAssignmentRequest(source.context, promptHash)
       saved = verifyExisting(existing, input, inputHash, assignmentJson, sourceJson, promptHash, source.binding.carrierId, source.binding.workspaceId)
+      if (promptHash !== link.promptHash) resolveOwnerExecutionAssignmentRequest(source.context, promptHash)
       return
     }
     const active = db.prepare("SELECT e.id FROM project_owner_planning_links l JOIN agent_executions e ON e.entity_type = 'task' AND e.entity_id = l.planning_task_id WHERE l.project_id = ? AND json_extract(l.payload, '$.purpose') = 'owner_execution_assignment' AND json_extract(l.payload, '$.targetTaskId') IS ? AND e.status IN ('queued', 'running') LIMIT 1").get(subject.projectId, subject.taskId ?? null)

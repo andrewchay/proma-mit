@@ -7,7 +7,7 @@ describe('内置运行验证断言模板', () => {
     expect(new Set(ids).size).toBe(ids.length)
     for (const template of OWNER_RUNTIME_ASSERTION_TEMPLATES) {
       expect(template.title.trim().length).toBeGreaterThan(0)
-      expect(template.intentKeywords.length === 0).toBe(template.id === 'counter.increment-reset')
+      expect(template.intentKeywords.length === 0).toBe(['counter.increment-reset', 'counter.mouse-keyboard'].includes(template.id))
       // 脚本必须是可求值的表达式（此处只做语法构造检查，真实执行由受管浏览器负责）。
       expect(() => new Function(`return ${template.script}`)).not.toThrow()
     }
@@ -26,7 +26,9 @@ describe('内置运行验证断言模板', () => {
   })
 
   test('Given补测断言 When匹配一般意图 Then不会隐式增加计数器交互检查', () => {
-    expect(selectOwnerRuntimeAssertionTemplates(['计数器需要加一和重置']).map(template => template.id)).not.toContain('counter.increment-reset')
+    const ids = selectOwnerRuntimeAssertionTemplates(['计数器需要加一和重置']).map(template => template.id)
+    expect(ids).not.toContain('counter.increment-reset')
+    expect(ids).not.toContain('counter.mouse-keyboard')
   })
 
   test('Given 意图为空 When 选择模板 Then 退回默认子集而非空集', () => {

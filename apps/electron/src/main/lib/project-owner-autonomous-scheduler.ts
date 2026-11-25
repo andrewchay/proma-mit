@@ -68,8 +68,8 @@ type Action =
   | { kind: 'dispatch'; commandId: string; ackFingerprint: string; taskId: string; role: OwnerExecutionCommandRole }
   | { kind: 'queue'; subject: ProjectOwnerGoalSubject; input: { grantId: string; taskId: string; role: OwnerExecutionCommandRole; reworkOrdinal: number; expectedRevalidationRevision: number }; taskId: string; role: OwnerExecutionCommandRole }
 interface Evaluation { status: OwnerAutonomousScheduleStatus; action?: Action }
-function readTechnicalReview(projectId: string, grantId: string, taskId: string, stepLinkId: string, reworkOrdinal: number) {
-  const reviews = listOwnerTechnicalReviewEvidence(projectId, taskId).filter(review =>
+function readTechnicalReview(projectId: string, grantId: string, taskId: string, stepLinkId: string, reworkOrdinal: number, reviewerCommandId?: string) {
+  const reviews = listOwnerTechnicalReviewEvidence(projectId, taskId, reviewerCommandId ? [reviewerCommandId] : undefined).filter(review =>
     review.grantId === grantId && review.stepLinkId === stepLinkId && review.reworkOrdinal === reworkOrdinal)
   if (reviews.length > 1) throw new Error(`同一Owner Task/返工轮次存在多条技术评审证据（${taskId}/${reworkOrdinal}）`)
   if (reviews[0]?.artifactVerified === false) throw new Error('独立评审对应完整文本成果已缺失或变化，停止自动续派')
@@ -218,8 +218,7 @@ function evaluate(projectId: string, now = Date.now()): Evaluation {
       }
       let review
       try {
-        review = listOwnerTechnicalReviewEvidence(projectId, task.id, [reviewer!.id])
-          .find(item => item.grantId === grant.id && item.stepLinkId === frozenTask.linkId && item.reworkOrdinal === reworkOrdinal)
+        review = readTechnicalReview(projectId, grant.id, task.id, frozenTask.linkId, reworkOrdinal, reviewer!.id)
       }
       catch (error) { return { status: status(projectId, 'stale', error instanceof Error ? error.message : '技术评审证据完整性错误；停止续派', { ...details, taskId: task.id, reworkOrdinal, nextAction: 'human_decision' }) } }
       if (!review) return { status: status(projectId, 'waiting', `Reviewer 第 ${reworkOrdinal} 轮已结束，但缺少可核验的结构化技术评审；停止自动续派`, { ...details, taskId: task.id, role: 'reviewer', reworkOrdinal, nextAction: 'human_decision' }) }
