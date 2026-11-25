@@ -141,24 +141,33 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const escalatedReviews = reviewHistory.filter((round, index) => round.businessTaskId && round.qualityState === 'escalated' && reviewHistory.findIndex(item => item.businessTaskId === round.businessTaskId) === index)
   const blockedReviews = reviewHistory.filter((round, index) => round.businessTaskId && round.qualityState === 'blocked' && reviewHistory.findIndex(item => item.businessTaskId === round.businessTaskId) === index)
   const [counterSupplement, setCounterSupplement] = useState<{ projectId: string; reviewerId: string; pending: boolean; message: string }>()
-  const supplementCounter = async (reviewerId: string) => {
+  const supplementReview = async (reviewerId: string, markdown: boolean) => {
     setCounterSupplement({ projectId, reviewerId, pending: true, message: '' })
     let message: string
     try {
-      const result = await window.electronAPI.paa.project.supplementOwnerCounterReview({ projectId, reviewerCommandId: reviewerId })
-      if (!result.ok) throw new Error(result.error.message)
-      message = result.value.status === 'passed' ? '补测通过，已保存原成果的验证回执。' : '补测未通过。' + (result.value.checks?.find(check => check.status !== 'passed')?.detail ?? '')
+      const request = { projectId, reviewerCommandId: reviewerId }
+      if (markdown) {
+        const result = await window.electronAPI.paa.project.retryOwnerMarkdownReview(request)
+        if (!result.ok) throw new Error(result.error.message)
+        message = '原文件已通过文件核对，独立复核已排队，等待评审结果。'
+      } else {
+        const result = await window.electronAPI.paa.project.supplementOwnerCounterReview(request)
+        if (!result.ok) throw new Error(result.error.message)
+        message = result.value.status === 'passed' ? '补测通过，已保存原成果的验证回执。' : '补测未通过。' + (result.value.checks?.find(check => check.status !== 'passed')?.detail ?? '')
+      }
       await load(projectId)
     } catch (error) {
       message = error instanceof Error ? error.message : '补测失败，请刷新项目后再试。'
     }
     setCounterSupplement({ projectId, reviewerId, pending: false, message })
   }
-  const counterSupplementControl = (round: typeof reviewHistory[number]) => {
-    const reviewerId = round.counterSupplementReviewerId
+  const reviewRecoveryControl = (round: typeof reviewHistory[number]) => {
+    const markdown = Boolean(round.markdownRetryReviewerId)
+    const reviewerId = round.markdownRetryReviewerId ?? round.counterSupplementReviewerId
     const state = counterSupplement?.projectId === projectId && counterSupplement.reviewerId === reviewerId ? counterSupplement : undefined
     return reviewerId && <div className="mt-2 space-y-1">
-      <button type="button" className="text-primary underline" disabled={state?.pending} onClick={() => void supplementCounter(reviewerId)}>{state?.pending ? '正在验证…' : '补测加一和重置'}</button>
+      {markdown && <p className="text-xs text-muted-foreground">对原 Markdown 文件重新验证，再在现有额度内启动一次独立评审，不重写文件。</p>}
+      <button type="button" className="text-primary underline" disabled={state?.pending} onClick={() => void supplementReview(reviewerId, markdown)}>{state?.pending ? '正在验证…' : markdown ? '保留原文件并重新评审' : '补测加一和重置'}</button>
 
     </div>
   }
@@ -308,6 +317,8 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     pendingDiscussionFocus.current = 'open'
     setDiscussionOpen(true)
   }
+  const employeeRunning = usage.commands.some(command => command.grantId === grant.grant?.grantId
+    && command.state === 'running' && command.executionStatus === 'running')
   const currentStatus = editor.loading && !editor.view ? '正在读取项目状态'
     : editor.error ? '项目状态读取失败，需要重新读取'
       : pendingAction ? '员工操作等待你的逐次确认'
@@ -323,6 +334,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
               : awaitingBusinessAcceptance ? '成果等待人工业务验收'
               : waitingForDecision || escalatedReviews.length > 0 || hasOpenQuestions || hasPendingChange ? 'Owner 正在等待你的决定'
                 : ownerProcessing ? 'Owner 正在处理项目工作'
+                  : employeeRunning ? '团队正在处理项目工作'
                   : grant.grant?.dispatchMode === 'autonomous' && hasCompletedOwnerDelivery(messages, usage.commands, taskId, plan.snapshot?.planVersion, grant.grant.grantId) ? '本轮成果已交付'
                   : assignmentTrace ? ownerTraceStatus(assignmentTrace)
                     : !editor.view?.manager ? 'Owner 尚未完成准备' : '等待下一步项目进展'
@@ -423,11 +435,11 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
         <section className="min-w-0 space-y-4 rounded-xl bg-card p-5 shadow-sm ring-1 ring-border/40 sm:p-6" aria-label="需要你决定">
           <h4 className="text-base font-semibold">需要你决定</h4>
           {pendingDeliveredItem && pendingDeliveredReference && <OwnerDeliveredDecisionCard subject={subject} item={pendingDeliveredItem} reference={pendingDeliveredReference} acceptanceBlocker={acceptanceBlocker} onOpen={() => selectDelivery(pendingDeliveredReference)} />}
-          {!editor.loading && editor.view && !pendingAction && !latestWorkspaceProposal && !needsArrangementRetry && !authorizationDecision && !waitingForDecision && !hasOpenQuestions && !hasPendingChange && !acceptanceSchedule && !pendingDeliveredItem && !executionAttention
+          {!editor.loading && editor.view && !pendingAction && !latestWorkspaceProposal && !needsArrangementRetry && !authorizationDecision && !waitingForDecision && !hasOpenQuestions && !hasPendingChange && !acceptanceSchedule && !pendingDeliveredItem && !executionAttention && escalatedReviews.length === 0 && blockedReviews.length === 0
             && <p className="text-sm text-muted-foreground">暂无待你决定的事项。</p>}
           {acceptanceSchedule && <OwnerAcceptanceCard projectId={projectId} schedule={acceptanceSchedule} commands={usage.commands} onChanged={() => { void refreshCommandProgress(subject) }} feedbackDisabled={composer.sending || Boolean(composer.pending || composer.deliveryReference || composer.deliveryReviewDecision) || !editor.view?.manager} feedbackCapacity={Math.max(0, 3700 - composer.text.length)} onDiscuss={(delivery, excerpt, intent) => { const context = `交付「${delivery.title}」版本 ${delivery.version}（记录 ${delivery.id}）${excerpt ? `，${intent === 'question' ? '想询问' : '希望修改'}：\n“${excerpt}”` : '：'}\n`; const text = `${composer.text}${composer.text.trim() ? '\n\n' : ''}${context}`; if (text.length > 4000) return; edit({ subject, text }); focusReplyComposer() }} />}
           {acceptanceSchedule && (composer.deliveryReference || composer.deliveryReviewDecision) && <p className="text-xs text-muted-foreground">对话草稿已关联另一成果。请先发送或取消该关联，再对这个交付点选反馈。</p>}
-          {escalatedReviews.map(round => <div key={round.id} className="space-y-2 rounded-lg bg-amber-500/10 p-3 text-sm" aria-label="质量决定需协商"><p className="font-medium">{round.title} · 需要你决定</p><p className="whitespace-pre-wrap break-words">{round.steps.find(step => step.label === 'Owner 决定')?.detail ?? '请与 Owner 协商未解决的质量事项。'}</p><button type="button" className="text-primary underline" onClick={focusReplyComposer}>回复 Owner</button>{counterSupplementControl(round)}</div>)}
+          {escalatedReviews.map(round => <div key={round.id} className="space-y-2 rounded-lg bg-amber-500/10 p-3 text-sm" aria-label="质量决定需协商"><p className="font-medium">{round.title} · 需要你决定</p><p className="whitespace-pre-wrap break-words">{round.steps.find(step => step.label === 'Owner 决定')?.detail ?? '请与 Owner 协商未解决的质量事项。'}</p><button type="button" className="text-primary underline" onClick={focusReplyComposer}>回复 Owner</button>{reviewRecoveryControl(round)}</div>)}
           {waitingForDecision && <div className="flex flex-wrap items-center gap-3 rounded-lg bg-amber-500/10 p-3 text-sm">
             <p>{decisionLabel}</p>
             {waitingMessage?.kind === 'clarification' && !hasOpenQuestions && <button type="button" className="text-primary underline underline-offset-4" onClick={focusReplyComposer}>回复 Owner</button>}
@@ -474,7 +486,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
           {evidenceBlocker && evidenceRisk && <div className="mt-3 rounded-xl bg-amber-500/10 p-3 text-sm" role="alert"><p className="font-medium">成果验证证据需要核对</p><p className="mt-1">{evidenceBlocker}</p><button type="button" className="mt-2 text-primary underline" onClick={() => selectDelivery(evidenceRisk.reference)}>查看成果和证据</button></div>}
           {planRisks.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-5 text-sm [overflow-wrap:anywhere]">{planRisks.map((risk, index) => <li key={index}>{risk}</li>)}</ul>}
           {counterSupplementNotice && <p role="status" className="mt-2 text-sm">{counterSupplementNotice}</p>}
-          {blockedReviews.map(round => <div key={round.id} className="mt-3 rounded-xl bg-amber-500/10 p-3 text-sm" aria-label="质量阻断"><p className="font-medium">{round.title} · 质量决定被阻断</p><p className="mt-1 whitespace-pre-wrap break-words">{round.steps.find(step => step.label === 'Owner 决定')?.detail ?? '请核对当前质量决定和恢复条件。'}</p>{counterSupplementControl(round)}</div>)}
+          {blockedReviews.map(round => <div key={round.id} className="mt-3 rounded-xl bg-amber-500/10 p-3 text-sm" aria-label="质量阻断"><p className="font-medium">{round.title} · 质量决定被阻断</p><p className="mt-1 whitespace-pre-wrap break-words">{round.steps.find(step => step.label === 'Owner 决定')?.detail ?? '请核对当前质量决定和恢复条件。'}</p>{reviewRecoveryControl(round)}</div>)}
           {delegation.view?.state === 'attention' && !authorizationDecision && children && <a href={`#${settingsId}`} className="mt-2 block text-sm text-primary underline underline-offset-4">上次请求待核对，查看请求记录</a>}
           {!evidenceBlocker && !latestAttention && !priorAttention && blockedReviews.length === 0 && delegation.view?.state !== 'attention' && planRisks.length === 0 && <p className="mt-2 text-sm text-muted-foreground">暂无已记录的风险提示，不代表已完成全面风险检查。</p>}
           {priorAttention && <p className="mt-2 text-xs text-muted-foreground">此前 Owner 曾提出关注事项；后续进展是否解决该事项，请查看 <button type="button" className="text-primary underline" onClick={() => revealDiscussionTarget(`owner-message-${priorAttention.id}`)}>历史记录</button>核对。</p>}

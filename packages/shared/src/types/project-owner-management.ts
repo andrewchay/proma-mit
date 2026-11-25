@@ -140,6 +140,7 @@ export interface OwnerReviewHistory {
   reworkOrdinal: number
   qualityState?: 'accepted' | 'rework_authorized' | 'escalated' | 'blocked'
   counterSupplementReviewerId?: string
+  markdownRetryReviewerId?: string
   steps: Array<{ label: string; detail: string; at?: number }>
 }
 

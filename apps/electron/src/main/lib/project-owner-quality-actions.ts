@@ -36,7 +36,7 @@ export interface OwnerQualityArtifact { contentHash: string; content: string; pr
 export function readOwnerQualityArtifact(reviewerCommandId: string): OwnerQualityArtifact | null {
   const { source, taskId } = readOwnerCommandFrozenSource(reviewerCommandId)
   if (ownerTaskDeliveryKind(source, taskId) === 'development') {
-    const review = listOwnerTechnicalReviewEvidence(source.projectId).find(item => item.reviewerCommandId === reviewerCommandId && item.artifactVerified === true)
+    const review = listOwnerTechnicalReviewEvidence(source.projectId, taskId, [reviewerCommandId]).find(item => item.reviewerCommandId === reviewerCommandId && item.artifactVerified === true)
     const artifact = review?.developmentArtifact
     if (!review || !artifact || artifact.executorCommandId !== review.executorCommandId || artifact.executorExecutionId !== review.executorExecutionId
       || artifact.contentHash !== review.artifactHash || !review.validationEvidenceVerified) return null

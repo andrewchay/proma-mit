@@ -46,6 +46,51 @@ export class OwnerRuntimeVerificationError extends Error {
   }
 }
 
+async function checkCounterInput(contents: Electron.WebContents, targetUrl: string): Promise<{ passed: boolean; detail: string }> {
+  const inspect = async <T>(script: string): Promise<T> => {
+    if (contents.getURL() !== targetUrl) throw new Error('计数器检查期间已离开目标页面')
+    return contents.executeJavaScript(script)
+  }
+  const readCount = () => inspect<string>("document.querySelector('#count').textContent.trim()")
+  const selectors = ['#increment', '#increment', '#reset']
+  const input = contents.debugger
+  const press = async (key: 'Tab' | 'Enter', windowsVirtualKeyCode: number) => {
+    const event = { key, code: key, windowsVirtualKeyCode }
+    await input.sendCommand('Input.dispatchKeyEvent', key === 'Enter'
+      ? { ...event, type: 'keyDown', text: '\r', unmodifiedText: '\r' }
+      : { ...event, type: 'rawKeyDown' })
+    await input.sendCommand('Input.dispatchKeyEvent', { ...event, type: 'keyUp' })
+  }
+  input.attach()
+  try {
+    await input.sendCommand('Emulation.setFocusEmulationEnabled', { enabled: true })
+    const mouse = [await readCount()]
+    for (const selector of selectors) {
+      const point = await inspect<{ x: number; y: number }>(`(() => {
+        const button = document.querySelector(${JSON.stringify(selector)})
+        button.scrollIntoView({ block: 'center', inline: 'center' })
+        const rect = button.getBoundingClientRect()
+        return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+      })()`)
+      await input.sendCommand('Input.dispatchMouseEvent', { ...point, type: 'mousePressed', button: 'left', clickCount: 1 })
+      await input.sendCommand('Input.dispatchMouseEvent', { ...point, type: 'mouseReleased', button: 'left', clickCount: 1 })
+      mouse.push(await readCount())
+    }
+    const keyboard = [await readCount()]
+    for (const selector of selectors) {
+      const targetFocused = () => inspect<boolean>(`document.activeElement?.matches(${JSON.stringify(selector)}) === true`)
+      for (let i = 0; i < 30 && !await targetFocused(); i++) await press('Tab', 9)
+      if (!await targetFocused()) return { passed: false, detail: '无法通过 Tab 聚焦计数器按钮' }
+      await press('Enter', 13)
+      keyboard.push(await readCount())
+    }
+    return {
+      passed: mouse.join(',') === '0,1,2,0' && keyboard.join(',') === '0,1,2,0',
+      detail: `鼠标：${mouse.join(' → ')}；Enter：${keyboard.join(' → ')}`,
+    }
+  } finally { if (input.isAttached()) input.detach() }
+}
+
 const DEFAULT_TIMEOUT_MS = 60_000
 /**
  * 每次验证使用独立的内存 partition（无 `persist:` 前缀即不落盘）。
@@ -229,6 +274,9 @@ const defaultBrowserRunner: OwnerRuntimeBrowserRunner = async ({ filePath, resou
           () => window.webContents.executeJavaScript(template.script, true),
           `断言 ${template.id}`,
         ) as { passed?: boolean; skipped?: boolean; detail?: string; bestScore?: string } | null
+        if (template.id === 'counter.mouse-keyboard' && raw?.passed === true) {
+          raw = await withinDeadline(() => checkCounterInput(window.webContents, allowedTarget), '计数器鼠标与键盘检查')
+        }
         if (template.id === 'storage.best-score' && raw?.passed === true) {
           const before = raw.bestScore
           await withinDeadline(() => window.loadFile(filePath), '最高分刷新检查')

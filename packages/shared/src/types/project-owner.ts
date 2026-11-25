@@ -268,6 +268,8 @@ export interface OwnerPlanningConversationContext {
   truncated: boolean
   currentPlan: { revision: number; state: string; proposal: ProjectOwnerPlanProposal } | null
   tasks: Array<{ id: string; title: string; status: string }>
+  /** 对话准备时的员工运行事实，与任务业务状态独立。旧提示不包含此字段。 */
+  activeTeamRuns?: Array<{ taskId: string; title: string; role: 'executor' | 'reviewer'; status: 'queued' | 'running' }>
   tasksTruncated: boolean
 }
 
@@ -1226,6 +1228,7 @@ export interface ProjectOwnerExecutionCommandApi {
   previewOwnerPreflightReconciliation: (request: OwnerPreflightReconciliationPreviewRequest) => Promise<ProjectOwnerGoalResult<OwnerPreflightReconciliationPreview>>
   confirmOwnerPreflightReconciliation: (request: ConfirmOwnerPreflightReconciliationRequest) => Promise<ProjectOwnerGoalResult<OwnerPreflightReconciliationResult>>
   /** 重新核对研发工作区；清理后调用可恢复「从未认领」的排队准备。 */
+  retryOwnerMarkdownReview: (request: { projectId: string; reviewerCommandId: string }) => Promise<ProjectOwnerGoalResult<{ reviewerCommandId: string }>>
   supplementOwnerCounterReview: (request: { projectId: string; reviewerCommandId: string }) => Promise<ProjectOwnerGoalResult<import('./development-review').DevelopmentValidationResult>>
   recheckOwnerDevelopmentWorkspace: (request: ProjectOwnerGoalSubject & { executionId: string }) => Promise<ProjectOwnerGoalResult<OwnerDevelopmentWorkspaceRecheck>>
 }

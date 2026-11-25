@@ -112,6 +112,26 @@ test('Given 绿地项目无代码候选 When Owner声明新建文件与内置断
   expect(() => parseOwnerExecutionAssignmentProposal(incomplete, greenfieldContext)).toThrow('允许范围必须覆盖全部目标文件')
   expect(parseOwnerExecutionAssignmentProposal(incomplete, greenfieldContext, false, false)).toEqual(incomplete)
 })
+test('Given纯 Markdown 文件 When生成新安排 Then拒绝浏览器验证并保留历史安排解码', () => {
+  const scope = { targetPaths: ['manual/handbook.md'], allowedPaths: ['manual/handbook.md'], verificationCommands: ['browser:html.loads'], reason: '交付活动手册' }
+  const proposal = { ...greenfieldResponse, developmentScope: scope }
+  expect(() => parseOwnerExecutionAssignmentProposal(proposal, greenfieldContext, true, true, { enforceVerificationTargets: true })).toThrow('纯 Markdown 目标无法执行 HTML 验证')
+  expect(parseOwnerExecutionAssignmentProposal(proposal, greenfieldContext)).toEqual(proposal)
+  const corrected = { ...proposal, developmentScope: { ...scope, verificationCommands: ['document:markdown'] } }
+  expect(parseOwnerExecutionAssignmentProposal(corrected, greenfieldContext, true, true, { enforceVerificationTargets: true })).toEqual(corrected)
+})
+test('Given冻结验收要求键盘操作 When只安排加载网页 Then拒绝证据缺口并接受完整断言', () => {
+  const scope = { ...greenfieldResponse.developmentScope!, verificationCommands: ['browser:html.loads'] }
+  const proposal = { ...greenfieldResponse, developmentScope: scope }
+  const frozen = { ...greenfieldContext, steps: greenfieldContext.steps.map(step => ({
+    ...step, acceptanceCriteria: ['鼠标加一两次后重置归零', '键盘聚焦后 Enter 只加一'],
+  })) }
+  expect(parseOwnerExecutionAssignmentProposal(proposal, frozen)).toEqual(proposal)
+  expect(() => parseOwnerExecutionAssignmentProposal(proposal, frozen, true, true, { enforceVerificationTargets: true })).toThrow('计数器验收包含键盘')
+  const corrected = { ...proposal, developmentScope: { ...scope, verificationCommands: ['browser:html.loads+counter.mouse-keyboard'] } }
+  expect(parseOwnerExecutionAssignmentProposal(corrected, frozen, true, true, { enforceVerificationTargets: true })).toEqual(corrected)
+})
+
 test('Given计划区分文本与代码 When安排混合步骤 Then选择研发批次并拒绝错误的执行类型', () => {
   const steps = [{ ...context.steps[0]!, deliveryKind: 'text' as const }, { ...context.steps[1]!, deliveryKind: 'development' as const }]
   const mixed = { ...greenfieldContext, steps }

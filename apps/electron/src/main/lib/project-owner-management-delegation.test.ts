@@ -248,6 +248,10 @@ test.each(['到期', '撤销'])('Given首次规划无输出且授权%s When 确�
   if (oldState === '撤销') service.revokeOwnerManagementDelegation(f.project.id, grant.id)
   const blocked = service.getOwnerManagementDelegation(f.project.id)
   expect(blocked.state).toBe('attention')
+  const { getOwnerAutonomousScheduleStatus } = await import('./project-owner-autonomous-scheduler')
+  expect(getOwnerAutonomousScheduleStatus(f.project.id)).toMatchObject({
+    state: 'needs_reconcile', nextAction: 'human_decision', reason: expect.stringContaining('可在 Owner 对话确认重新规划'),
+  })
   const recovery = blocked.initialPlanningRecovery!
   expect(recovery).toMatchObject({ executionId: original.id, delegationId: grant.id })
   const { sendOwnerManagementMessage } = await import('./project-owner-management-conversation')

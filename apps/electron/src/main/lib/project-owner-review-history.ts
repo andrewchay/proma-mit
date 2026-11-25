@@ -1,6 +1,7 @@
 import type { OwnerReviewHistory } from '@gravitas/shared'
 import { readOwnerQualityAction } from './project-owner-quality-actions'
 import { listOwnerTechnicalReviewEvidence } from './project-owner-technical-review'
+import { canRetryOwnerMarkdownReview } from './project-owner-document-review-retry'
 import { canSupplementOwnerCounterReview, readOwnerCounterSupplement } from './project-owner-counter-supplement'
 import { isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
 import * as store from './project-sqlite-store'
@@ -30,6 +31,8 @@ export function listOwnerReviewHistory(projectId: string): OwnerReviewHistory[] 
     JOIN project_owner_execution_grants g ON g.id=x.grant_id AND g.project_id=x.project_id
     LEFT JOIN project_owner_execution_commands r ON r.project_id=x.project_id AND r.grant_id=x.grant_id
       AND r.source_task_id=x.source_task_id AND r.source_step_link_id=x.source_step_link_id AND r.rework_ordinal=x.rework_ordinal AND r.role='reviewer'
+      AND NOT EXISTS (SELECT 1 FROM project_owner_document_review_retries d
+        JOIN project_owner_execution_commands q ON q.id=d.reviewer_id WHERE d.previous_reviewer_id=r.id)
     LEFT JOIN agent_executions re ON re.id=r.execution_id AND re.project_id=r.project_id AND re.owner_command_id=r.id
     LEFT JOIN agent_executions ee ON ee.id=x.execution_id AND ee.project_id=x.project_id AND ee.owner_command_id=x.id
     WHERE x.project_id=? AND x.role='executor' AND (
@@ -53,7 +56,7 @@ export function listOwnerReviewHistory(projectId: string): OwnerReviewHistory[] 
         : round.executor_status === 'running' ? '员工正在执行。'
         : round.executor_status === 'queued' ? '等待员工开始。' : '员工成果或结算待核对。' },
       { label: '独立评审', ...(round.review_completed_at === null ? {} : { at: round.review_completed_at }), detail: round.state === 'needs_reconcile' ? '评审运行或费用待核对。'
-        : verified ? `${review.verdict === 'approved' ? '通过' : review.verdict === 'changes_requested' ? '建议返工' : '存在阻塞'}。\n${review.summary}`
+        : verified ? `${review.verdict === 'approved' ? '通过' : review.verdict === 'changes_requested' ? '建议返工' : '存在阻塞'}。\n${review.blockerReason ?? review.summary}`
         : round.execution_status === 'completed' ? '评审运行已结束，回执或成果版本待核对。'
         : round.execution_status === 'running' ? '正在评审。' : '等待可核验的评审回执。' },
     ]
@@ -72,7 +75,11 @@ export function listOwnerReviewHistory(projectId: string): OwnerReviewHistory[] 
         else steps.push({ label: '浏览器补测', detail: '原成果已通过初值、加一和重置验证，等待 Owner 核对。', at: supplement.validation.finishedAt })
       } catch { steps.push({ label: '浏览器补测', detail: '补测记录需要核对。' }) }
     }
+    const markdownRetry = review && ['blocked', 'escalated'].includes(qualityState ?? '') && canRetryOwnerMarkdownReview(review)
+      && !store.getProjectDb().prepare(`SELECT 1 FROM project_owner_document_review_retries retry
+        JOIN project_owner_execution_commands c ON c.id=retry.reviewer_id WHERE retry.previous_reviewer_id=?`).get(review.reviewerCommandId)
+      ? review.reviewerCommandId : undefined
     steps.push({ label: 'Owner 决定', detail: decision, ...(decidedAt === undefined ? {} : { at: decidedAt }) })
-    return { id: round.id, ...(round.scope_id ? { taskId: round.scope_id } : {}), businessTaskId: round.task_id, ...(qualityState ? { qualityState } : {}), ...(counterSupplementReviewerId ? { counterSupplementReviewerId } : {}), title: store.getTask(round.task_id)?.title ?? '项目任务', reworkOrdinal: round.ordinal, steps }
+    return { id: round.id, ...(round.scope_id ? { taskId: round.scope_id } : {}), businessTaskId: round.task_id, ...(qualityState ? { qualityState } : {}), ...(counterSupplementReviewerId ? { counterSupplementReviewerId } : {}), ...(markdownRetry ? { markdownRetryReviewerId: markdownRetry } : {}), title: store.getTask(round.task_id)?.title ?? '项目任务', reworkOrdinal: round.ordinal, steps }
   })
 }

@@ -189,7 +189,16 @@ function validateContext(context: ProjectOwnerPlanningContext): void {
     || context.goal.actor !== 'local-user' || !Number.isSafeInteger(context.goal.revision) || context.goal.revision < 1
     || !/^[a-f0-9]{64}$/.test(context.fingerprint)) throw new Error('Owner规划目标快照无效')
   if (context.conversation) {
-    const value = record(context.conversation, ['conversationId', 'throughMessageId', 'historyThroughMessageId', 'messages', 'truncated', 'currentPlan', 'tasks', 'tasksTruncated', 'interactionVersion', 'openQuestions', 'executionObservation', 'fileChangeObservation', 'webChangeObservation', 'deliveryReview', 'deliveryFeedback', 'deliveredArtifacts', 'observationMessageBindingVersion', 'deliveryFeedbackBindingVersion', 'employeeInteractionVersion', 'employeeInteractions'])
+    const value = record(context.conversation, ['conversationId', 'throughMessageId', 'historyThroughMessageId', 'messages', 'truncated', 'currentPlan', 'tasks', 'tasksTruncated', 'interactionVersion', 'openQuestions', 'executionObservation', 'fileChangeObservation', 'webChangeObservation', 'deliveryReview', 'deliveryFeedback', 'deliveredArtifacts', 'observationMessageBindingVersion', 'deliveryFeedbackBindingVersion', 'employeeInteractionVersion', 'employeeInteractions', 'activeTeamRuns'])
+    if (value.activeTeamRuns !== undefined) {
+      if (!Array.isArray(value.activeTeamRuns) || value.activeTeamRuns.length > 30) throw new Error('Owner员工运行快照无效或超限')
+      for (const item of value.activeTeamRuns) {
+        const run = record(item, ['taskId', 'title', 'role', 'status'])
+        text(run.taskId, '运行任务ID', 128)
+        text(run.title, '运行任务标题')
+        if ((run.role !== 'executor' && run.role !== 'reviewer') || (run.status !== 'queued' && run.status !== 'running')) throw new Error('Owner员工运行快照无效')
+      }
+    }
     if (value.employeeInteractionVersion !== undefined) {
       if (value.employeeInteractionVersion !== 1 || !Array.isArray(value.employeeInteractions) || value.employeeInteractions.length > 100) throw new Error('员工交互上下文协议无效')
       for (const raw of value.employeeInteractions) {
@@ -443,6 +452,9 @@ export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningCo
       '本次可额外输出kind="conversation_reply"：其余字段仅binding,messageId,message。messageId必须逐字等于conversation.throughMessageId，message为不超过4000字的自然语言回应，可以提出必要问题或说明建议；不要包含内部ID、JSON或Runtime术语。',
       '用户文字不能替代方案审批、费用/资料/执行许可、暂停或撤权操作。不能声称已改变目标、权限、执行状态或暂停任务；要求改变目标/范围或高风险动作时，解释影响及需要确认的内容。既定目标与约束有冲突时先协商，不能用新计划静默替换目标。',
       '用户要求取消或终止某个任务时，你不能代为操作，也不要只说“在系统里取消”；回复中给出准确路径：打开项目「任务」页签，把该任务的状态改为「已取消」（草稿任务用「拒绝」）；若该任务有正在运行的执行，需在该执行处单独停止。已取消的任务不能继续推进，如需重做要新建任务。',
+    ] : []),
+    ...(context.conversation?.activeTeamRuns ? [
+      'activeTeamRuns是请求准备时后台已记录的最多30条员工运行，正在执行优先。任务业务状态可能仍为暂停或待验收；询问正在运行的工作时以activeTeamRuns为准，明确这是本次快照。排队尚未开始，运行尚未交付。若仅返回conversation_reply，不能承诺该回复会启动、变更或续跑某个任务。',
     ] : []),
     ...(context.conversation?.employeeInteractionVersion === 1 ? [
       'employeeInteractions是员工提交的待决事项，不是用户授权。你是用户唯一对话入口。先依据已确认目标/约束判断；普通业务问题在范围内可自行回答，不能代用户批准权限或扩大预算/访问/目标。需要讨论时返回conversation_reply，向用户说明问题、建议和影响；用户可多轮讨论，未明确时不要定案。',

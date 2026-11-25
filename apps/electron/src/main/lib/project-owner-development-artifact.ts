@@ -223,7 +223,9 @@ export async function readOwnerDevelopmentArtifactForReview(reviewerCommandId: s
   const files = await readDevelopmentSnapshotContentsAsync(sessionDirectory, execution.id)
   const content = JSON.stringify({ executionId: execution.id, workspaceId: workspace.id, baseCommit: snapshot.baseCommit, contentHash: snapshot.contentHash, files })
   if (Buffer.byteLength(content, 'utf8') > 512 * 1024) throw new Error('Owner代码快照超过Reviewer完整输入上限；未截断或启动评审')
-  const validationEvidence = (frozenTask.developmentScope.verificationCommands ?? []).map(command => {
+  const { readOwnerDocumentReviewValidation } = require('./project-owner-document-review-retry') as typeof import('./project-owner-document-review-retry')
+  const documentValidation = readOwnerDocumentReviewValidation(reviewerCommandId, executor.id, snapshot.contentHash)
+  const validationEvidence = documentValidation ? [documentValidation] : (frozenTask.developmentScope.verificationCommands ?? []).map(command => {
     const validationId = ownerDevelopmentValidationId(executor.id, command, snapshot.contentHash)
     const attempt = readOwnerDevelopmentValidationAttempt(sessionDirectory, validationId)
     if (!attempt) return { command, validationId, attemptState: 'missing' as const }

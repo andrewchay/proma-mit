@@ -194,6 +194,19 @@ export const OWNER_RUNTIME_ASSERTION_TEMPLATES: readonly OwnerRuntimeAssertionTe
     })()`,
   },
   {
+    id: 'counter.mouse-keyboard',
+    title: '计数器鼠标与 Enter 操作均依次显示 0、1、2、0',
+    intentKeywords: [],
+    script: `(() => {
+      const visible = element => element && element.getClientRects().length > 0
+        && getComputedStyle(element).visibility === 'visible'
+      const buttons = ['button#increment', 'button#reset'].map(selector => document.querySelector(selector))
+      const passed = visible(document.querySelector('#count'))
+        && buttons.every(button => visible(button) && !button.disabled)
+      return { passed, detail: passed ? '' : '需要可见的 #count 及可操作的 #increment、#reset' }
+    })()`,
+  },
+  {
     id: 'text-counter.behavior',
     title: '文本计数器输入、非空白 Unicode 码点、分词、换行及清空正确',
     intentKeywords: ['文本计数器', '码点数', '词数', 'unicode'],

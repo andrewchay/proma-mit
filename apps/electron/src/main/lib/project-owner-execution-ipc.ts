@@ -53,6 +53,13 @@ export function registerProjectOwnerExecutionIpcHandlers(ipc: Registrar): void {
     const subject = parseOwnerExecutionSubject({ projectId: value.projectId, ...(value.taskId === undefined ? {} : { taskId: value.taskId }) })
     return resumeOwnerExecutionStartIntent(value.intentId, subject)
   }))
+  ipc.handle(PROJECT_IPC_CHANNELS.RETRY_OWNER_MARKDOWN_REVIEW, (_, request) => result(async () => {
+    const { projectId, reviewerCommandId } = ownerExecutionObject(request, ['projectId', 'reviewerCommandId'])
+    const subject = parseOwnerExecutionSubject({ projectId })
+    if (typeof reviewerCommandId !== 'string' || !reviewerCommandId.trim() || reviewerCommandId.length > 128) throw new Error('独立评审ID无效')
+    const { retryOwnerMarkdownReview } = await import('./project-owner-document-review-retry')
+    return retryOwnerMarkdownReview(subject.projectId, reviewerCommandId)
+  }))
   ipc.handle(PROJECT_IPC_CHANNELS.SUPPLEMENT_OWNER_COUNTER_REVIEW, (_, request) => result(async () => {
     assertLocalActorEnabled()
     const { projectId, reviewerCommandId } = ownerExecutionObject(request, ['projectId', 'reviewerCommandId'])
