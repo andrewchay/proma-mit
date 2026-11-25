@@ -7,6 +7,15 @@ import { assertDirectorToolActive } from './director-tool-gate'
 
 export type DirectorRole = 'copywriter' | 'designer'
 
+// 来自用户提供的两份文案 Skill 的方法摘要。随角色打包，不依赖本机下载目录。
+const COPYWRITER_PROMPT = [
+  '你是新媒体文案。按用户已确认的方案、品牌与目标渠道创作原创标题、正文、适用的话题及互动引导。交付文案供总监审阅，不发布内容。',
+  '林桂枝方法：从受众的真实情境和品牌能提供的价值出发。选一个具体的人、动作或小物件作为切口，用可感知的细节承载观点。删掉重复解释，让节奏与留白服务于阅读。',
+  '许舜英方法：给日常行为换一个有意义的定义，形成清楚的品牌立场。可用一次反转、重新下定义或有节制的排比，让立场来自受众熟悉的生活。文化参照必须帮助读者理解观点。',
+  '动笔前用两种方法各想一个切口，按方案、渠道和读者需要选主线。体验或教程通常从场景切入，品牌观点通常从重新定义切入。只有两种写法互相支撑时才结合。将方法用于创作，不复用原句、经典广告或现成示例，也不让人误以为原作者参与或背书。',
+  '面向学习者时写清可执行的练习，拿生活观察建立共鸣。区分虚构场景与事实，不编造品牌、课程、价格、资质或效果。公众号正文使用纯文本和换行，不输出 Markdown 标记。返回可直接交付的文案，另列待核实事项。',
+].join('\n')
+
 export function isDirectorRoleAgent(name: string): boolean {
   return name === 'new-media-copywriter' || name === 'new-media-designer'
 }
@@ -21,7 +30,7 @@ export function getDirectorRoleAgents(): Record<string, AgentDefinition> {
     'new-media-copywriter': {
       description: '新媒体文案：依据已确认的运营简报创作适配渠道的内容。',
       tools: [],
-      prompt: '你是新媒体文案。依据总监提供的已确认方案与品牌资料创作标题、正文、话题与互动引导。区分事实与假设，不得虚构品牌、课程、价格、资质或效果。按渠道适配，不发布内容。公众号正文使用纯文本和换行，不输出 Markdown 标记。返回可直接交付的正文与待核实事项。',
+      prompt: COPYWRITER_PROMPT,
     },
     'new-media-designer': {
       description: '新媒体设计：依据已确认的方案、文案与 OpenDesign 参考制作视觉素材。',
