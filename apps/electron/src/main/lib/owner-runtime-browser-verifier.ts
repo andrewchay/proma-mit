@@ -77,16 +77,19 @@ async function checkCounterInput(contents: Electron.WebContents, targetUrl: stri
       mouse.push(await readCount())
     }
     const keyboard = [await readCount()]
+    const focusTrace: string[] = []
     for (const selector of selectors) {
       const targetFocused = () => inspect<boolean>(`document.activeElement?.matches(${JSON.stringify(selector)}) === true`)
-      for (let i = 0; i < 30 && !await targetFocused(); i++) await press('Tab', 9)
+      let tabs = 0
+      for (; tabs < 30 && !await targetFocused(); tabs++) await press('Tab', 9)
       if (!await targetFocused()) return { passed: false, detail: '无法通过 Tab 聚焦计数器按钮' }
+      focusTrace.push(`${selector}（${tabs} 次 Tab）`)
       await press('Enter', 13)
       keyboard.push(await readCount())
     }
     return {
       passed: mouse.join(',') === '0,1,2,0' && keyboard.join(',') === '0,1,2,0',
-      detail: `鼠标：${mouse.join(' → ')}；Enter：${keyboard.join(' → ')}`,
+      detail: `鼠标：${mouse.join(' → ')}；Enter：${keyboard.join(' → ')}；Tab 焦点：${focusTrace.join(' → ')}`,
     }
   } finally { if (input.isAttached()) input.detach() }
 }

@@ -4,7 +4,7 @@ import { containsOwnerValidationEvidenceQuote } from './development-validation-a
 import { getAgentSessionSDKMessages } from './agent-session-manager'
 import { getOwnerManagementMessage, appendOwnerManagementMessage } from './project-owner-management-store'
 import { assertOwnerReviewerTextDelivery } from './project-owner-text-delivery'
-import { recordOwnerTechnicalReviewEvidence, normalizeOwnerTechnicalReviewQuotes, unwrapReviewReceipt } from './project-owner-technical-review'
+import { recordOwnerTechnicalReviewEvidence, normalizeOwnerTechnicalReviewQuotes, normalizeOwnerTechnicalReviewReceipt, unwrapReviewReceipt } from './project-owner-technical-review'
 import * as store from './project-sqlite-store'
 
 export function recoverOwnerReviewEvidence(projectId: string, grantId: string, taskId: string, round: number): boolean {
@@ -20,7 +20,9 @@ export function recoverOwnerReviewEvidence(projectId: string, grantId: string, t
   const rejection = db.prepare('SELECT id FROM project_owner_management_messages WHERE project_id=? AND event_id=?').get(projectId, `owner-review-evidence-rejected:${row.id}:${row.execution_id}`) as { id: string } | undefined
   if (!rejection) return false
   const message = getOwnerManagementMessage(projectId, rejection.id)
-  if (!message || message.kind !== 'attention' || !message.content.includes('技术评审原文依据与完整成果不匹配')) return false
+  if (!message || message.kind !== 'attention') return false
+  const invalidJson = message.content.includes('原因：技术评审回执不是严格 JSON。')
+  if (!invalidJson && !message.content.includes('技术评审原文依据与完整成果不匹配')) return false
   const messages = getAgentSessionSDKMessages(row.session_id)
   const last = messages.at(-1)
   if (!last || last.type !== 'result' || last.subtype !== 'success' || last.session_id !== row.session_id) return false
@@ -33,9 +35,18 @@ export function recoverOwnerReviewEvidence(projectId: string, grantId: string, t
   // SQLite 终态摘要必须完整等于会话原文；截断或被修改的会话不能用于恢复。
   if (raw !== row.result_summary) return false
   const development = ownerDevelopmentArtifactFromPrompt(row.prompt)
-  if (development) {
+  if (invalidJson) {
+    if (!development || last.finish_reason !== 'stop') return false
+    const repaired = normalizeOwnerTechnicalReviewReceipt(raw, development.content, development.validationEvidence, { prompt: row.prompt, hash: development.contentHash })
+    if (repaired === unwrapReviewReceipt(raw)) return false
+    try { JSON.parse(repaired) } catch { return false }
+    recordOwnerTechnicalReviewEvidence(row.id, row.execution_id, raw)
+    appendOwnerManagementMessage({ projectId, taskId, eventId: `owner-review-json-recovered:${row.id}:${row.execution_id}`,
+      role: 'assistant', kind: 'management_progress', content: '已核对原评审的文件路径引文和冻结成果，恢复评审记录，无需重新运行评审。' })
+    return true
+  } else if (development) {
     const receipt = unwrapReviewReceipt(raw)
-    const normalized = normalizeOwnerTechnicalReviewQuotes(receipt, development.content)
+    const normalized = normalizeOwnerTechnicalReviewQuotes(receipt, development.content, development.validationEvidence)
     if (normalized === receipt) {
       let response: { criteria?: Array<{ status?: unknown; quote?: unknown }> } | null
       try { response = JSON.parse(receipt) } catch { return false }

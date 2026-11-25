@@ -12,17 +12,18 @@ browserTest('Given 管理范围许可卡 When 授权、失效后续授权及撤�
   writeFileSync(join(directory, 'entry.tsx'), `
 import React from 'react';import {createRoot} from 'react-dom/client';import {Provider} from 'jotai';
 import {OwnerManagementDelegationCard} from ${JSON.stringify(join(renderer, 'components/projects/OwnerManagementDelegationCard.tsx'))};
-const params=new URLSearchParams(location.search);const recovery=params.has('recovery')?{delegationId:'stale-grant',executionId:'first-run',receiptId:'receipt'}:null;let reauthorized=false,raceStale=false,current=params.has('stale')||params.has('attention')||params.has('exhausted')||recovery?{id:'stale-grant',maxCostMicros:2000000,expiresAt:Date.now()+3600000}:null,previews=[],confirms=[],revokes=[],reads=0,bindings=0;
+const params=new URLSearchParams(location.search);const recovery=params.has('recovery')?{delegationId:'stale-grant',executionId:'first-run',receiptId:'receipt'}:null;let reauthorized=false,raceStale=false,current=params.has('stale')||params.has('attention')||params.has('exhausted')||recovery?{id:'stale-grant',maxCostMicros:2000000,perRequestCeilingMicros:310000,expiresAt:Date.now()+3600000}:null,previews=[],confirms=[],revokes=[],qualityRetries=[],reads=0,bindings=0;
 const ok=value=>({ok:true,value});
 window.electronAPI={paa:{project:{
-getOwnerManagementDelegation:async()=>{reads++;return ok({delegation:current,state:current?(reauthorized?'active':raceStale||params.has('stale')?'stale':(params.has('attention')||recovery)?'attention':params.has('exhausted')?'exhausted':'active'):'none',usedRequests:current?1:0,reservedCostMicros:current?620000:0,detail:current?(reauthorized?'管理委托有效':raceStale||params.has('stale')?'来源已变化，需重新确认':params.has('attention')?'上次管理请求未得到可继续结果，请核对原运行；不会自动重试。':params.has('exhausted')?'当前预算不足以预留下一次 Owner 请求':'管理委托有效'):'',...(recovery&&!reauthorized?{initialPlanningRecovery:recovery}:{}),...(params.has('attention')?{attentionCheck:{executionStatus:'failed',outcomeState:'failed',reason:'output_limit',requestStartedAt:Date.now()-120000,receiptCapturedAt:Date.now()-60000,modelId:'deepseek-flash',providerResponseId:'d713371a-eb05-4a91-a53f-a2b8f46f94fb',outcomeDetail:'Owner安排输出达到本次请求上限',inputTokens:1849,outputTokens:4096,costSource:'unknown',costUsd:null}}:{})})},onOwnerManagementChanged:()=>()=>{},
+getOwnerManagementDelegation:async()=>{reads++;return ok({delegation:current,state:current?(reauthorized?'active':raceStale||params.has('stale')?'stale':(params.has('attention')||recovery)?'attention':params.has('exhausted')?'exhausted':'active'):'none',usedRequests:current?1:0,reservedCostMicros:current?620000:0,detail:current?(reauthorized?'管理委托有效':raceStale||params.has('stale')?'来源已变化，需重新确认':params.has('attention')?'上次管理请求未得到可继续结果，请核对原运行；不会自动重试。':params.has('exhausted')?'当前预算不足以预留下一次 Owner 请求':'管理委托有效'):'',...(recovery&&!reauthorized?{initialPlanningRecovery:recovery}:{}),...(params.has('attention')?{attentionCheck:{executionStatus:'failed',outcomeState:'failed',reason:'output_limit',...(params.has('quality')?{phase:'quality_decision',finishReason:'length',...(params.has('browser-failure')?{retryExecutionId:qualityRetries.length<2?'truncated-quality-run':'next-quality-run'}:qualityRetries.length?{}:{retryExecutionId:'truncated-quality-run'})}:{}),requestStartedAt:Date.now()-120000,receiptCapturedAt:Date.now()-60000,modelId:'deepseek-flash',providerResponseId:'d713371a-eb05-4a91-a53f-a2b8f46f94fb',outcomeDetail:'Owner安排输出达到本次请求上限',inputTokens:1849,outputTokens:4096,costSource:'unknown',costUsd:null}}:{})})},onOwnerManagementChanged:()=>()=>{},
+retryOwnerQualityDecision:async input=>{qualityRetries.push(input);if(params.has('browser-failure')&&qualityRetries.length===1)return ok({failedValidationId:'failed-browser-check'});return ok({planningTaskId:'retry-task'})},
 ensureOwnerRuntimeBinding:async()=>{bindings++;return ok({revision:2})},
 
 previewOwnerManagementDelegation:async input=>{previews.push(input);if(params.has('bindingstale')&&previews.length===1)return {ok:false,error:{code:'conflict',message:'Owner管理配置已变化，请重新确认'}};return ok({...input,...(recovery?{recoveryBudget:{reservedMicros:620000,remainingMicros:1070000}}:{}),scopeHash:'scope',previewHash:'preview',bindingRevision:1,goalRevision:1,modelId:'deepseek-flash',workspaceName:'已授权资料',priceEvidenceId:'reviewed',perRequestCeilingMicros:310000,maxOutputTokens:8192})},
 confirmOwnerManagementDelegation:async input=>{confirms.push(input);current={...input.input,id:'grant',modelId:'deepseek-flash'};if(params.has('race')&&confirms.length===1){current={id:'stale-grant',maxCostMicros:2000000,expiresAt:Date.now()+3600000};raceStale=true;throw Error('Owner管理委托的配置、资料或价格已变化')}if(!params.has('stale')&&!params.has('exhausted')&&!recovery&&confirms.length===1)throw Error('回包丢失，请重提核对');reauthorized=true;return ok(current)},
 revokeOwnerManagementDelegation:async input=>{revokes.push(input);return ok({delegation:current,state:'revoked',usedRequests:1,reservedCostMicros:310000,detail:'管理委托已撤销'})}
 }}};
-window.fixture={facts:()=>({previews,confirms,revokes,reads,bindings})};
+window.fixture={facts:()=>({previews,confirms,revokes,qualityRetries,reads,bindings})};
 createRoot(document.getElementById('root')).render(<Provider><OwnerManagementDelegationCard projectId="p" {...(params.has('task')?{taskId:'task'}:{})}/></Provider>);
 `)
   await build({ entryPoints: [join(directory, 'entry.tsx')], outfile: join(directory, 'entry.js'), bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', absWorkingDir: root, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], alias: { '@': renderer }, define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
@@ -114,11 +115,31 @@ createRoot(document.getElementById('root')).render(<Provider><OwnerManagementDel
     expect(attentionText).toContain('Owner 已暂停并保留你的新消息')
     expect(attentionText).toContain('重新确认授权范围不会解除这次暂停')
     expect(attentionText).toContain('预留金额按保守上界计算，不是实际账单')
-    expect(attentionText).toContain('暂停原因：模型输出达到本次请求上限，未形成完整结果')
+    expect(attentionText).toContain('暂停原因：本次模型输出达到或超过授权上限')
     expect(attentionText).toContain('输入 1849 / 输出 4096 tokens')
     expect(attentionText).toContain('服务商请求编号：本地没有保存服务商请求编号 · 响应编号：d713371a-eb05-4a91-a53f-a2b8f46f94fb')
     expect(attentionText).toContain('处理详情：Owner安排输出达到本次请求上限')
     expect(attentionText).toContain('当前界面没有将外部账单核对结果写回并恢复授权的操作')
+    await page.goto(`http://127.0.0.1:${server.port}/?attention&quality`)
+    await page.getByRole('heading', { name: '需要核对成果验收' }).waitFor()
+    expect(await page.locator('section[aria-label="Owner管理委托"]').innerText()).toContain('原成果和独立评审记录仍可查阅')
+    await page.getByText(/预留最多 \$0\.31，沿用原成果和独立评审/).waitFor()
+    expect(await page.evaluate<Array<{ projectId: string; executionId: string }>>('window.fixture.facts().qualityRetries')).toEqual([])
+    await page.getByRole('button', { name: '确认并继续成果验收' }).click()
+    await page.getByText('已保存续验请求，等待处理。', { exact: true }).waitFor()
+    await page.getByRole('button', { name: '确认并继续成果验收' }).waitFor({ state: 'detached' })
+    expect(await page.evaluate<Array<{ projectId: string; executionId: string }>>('window.fixture.facts().qualityRetries')).toEqual([{ projectId: 'p', executionId: 'truncated-quality-run' }])
+    await page.goto(`http://127.0.0.1:${server.port}/?attention&quality&browser-failure`)
+    await page.getByRole('button', { name: '确认并继续成果验收' }).click()
+    await page.getByRole('button', { name: '确认重试浏览器检查' }).click()
+    await page.getByRole('button', { name: '确认并继续成果验收' }).click()
+    expect(await page.evaluate<Array<{ projectId: string; executionId: string; failedValidationId?: string }>>('window.fixture.facts().qualityRetries')).toEqual([
+      { projectId: 'p', executionId: 'truncated-quality-run' },
+      { projectId: 'p', executionId: 'truncated-quality-run', failedValidationId: 'failed-browser-check' },
+      { projectId: 'p', executionId: 'next-quality-run' },
+    ])
+    await page.goto(`http://127.0.0.1:${server.port}/?attention`)
+    await page.getByRole('heading', { name: 'Owner 已暂停：需要核对上次请求' }).waitFor()
     const readsBeforeRefresh = await page.evaluate<number>('window.fixture.facts().reads')
     await page.getByRole('button', { name: '重新读取上次请求状态', exact: true }).click()
     await page.waitForFunction(`window.fixture.facts().reads>${readsBeforeRefresh}`)

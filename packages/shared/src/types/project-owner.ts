@@ -81,6 +81,8 @@ export interface ProjectOwnerCriterionTrace {
   criticality: 'critical' | 'advisory'
   /** 承接该要求的计划步骤 key。 */
   stepKey: string
+  /** 逐份要求的本步骤核验范围，仅检查该步骤自己的文本原件。 */
+  verificationScope?: 'own_text'
   /** 检验方式；未配置验证器时如实记录为 unverified。 */
   verification: 'automated' | 'manual_review' | 'user_decision' | 'unverified'
   /** 执行时采用的默认条件（如纸张、边距、字号）；无则为空。 */
@@ -276,6 +278,8 @@ export interface OwnerPlanningConversationContext {
 export interface OwnerManagementDeliveryReview {
   version: 1
   qualityDecisionVersion?: 1
+  /** 新质量请求的决定身份由同一冻结评审和成果绑定。 */
+  qualityDecisionBindingVersion?: 1 | 2
   qualityLimits?: { maxRework: number; remainingRework: number; remainingRuns: number; remainingCostMicros: number }
   /** 只有阻断门槛出现新事实时才生成；触发重新判断，不构成恢复许可。 */
   qualityRecovery?: { previousExecutionId: string; conditionFingerprint: string; previousDetail: string }
@@ -284,6 +288,8 @@ export interface OwnerManagementDeliveryReview {
   artifact?: OwnerTextDelivery
   /** 代码执行的完整冻结快照及绑定的验证回执；与文本成果互斥。 */
   developmentArtifact?: OwnerDevelopmentDeliveryArtifact
+  /** 续验时对同一成果补跑的原命令证据，保留原评审引用及其原始回执。 */
+  validationRefresh?: OwnerDevelopmentDeliveryArtifact['validationEvidence']
   review?: {
     reviewerCommandId: string
     artifactHash: string
@@ -1090,6 +1096,10 @@ export interface ConfirmOwnerPreflightReconciliationRequest extends ProjectOwner
 }
 export interface OwnerExecutionCommandView {
   textDelivery?: { state: 'available' | 'unavailable'; detail: string; artifact?: OwnerTextDelivery }
+  /** 已确认是认领前 Git 阻塞，尚未发送模型请求，可在清理工作区后续跑。 */
+  workspaceBlocked?: true
+  /** 已为同一成果启动替代评审，旧命令和费用仍可核对。 */
+  reviewReplaced?: true
   commandId: string
   grantId: string
   taskId: string
@@ -1196,6 +1206,8 @@ export interface OwnerExecutionAutonomousScheduleStatus {
   projectId: string
   state: OwnerExecutionAutonomousScheduleState
   grantId?: string
+  deliveryPublished?: true
+  waitingQuestion?: { taskId?: string }
   taskId?: string
   role?: OwnerExecutionCommandRole
   reservedCostMicros: number
@@ -1228,6 +1240,8 @@ export interface ProjectOwnerExecutionCommandApi {
   previewOwnerPreflightReconciliation: (request: OwnerPreflightReconciliationPreviewRequest) => Promise<ProjectOwnerGoalResult<OwnerPreflightReconciliationPreview>>
   confirmOwnerPreflightReconciliation: (request: ConfirmOwnerPreflightReconciliationRequest) => Promise<ProjectOwnerGoalResult<OwnerPreflightReconciliationResult>>
   /** 重新核对研发工作区；清理后调用可恢复「从未认领」的排队准备。 */
+  refreshOwnerDeliveryBrowser: (request: ProjectOwnerGoalSubject & { messageId: string; stepKey: string; artifactHash: string; anchorId: string; failedValidationId?: string }) => Promise<ProjectOwnerGoalResult<{ status: 'passed' | 'failed' }>>
+  retryOwnerQualityDecision: (request: { projectId: string; taskId?: string; executionId: string; failedValidationId?: string }) => Promise<ProjectOwnerGoalResult<{ planningTaskId: string } | { failedValidationId: string }>>
   retryOwnerMarkdownReview: (request: { projectId: string; reviewerCommandId: string }) => Promise<ProjectOwnerGoalResult<{ reviewerCommandId: string }>>
   supplementOwnerCounterReview: (request: { projectId: string; reviewerCommandId: string }) => Promise<ProjectOwnerGoalResult<import('./development-review').DevelopmentValidationResult>>
   recheckOwnerDevelopmentWorkspace: (request: ProjectOwnerGoalSubject & { executionId: string }) => Promise<ProjectOwnerGoalResult<OwnerDevelopmentWorkspaceRecheck>>

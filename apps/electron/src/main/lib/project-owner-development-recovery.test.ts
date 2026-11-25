@@ -148,6 +148,18 @@ test('Given失败工作树有改动 When交接 Then新工作树包含同样的�
   // 新工作树里能读到同样内容
   expect(execFileSync('cat', [join(targetWorktree, 'index.html')], { encoding: 'utf8' })).toBe('<html>done</html>\n')
   expect(execFileSync('cat', [join(targetWorktree, 'README.md')], { encoding: 'utf8' })).toBe('modified\n')
+
+  // 接替在认领前中断时，重试必须复用原快照，且仍核对失败工作树。
+  const retried = await recovery.readFailedDevelopmentHandoff({
+    repository: root, failedWorktreePath: failedWorktree, failedSessionDirectory: failedDir,
+    failedExecutionId, workspaceId, scope,
+  })
+  expect(retried.handoff?.snapshot).toEqual(snapshot!)
+  writeFileSync(join(failedWorktree, 'index.html'), '<html>changed after capture</html>\n')
+  await expect(recovery.readFailedDevelopmentHandoff({
+    repository: root, failedWorktreePath: failedWorktree, failedSessionDirectory: failedDir,
+    failedExecutionId, workspaceId, scope,
+  })).rejects.toThrow('冻结后发生变化')
 })
 
 interface SupersessionChain {

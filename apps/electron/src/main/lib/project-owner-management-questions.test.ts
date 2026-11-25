@@ -21,6 +21,7 @@ const { recordOwnerPlanningRun } = await import('./project-owner-planning-run-se
 const { getOwnerManagementConversation, answerOwnerManagementQuestion, projectOwnerManagementRunResult } = await import('./project-owner-management-questions')
 const { onOwnerManagementChanged } = await import('./project-owner-management-events')
 const { reconcileOwnerManagement, startOwnerManagementLoop } = await import('./project-owner-management-loop')
+const { getOwnerAutonomousScheduleStatus } = await import('./project-owner-autonomous-scheduler')
 beforeAll(async () => { await store.initProjectDb() })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
 const tick = () => new Promise<void>(resolve => queueMicrotask(resolve))
@@ -67,6 +68,7 @@ test('Given 模型提出必要问题 When 页面未挂载且应用重开 Then �
     const first = getOwnerManagementConversation(f.project.id)
     expect(first.questions).toHaveLength(1)
     expect(first.questions[0]).toMatchObject({ state: 'open', reason: '受众决定方案取舍', questions: [{ key: 'audience', recommended: '现有用户' }] })
+    expect(getOwnerAutonomousScheduleStatus(f.project.id)).toMatchObject({ state: 'no_grant', waitingQuestion: {} })
     expect(first.messages.filter(message => message.kind === 'clarification')).toHaveLength(1)
     recordOwnerPlanningRun(f.executionId, 'ai-sdk', f.result)
     await tick()
@@ -89,6 +91,7 @@ test('Given 原问题有效 When 答复并重复提交 Then 同事务保存约�
     for (let i = 0; i < 100 && !getOwnerManagementConversation(f.project.id).messages.some(message => message.kind === 'planning_confirmation'); i++) await Bun.sleep(10)
     const view = getOwnerManagementConversation(f.project.id)
     expect(view.questions[0]?.state).toBe('answered')
+    expect(getOwnerAutonomousScheduleStatus(f.project.id).waitingQuestion).toBeUndefined()
     expect(view.messages.filter(message => message.kind === 'answer')).toHaveLength(1)
     const next = view.messages.findLast(message => message.kind === 'planning_confirmation')
     expect(next?.planningTaskId).toBeTruthy()
@@ -106,6 +109,7 @@ test('Given 来源已漂移或项目不匹配 When 套用旧答复 Then 拒绝�
   expect(() => answerOwnerManagementQuestion({ ...input, expectedContextFingerprint: '0'.repeat(64) })).toThrow('来源已变化')
   saveProjectOwnerGoalDraft(f.project.id, 1, { objective: '已改变的目标' })
   expect(getOwnerManagementConversation(f.project.id).questions[0]?.state).toBe('stale')
+  expect(getOwnerAutonomousScheduleStatus(f.project.id).waitingQuestion).toBeUndefined()
   expect(() => answerOwnerManagementQuestion(input)).toThrow()
   expect(getProjectOwnerGoalDraft(f.project.id)?.revision).toBe(2)
   expect(store.listTasks(f.project.id)).toHaveLength(1)
@@ -135,6 +139,7 @@ test('Given 用户答复事务被回滚 When 重新读取 Then 约束、答复�
 
 test('Given 任务级问题 When 回答 Then 只修订准确任务目标，项目目标不被补造', async () => {
   const f = fixture(true); reconcileOwnerManagement(f.project.id)
+  expect(getOwnerAutonomousScheduleStatus(f.project.id).waitingQuestion).toEqual({ taskId: f.taskId })
   const stop = startOwnerManagementLoop()
   try {
     answerOwnerManagementQuestion(questionInput(f)); await tick()

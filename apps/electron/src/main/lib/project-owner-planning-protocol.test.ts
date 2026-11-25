@@ -17,6 +17,38 @@ function proposal(c: ProjectOwnerPlanningContext) {
     proposal: { summary: '形成定位简报', assumptions: ['受众待验证'], risks: [], steps: [{ key: 'brief', title: '需求整理', outcome: '需求简报', acceptanceCriteria: ['范围明确'], dependencies: [], roleKey: 'requirements-analyst', deliveryKind: 'text' as const }] } }
 }
 
+test('Given 主流程的计划字段放错层级 When 本地解析 Then 只恢复唯一结构并严格核对来源和绑定', async () => {
+  const { parseProjectOwnerPlanningResponse } = await import('./project-owner-planning-protocol')
+  const c = context()
+  const raw = proposal(c)
+  const { steps, ...summary } = raw.proposal
+  const criteriaTrace = [{ key: 'goal', source: 'objective', sourceIndex: 0, sourceText: c.goal.goal.objective,
+    criticality: 'critical', stepKey: steps[0]!.key, verification: 'manual_review' }]
+  const expected = parseProjectOwnerPlanningResponse({ ...raw, proposal: { ...raw.proposal, criteriaTrace } }, c)
+  const displaced = { ...raw, proposal: summary, steps, criteriaTrace }
+  expect(parseProjectOwnerPlanningResponse(displaced, c)).toEqual(expected)
+  const nested = { ...raw, proposal: { ...summary, steps: [{ ...steps[0]!, criteriaTrace }] } }
+  expect(parseProjectOwnerPlanningResponse(nested, c)).toEqual(expected)
+  expect(() => parseProjectOwnerPlanningResponse({ ...nested, criteriaTrace }, c)).toThrow('重复计划字段')
+  expect(() => parseProjectOwnerPlanningResponse({ ...nested, proposal: { ...summary, steps: [{ ...steps[0]!, criteriaTrace: [{ ...criteriaTrace[0], stepKey: 'other-step' }] }] } }, c)).toThrow('所属步骤不符')
+  expect(parseProjectOwnerPlanningResponse({ ...raw, proposal: { ...raw.proposal, criteriaTrace, sourceReferences: [] } }, c)).toEqual(expected)
+  const { acceptanceCriteria, ...step } = steps[0]!
+  const withWireExtras = { ...raw, note: '尚未执行任何步骤，本计划待用户确认。', proposal: { ...summary,
+    steps: [{ ...step, 'acceptanceCriteria [': acceptanceCriteria }], criteriaTrace, needsReview: true } }
+  expect(parseProjectOwnerPlanningResponse(withWireExtras, c)).toEqual(expected)
+  expect(parseProjectOwnerPlanningResponse({ ...withWireExtras, note: null, meta: { reason: 'per_user_request_in_scope' } }, c)).toEqual(expected)
+  expect(() => parseProjectOwnerPlanningResponse({ ...withWireExtras, meta: { reason: 'approved' } }, c)).toThrow('未知字段')
+  expect(() => parseProjectOwnerPlanningResponse({ ...withWireExtras, meta: { reason: 'per_user_request_in_scope', allowWrite: true } }, c)).toThrow()
+  expect(() => parseProjectOwnerPlanningResponse({ ...withWireExtras, note: '已批准执行。' }, c)).toThrow('未知字段')
+  expect(() => parseProjectOwnerPlanningResponse({ ...withWireExtras, proposal: { ...withWireExtras.proposal, needsReview: false } }, c)).toThrow('未知字段')
+  expect(() => parseProjectOwnerPlanningResponse({ ...withWireExtras, proposal: { ...withWireExtras.proposal,
+    steps: [{ ...withWireExtras.proposal.steps[0], acceptanceCriteria }] } }, c)).toThrow('重复计划字段')
+  expect(() => parseProjectOwnerPlanningResponse({ ...displaced, proposal: raw.proposal }, c)).toThrow('重复计划字段')
+  expect(() => parseProjectOwnerPlanningResponse({ ...displaced, contextFingerprint: 'other' }, c)).toThrow('目标或资料版本不匹配')
+  expect(() => parseProjectOwnerPlanningResponse({ ...displaced, criteriaTrace: [{ ...criteriaTrace[0], sourceText: '伪造的原要求' }] }, c)).toThrow('追溯来源原文与目标不符')
+  expect(() => parseProjectOwnerPlanningResponse({ ...raw, proposal: { ...raw.proposal, sourceReferences: [{ path: 'other.md' }] } }, c)).toThrow('未知字段')
+})
+
 test('Given 已存目标与资料快照 When 构建规划请求 Then data-only、不索路径、未调用模型或创建授权', async () => {
   const protocol = await import('./project-owner-planning-protocol')
   const c = context()
@@ -30,6 +62,12 @@ test('Given 已存目标与资料快照 When 构建规划请求 Then data-only�
   expect(request.systemPrompt).toContain('acceptanceCriteria为1–2条')
   expect(request.systemPrompt).toContain('每个对象属性名后必须使用冒号')
   expect(request.systemPrompt).toContain('"acceptanceCriteria":["明确的验收标准"]')
+  expect(request.systemPrompt).toContain('所有需求追溯统一放在 proposal.criteriaTrace')
+  const example = request.systemPrompt.split('\n').map(line => {
+    try { return JSON.parse(line) } catch { return null }
+  }).find(value => value?.kind === 'plan_proposal')
+  expect(example?.proposal.criteriaTrace[0]?.stepKey).toBe(example?.proposal.steps[0]?.key)
+  expect(example?.proposal.steps[0]).not.toHaveProperty('criteriaTrace')
   expect(request.systemPrompt).toContain('roleKey只能逐字使用本次资料roles数组中已有的key')
   expect(request.systemPrompt).toContain('可用key：["requirements-analyst"]')
   expect(request.userPrompt).toContain(c.goal.goal.objective)
@@ -42,6 +80,8 @@ test('Given 规划把同一源码的缺陷清单交给文本员工 When 入账 T
   const previous = protocol.buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, true, false)
   const recover = (request: typeof current) => protocol.resolveProjectOwnerPlanningRequest(c, createHash('sha256').update(JSON.stringify(request)).digest('hex'))
   expect(recover(previous)).toEqual(previous)
+  const priorFilePrompt = protocol.buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, false)
+  expect(recover(priorFilePrompt)).toEqual(priorFilePrompt)
   expect(recover(current)).toEqual(current)
   expect(protocol.usesOwnerSourceInspectionRouting(previous)).toBe(false)
   expect(protocol.usesOwnerSourceInspectionRouting(current)).toBe(true)
@@ -132,6 +172,47 @@ test('Given反馈绑定准确成果 When Owner 提交修订方案 Then逐项评�
   expect(request.systemPrompt).toContain(artifactHash)
 })
 
+test('Given逐份验收的两份文本 When只修订后一步 Then保留已交付步骤、原依赖与逐份标准', async () => {
+  const protocol = await import('./project-owner-planning-protocol'), c = context()
+  const phrase = '两份文本各自完整可复制'
+  c.goal.goal.objective = phrase
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const original = proposal(c).proposal
+  const left = { ...original.steps[0]!, key: 'checklist', title: '器材清单', deliveryKind: 'text' as const, dependencies: [] }
+  const right = { ...left, key: 'notice', title: '归还通知', dependencies: ['checklist'] }
+  const scope = { source: 'objective' as const, sourceIndex: 0, sourceText: phrase, criticality: 'critical' as const,
+    verification: 'manual_review' as const, verificationScope: 'own_text' as const, assumptions: [] }
+  const leftTrace = { ...scope, key: 'scope-left', stepKey: left.key }
+  const rightTrace = { ...scope, key: 'scope-right', stepKey: right.key }
+  const messageId = '3'.repeat(64), throughMessageId = '4'.repeat(64)
+  const content = '归还通知原文', artifactHash = createHash('sha256').update(content).digest('hex')
+  c.conversation = { conversationId: 'conversation', throughMessageId, historyThroughMessageId: throughMessageId,
+    messages: [{ id: throughMessageId, role: 'user', content: '只改归还通知，清单保留' }], truncated: false, tasks: [], tasksTruncated: false,
+    currentPlan: { revision: 2, state: 'confirmed', proposal: { ...original, projectId: c.goal.goal.projectId, goalVersion: c.goal.goal.goalVersion,
+      mode: 'proposal_only', steps: [left, right], criteriaTrace: [leftTrace, rightTrace] } },
+    deliveryFeedbackBindingVersion: 1,
+    deliveredArtifacts: { version: 2, messageId, planVersion: 1, items: [
+      { stepKey: left.key, title: left.title, artifactHash: 'a'.repeat(64), acceptanceCriteria: ['清单准确'] },
+      { stepKey: right.key, title: right.title, artifactHash, acceptanceCriteria: ['控制在 120 字内'] },
+    ] },
+    deliveryFeedback: { version: 1, messageId, stepKey: right.key, artifactHash, title: right.title,
+      acceptanceCriteria: ['控制在 120 字内'], content, ownerDecision: '验收', reviewerSummary: '已检查' },
+  }
+  const revision = { ...right, key: 'only-revision', outcome: '只输出通知正文', dependencies: [] }
+  const assessment = { summary: '只改选中的通知', changes: [{ criterion: '控制在 120 字内', disposition: 'addressed', proposedChange: '按全文计数' }],
+    authorizationImpact: 'within_confirmed_boundary', authorizationRationale: '只精简通知正文' }
+  const model = { ...proposal(c), proposal: { ...original, steps: [revision],
+    criteriaTrace: [{ ...rightTrace, stepKey: revision.key }], deliveryFeedbackAssessment: assessment } }
+  const parsed = protocol.parseProjectOwnerPlanningResponse(model, c)
+  expect(parsed).toMatchObject({ kind: 'plan_proposal', proposal: {
+    steps: [left, { ...revision, key: right.key, dependencies: right.dependencies }], criteriaTrace: [leftTrace, rightTrace],
+    deliveryFeedbackAssessment: { messageId, artifactHash, stepKey: right.key },
+  } })
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...model, proposal: { ...model.proposal, deliveryFeedbackAssessment: undefined } }, c)).toThrow('成果反馈影响评估')
+  c.conversation.deliveredArtifacts!.items.shift()
+  expect(() => protocol.parseProjectOwnerPlanningResponse(model, c)).toThrow('逐份文本核验必须由每个文本交付步骤分别承接')
+})
+
 test('Given宿主绑定成果反馈 When 模型不回填标识 Then 主进程补齐身份且拒绝自带身份', async () => {
   const protocol = await import('./project-owner-planning-protocol'), c = context()
   const content = '已验收成果正文', artifactHash = createHash('sha256').update(content, 'utf8').digest('hex'), messageId = '3'.repeat(64)
@@ -146,6 +227,20 @@ test('Given宿主绑定成果反馈 When 模型不回填标识 Then 主进程补
     authorizationImpact: 'within_confirmed_boundary' as const, authorizationRationale: '在当前确认范围内；旧执行许可不沿用' } } }
   const parsed = protocol.parseProjectOwnerPlanningResponse(bound, c)
   expect(parsed).toMatchObject({ kind: 'plan_proposal', proposal: { deliveryFeedbackAssessment: { messageId, artifactHash } } })
+  const { deliveryFeedbackAssessment, steps: boundSteps, ...proposalBody } = bound.proposal
+  const misplacedAssessment = { ...bound, proposal: proposalBody, steps: boundSteps, deliveryFeedbackAssessment }
+  expect(protocol.parseProjectOwnerPlanningResponse(misplacedAssessment, c)).toEqual(parsed)
+  expect(() => protocol.parseProjectOwnerPlanningResponse(misplacedAssessment, context())).toThrow('未知字段')
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...misplacedAssessment, proposal: { ...proposalBody, deliveryFeedbackAssessment } }, c)).toThrow('重复计划字段')
+  const displaced = { key: 'goal-exact', source: 'acceptance', sourceIndex: 0, sourceText: c.goal.goal.objective,
+    criticality: 'critical', stepKey: base.proposal.steps[0]!.key, verification: 'manual_review' }
+  const misplacedRevision = { ...bound, proposal: { ...bound.proposal, criteriaTrace: [displaced] } }
+  expect(protocol.parseProjectOwnerPlanningResponse(misplacedRevision, c)).toMatchObject({
+    kind: 'plan_proposal', proposal: { criteriaTrace: [{ source: 'objective', sourceIndex: 0, sourceText: c.goal.goal.objective }] },
+  })
+  const fabricated = { ...bound, proposal: { ...bound.proposal, criteriaTrace: [{ ...displaced, sourceText: '未经授权的任务' }] } }
+  expect(() => protocol.parseProjectOwnerPlanningResponse(fabricated, c)).toThrow('目标追溯来源不存在')
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...base, proposal: { ...base.proposal, criteriaTrace: [displaced] } }, context())).toThrow('目标追溯来源不存在')
 
   // 提示词不再向模型提供这两个标识。
   const request = protocol.buildProjectOwnerPlanningRequest(c)
@@ -545,4 +640,30 @@ test('Given已核对的历史提示 When重复读取或来源变化 Then缓存�
   expect(() => protocol.resolveProjectOwnerPlanningRequest(changed, hash)).toThrow('来源指纹不匹配')
   expect(() => protocol.resolveProjectOwnerPlanningRequest(changed, hash)).toThrow('来源指纹不匹配')
   expect(protocol.resolveProjectOwnerPlanningRequest(original, hash)).toEqual(request)
+})
+
+test('Given目标只交付一份正文 When模型重复拆出独立核对 Then合并验收要求并兼容历史计划', async () => {
+  const { buildProjectOwnerPlanningRequest, parseProjectOwnerPlanningResponse, resolveProjectOwnerPlanningRequest, usesSingleTextReviewFolding } = await import('./project-owner-planning-protocol')
+  const c = context()
+  c.goal.goal.objective = '起草一份活动通知，安排员工起草与独立评审，只交付一份正文。'
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const raw = proposal(c)
+  const draft = { ...raw.proposal.steps[0]!, title: '起草报名通知正文', outcome: '通知草稿' }
+  const review = { ...draft, key: 'review', title: '独立核对并定稿通知', outcome: '最终通知正文', dependencies: [draft.key], acceptanceCriteria: ['不虚构报名规则'] }
+  const trace = { key: 'one', source: 'objective', sourceIndex: 0, sourceText: '只交付一份正文', criticality: 'critical', stepKey: review.key, verification: 'manual_review' }
+  const response = { ...raw, proposal: { ...raw.proposal, steps: [draft, review], criteriaTrace: [trace] } }
+  const current = buildProjectOwnerPlanningRequest(c)
+  expect(usesSingleTextReviewFolding(current)).toBe(true)
+  const historical = buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false)
+  const hash = createHash('sha256').update(JSON.stringify(historical)).digest('hex')
+  expect(resolveProjectOwnerPlanningRequest(c, hash)).toEqual(historical)
+  expect(parseProjectOwnerPlanningResponse(response, c, Date.now(), true, true)).toMatchObject({ proposal: { steps: [draft, review] } })
+  const parsed = parseProjectOwnerPlanningResponse(response, c, Date.now(), true, true, true)
+  expect(parsed).toMatchObject({ proposal: { steps: [{ key: draft.key, outcome: review.outcome, acceptanceCriteria: ['范围明确', '不虚构报名规则'] }], criteriaTrace: [{ stepKey: draft.key }] } })
+  const separate = { ...response, proposal: { ...response.proposal, steps: [draft, { ...review, outcome: '逐项核对报告' }] } }
+  expect(parseProjectOwnerPlanningResponse(separate, c, Date.now(), true, true, true)).toMatchObject({ proposal: { steps: [{ key: draft.key }, { key: review.key }] } })
+  c.sources.roles.push({ ...c.sources.roles[0]!, key: 'legal', name: '法务专员' })
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const specialist = { ...response, contextFingerprint: c.fingerprint, proposal: { ...response.proposal, steps: [draft, { ...review, roleKey: 'legal' }] } }
+  expect(parseProjectOwnerPlanningResponse(specialist, c, Date.now(), true, true, true)).toMatchObject({ proposal: { steps: [{ key: draft.key }, { key: review.key, roleKey: 'legal' }] } })
 })

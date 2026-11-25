@@ -279,6 +279,45 @@ export const OWNER_RUNTIME_ASSERTION_TEMPLATES: readonly OwnerRuntimeAssertionTe
     })()`,
   },
   {
+    id: 'conversion.miles-km',
+    title: '英里转公里验证换算精度、空输入和负数',
+    intentKeywords: ['英里转公里', '英里转千米', 'miles to kilometers'],
+    script: `(async () => {
+      const input = document.querySelector('input#miles')
+      const convert = document.querySelector('button#convert-btn')
+      const result = document.getElementById('result')
+      const error = document.getElementById('error')
+      const visible = element => element && element.getClientRects().length > 0 && getComputedStyle(element).visibility === 'visible'
+      if (!visible(input) || input.disabled || input.readOnly || !visible(convert) || convert.disabled || !result || !error) {
+        return { passed: false, detail: '缺少可操作的英里输入、换算按钮、结果或错误控件' }
+      }
+      const evaluate = async value => {
+        input.value = value
+        input.dispatchEvent(new Event('input', { bubbles: true }))
+        input.dispatchEvent(new Event('change', { bubbles: true }))
+        convert.click()
+        await new Promise(resolve => setTimeout(resolve, 30))
+        return { result: result.textContent.trim(), error: error.textContent.trim() }
+      }
+      for (const [value, expected] of [['1', '1.61'], ['0', '0.00'], ['1000', '1609.34']]) {
+        const actual = await evaluate(value)
+        const matches = actual.result.match(/(?:^|[^0-9.-])([0-9]+\\.[0-9]{2})\\s*(?:公里|千米|km)$/i)
+        if (!visible(result) || matches?.[1] !== expected || actual.error) {
+          return { passed: false, detail: '输入 ' + value + ' 期望 ' + expected + ' 公里，实际 ' + actual.result }
+        }
+      }
+      const empty = await evaluate('')
+      if (empty.result || !visible(error) || !/请输入|为空|不能为空|empty|required/i.test(empty.error)) {
+        return { passed: false, detail: '空输入未清空结果并显示明确提示' }
+      }
+      const negative = await evaluate('-1')
+      if (negative.result || !visible(error) || !/负(?:数|值)|非负|不能小于\\s*0|negative|non-negative/i.test(negative.error)) {
+        return { passed: false, detail: '负数未清空结果并显示明确提示' }
+      }
+      return { passed: true, detail: '实测 1 为 1.61 公里，0 为 0.00 公里，1000 为 1609.34 公里，空输入和负数均提示且清空结果' }
+    })()`,
+  },
+  {
     id: 'diary.five-years',
     title: '五年同日回顾及闰日占位',
     intentKeywords: ['五年日记', '5年日记', '五年同日', '闰日', '闰年'],

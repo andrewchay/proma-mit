@@ -19,6 +19,7 @@ import { OwnerModuleStatus } from './OwnerModuleStatus'
 import { getOwnerWaitingLabel, getOwnerWaitingMessage, hasCompletedOwnerDelivery } from './project-owner-progress-state'
 import { deriveOwnerExecutionAttention } from './project-owner-execution-attention'
 import { OwnerExecutionBlockerNotice } from './OwnerExecutionBlockerNotice'
+import { revealOwnerHistoryTarget } from './OwnerDesignHistory'
 
 const field = 'mt-2 w-full min-w-0 rounded-lg bg-background p-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
 const button = 'rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50'
@@ -121,7 +122,7 @@ export function ProjectOwnerExecutionConversation({ projectId, taskId, ownerConv
   const ownerScheduleExpired = Boolean(ownerAutonomyManaged && commandProgress.loaded && scheduleMatchesGrant && schedule?.state === 'expired' && !ownerCompleted)
   const scheduleIdentityComplete = Boolean(scheduleMatchesGrant && schedule?.taskId && schedule.role && Number.isInteger(schedule.reworkOrdinal))
   const matchingScheduleCommands = scheduleIdentityComplete
-    ? ownerCommands.filter(command => command.taskId === schedule?.taskId && command.role === schedule.role && command.reworkOrdinal === schedule.reworkOrdinal)
+    ? ownerCommands.filter(command => !command.reviewReplaced && command.taskId === schedule?.taskId && command.role === schedule.role && command.reworkOrdinal === schedule.reworkOrdinal)
     : []
   const currentOwnerCommand = matchingScheduleCommands.length === 1 ? matchingScheduleCommands[0] : null
   const scheduleState = schedule?.state
@@ -245,15 +246,11 @@ export function ProjectOwnerExecutionConversation({ projectId, taskId, ownerConv
     {ownerStarted && <p role="status" className="rounded-xl bg-primary/10 p-4 text-sm leading-6">我已按你确认的结果和范围开始推进，正在协调执行与成果检查。出现需要你决定的事项或交付进展时，我会在这里告诉你。</p>}
     {ownerQueued && <p role="status" className="rounded-xl bg-muted/60 p-4 text-sm leading-6">工作已进入执行队列，正在等待员工启动。开始处理后，我会在这里更新进度。</p>}
     {executionAttention && !ownerScheduleExpired && <OwnerExecutionBlockerNotice
+      key={executionAttention.recheckExecutionId}
       attention={executionAttention}
-      onOpenEvidence={() => document.getElementById('owner-project-progress')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-      onRecheckWorkspace={() => {
-        const executionId = executionAttention.recheckExecutionId
-        if (!executionId) return
-        void window.electronAPI.paa.project.recheckOwnerDevelopmentWorkspace({ projectId, ...(taskId ? { taskId } : {}), executionId })
-          .then(result => { if (!result.ok) throw new Error(result.error.message); return loadCommandProgress(subject) })
-          .catch(() => { /* 失败时保留原提示，不静默假装已解决 */ })
-      }}
+      subject={subject}
+      onOpenEvidence={() => revealOwnerHistoryTarget('owner-project-progress')}
+      onWorkspaceCleared={() => void loadCommandProgress(subject)}
     />}
     {ownerCompleted && <p role="status" className="rounded-xl bg-primary/10 p-4 text-sm leading-6">执行、独立检查和成果交付均已完成，本轮不再有待启动工作。如需拓展或修改目标，Owner会先核对当前范围和授权。</p>}
     {ownerScheduleExpired && <p role="alert" className="rounded-xl bg-amber-500/10 p-4 text-sm leading-6">执行授权已到期，Owner已暂停新的派发，已有进度和成果都会保留。项目管理授权与执行授权分别核对，重新确认管理预算不会自动续期执行授权；如需继续，请在下方续期执行授权。</p>}

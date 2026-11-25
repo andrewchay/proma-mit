@@ -17,9 +17,21 @@ import { runOwnerRuntimeBrowserAssertions, type OwnerRuntimeBrowserCheckResult }
 
 export const BROWSER_VERIFICATION_PREFIX = 'browser:'
 export const MARKDOWN_VERIFICATION_COMMAND = 'document:markdown'
+export const STAGED_FILES_VERIFICATION_COMMAND = 'snapshot:files'
 
 export const COUNTER_KEYBOARD_CHECK = 'counter.mouse-keyboard'
 export const COUNTER_KEYBOARD_VERIFICATION_COMMAND = `browser:html.loads+${COUNTER_KEYBOARD_CHECK}`
+
+export const MILES_CONVERSION_CHECK = 'conversion.miles-km'
+export const MILES_CONVERSION_VERIFICATION_COMMAND = `browser:html.loads+${MILES_CONVERSION_CHECK}`
+
+/** 仅为确切匹配的英里转公里交付要求固定四项行为验证。 */
+export function requiresOwnerMilesConversionVerification(steps: ReadonlyArray<{ acceptanceCriteria?: readonly string[] }>, targets: readonly string[]): boolean {
+  if (targets.filter(target => /\.html?$/i.test(target)).length !== 1) return false
+  const criteria = steps.flatMap(step => step.acceptanceCriteria ?? []).join(' ')
+  return /1\.609344(?!\d)/.test(criteria) && /1\.61(?!\d)/.test(criteria) && /0\.00(?!\d)/.test(criteria)
+    && /空输入|空值|empty input/i.test(criteria) && /负数|negative/i.test(criteria)
+}
 
 /** 明确同时要求按钮式计数、重置和键盘时，页面可加载不能作为唯一验证。 */
 export function requiresOwnerCounterKeyboardVerification(steps: ReadonlyArray<{ acceptanceCriteria?: readonly string[] }>, targets: readonly string[]): boolean {

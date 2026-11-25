@@ -2,13 +2,13 @@ import { supportsOwnerExecutionKind, supportsOwnerMixedTeam } from '@gravitas/sh
 /** 将Owner方案接入现有团队；成果反馈形成的新方案须经用户确认后才启动。 */
 import { createHash, randomUUID } from 'node:crypto'
 import type { OwnerExecutionPreparationInput, OwnerManagementEvent } from '@gravitas/shared'
-import { getProjectOwnerPlanDraft, getProjectOwnerPlanningContext } from './project-owner-plan-service'
+import { getProjectOwnerPlanDraft, getProjectOwnerPlanningContext, isOwnerRevisionCurrentForAutomation } from './project-owner-plan-service'
 import { getOwnerRuntimeBinding } from './project-owner-runtime-binding'
 import { getCurrentOwnerExecutionAssignmentContext } from './project-owner-execution-assignment-context-service'
 import { OwnerExecutionAssignmentCapabilityError, ownerAssignmentContextMatchesApprovalTransition, ownerAssignmentContextsEquivalent, parseOwnerExecutionAssignmentContext } from './project-owner-execution-assignment-context'
 import { listOwnerExecutionAssignmentRuns, prepareOwnerExecutionAssignment } from './project-owner-execution-assignment-service'
 import { getOwnerExecutionPreparation } from './project-owner-execution-preparation'
-import { getOwnerManagementDelegation } from './project-owner-management-delegation'
+import { getOwnerManagementClaim, getOwnerManagementDelegation } from './project-owner-management-delegation'
 import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt } from './project-owner-planning-run-service'
 import { readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
 import { appendOwnerManagementMessage, appendOwnerManagementTrace, listPendingOwnerManagementEvents, recordOwnerManagementAssignmentProtocolRetry } from './project-owner-management-store'
@@ -17,12 +17,12 @@ import { getOwnerTeamWorkspaceProposal } from './project-owner-team-workspace-ac
 import { ensureOwnerDefaultTeam } from './project-owner-default-team'
 import { saveOwnerExecutionStartIntent } from './project-owner-execution-start-intent'
 import { hasCompleteOwnerManagementDelivery } from './project-owner-management-delivery'
-import { MARKDOWN_BROWSER_VERIFICATION_MISMATCH } from './project-owner-execution-assignment-protocol'
+import { MARKDOWN_BROWSER_VERIFICATION_MISMATCH, MILES_CONVERSION_VERIFICATION_MISSING } from './project-owner-execution-assignment-protocol'
 import * as store from './project-sqlite-store'
 
 export function isRecoverableOwnerAssignmentRejection(detail: string): boolean {
   // 第三种是“结构/字段不合规”：方案本身有效，原预算内重排一次通常即可修复。
-  return ['Owner安排必须由未承担执行岗位的独立评审员审核', 'Owner人员安排必须完整覆盖所选步骤的全部岗位', 'Owner人员安排提案格式无效或夹带未授权字段', 'Owner绿地研发允许范围必须覆盖全部目标文件', MARKDOWN_BROWSER_VERIFICATION_MISMATCH].includes(detail)
+  return ['Owner安排必须由未承担执行岗位的独立评审员审核', 'Owner人员安排必须完整覆盖所选步骤的全部岗位', 'Owner人员安排提案格式无效或夹带未授权字段', 'Owner绿地研发允许范围必须覆盖全部目标文件', MARKDOWN_BROWSER_VERIFICATION_MISMATCH, MILES_CONVERSION_VERIFICATION_MISSING].includes(detail)
 }
 
 export { ownerAssignmentFailureReason } from './project-owner-failure-reason'
@@ -60,6 +60,11 @@ export function queueOwnerAssignmentProtocolRetry(projectId: string, taskId: str
   return retry.kind === 'assignment_recheck'
 }
 
+function assignmentConversationEvent(event: OwnerManagementEvent, eventId: string) {
+  // 任务消息使用新的事件标识，保留旧版已写到项目对话的历史记录。
+  return { projectId: event.projectId, ...(event.taskId ? { taskId: event.taskId, eventId: `${eventId}:task-owner` } : { eventId }) }
+}
+
 export function prepareOwnerManagementAssignment(event: OwnerManagementEvent): void {
   if (event.kind === 'delegation_confirmed') {
     const view = getOwnerManagementDelegation(event.projectId, event.taskId)
@@ -73,11 +78,11 @@ export function prepareOwnerManagementAssignment(event: OwnerManagementEvent): v
     || event.kind === 'team_changed' && plan.revision !== event.sourceRevision
     || event.kind === 'team_changed' && plan.state !== 'confirmed' && !(plan.state === 'proposed' && event.sourceId?.startsWith('team-access:') && getOwnerManagementDelegation(event.projectId, event.taskId).state === 'active')
     || !['planning_result', 'plan_confirmed', 'team_changed', 'delegation_confirmed', 'assignment_recheck'].includes(event.kind)) return
-  if (hasCompleteOwnerManagementDelivery(event.projectId, event.taskId, plan)) return
+  if (!isOwnerRevisionCurrentForAutomation(plan) || hasCompleteOwnerManagementDelivery(event.projectId, event.taskId, plan)) return
   const binding = getOwnerRuntimeBinding(event.projectId)
   if (!binding) throw new Error('Owner安排缺少有效模型绑定')
   // 默认建队优先于外部工作区建议：项目已授权工作区内能按方案自动补齐团队时，不要求扩大项目资料范围。
-  ensureOwnerDefaultTeam(event.projectId, binding, plan.proposal.steps.map(step => step.roleKey))
+  ensureOwnerDefaultTeam(event.projectId, binding, plan.proposal.steps.map(step => step.roleKey), plan.proposal.steps.some(step => step.deliveryKind === 'development'))
   const context = getProjectOwnerPlanningContext(event.projectId, event.taskId)
   const requestKey = createHash('sha256').update(event.id).digest('hex').slice(0, 32)
   const input = { requestId: `management-assignment:${requestKey}`, expectedBindingRevision: binding.revision, expectedGoalRevision: context.goal.revision, expectedPlanRevision: plan.revision, expectedPlanFingerprint: plan.planFingerprint, expectedContextFingerprint: context.fingerprint }
@@ -109,15 +114,15 @@ export function prepareOwnerManagementAssignment(event: OwnerManagementEvent): v
     trace('assignment_preparation', 'blocked', 'team_check', cause instanceof OwnerExecutionAssignmentCapabilityError ? cause.reason : reason)
     const capabilityReason = cause instanceof OwnerExecutionAssignmentCapabilityError ? cause.reason : reason
     const capabilityFingerprint = `${capabilityReason}:${teamWorkspaceProposal?.scopeFingerprint ?? input.expectedContextFingerprint}`
-    appendOwnerManagementMessage({ projectId: event.projectId, eventId: messageEventId('capability', capabilityFingerprint), role: 'assistant', kind: 'attention', content: actionableMessage, ...(teamWorkspaceProposal ? { teamWorkspaceProposal } : {}) })
+    appendOwnerManagementMessage({ ...assignmentConversationEvent(event, messageEventId('capability', capabilityFingerprint)), role: 'assistant', kind: 'attention', content: actionableMessage, ...(teamWorkspaceProposal ? { teamWorkspaceProposal } : {}) })
     return
   }
   trace('assignment_preparation', 'completed', 'team_check', source.context.contextFingerprint)
-  // 已核对的路径收窄从确认版本重新安排，避免停在旧待确认版本的执行边界。
+  // 计划只发生确认版本变化时，复用原团队候选；实际写入范围仍由主进程核对。
   const independentlyConfirmedNarrowing = plan.actor === 'system:owner-manager' && plan.proposal.deliveryFeedbackAssessment?.authorizationImpact === 'additional_confirmation'
-  if (event.kind === 'plan_confirmed' && !independentlyConfirmedNarrowing) {
+  if (event.kind === 'plan_confirmed') {
     const prepared = store.getProjectDb().prepare("SELECT planning_task_id, assignment_snapshot FROM project_owner_planning_links WHERE project_id = ? AND json_extract(payload, '$.purpose') = 'owner_execution_assignment' AND json_extract(payload, '$.targetTaskId') IS ? AND json_extract(payload, '$.planRevision') = ? ORDER BY rowid DESC").all(event.projectId, event.taskId ?? null, plan.revision - 1) as Array<{ planning_task_id: string; assignment_snapshot: string | null }>
-    const reusable = prepared.some(row => {
+    const reusable = prepared.find(row => {
       if (!row.assignment_snapshot) return false
       try {
         const previous = parseOwnerExecutionAssignmentContext(JSON.parse(row.assignment_snapshot))
@@ -126,7 +131,21 @@ export function prepareOwnerManagementAssignment(event: OwnerManagementEvent): v
         return Boolean(resolved?.assignmentContext && ownerAssignmentContextMatchesApprovalTransition(resolved.assignmentContext, source.context))
       } catch { return false }
     })
-    if (reusable) return
+    if (reusable) {
+      if (independentlyConfirmedNarrowing) {
+        const execution = store.listAgentExecutionsByEntity('task', reusable.planning_task_id).at(0)
+        const outcome = execution ? getOwnerPlanningRunOutcome(execution.id) : null
+        if (outcome) projectOwnerManagementAssignmentResult({
+          ...event, id: `narrowed-assignment:${outcome.executionId}`, kind: 'assignment_result', sourceId: outcome.executionId,
+        })
+        else if (execution && !['queued', 'running'].includes(execution.status)) appendOwnerManagementMessage({
+          projectId: event.projectId, ...(event.taskId ? { taskId: event.taskId } : {}),
+          eventId: `narrowed-assignment-missing:${execution.id}`, role: 'assistant', kind: 'attention',
+          content: '已核对修订范围。原团队安排已经结束，但缺少可用结论，需要先核对原运行记录。',
+        })
+      }
+      return
+    }
   }
   const roles = [...new Set(source.context.steps.map(step => step.roleKey))]
   const completeTeam = source.context.workspaces.some(workspace => source.context.candidates.some(reviewer => {
@@ -148,7 +167,7 @@ export function prepareOwnerManagementAssignment(event: OwnerManagementEvent): v
     const nextStep = teamWorkspaceProposal
       ? `为推进当前方案，我建议将“${teamWorkspaceProposal.workspaceName}”工作区纳入本项目资料范围；其中的资料、技能和配置会用于后续工作。确认后我会继续安排团队。`
       : '我暂时找不到可承担这项工作的合格团队，所以工作尚未开始；扩大项目资料范围也不能解决当前团队配置问题。目标和方案已保留。我会在团队配置发生变化时自动重新核对；如需调整交付目标或验收标准，会先回来和你商量。'
-    appendOwnerManagementMessage({ projectId: event.projectId, eventId: messageEventId('capability', 'team-contract-incomplete'), role: 'assistant', kind: 'attention', content: `当前团队不足以覆盖方案需要的执行岗位和独立检查，因此这部分工作还没有派工。${prefix}${nextStep}`, ...(teamWorkspaceProposal ? { teamWorkspaceProposal } : {}) })
+    appendOwnerManagementMessage({ ...assignmentConversationEvent(event, messageEventId('capability', 'team-contract-incomplete')), role: 'assistant', kind: 'attention', content: `当前团队不足以覆盖方案需要的执行岗位和独立检查，因此这部分工作还没有派工。${prefix}${nextStep}`, ...(teamWorkspaceProposal ? { teamWorkspaceProposal } : {}) })
     return
   }
   // 只复用同一已确认方案和完整候选快照，人工旧入口也不能导致重复准备。
@@ -168,12 +187,12 @@ export function prepareOwnerManagementAssignment(event: OwnerManagementEvent): v
       projectOwnerManagementAssignmentResult({ id: `assignment-replay:${previousOutcome.executionId}`, projectId: event.projectId, kind: 'assignment_result', ...(event.taskId ? { taskId: event.taskId } : {}), sourceRevision: plan.revision, sourceId: previousOutcome.executionId, createdAt: Date.now(), consumedAt: null })
       return
     }
-    appendOwnerManagementMessage({ projectId: event.projectId, eventId: messageEventId('assignment', `existing-terminal:${existing.planning_task_id}`), role: 'assistant', kind: 'attention', planningTaskId: existing.planning_task_id, content: '我找到此前为当前方案准备的人员安排，但它已结束且没有可展示的安排结论。我没有重复发送请求；需要先核对原运行记录，再决定是否重新安排。' })
+    appendOwnerManagementMessage({ ...assignmentConversationEvent(event, messageEventId('assignment', `existing-terminal:${existing.planning_task_id}`)), role: 'assistant', kind: 'attention', planningTaskId: existing.planning_task_id, content: '我找到此前为当前方案准备的人员安排，但它已结束且没有可展示的安排结论。我没有重复发送请求；需要先核对原运行记录，再决定是否重新安排。' })
     return
   }
   const planningTaskId = prepareOwnerExecutionAssignment({ projectId: event.projectId, ...(event.taskId ? { taskId: event.taskId } : {}) }, input).planningTaskId
   trace('assignment_run', 'queued', 'provider_pending', source.context.contextFingerprint)
-  appendOwnerManagementMessage({ projectId: event.projectId, eventId: messageEventId('assignment', source.context.contextFingerprint), role: 'assistant', kind: 'management_progress', planningTaskId, content: plan.state === 'proposed' ? '我正在依据已授权的项目目标和预算准备团队安排；完成后会继续执行和独立检查。如遇到范围外事项，我会回来与你商量。' : '我正在依据已确认方案和项目授权推进团队安排；完成后会继续执行和独立检查。如遇到范围外事项，我会回来与你商量。' })
+  appendOwnerManagementMessage({ ...assignmentConversationEvent(event, messageEventId('assignment', source.context.contextFingerprint)), role: 'assistant', kind: 'management_progress', planningTaskId, content: plan.state === 'proposed' ? '我正在依据已授权的项目目标和预算准备团队安排；完成后会继续执行和独立检查。如遇到范围外事项，我会回来与你商量。' : '我正在依据已确认方案和项目授权推进团队安排；完成后会继续执行和独立检查。如遇到范围外事项，我会回来与你商量。' })
 }
 
 export function projectOwnerManagementAssignmentResult(event: OwnerManagementEvent): void {
@@ -198,7 +217,7 @@ export function projectOwnerManagementAssignmentResult(event: OwnerManagementEve
     appendOwnerManagementTrace({ eventId: `owner-trace:assignment-result:${event.id}:failed`, projectId: event.projectId, ...(event.taskId ? { taskId: event.taskId } : {}), phase: 'assignment_run', state: outcome.state === 'needs_clarification' ? 'waiting' : 'failed', createdAt: Date.now(), detailCode: outcome.state === 'needs_clarification' ? 'decision_required' : 'result_ready' })
     // 把可核对的失败原因写进对话，Owner 才能如实回答“需要核对什么”，而不是含糊其辞。
     const reason = ownerAssignmentFailureReason(outcome.detail)
-    appendOwnerManagementMessage({ projectId: event.projectId, eventId: event.id, role: 'assistant', kind: 'attention', content: `这次人员安排没有得到可继续使用的结果。${reason ? `原因：${reason}。` : ''}我已保留原记录；除非确认可以修复，否则不会自动重复调用。` })
+    appendOwnerManagementMessage({ ...assignmentConversationEvent(event, event.id), role: 'assistant', kind: 'attention', content: `这次人员安排没有得到可继续使用的结果。${reason ? `原因：${reason}。` : ''}我已保留原记录；除非确认可以修复，否则不会自动重复调用。` })
     return
   }
   appendOwnerManagementTrace({ eventId: `owner-trace:assignment-result:${event.id}:completed`, projectId: event.projectId, ...(event.taskId ? { taskId: event.taskId } : {}), phase: 'assignment_run', state: 'completed', createdAt: Date.now(), detailCode: 'result_ready' })
@@ -208,15 +227,23 @@ export function projectOwnerManagementAssignmentResult(event: OwnerManagementEve
   if (!resolved) throw new Error('Owner安排来源无法核验')
   const plan = getProjectOwnerPlanDraft(event.projectId, event.taskId)
   const subject = { projectId: event.projectId, ...(event.taskId ? { taskId: event.taskId } : {}) }
+  if (plan && !isOwnerRevisionCurrentForAutomation(plan)) {
+    appendOwnerManagementMessage({ ...assignmentConversationEvent(event, `${event.id}:revision-changed`), role: 'assistant',
+      kind: 'attention', content: '团队安排结果已保留。最新意见、交付版本或授权已变化，本次未按旧修订启动员工。' })
+    return
+  }
   const delegationView = getOwnerManagementDelegation(event.projectId, event.taskId)
   const delegation = delegationView.delegation
   const startApproval = delegation?.startApproval
+  const narrowedAssignment = plan?.actor === 'system:owner-manager' && delegation?.autonomousWorkspaceEditVersion === 1
+    && plan.proposal.deliveryFeedbackAssessment?.authorizationImpact === 'additional_confirmation'
+    && resolved.link.planRevision === plan.revision - 1
   const matchesStartApproval = Boolean(startApproval && plan?.state === 'confirmed'
     && plan.revision === startApproval.expectedPlanRevision + 1 && plan.goalRevision === startApproval.expectedGoalRevision
     && plan.planFingerprint === startApproval.planFingerprint && plan.contextFingerprint === startApproval.contextFingerprint
     && resolved.link.planRevision === plan.revision)
   const withinAutonomousProjectGrant = Boolean(delegation?.autonomousExecution && delegationView.state === 'active'
-    && plan?.state === 'confirmed' && resolved.link.planRevision === plan.revision)
+    && plan?.state === 'confirmed' && (resolved.link.planRevision === plan.revision || narrowedAssignment))
   if (startApproval && (!matchesStartApproval || delegationView.state !== 'active' || !delegation)) {
     appendOwnerManagementMessage({ projectId: event.projectId, eventId: `${event.id}:approved-start-stale`, role: 'assistant', kind: 'attention', ...(event.taskId ? { taskId: event.taskId } : {}), content: delegationView.state === 'active'
       ? '我发现已确认的目标或方案来源发生变化，因此没有启动团队。原方案、安排和预算记录都已保留；请在这里重新核对结果范围。'
@@ -251,13 +278,18 @@ export function projectOwnerManagementAssignmentResult(event: OwnerManagementEve
       return
     }
     let developmentScope = outcome.assignmentProposal.developmentScope
-    if (developmentScope && plan.proposal.deliveryFeedbackAssessment) {
+    if (plan.proposal.deliveryFeedbackAssessment && (developmentScope || narrowedAssignment)) {
       const { readOwnerDevelopmentRevisionLimit } = require('./project-owner-development-artifact') as typeof import('./project-owner-development-artifact')
       try {
         const limit = readOwnerDevelopmentRevisionLimit(plan, outcome.assignmentProposal.workspaceId, plan.actor === 'system:owner-manager')
+        if (plan.actor === 'system:owner-manager' && plan.proposal.deliveryFeedbackAssessment.authorizationImpact === 'additional_confirmation'
+          && (!limit?.onlyNarrowing || limit.delegationId !== delegation.id
+            || getOwnerManagementClaim(receipt.planningTaskId)?.delegationId !== delegation.id)) {
+          throw new Error('当前反馈或团队安排不能核验为原授权内的单文件修订')
+        }
         if (limit) {
           const commands = new Set(limit.commands)
-          if (!developmentScope.targetPaths.includes(limit.path)
+          if (!developmentScope?.targetPaths.includes(limit.path)
             || !developmentScope.verificationCommands.every(command => commands.has(command))
             || developmentScope.verificationCommands.length !== commands.size) throw new Error('安排的目标或验证命令不符合用户的修订范围')
           developmentScope = { ...developmentScope, targetPaths: [limit.path], allowedPaths: [limit.path] }
@@ -268,8 +300,11 @@ export function projectOwnerManagementAssignmentResult(event: OwnerManagementEve
         return
       }
     }
+    // 团队安排是受控运行，executionId 已是稳定的 UUID；启动意图复用该身份去重。
+    const requestId = narrowedAssignment ? receipt.executionId : randomUUID()
+    if (narrowedAssignment && store.getProjectDb().prepare('SELECT 1 FROM project_owner_execution_start_intents WHERE id=? AND project_id=?').get(requestId, event.projectId)) return
     const input: OwnerExecutionPreparationInput = {
-      requestId: randomUUID(), expectedPreparationRevision: executionPreparation.revision,
+      requestId, expectedPreparationRevision: executionPreparation.revision,
       expectedPolicyRevision: policy?.revision ?? null, expectedGoalRevision: plan.goalRevision, expectedPlanRevision: plan.revision,
       selectedStepKeys: [...outcome.assignmentProposal.selectedStepKeys], executionKind: outcome.assignmentProposal.executionKind,
       employeeRuntimeVersion: 2,
@@ -292,5 +327,5 @@ export function projectOwnerManagementAssignmentResult(event: OwnerManagementEve
     appendOwnerManagementMessage({ projectId: event.projectId, eventId: `${event.id}:approved-start:${intent.intentId}`, role: 'assistant', kind: 'management_progress', planningTaskId: resolved.link.planningTaskId, ...(event.taskId ? { taskId: event.taskId } : {}), content: '安排已完成。我正在按你确认的方案和预算核验工作范围并启动团队；如果执行前发现目标、资料或授权变化，我会暂停并在这里说明。' })
     return
   }
-  appendOwnerManagementMessage({ projectId: event.projectId, eventId: event.id, role: 'assistant', kind: 'execution_arranged', planningTaskId: receipt.planningTaskId, content: '结果方案的内部安排已准备好，员工尚未启动。请审阅方案及明确展示的结果/执行边界；确认开始后，Owner会负责组织执行。' })
+  appendOwnerManagementMessage({ ...assignmentConversationEvent(event, event.id), role: 'assistant', kind: 'execution_arranged', planningTaskId: receipt.planningTaskId, content: '结果方案的内部安排已准备好，员工尚未启动。请审阅方案及明确展示的结果/执行边界；确认开始后，Owner会负责组织执行。' })
 }

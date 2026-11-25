@@ -1,21 +1,21 @@
 import { findOwnerFollowupFuse, hasUnstartedOwnerConversation, preparePendingOwnerConversation } from './project-owner-management-conversation'
 import { decideAttentionCarryover } from './project-owner-attention-carryover-policy'
 import { prepareOwnerManagementAssignment, projectOwnerManagementAssignmentResult, queueOwnerAssignmentProtocolRetry, isRecoverableOwnerAssignmentRejection } from './project-owner-management-assignment'
-import { getOwnerInitialPlanningRecoveryCutoff, getPendingOwnerInitialPlanningRecovery, getOwnerManagementDelegation, hasActiveOwnerManagementRequest, renewExpiredOwnerManagementDelegation } from './project-owner-management-delegation'
+import { getOwnerInitialPlanningRecoveryCutoff, getPendingOwnerInitialPlanningRecovery, getOwnerManagementClaim, getOwnerManagementDelegation, hasAccountedOwnerManagementRun, hasActiveOwnerManagementRequest, renewExpiredOwnerManagementDelegation } from './project-owner-management-delegation'
 import type { OwnerManagementEvent } from '@gravitas/shared'
 import { prepareOwnerUnchangedAnswer, projectOwnerManagementRunResult } from './project-owner-management-questions'
 import { getProjectOwnerGoalDraft } from './project-owner-goal-service'
-import { confirmProjectOwnerPlanDraftForOwner, getProjectOwnerPlanDraft, getProjectOwnerPlanningContext } from './project-owner-plan-service'
-import { getOwnerRuntimeBinding, prepareOwnerPlanning, resolveOwnerRuntimeBindingFromDefaults } from './project-owner-runtime-binding'
+import { confirmProjectOwnerPlanDraftForOwner, getCurrentBoundRevisionRetrySource, getProjectOwnerPlanDraft, getProjectOwnerPlanningContext, isOwnerRevisionCurrentForAutomation, matchesCurrentBoundRevisionRetry } from './project-owner-plan-service'
+import { getOwnerRuntimeBinding, prepareOwnerPlanning, resolveOwnerRuntimeBindingFromDefaults, OWNER_BOUND_REVISION_RETRY_PREFIX, OWNER_INITIAL_PLAN_RETRY_PREFIX, OWNER_QUALITY_RETRY_PREFIX, ownerInitialPlanRetryRequestId } from './project-owner-runtime-binding'
 import { onOwnerManagementChanged, onOwnerManagementWake, type OwnerManagementChanged } from './project-owner-management-events'
 import { appendOwnerManagementMessage, appendOwnerManagementTrace, consumeOwnerManagementEvent, getOwnerManagementMessage, getOwnerManager, listPendingOwnerManagementEvents, recordOwnerManagementAssignmentRecheck, recordOwnerManagementRenewalRecheck, recordStaleOwnerManagementTrace } from './project-owner-management-store'
 import * as store from './project-sqlite-store'
 import { nextOwnerExecutionObservationDeadline, scanOwnerExecutionObservations } from './project-owner-management-execution'
-import { OwnerPlanningSourceChangedError, readOwnerPlanningSnapshot } from './project-owner-planning-source'
+import { OwnerPlanningSourceChangedError, readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
 import { hasCompleteOwnerManagementDelivery, publishOwnerManagementCompletion } from './project-owner-management-delivery'
 import { onOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
 import { listOwnerExecutionAssignmentRuns } from './project-owner-execution-assignment-service'
-import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt, recoverLegacyOwnerConversationReply, recoverLegacyOwnerAssignmentProposal } from './project-owner-planning-run-service'
+import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt, hasCompleteRejectedOwnerPlanReceipt, isRetryableOwnerBoundRevisionReceipt, recoverInitialOwnerPlanningResponse, recoverLegacyOwnerConversationReply, recoverLegacyOwnerAssignmentProposal } from './project-owner-planning-run-service'
 import { ensureOwnerDefaultTeam } from './project-owner-default-team'
 
 let requestActiveOwnerManagementRescan: (() => void) | null = null
@@ -76,17 +76,19 @@ function handleTeamChange(event: OwnerManagementEvent): void {
 
 function isVerifiedDevelopmentNarrowing(proposed: NonNullable<ReturnType<typeof getProjectOwnerPlanDraft>>, delegation: NonNullable<ReturnType<typeof getOwnerManagementDelegation>['delegation']>): boolean {
   const feedback = proposed.proposal.deliveryFeedbackAssessment
-  if (feedback?.authorizationImpact !== 'additional_confirmation' || delegation.autonomousWorkspaceEditVersion !== 1
-    || !/收窄|缩小/.test(feedback.authorizationRationale)
-    || /(?:新增|扩大)(?:预算|费用|资料|工作区|外发|发布|验证)/.test(feedback.authorizationRationale)) return false
+  if (feedback?.authorizationImpact !== 'additional_confirmation' || delegation.autonomousWorkspaceEditVersion !== 1) return false
   const binding = getOwnerRuntimeBinding(proposed.projectId)
   if (!binding) return false
   const { readOwnerDevelopmentRevisionLimit } = require('./project-owner-development-artifact') as typeof import('./project-owner-development-artifact')
-  try { return readOwnerDevelopmentRevisionLimit(proposed, binding.workspaceId, true)?.onlyNarrowing === true }
+  try {
+    const limit = readOwnerDevelopmentRevisionLimit(proposed, binding.workspaceId, true)
+    return limit?.onlyNarrowing === true && limit.delegationId === delegation.id
+  }
   catch { return false }
 }
 
 function acceptPlanAndArrange(event: OwnerManagementEvent, proposed: NonNullable<ReturnType<typeof getProjectOwnerPlanDraft>>): void {
+  if (!isOwnerRevisionCurrentForAutomation(proposed)) return
   const delegation = getOwnerManagementDelegation(event.projectId, event.taskId)
   if (delegation.state !== 'active' || !delegation.delegation) return
   if (!delegation.delegation.autonomousExecution) {
@@ -166,8 +168,14 @@ function handle(event: OwnerManagementEvent): void {
   if (event.kind === 'plan_confirmed') { prepareOwnerManagementAssignment(event); return }
   if (event.kind === 'planning_result') {
     if (!event.sourceId) throw new Error('Owner运行事件缺少来源')
-    projectOwnerManagementRunResult(event.projectId, event.sourceId, event.id)
     const proposed = getProjectOwnerPlanDraft(event.projectId, event.taskId)
+    if (proposed?.sourceRun?.executionId === event.sourceId && !isOwnerRevisionCurrentForAutomation(proposed)) {
+      appendOwnerManagementMessage({ projectId: event.projectId, eventId: event.id, ...(event.taskId ? { taskId: event.taskId } : {}),
+        role: 'assistant', kind: 'attention', content: '原方案已保留。当前意见、交付版本或授权与原请求不符，尚未安排团队。' })
+      preparePendingOwnerConversation(event.projectId, event.taskId)
+      return
+    }
+    projectOwnerManagementRunResult(event.projectId, event.sourceId, event.id)
     if (proposed?.state === 'proposed' && proposed.sourceRun?.executionId === event.sourceId) acceptPlanAndArrange(event, proposed)
     preparePendingOwnerConversation(event.projectId, event.taskId)
     return
@@ -236,7 +244,7 @@ export function reconcileOwnerManagement(projectId: string): void {
       throw new OwnerEventReconciliationError(event.id, cause)
     }
   }
-  recoverLegacyOwnerConversationReplies(projectId)
+  recoverLegacyOwnerResponses(projectId)
   // 兼容旧版本已保存但没有启动执行的对话；恢复授权或进程重启后继续处理原消息。
   const subjects = store.getProjectDb().prepare('SELECT DISTINCT subject_key FROM project_owner_revisions WHERE project_id = ?').all(projectId) as { subject_key: string }[]
   for (const { subject_key: key } of subjects) {
@@ -248,7 +256,7 @@ export function reconcileOwnerManagement(projectId: string): void {
     }
     // 兼容旧版已判需确认的路径缩减，只复核当前精确反馈。
     const pending = getProjectOwnerPlanDraft(projectId, taskId)
-    if (pending?.state !== 'proposed' || pending.proposal.deliveryFeedbackAssessment?.authorizationImpact !== 'additional_confirmation') continue
+    if (pending?.state !== 'proposed' || pending.proposal.deliveryFeedbackAssessment?.authorizationImpact !== 'additional_confirmation' || !isOwnerRevisionCurrentForAutomation(pending)) continue
     const view = getOwnerManagementDelegation(projectId, taskId)
     if (view.state !== 'active' || !view.delegation?.autonomousExecution || !isVerifiedDevelopmentNarrowing(pending, view.delegation)) continue
     confirmProjectOwnerPlanDraftForOwner(projectId, pending.goalRevision, pending.revision, taskId)
@@ -275,23 +283,83 @@ function recoverMissingOwnerDefaultTeams(projectId: string): void {
     const binding = getOwnerRuntimeBinding(projectId)
     if (!binding) continue
     store.getProjectDb().transaction(() => {
-      if (!ensureOwnerDefaultTeam(projectId, binding, plan.proposal.steps.map(step => step.roleKey))) return
+      if (!ensureOwnerDefaultTeam(projectId, binding, plan.proposal.steps.map(step => step.roleKey), plan.proposal.steps.some(step => step.deliveryKind === 'development'))) return
       prepareOwnerManagementAssignment({ id: `default-team-recovery:${projectId}:${taskId ?? 'project'}:${plan.revision}:${binding.revision}`, projectId, ...(taskId ? { taskId } : {}), kind: 'plan_confirmed', sourceRevision: plan.revision, createdAt: Date.now(), consumedAt: null })
     })()
   }
 }
 
-/** 旧版解析器误拒绝的完整普通回应可从原文本地恢复，再由Owner接着履行已确认计划。 */
-function recoverLegacyOwnerConversationReplies(projectId: string): void {
+const initialPlanRetryErrors = new Set(['Owner规划响应包含未知字段', '计划步骤 存在未知字段：criteriaTrace', 'Owner规划响应包含重复计划字段', '步骤内的目标追溯与所属步骤不符'])
+
+/** 只为已完整结束且有费用回执或可按已知费率计入预算的首份规划准备一次新请求。 */
+function queueOwnerInitialPlanProtocolRetry(projectId: string, executionId: string): void {
+  const outcome = getOwnerPlanningRunOutcome(executionId)
+  const receipt = outcome && getOwnerPlanningRunReceipt(outcome.receiptId)
+  if (!outcome || !receipt || receipt.projectId !== projectId || !outcome.protocolRejected || !hasCompleteRejectedOwnerPlanReceipt(outcome, receipt)
+    || !initialPlanRetryErrors.has(outcome.detail) && !outcome.detail.startsWith('目标追溯来源原文与目标不符：')) return
+  const source = readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true })
+  if (!source || source.link.planRevision !== 0 || source.link.conversationMessageId || source.link.id !== receipt.linkId
+    || source.link.requestId.startsWith(OWNER_INITIAL_PLAN_RETRY_PREFIX)) return
+  const taskId = source.link.targetTaskId
+  if (getProjectOwnerPlanDraft(projectId, taskId) || hasUnstartedOwnerConversation(projectId, taskId)) return
+  const grant = getOwnerManagementDelegation(projectId, taskId)
+  const claim = getOwnerManagementClaim(receipt.planningTaskId)
+  if (grant.state !== 'active' || !grant.delegation?.autonomousExecution || claim?.executionId !== executionId || claim.delegationId !== grant.delegation.id
+    || hasActiveOwnerManagementRequest(grant.delegation.id) || !hasAccountedOwnerManagementRun(receipt.planningTaskId, executionId)) return
+  const requestId = ownerInitialPlanRetryRequestId(grant.delegation.id, source.link.goalRevision)
+  const db = store.getProjectDb()
+  db.transaction(() => {
+    if (db.prepare(`SELECT 1 FROM project_owner_planning_links WHERE project_id=? AND json_extract(payload,'$.requestId')=? LIMIT 1`).get(projectId, requestId)
+      || db.prepare('SELECT 1 FROM project_owner_planning_stop_requests WHERE execution_id=?').get(executionId)
+      || !resolveOwnerPlanningTask(receipt.planningTaskId, true)) return
+    const planned = prepareOwnerPlanning(projectId, { requestId, ...(taskId ? { taskId } : {}), expectedBindingRevision: source.link.bindingRevision,
+      expectedGoalRevision: source.link.goalRevision, expectedPlanRevision: 0, expectedContextFingerprint: source.context.fingerprint }, 'initial_protocol_retry')
+    appendOwnerManagementMessage({ projectId, eventId: requestId, ...(taskId ? { taskId } : {}), role: 'assistant', kind: 'management_progress',
+      planningTaskId: planned.planningTaskId, content: '首份规划已返回，但格式无法校验。我保留了原回执，将在现有项目预算内重新整理一次。' })
+  })()
+}
+
+function queueOwnerBoundRevisionProtocolRetry(projectId: string, executionId: string): void {
+  const outcome = getOwnerPlanningRunOutcome(executionId)
+  const receipt = outcome && getOwnerPlanningRunReceipt(outcome.receiptId)
+  if (!outcome || !receipt || !isRetryableOwnerBoundRevisionReceipt(outcome, receipt)) return
+  const snapshot = readOwnerPlanningSnapshot(receipt.planningTaskId)
+  if (!snapshot?.context.conversation?.deliveryFeedback || snapshot.link.projectId !== projectId) return
+  const taskId = snapshot.link.targetTaskId
+  const grant = getOwnerManagementDelegation(projectId, taskId)
+  if (grant.state !== 'active' || !grant.delegation?.autonomousExecution || hasActiveOwnerManagementRequest(grant.delegation.id)) return
+  const delegationId = grant.delegation.id
+  const requestId = `${OWNER_BOUND_REVISION_RETRY_PREFIX}${executionId}`
+  const db = store.getProjectDb()
+  db.transaction(() => {
+    if (db.prepare('SELECT 1 FROM project_owner_planning_links WHERE project_id=? AND request_id=?').get(projectId, requestId)) return
+    const source = getCurrentBoundRevisionRetrySource(projectId, executionId, delegationId)
+    if (!source?.link.conversationMessageId || !resolveOwnerPlanningTask(receipt.planningTaskId, true)) return
+    const planned = prepareOwnerPlanning(projectId, { requestId, ...(taskId ? { taskId } : {}), conversationMessageId: source.link.conversationMessageId,
+      expectedBindingRevision: source.link.bindingRevision, expectedGoalRevision: source.link.goalRevision, expectedPlanRevision: source.link.planRevision,
+      expectedContextFingerprint: source.context.fingerprint }, 'bound_revision_retry')
+    appendOwnerManagementMessage({ projectId, eventId: requestId, ...(taskId ? { taskId } : {}), role: 'assistant', kind: 'management_progress',
+      planningTaskId: planned.planningTaskId, content: '修订方案未通过原成果标准的核验。我已保留原记录，会在同一份交付和现有授权内重新核对一次。' })
+  })()
+}
+
+/** 从原回执重新验证旧版误拒的首份方案、对话回应或质量决定。 */
+function recoverLegacyOwnerResponses(projectId: string): void {
   const executions = store.getProjectDb().prepare(`SELECT o.execution_id FROM project_owner_planning_run_outcomes o
     JOIN project_owner_planning_run_receipts r ON r.id = o.receipt_id
     WHERE json_extract(r.payload, '$.projectId') = ? AND json_extract(r.payload, '$.purpose') = 'owner_planning'
-      AND json_extract(o.payload, '$.state') = 'failed' AND json_extract(o.payload, '$.detail') IN ('Owner规划响应包含未知字段', 'Owner执行跟进只允许分析回应或必要协商', 'Owner质量决定与准确评审/成果不匹配', 'Owner质量决定未按准确标准逐项判断或引用不符', 'Owner返工必须指出具体不满足标准及可执行修改')
+      AND json_extract(o.payload, '$.state') = 'failed' AND (
+        json_extract(o.payload, '$.protocolRejected') = 1
+        OR json_extract(o.payload, '$.detail') IN ('Owner规划响应包含未知字段', 'Owner执行跟进只允许分析回应或必要协商', 'Owner质量决定与准确评审/成果不匹配', 'Owner质量决定未按准确标准逐项判断或引用不符', 'Owner返工必须指出具体不满足标准及可执行修改'))
+      AND NOT EXISTS (SELECT 1 FROM project_owner_planning_run_recoveries p WHERE p.execution_id = o.execution_id AND json_extract(p.payload, '$.recoveredOutcome.state') IN ('proposed', 'needs_clarification'))
       AND NOT (EXISTS (SELECT 1 FROM project_owner_management_messages m WHERE m.project_id = ? AND m.event_id = 'legacy-response-recovered:' || o.execution_id)
         AND EXISTS (SELECT 1 FROM project_owner_planning_run_recoveries p WHERE p.execution_id = o.execution_id AND json_type(p.payload, '$.recoveredOutcome.qualityDecision') = 'object'))
     ORDER BY r.rowid`).all(projectId, projectId) as { execution_id: string }[]
   for (const { execution_id: executionId } of executions) {
     try {
+      if (recoverInitialOwnerPlanningResponse(executionId)) continue
+      queueOwnerBoundRevisionProtocolRetry(projectId, executionId)
+      queueOwnerInitialPlanProtocolRetry(projectId, executionId)
       const recovered = recoverLegacyOwnerConversationReply(executionId)
       if (!recovered || recovered.state !== 'replied') continue
       const receipt = getOwnerPlanningRunReceipt(recovered.receiptId)
@@ -345,7 +413,7 @@ function recoverMissingProposedPlanAssignment(projectId: string): void {
   for (const { subject_key: subjectKey } of subjects) {
     const taskId = subjectKey.startsWith('task:') ? subjectKey.slice(5) : undefined
     const plan = getProjectOwnerPlanDraft(projectId, taskId)
-    if (!plan || plan.state !== 'proposed') continue
+    if (!plan || plan.state !== 'proposed' || !isOwnerRevisionCurrentForAutomation(plan)) continue
     const delegation = getOwnerManagementDelegation(projectId, taskId)
     if (delegation.state !== 'active' || !delegation.delegation) continue
     const assignments = listOwnerExecutionAssignmentRuns({ projectId, ...(taskId ? { taskId } : {}) })
@@ -569,13 +637,26 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
           if (plan && ['proposed', 'confirmed'].includes(plan.state)) continue
         }
         const view = getOwnerManagementDelegation(projectId, subject.targetTaskId)
+        if (subject.requestId?.startsWith(OWNER_BOUND_REVISION_RETRY_PREFIX)) {
+          const retry = readOwnerPlanningSnapshot(link.planning_task_id)
+          if (!retry || view.state !== 'active' || !view.delegation?.autonomousExecution || !matchesCurrentBoundRevisionRetry(retry.link, view.delegation.id)) continue
+        }
+        if (subject.requestId?.startsWith(OWNER_INITIAL_PLAN_RETRY_PREFIX)
+          && (view.state !== 'active' || !view.delegation?.autonomousExecution || subject.goalRevision === undefined
+            || subject.requestId !== ownerInitialPlanRetryRequestId(view.delegation.id, subject.goalRevision))) continue
         if (view.state === 'stale') continue
         // 最新对话已有Run时不重复调用；后续内部安排仍可继续处理。
         if (store.listAgentExecutionsByEntity('task', link.planning_task_id).length) continue
         subjects.add(subjectKey)
         // 已有调用时等待完成回调；先入队再失败回滚会产生新唤醒，造成忙重试。
         // attention 且可接续（上条仅结论不可继续、仍在预算内）时放行，与对话层和认领闸门判定一致。
-        if ((view.state !== 'active' && decideAttentionCarryover(view) !== 'proceed') || !view.delegation || hasActiveOwnerManagementRequest(view.delegation.id)) continue
+        const isQualityRetry = subject.requestId?.startsWith(OWNER_QUALITY_RETRY_PREFIX) === true
+        if ((view.state !== 'active' && decideAttentionCarryover(view) !== 'proceed' && !isQualityRetry) || !view.delegation || hasActiveOwnerManagementRequest(view.delegation.id)) continue
+        if (isQualityRetry) {
+          const { canStartOwnerQualityRetry } = await import('./project-owner-quality-retry')
+          const source = readOwnerPlanningSnapshot(link.planning_task_id)
+          if (!source || !canStartOwnerQualityRetry(source.link, view.delegation.id)) continue
+        }
         if (readOwnerPlanningSnapshot(link.planning_task_id, { allowUnknownPromptForHistory: true })?.context.conversation?.executionObservation && view.delegation?.executionFollowupEnabled !== true) {
           appendOwnerManagementMessage({ projectId, eventId: `followup-scope:${link.planning_task_id}`, role: 'assistant', kind: 'attention', ...(subject.targetTaskId ? { taskId: subject.targetTaskId } : {}), content: '执行结果已保留。此前管理委托未包含主动跟进分析；重新确认管理范围后，我才能在额度内分析，不会自动消耗旧许可。' })
           continue
@@ -604,7 +685,7 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
           if (stopped || getOwnerManager(projectId)?.status !== 'active') return
           // 质量对话优先于内部安排；交付可能在安排等待期间形成，启动前必须按当前事实再核验。
           const currentPlan = subject.purpose === 'owner_execution_assignment' ? getProjectOwnerPlanDraft(projectId, subject.targetTaskId) : null
-          if (currentPlan && hasCompleteOwnerManagementDelivery(projectId, subject.targetTaskId, currentPlan)) {
+          if (currentPlan && (!isOwnerRevisionCurrentForAutomation(currentPlan) || hasCompleteOwnerManagementDelivery(projectId, subject.targetTaskId, currentPlan))) {
             appendOwnerManagementTrace({ eventId: `owner-delivery-arrangement-suppressed:${link.planning_task_id}`, projectId, ...(subject.targetTaskId ? { taskId: subject.targetTaskId } : {}), phase: 'assignment_run', state: 'blocked', createdAt: Date.now(), detailCode: 'no_update' })
             continue
           }

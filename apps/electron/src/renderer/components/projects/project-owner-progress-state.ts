@@ -1,4 +1,4 @@
-import type { OwnerExecutionCommandView, OwnerManagementMessage } from '@gravitas/shared'
+import type { OwnerExecutionAutonomousScheduleStatus, OwnerExecutionCommandView, OwnerManagementMessage } from '@gravitas/shared'
 
 /** 只把当前授权、当前方案对应的交付视为本轮完成。 */
 export function hasCompletedOwnerDelivery(messages: readonly OwnerManagementMessage[], commands: readonly Pick<OwnerExecutionCommandView, 'grantId' | 'state'>[], taskId: string | undefined, planVersion: number | undefined, grantId: string | undefined): boolean {
@@ -62,12 +62,14 @@ export interface OwnerProjectRowSummary {
 export function summarizeOwnerProjectRow(
   messages: readonly OwnerManagementMessage[],
   taskId: string | undefined,
-  schedule: { state: string; reason?: string; nextAction?: string } | undefined,
+  schedule: { state: string; reason?: string; nextAction?: string; deliveryPublished?: OwnerExecutionAutonomousScheduleStatus['deliveryPublished']; waitingQuestion?: OwnerExecutionAutonomousScheduleStatus['waitingQuestion'] } | undefined,
   authorizationState?: string,
 ): OwnerProjectRowSummary {
+  if (schedule?.waitingQuestion) return { stage: '等待中', waitingOn: '你', nextAction: '在 Owner 对话回答问题', needsUser: true }
   const waitingLabel = getOwnerWaitingLabel(messages, taskId, authorizationState)
   if (waitingLabel) return { stage: '等待你', waitingOn: '你', nextAction: waitingLabel, needsUser: true }
   if (!schedule) return { stage: '未开始', waitingOn: '', nextAction: '尚未建立管理授权', needsUser: false }
+  if (schedule.deliveryPublished) return { stage: '已交付', waitingOn: '', nextAction: '在项目对话查看成果', needsUser: false }
   switch (schedule.state) {
     case 'running': return { stage: '进行中', waitingOn: '', nextAction: 'Owner 与团队正在推进', needsUser: false }
     case 'ready': return { stage: '进行中', waitingOn: '', nextAction: '即将安排下一步', needsUser: false }

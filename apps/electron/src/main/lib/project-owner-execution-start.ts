@@ -5,7 +5,7 @@ import * as store from './project-sqlite-store'
 import { admitOwnerExecutionGateSession, resolveOwnerExecutionGateSession } from './project-owner-execution-gates'
 import { getOwnerExecutionRevalidation } from './project-owner-execution-revalidation'
 import { getPilotPolicy } from './project-pilot-policy'
-import { ownerExecutionHash, parseOwnerExecutionSubject } from './project-owner-execution-source'
+import { ownerExecutionHash } from './project-owner-execution-source'
 import { ownerTaskSpecificationHash } from './project-owner-task-materialization'
 import { assertOwnerCommandUpstreamHandoffsCurrent, hashOwnerCommandSource } from './project-owner-execution-command'
 
@@ -17,11 +17,11 @@ function assertOwnerCommandStartRecordLocked(executionId: string, commandId: str
     || command.execution_id !== executionId || !['queued', 'running'].includes(command.state)) {
     throw new Error('Owner启动归属或命令状态无法核验')
   }
-  const grant = database.prepare('SELECT * FROM project_owner_execution_grants WHERE id=? AND project_id=?').get(command.grant_id, execution.projectId) as { state: string; revalidation_id: string; revalidation_revision: number; revalidation_integrity_hash: string; materialization_id: string; materialization_integrity_hash: string; policy_revision: number; expires_at: number } | undefined
+  const grant = database.prepare('SELECT * FROM project_owner_execution_grants WHERE id=? AND project_id=?').get(command.grant_id, execution.projectId) as { task_id: string | null; state: string; revalidation_id: string; revalidation_revision: number; revalidation_integrity_hash: string; materialization_id: string; materialization_integrity_hash: string; policy_revision: number; expires_at: number } | undefined
   const policy = getPilotPolicy(execution.projectId)
   if (!grant || grant.state !== 'active' || grant.expires_at <= now || !policy || policy.revision !== grant.policy_revision) throw new Error('Owner启动授权不存在、过期或策略已变化')
   // 用grant冻结的上游三元组精确比对v2记录；expectedRevalidationRevision<=0时跳过revision数值校验（handoff intent场景）。
-  const viewAny = getOwnerExecutionRevalidation(parseOwnerExecutionSubject({ projectId: execution.projectId }))
+  const viewAny = getOwnerExecutionRevalidation({ projectId: execution.projectId, ...(grant.task_id ? { taskId: grant.task_id } : {}) })
   if (viewAny.status !== 'current' || !viewAny.revalidation) throw new Error('Owner启动来源非current')
   const record = viewAny.revalidation
   if ((expectedRevalidationRevision > 0 && record.revision !== expectedRevalidationRevision) || record.id !== grant.revalidation_id

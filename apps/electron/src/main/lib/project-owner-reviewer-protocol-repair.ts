@@ -15,7 +15,7 @@ export function isOwnerReviewerProtocolRepairSession(sessionId: string): boolean
   } catch { return false }
 }
 
-export function ownerReviewerProtocolCorrection(sessionId: string, prompt: string, raw: string): string | null {
+export function ownerReviewerProtocolCorrection(sessionId: string, raw: string): string | null {
   let execution: ReturnType<typeof store.getAgentExecutionBySessionId>
   try { execution = store.getAgentExecutionBySessionId(sessionId) }
   catch { return null }
@@ -28,14 +28,17 @@ export function ownerReviewerProtocolCorrection(sessionId: string, prompt: strin
   const task = source.tasks.find(item => item.taskId === execution.entityId)
   const link = getOwnerTaskMaterializationRecord(execution.projectId, source.materialization.id).links.find(item => item.id === task?.linkId)
   if (!link) return null
-  const development = ownerTaskDeliveryKind(source, execution.entityId) === 'development' ? ownerDevelopmentArtifactFromPrompt(prompt) : null
+  // 适配器会给实际发送的提示加工具说明；协议与快照只从当前 Reviewer 的持久提示读取。
+  const development = ownerTaskDeliveryKind(source, execution.entityId) === 'development' ? ownerDevelopmentArtifactFromPrompt(execution.prompt) : null
   const text = development ? null : assertOwnerReviewerTextDelivery(execution.ownerCommandId)
   if (!development && !text) return null
   try {
     const artifactContent = development?.content ?? text?.content
-    const receipt = normalizeOwnerTechnicalReviewReceipt(raw, artifactContent)
+    const artifactHash = development?.contentHash ?? text?.contentSha256
+    const receipt = normalizeOwnerTechnicalReviewReceipt(raw, artifactContent, development?.validationEvidence,
+      artifactHash ? { prompt: execution.prompt, hash: artifactHash } : undefined)
     const parsed = parseOwnerTechnicalReviewResponse(receipt, link.projection.acceptanceCriteria,
-      development?.contentHash ?? text?.contentSha256, artifactContent,
+      artifactHash, artifactContent,
       development ? 'development' : 'text', development?.validationEvidence)
     if (development?.validationEvidence) assertOwnerDevelopmentValidationForVerdict(parsed.verdict, development.validationEvidence)
     return null

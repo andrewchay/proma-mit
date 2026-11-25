@@ -9,9 +9,17 @@ export function findReferencedDelivery(messages: readonly OwnerManagementMessage
 
 /** 仅显示能唯一对应当前交付版本的最近人工决定。 */
 export function findLatestDeliveryReview(messages: readonly OwnerManagementMessage[], taskId: string | undefined, reference: OwnerManagementDeliveryReference): OwnerManagementMessage | undefined {
-  const selected = findReferencedDelivery(messages, taskId, reference)
-  if (!selected) return undefined
-  return messages.findLast(message => message.taskId === taskId && message.role === 'user' && (message.deliveryReviewDecision === 'accepted' || message.deliveryReviewDecision === 'changes_requested')
-    && message.deliveryReference?.messageId === reference.messageId
-    && findReferencedDelivery(messages, taskId, message.deliveryReference) === selected)
+  const verified = new Map<string, OwnerManagementDeliveryItem>()
+  let cursor: OwnerManagementDeliveryReference | undefined = reference
+  while (cursor && !verified.has(cursor.messageId)) {
+    const item = findReferencedDelivery(messages, taskId, cursor)
+    if (!item) break
+    verified.set(cursor.messageId, item)
+    const previousId = messages.find(message => message.id === cursor?.messageId)?.delivery?.localTextRevisionOf
+    cursor = previousId ? { messageId: previousId, artifactHash: reference.artifactHash, stepKey: item.stepKey } : undefined
+  }
+  return messages.findLast(message => message.taskId === taskId && message.role === 'user'
+    && (message.deliveryReviewDecision === 'accepted' || message.deliveryReviewDecision === 'changes_requested')
+    && message.deliveryReference && verified.has(message.deliveryReference.messageId)
+    && findReferencedDelivery(messages, taskId, message.deliveryReference) === verified.get(message.deliveryReference.messageId))
 }

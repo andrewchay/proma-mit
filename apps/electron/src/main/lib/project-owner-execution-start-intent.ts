@@ -229,6 +229,11 @@ function readReviewedBatchForRevision(subject: ProjectOwnerGoalSubject, plan: Pr
 
   // 返工后的评审原文未通过校验时没有质量决定。只允许后续用户消息产生的修订接替，保留原评审。
   if (plan.planFingerprint === source.planFingerprint) return null
+  const goalBlock = db.prepare('SELECT id FROM project_owner_management_messages WHERE project_id=? AND event_id=?')
+    .get(subject.projectId, `owner-delivery-original-goal-blocked:${grant.grantId}`) as { id: string } | undefined
+  const blockedDelivery = goalBlock && getOwnerManagementMessage(subject.projectId, goalBlock.id)
+  if (blockedDelivery?.kind === 'attention' && blockedDelivery.goalRevision === plan.goalRevision
+    && blockedDelivery.taskId === subject.taskId && blockedDelivery.createdAt <= message.createdAt) return grant
   const rejected = db.prepare(`
     SELECT m.id FROM project_owner_execution_commands c
     JOIN agent_executions e ON e.id=c.execution_id AND e.project_id=c.project_id AND e.owner_command_id=c.id
@@ -552,6 +557,10 @@ export function resumeOwnerExecutionStartIntent(intentId: string, expectedSubjec
       const { readOwnerDevelopmentRevisionLimit } = require('./project-owner-development-artifact') as typeof import('./project-owner-development-artifact')
       const limit = readOwnerDevelopmentRevisionLimit(plan, intent.input.workspaceId, true)
       const scope = intent.input.developmentScope
+      if (plan.proposal.deliveryFeedbackAssessment.authorizationImpact === 'additional_confirmation'
+        && (!limit?.onlyNarrowing || limit.delegationId !== autonomousGrant.delegation?.id)) {
+        throw new Error('原交付的管理授权或单文件修订范围无法核对，员工未启动')
+      }
       if (limit && (scope?.workspaceId !== intent.input.workspaceId
         || scope.targetPaths.length !== 1 || scope.targetPaths[0] !== limit.path
         || scope.allowedPaths.length !== 1 || scope.allowedPaths[0] !== limit.path

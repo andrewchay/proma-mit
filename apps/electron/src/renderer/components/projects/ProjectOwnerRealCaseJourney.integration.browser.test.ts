@@ -745,9 +745,12 @@ createRoot(document.getElementById('root')).render(<Provider store={store}><Proj
     expect(await page.getByLabel('执行阻塞').count()).toBe(1)
     expect(await page.getByLabel('执行阻塞').innerText()).toContain('实现页面')
     // 3. 点「查看失败证据」后应能看到失败命令的终止证据。
+    const evidence = page.getByLabel('执行终止证据').first()
+    expect(await evidence.isVisible()).toBe(false)
+    await page.setViewportSize({ width: 700, height: 850 })
     await page.getByRole('button', { name: '查看失败证据' }).click()
-    await page.waitForTimeout(500)
-    expect(await page.getByLabel('执行终止证据').count()).toBeGreaterThan(0)
+    await evidence.waitFor({ state: 'visible' })
+    expect(await evidence.isVisible()).toBe(true)
   } finally {
     await browser.close()
     server.stop(true)

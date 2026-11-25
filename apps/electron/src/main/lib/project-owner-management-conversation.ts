@@ -1,5 +1,6 @@
 import { deliveryContentMatchesArtifact } from './project-owner-delivery-content'
 import { readOwnerManagementDelivery } from './project-owner-management-delivery'
+import { findOwnerCounterSupplementValidation } from './project-owner-counter-supplement'
 /** 持续对话只产生管理资料与受控规划请求；不把自然语言当作授权或权威目标修改。 */
 import { createHash } from 'node:crypto'
 import { ownerDeliveryValidationBlocker, type OwnerManagementMessage, type ProjectOwnerPlanningContext, type SendOwnerManagementMessageRequest } from '@gravitas/shared'
@@ -56,7 +57,9 @@ export function sendOwnerManagementMessage(raw: unknown): OwnerManagementMessage
     }
     const message = { projectId: input.projectId, eventId, role: 'user' as const, kind: 'conversation' as const, ...(input.taskId ? { taskId: input.taskId } : {}), ...(input.deliveryReference ? { deliveryReference: input.deliveryReference } : {}), ...(input.deliveryReviewDecision ? { deliveryReviewDecision: input.deliveryReviewDecision } : {}), goalRevision: goal.revision, content: input.content }
     // 稍后决定只保存事实，不触发管理请求或新派工。
-    saved = input.deliveryReviewDecision === 'deferred' ? appendOwnerManagementMessage(message) : recordOwnerConversationMessage(message)
+    const local = require('./project-owner-local-text-revision') as typeof import('./project-owner-local-text-revision')
+    saved = local.tryApplyOwnerLocalTextEdit(input, message)
+      ?? (input.deliveryReviewDecision === 'deferred' ? appendOwnerManagementMessage(message) : recordOwnerConversationMessage(message))
   })()
   if (!saved) throw new Error('Owner消息未确认保存')
   return saved
@@ -137,8 +140,18 @@ export function withOwnerConversationContext(context: ProjectOwnerPlanningContex
       ORDER BY (e.status='running') DESC,c.created_at,c.id LIMIT 30
     `).all(projectId, taskId ?? null) as NonNullable<ProjectOwnerPlanningContext['conversation']>['activeTeamRuns']
   }
-  const frozenCounterSupplement = frozenDeliveryReview?.review?.validationEvidence?.find(item => item.command === 'browser:html.loads+counter.increment-reset')?.validationId ?? false
-  const result = { ...context, conversation: { ...(fileObservation ? { fileChangeObservation: fileObservation } : {}), ...(webObservation ? { webChangeObservation: { id: webObservation.id, projectId: webObservation.projectId, runId: webObservation.runId, judgment: webObservation.judgment, facts: webObservation.facts.map(({ title, url, sourceId, snippetDigest, publishedAt, quote, isInference }) => ({ title, url, sourceId, snippetDigest, publishedAt, quote, isInference })), impact: webObservation.impact, suggestion: webObservation.suggestion, question: webObservation.question, uncertainty: webObservation.uncertainty, failureReason: webObservation.failureReason, createdAt: webObservation.createdAt, contentHash: webObservation.contentHash } } : {}), ...(deliveredArtifacts ? { deliveredArtifacts } : {}), ...(employeeInteractions ? { employeeInteractionVersion: 1 as const, employeeInteractions } : {}), ...(deliveryFeedback ? { deliveryFeedback, ...(deliveryFeedbackBindingVersion === 1 ? { deliveryFeedbackBindingVersion: 1 as const } : {}) } : {}), ...(observation ? { executionObservation: observation, ...(messageBindingVersion === 1 ? { observationMessageBindingVersion: 1 as const } : {}), ...(deliveryVersion === 1 ? { deliveryReview: readOwnerManagementDelivery(projectId, observation, frozenDeliveryReview === undefined ? undefined : { qualityRecovery: frozenDeliveryReview.qualityRecovery, counterSupplement: frozenCounterSupplement }) } : {}) } : interactionVersion === 2 ? { interactionVersion: 2 as const, openQuestions: questionSources.getOwnerConversationQuestionSources(context, latest.id) } : {}), conversationId: manager.conversationId, throughMessageId: messageId, historyThroughMessageId: latest.id, messages: messages.reverse(), truncated: messages.length < rows.length, currentPlan: plan ? { revision: plan.revision, state: plan.state, proposal: plan.proposal } : null, tasks: tasks.slice(0, 30).map(({ id, title, status }) => ({ id, title, status })), tasksTruncated: tasks.length > 30, ...(activeTeamRuns === undefined ? {} : { activeTeamRuns }) } }
+  const frozenCounterSupplement = findOwnerCounterSupplementValidation(frozenDeliveryReview?.review)?.validationId ?? false
+  let deliveryReview = observation && deliveryVersion === 1
+    ? readOwnerManagementDelivery(projectId, observation, frozenDeliveryReview === undefined ? undefined : {
+      qualityRecovery: frozenDeliveryReview.qualityRecovery, qualityDecisionBindingVersion: frozenDeliveryReview.qualityDecisionBindingVersion,
+      counterSupplement: frozenCounterSupplement,
+    }) : undefined
+  if (deliveryReview && message.eventId.startsWith('owner-quality-retry:')) {
+    const { applyOwnerQualityBrowserRefresh } = require('./project-owner-quality-retry') as typeof import('./project-owner-quality-retry')
+    deliveryReview = applyOwnerQualityBrowserRefresh(deliveryReview, message.eventId,
+      frozenDeliveryReview ? frozenDeliveryReview.validationRefresh?.[0]?.validationId ?? false : undefined)
+  }
+  const result = { ...context, conversation: { ...(fileObservation ? { fileChangeObservation: fileObservation } : {}), ...(webObservation ? { webChangeObservation: { id: webObservation.id, projectId: webObservation.projectId, runId: webObservation.runId, judgment: webObservation.judgment, facts: webObservation.facts.map(({ title, url, sourceId, snippetDigest, publishedAt, quote, isInference }) => ({ title, url, sourceId, snippetDigest, publishedAt, quote, isInference })), impact: webObservation.impact, suggestion: webObservation.suggestion, question: webObservation.question, uncertainty: webObservation.uncertainty, failureReason: webObservation.failureReason, createdAt: webObservation.createdAt, contentHash: webObservation.contentHash } } : {}), ...(deliveredArtifacts ? { deliveredArtifacts } : {}), ...(employeeInteractions ? { employeeInteractionVersion: 1 as const, employeeInteractions } : {}), ...(deliveryFeedback ? { deliveryFeedback, ...(deliveryFeedbackBindingVersion === 1 ? { deliveryFeedbackBindingVersion: 1 as const } : {}) } : {}), ...(observation ? { executionObservation: observation, ...(messageBindingVersion === 1 ? { observationMessageBindingVersion: 1 as const } : {}), ...(deliveryReview ? { deliveryReview } : {}) } : interactionVersion === 2 ? { interactionVersion: 2 as const, openQuestions: questionSources.getOwnerConversationQuestionSources(context, latest.id) } : {}), conversationId: manager.conversationId, throughMessageId: messageId, historyThroughMessageId: latest.id, messages: messages.reverse(), truncated: messages.length < rows.length, currentPlan: plan ? { revision: plan.revision, state: plan.state, proposal: plan.proposal } : null, tasks: tasks.slice(0, 30).map(({ id, title, status }) => ({ id, title, status })), tasksTruncated: tasks.length > 30, ...(activeTeamRuns === undefined ? {} : { activeTeamRuns }) } }
   if (JSON.stringify(result).length > 280000) throw new Error('Owner对话与资料合计过长，请精简当前资料后继续')
   return result
 }
@@ -180,7 +193,7 @@ function pendingOwnerObservation(projectId: string, taskId: string | undefined, 
 }
 
 function pendingOwnerUserMessage(projectId: string, taskId: string | undefined, cutoff: number): { id: string } | undefined {
-  return store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id = ? AND json_extract(payload, '$.kind') = 'conversation' AND json_extract(payload, '$.role') = 'user' AND COALESCE(json_extract(payload, '$.deliveryReviewDecision'), '') <> 'deferred' AND COALESCE(json_extract(payload, '$.chainReview.choice'), '') <> 'later' AND json_extract(payload, '$.teamWorkspaceApproval') IS NULL AND json_extract(payload, '$.taskId') IS ? AND json_extract(payload, '$.createdAt') > ? AND NOT EXISTS (SELECT 1 FROM project_owner_management_messages ignored WHERE ignored.project_id=project_owner_management_messages.project_id AND ignored.event_id IN ('conversation-stale:' || project_owner_management_messages.id, 'conversation-resumed:' || project_owner_management_messages.id)) ORDER BY rowid DESC LIMIT 1").get(projectId, taskId ?? null, cutoff) as { id: string } | undefined
+  return store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id = ? AND json_extract(payload, '$.kind') = 'conversation' AND json_extract(payload, '$.role') = 'user' AND COALESCE(json_extract(payload, '$.deliveryReviewDecision'), '') <> 'deferred' AND COALESCE(json_extract(payload, '$.chainReview.choice'), '') <> 'later' AND json_extract(payload, '$.teamWorkspaceApproval') IS NULL AND json_extract(payload, '$.taskId') IS ? AND json_extract(payload, '$.createdAt') > ? AND NOT EXISTS (SELECT 1 FROM project_owner_management_messages ignored WHERE ignored.project_id=project_owner_management_messages.project_id AND ignored.event_id IN ('conversation-stale:' || project_owner_management_messages.id, 'conversation-resumed:' || project_owner_management_messages.id)) AND json_extract(payload, '$.localTextAction') IS NULL ORDER BY rowid DESC LIMIT 1").get(projectId, taskId ?? null, cutoff) as { id: string } | undefined
 }
 
 /** 新消息串行交给同一管理主体；运行期间只落消息，结果回调后再准备后续批次。 */

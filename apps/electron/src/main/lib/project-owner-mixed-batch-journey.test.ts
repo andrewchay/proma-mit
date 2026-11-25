@@ -8,7 +8,8 @@
 import { afterAll, beforeAll, expect, mock, test } from 'bun:test'
 import { execFileSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildElectronMock } from './testing/electron-mock'
@@ -56,11 +57,14 @@ function gitRepository(): string {
 
 const BRIEF_CONTENT = '目标范围：面向已访谈的现有用户，建议有据可查。'
 const BRIEF_QUOTE = '面向已访谈的现有用户'
+const CODE_BRIEF_TITLE = '形成规格 base.css'
+const BASE_CSS = 'body { color: navy; }\n'
+const PARTIAL_HTML = '<!doctype html><html><!-- 上次失败前已保存 --></html>\n'
 
 interface JourneyCall { role: 'executor' | 'reviewer'; taskTitle: string; reworkOrdinal: number }
 const businessCalls: JourneyCall[] = []
 
-async function fixture() {
+async function fixture(codeBrief = false, throughConversation = false) {
   const project = store.createProject({ title: '混合批次接替旅程', description: '' })
   const repo = gitRepository()
   const workspace = workspaces.createAgentWorkspace(`mixed-journey-${randomUUID()}`, repo)
@@ -80,10 +84,7 @@ async function fixture() {
     summary: '先定规格，再实现',
     assumptions: [],
     risks: [],
-    steps: [
-      { key: 'brief', title: '形成规格', outcome: '规格说明', acceptanceCriteria: ['范围明确'], dependencies: [], roleKey, deliveryKind: 'text' },
-      { key: 'delivery', title: '实现页面', outcome: '可运行的页面', acceptanceCriteria: ['页面可打开'], dependencies: ['brief'], roleKey, deliveryKind: 'development' },
-    ],
+    steps: TWO_STEPS(roleKey, codeBrief),
     changeReason: '建立混合方案',
   })
   plans.confirmProjectOwnerPlanDraft(project.id, 1, 1)
@@ -91,7 +92,9 @@ async function fixture() {
   const preparationInput = {
     requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2,
     selectedStepKeys: ['brief', 'delivery'], executionKind: 'development' as const,
-    developmentScope: { workspaceId: workspace.id, targetPaths: ['index.html'], allowedPaths: ['index.html', 'README.md'], verificationCommands: ['git status'] },
+    developmentScope: codeBrief
+      ? { workspaceId: workspace.id, targetPaths: ['index.html', 'base.css'], allowedPaths: ['index.html', 'base.css'], verificationCommands: ['browser:html.loads'] }
+      : { workspaceId: workspace.id, targetPaths: ['index.html'], allowedPaths: ['index.html', 'README.md'], verificationCommands: ['git status'] },
     qualityManagementVersion: 1 as const, employeeRuntimeVersion: 2 as const,
     executorEmployeeId: executor.id, reviewerEmployeeId: reviewer.id,
     roleAssignments: [{ roleKey, employeeId: executor.id }],
@@ -101,14 +104,22 @@ async function fixture() {
   const preparationPreview = prep.previewOwnerExecutionPreparation(subject, preparationInput)
   const preparation = prep.saveOwnerExecutionPreparation(subject, preparationInput, preparationPreview.previewFingerprint)
   const materializationInput = { requestId: randomUUID(), expectedMaterializationRevision: 0, expectedPreparationId: preparation.id, expectedPreparationRevision: preparation.revision, expectedPreparationHash: preparation.integrityHash, expectedPolicyRevision: preparation.policyRevision }
-  const delegationInput = { projectId: project.id, requestId: randomUUID(), maxRequests: 12, maxCostMicros: 15_000_000, expiresAt: Date.now() + 3_600_000 }
+  const delegationInput = { projectId: project.id, requestId: randomUUID(), maxRequests: 12, maxCostMicros: 15_000_000, expiresAt: Date.now() + 3_600_000,
+    ...(throughConversation ? { autonomousExecution: true as const, autonomousWorkspaceEditVersion: 1 as const } : {}) }
   const delegationPreview = delegation.previewOwnerManagementDelegation(delegationInput)
   delegation.confirmOwnerManagementDelegation({ input: delegationInput, previewHash: delegationPreview.previewHash })
   return { project, subject, workspace, repo, executor, reviewer, materializationInput, preparationRoleKey: roleKey }
 }
 
+interface RunnerOptions {
+  codeBrief?: boolean
+  partialPage?: boolean
+  changeRetainedFile?: boolean
+  throughConversation?: boolean
+}
+
 /** 替身 Runner：业务执行走真实受控出口，Owner 规划返回质量决定或普通回应。 */
-function installRunner() {
+function installRunner(canFinishDevelopment = () => false, { codeBrief, partialPage, changeRetainedFile, throughConversation }: RunnerOptions = {}) {
   registry.setHeadlessAgentRunner(async (input, callbacks) => {
     callbacks.onRuntimeStarted?.()
     const execution = store.getAgentExecutionBySessionId(input.sessionId)
@@ -123,16 +134,35 @@ function installRunner() {
       const channel = channels.getChannelById(input.channelId)!
       await fetcher(`${channel.baseUrl!.replace(/\/+$/, '')}/chat/completions`, { method: 'POST', body: JSON.stringify({ model: input.modelId, max_tokens: 100, messages: [{ role: 'user', content: input.userMessage }] }) })
       // 研发步骤的执行者失败：Provider 以 other 结束，费用仍按真实请求结算。
-      if (task.title === '实现页面') {
+      if (task.title === '实现页面' && !canFinishDevelopment()) {
+        if (partialPage) writeFileSync(join(workspaces.getAgentWorkspaceCwd(workspace, input.sessionId), 'index.html'), PARTIAL_HTML)
         callbacks.onComplete([{ id: randomUUID(), role: 'assistant', content: '已开始实现页面，但运行时提前结束。', createdAt: Date.now() }], {
           runtimeResult: { type: 'result', subtype: 'error_during_execution', finish_reason: 'other', usage: { input_tokens: 1, output_tokens: 2 },
             toolCallBatchIntegrity: { version: 1, complete: false, reasons: ['tool_call_batch_incomplete'], unexecutedMandatory: false } } as unknown as import('@gravitas/shared').SDKResultMessage,
         })
         return
       }
-      const content = command.role === 'reviewer'
+      const cssStep = task.title === CODE_BRIEF_TITLE
+      let content = command.role === 'reviewer' && task.title !== '实现页面' && !cssStep
         ? JSON.stringify({ schemaVersion: 2, artifactHash: (await import('./project-owner-text-delivery')).assertOwnerReviewerTextDelivery(execution.ownerCommandId)!.contentSha256, verdict: 'approved', summary: '规格范围与依据清楚', criteria: [{ criterion: '范围明确', status: 'met', evidence: '正文给出目标范围与依据', quote: BRIEF_QUOTE }], findings: [], blockerReason: null })
         : BRIEF_CONTENT
+      if (task.title === '实现页面' || cssStep) {
+        const filename = cssStep ? 'base.css' : 'index.html'
+        if (command.role === 'executor') {
+          const cwd = workspaces.getAgentWorkspaceCwd(workspace, input.sessionId)
+          if (codeBrief && !cssStep) expect(readFileSync(join(cwd, 'base.css'), 'utf8')).toBe(BASE_CSS)
+          if (partialPage && !cssStep) expect(readFileSync(join(cwd, 'index.html'), 'utf8')).toBe(PARTIAL_HTML)
+          if (changeRetainedFile && !cssStep) writeFileSync(join(cwd, 'base.css'), 'body { color: red; }\n')
+          const cssLink = codeBrief ? '<link rel="stylesheet" href="base.css">' : ''
+          writeFileSync(join(cwd, filename), cssStep ? BASE_CSS : `<!doctype html><html>${cssLink}<body><h1>验收页面</h1></body></html>\n`)
+          content = `已提交 ${filename}。`
+        } else {
+          const { ownerDevelopmentArtifactFromPrompt } = await import('./project-owner-development-artifact')
+          const artifact = ownerDevelopmentArtifactFromPrompt(input.userMessage)!
+          content = JSON.stringify({ schemaVersion: 3, artifactHash: artifact.contentHash, verdict: 'approved', summary: '页面文件与验证结果可核对',
+            criteria: [{ criterion: cssStep ? '样式指定藏青色' : codeBrief ? '浏览器可打开页面' : '页面可打开', status: 'met', evidence: '快照包含可直接核对的文件', quote: cssStep ? BASE_CSS.trim() : '<h1>验收页面</h1>' }], findings: [], blockerReason: null })
+        }
+      }
       callbacks.onComplete([{ id: randomUUID(), role: 'assistant', content, createdAt: Date.now() }], {
         runtimeResult: { type: 'result', subtype: 'success', finish_reason: 'stop', usage: { input_tokens: 1, output_tokens: 2 },
           toolCallBatchIntegrity: { version: 1, complete: true, reasons: [], unexecutedMandatory: false } } as unknown as import('@gravitas/shared').SDKResultMessage,
@@ -149,18 +179,30 @@ function installRunner() {
     const delivery = conversation?.deliveryReview
     const observation = conversation?.executionObservation
     const binding = { projectId: source.link.projectId, goalVersion: source.context.goal.goal.goalVersion, contextFingerprint: source.context.fingerprint }
-    const result = delivery?.qualityDecisionVersion === 1 && delivery.artifact && delivery.review && observation
+    const artifactHash = delivery?.developmentArtifact?.contentHash ?? delivery?.artifact?.contentSha256
+    const assignment = throughConversation ? source.assignmentContext : undefined
+    const continued = throughConversation && conversation?.messages.some(message => message.role === 'user' && message.content === CONTINUE_PAGE)
+    const result = assignment
+      ? { schemaVersion: 1, contextFingerprint: assignment.contextFingerprint, selectedStepKeys: assignment.steps.map(step => step.key),
+        scopeReason: '继续完成已确认的样式与页面', workspaceId: assignment.workspaces[0]!.id, workspaceReason: '沿用原工作区',
+        executionKind: 'development', executionKindReason: '研发文件交付',
+        assignments: [...new Set(assignment.steps.map(step => step.roleKey))].map(roleKey => ({ roleKey, employeeId: assignment.candidates.find(item => item.name === '执行者')!.id, reason: '沿用原执行者' })),
+        reviewerEmployeeId: assignment.candidates.find(item => item.name === '独立评审')!.id, reviewerReason: '继续独立检查',
+        developmentScope: { targetPaths: ['index.html', 'base.css'], allowedPaths: ['index.html', 'base.css'], verificationCommands: ['browser:html.loads'], reason: '沿用原开发范围' } }
+      : delivery?.qualityDecisionVersion === 1 && artifactHash && delivery.review && observation
       ? {
         schemaVersion: 1, kind: 'quality_decision', binding, messageId: conversation!.throughMessageId,
         message: '已按完整成果与独立检查核对。',
         decision: {
-          reviewerCommandId: observation.commandId, artifactHash: delivery.artifact.contentSha256, verdict: 'accept',
+          reviewerCommandId: observation.commandId, artifactHash, verdict: 'accept',
           reason: '规格步骤的成果与独立检查均满足验收标准',
           criteria: delivery.review.criteria.map(item => ({ criterion: item.criterion, status: 'met', evidence: '成果正文包含对应依据', quote: item.quote ?? BRIEF_QUOTE })),
           findings: [],
         },
       }
-      : { schemaVersion: 1, kind: 'conversation_reply', binding, messageId: conversation?.throughMessageId ?? randomUUID(), message: '我已记录当前进度，等待下一步事实。' }
+      : continued && !observation
+        ? { schemaVersion: 1, kind: 'plan_proposal', binding, proposal: { summary: '保留样式并完成页面', assumptions: [], risks: [], steps: TWO_STEPS(source.context.sources.roles[0]!.key, true) } }
+        : { schemaVersion: 1, kind: 'conversation_reply', binding, messageId: conversation?.throughMessageId ?? randomUUID(), message: '我已记录当前进度，等待下一步事实。' }
     callbacks.onComplete([], { runtimeResult: { type: 'result', subtype: 'success', session_id: input.sessionId, finish_reason: 'stop', result: JSON.stringify(result), usage: { input_tokens: 10, output_tokens: 30 }, owner_planning_usage: { inputTokens: 10, outputTokens: 30, cacheReadTokens: null, cacheWriteTokens: null } } as unknown as import('@gravitas/shared').SDKResultMessage })
   })
 }
@@ -322,16 +364,16 @@ async function prepareSupersedingBatch(
   return { materializationInput, preview: material.previewOwnerTaskMaterialization(f.subject, materializationInput) }
 }
 
-const TWO_STEPS = (roleKey: string) => [
-  { key: 'brief', title: '形成规格', outcome: '规格说明', acceptanceCriteria: ['范围明确'], dependencies: [] as string[], roleKey, deliveryKind: 'text' as const },
-  { key: 'delivery', title: '实现页面', outcome: '可运行的页面', acceptanceCriteria: ['页面可打开'], dependencies: ['brief'], roleKey, deliveryKind: 'development' as const },
+const TWO_STEPS = (roleKey: string, codeBrief = false) => [
+  { key: 'brief', title: codeBrief ? CODE_BRIEF_TITLE : '形成规格', outcome: codeBrief ? '可复用的样式文件' : '规格说明', acceptanceCriteria: [codeBrief ? '样式指定藏青色' : '范围明确'], dependencies: [] as string[], roleKey, deliveryKind: codeBrief ? 'development' as const : 'text' as const },
+  { key: 'delivery', title: '实现页面', outcome: '可运行的页面', acceptanceCriteria: [codeBrief ? '浏览器可打开页面' : '页面可打开'], dependencies: ['brief'], roleKey, deliveryKind: 'development' as const },
 ]
 
 /** 等规格验收完成、研发步骤失败；返回规格任务。 */
-async function untilBriefAccepted(f: Awaited<ReturnType<typeof fixture>>) {
+async function untilBriefAccepted(f: Awaited<ReturnType<typeof fixture>>, title = '形成规格') {
   await until(() => {
     const commands = executionCommand.listOwnerExecutionCommands(f.subject)
-    return commands.some(c => c.taskTitle === '形成规格' && c.role === 'reviewer' && c.state === 'settled')
+    return commands.some(c => c.taskTitle === title && c.role === 'reviewer' && qualityActions.readOwnerQualityAction(c.commandId)?.state === 'accepted')
       && commands.some(c => c.taskTitle === '实现页面' && c.state === 'settled' && c.executionStatus === 'failed')
   }, '规格验收完成且研发失败', 30_000, () => ({
     calls: businessCalls,
@@ -339,7 +381,7 @@ async function untilBriefAccepted(f: Awaited<ReturnType<typeof fixture>>) {
       .map(c => ({ title: c.taskTitle, role: c.role, state: c.state, executionStatus: c.executionStatus })),
     schedule: scheduler.getOwnerAutonomousScheduleStatus(f.project.id),
   }))
-  return store.listTasks(f.project.id).find(task => task.title === '形成规格')!
+  return store.listTasks(f.project.id).find(task => task.title === title)!
 }
 
 /**
@@ -486,14 +528,227 @@ test('Given连续两次恢复 When第二次材料化 Then更早已验收的步�
   }
 }, 120_000)
 
+const CONTINUE_PAGE = '请保留已验收的 base.css，接着完成上次没有完成的页面。验收和授权范围沿用原来。'
+
+test('Given 样式已验收且页面被主仓未提交文件阻塞 When 用户清理后重新核对 Then 原授权只续跑页面并交付', async () => {
+  const f = await fixture(true)
+  const accepted = await import('./project-owner-accepted-artifact')
+  const browser = await import('./owner-runtime-browser-verifier')
+  const conversation = await import('./project-owner-management-questions')
+  const { dispatchAutonomousOwnerCommandExecution } = await import('./project-owner-execution-dispatcher')
+  const { registerProjectOwnerExecutionIpcHandlers } = await import('./project-owner-execution-ipc')
+  const handlers = new Map<string, (event: unknown, request: unknown) => unknown>()
+  registerProjectOwnerExecutionIpcHandlers({ handle: (name, handler) => { handlers.set(name, handler) } })
+  const recheck = (request: unknown) => handlers.get(PROJECT_IPC_CHANNELS.RECHECK_OWNER_DEVELOPMENT_WORKSPACE)!(undefined, request)
+  const marker = join(f.repo, 'qa-blocker.txt')
+  const secondMarker = join(f.repo, 'qa-blocker-again.txt')
+  const firstCall = businessCalls.length
+  const dispatchFailures: string[] = []
+  let blockedAttempts = 0
+  const driver = {
+    queue: executionCommand.reserveAndQueueAutonomousOwnerCommand,
+    dispatch: async (request: unknown) => {
+      const { commandId } = request as { commandId: string }
+      const command = executionCommand.listOwnerExecutionCommands(f.subject).find(item => item.commandId === commandId)
+      if (blockedAttempts < 2 && command?.taskTitle === '实现页面' && command.role === 'executor') {
+        writeFileSync(blockedAttempts === 0 ? marker : secondMarker, '用于验收的未提交文件\n')
+        blockedAttempts += 1
+      }
+      try { return await dispatchAutonomousOwnerCommandExecution(request) }
+      catch (error) {
+        dispatchFailures.push(error instanceof Error ? error.message : String(error))
+        throw error
+      }
+    },
+  }
+  installRunner(() => true, { codeBrief: true })
+  const nativeBrowser = process.platform === 'darwin'
+    ? (await import('./testing/owner-electron-browser-runner')).createOwnerElectronBrowserRunner(directory)
+    : undefined
+  browser.setOwnerRuntimeBrowserRunner(nativeBrowser ?? (async input => ({
+    relativePath: 'index.html', durationMs: 1, timedOut: false,
+    checks: input.templates.map(template => ({ id: template.id, title: template.title, status: 'passed', detail: '验收替身' })),
+  })))
+  for (const event of managementStore.listPendingOwnerManagementEvents(f.project.id)) managementStore.consumeOwnerManagementEvent(event)
+  const stopWake = scheduleEvents.onOwnerAutonomousScheduleWake(projectId => {
+    if (projectId === f.project.id) void scheduler.runOwnerAutonomousSchedule(projectId, driver)
+  })
+  const stopManagement = management.startOwnerManagementLoop()
+  try {
+    const preview = material.previewOwnerTaskMaterialization(f.subject, f.materializationInput)
+    const original = await executionLaunch.launchOwnerPreparedExecution(
+      { ...f.subject, input: f.materializationInput, previewFingerprint: preview.previewFingerprint }, { schedule: async () => {} },
+    )
+    await scheduler.runOwnerAutonomousSchedule(f.project.id, driver)
+    const pageCommand = () => executionCommand.listOwnerExecutionCommands(f.subject)
+      .find(item => item.taskTitle === '实现页面' && item.role === 'executor')
+    await until(() => pageCommand()?.state === 'needs_reconcile', '等待真实研发工作区阻塞')
+    const blocked = pageCommand()!
+    const cssTask = store.listTasks(f.project.id).find(task => task.title === CODE_BRIEF_TITLE)!
+    const originalArtifact = accepted.readLatestAcceptedArtifact(f.project.id, cssTask.id)!
+    expect(originalArtifact).toBeDefined()
+    expect(store.getAgentExecution(blocked.executionId!)?.sessionId).toBe('')
+    const db = store.getProjectDb()
+    const requests = () => db.prepare('SELECT COUNT(*) AS count FROM project_owner_execution_request_reservations WHERE command_id=?').get(blocked.commandId)
+    expect(requests()).toEqual({ count: 0 })
+    const { recoverUnclaimedOwnerCommandPreparations } = await import('./project-owner-execution-stop')
+    expect(recoverUnclaimedOwnerCommandPreparations()).toBe(0)
+    expect(pageCommand()?.state).toBe('needs_reconcile')
+    expect(blocked.workspaceBlocked).toBe(true)
+    expect(scheduler.getOwnerAutonomousScheduleStatus(f.project.id).reason).toContain('研发工作区有未提交的改动')
+    const checkInput = { ...f.subject, executionId: blocked.executionId }
+    expect(await recheck(checkInput)).toMatchObject({ ok: true, value: { state: 'blocked', blocker: { kind: 'dirty_worktree', untrackedFiles: ['qa-blocker.txt'] } } })
+    expect(await recheck({ ...checkInput, taskId: cssTask.id })).toMatchObject({ ok: false })
+    expect(grantIssue.getOwnerExecutionGrant(f.subject)).toMatchObject({ grantId: original.grantId, state: 'active' })
+    const cssCommands = () => executionCommand.listOwnerExecutionCommands(f.subject).filter(item => item.taskId === cssTask.id)
+    const cssBefore = cssCommands().map(({ commandId, actualCostMicros }) => ({ commandId, actualCostMicros }))
+    renameSync(marker, join(directory, `${f.project.id}-cleared-blocker.txt`))
+    expect(await recheck(checkInput)).toEqual({ ok: true, value: { state: 'clean' } })
+    await until(() => blockedAttempts === 2 && pageCommand()?.state === 'needs_reconcile', '再次阻塞仍保留原命令')
+    const notices = conversation.getOwnerManagementConversation(f.project.id).messages.filter(item => item.kind === 'attention')
+    expect(notices.some(item => item.content.includes('qa-blocker.txt'))).toBe(true)
+    expect(notices.some(item => item.content.includes('qa-blocker-again.txt'))).toBe(true)
+    expect(requests()).toEqual({ count: 0 })
+    expect(grantIssue.getOwnerExecutionGrant(f.subject)).toMatchObject({ grantId: original.grantId, state: 'active' })
+    renameSync(secondMarker, join(directory, `${f.project.id}-cleared-blocker-again.txt`))
+    // 模拟旧版自动扫描已经恢复命令、却遗留授权待对账。其他请求未知时必须保持冻结。
+    db.prepare("UPDATE project_owner_execution_grants SET state='needs_reconcile' WHERE id=?").run(original.grantId)
+    db.prepare("UPDATE project_owner_execution_commands SET state='queued' WHERE id=?").run(blocked.commandId)
+    expect(pageCommand()?.workspaceBlocked).toBe(true)
+    const cssRequest = cssCommands().find(item => item.role === 'executor')!
+    const setRequestState = (state: string) => db.prepare('UPDATE project_owner_execution_request_reservations SET state=? WHERE command_id=?').run(state, cssRequest.commandId)
+    setRequestState('needs_reconcile')
+    expect(await recheck(checkInput)).toMatchObject({ ok: false, error: { message: '工作区已清理，这次授权还有其他执行或费用需要核对。' } })
+    expect(grantIssue.getOwnerExecutionGrant(f.subject)).toMatchObject({ state: 'needs_reconcile' })
+    setRequestState('settled')
+    expect(await recheck(checkInput)).toEqual({ ok: true, value: { state: 'clean' } })
+    const delivery = () => conversation.getOwnerManagementConversation(f.project.id).messages.find(item => item.kind === 'delivery')?.delivery
+    await until(() => Boolean(delivery()) || dispatchFailures.length > 0, '重新核对后自动交付原任务', 30_000,
+      () => scheduler.getOwnerAutonomousScheduleStatus(f.project.id))
+    expect(dispatchFailures).toEqual([])
+    const final = delivery()!.items.find(item => item.stepKey === 'delivery')!
+    const files = JSON.parse(final.content).files as Array<{ file: { path: string }; newContent: string }>
+    expect(files.find(item => item.file.path === 'base.css')?.newContent).toBe(BASE_CSS)
+    expect(files.find(item => item.file.path === 'index.html')?.newContent).toContain('href="base.css"')
+    const validation = conversation.getOwnerManagementConversation(f.project.id).deliveryValidations?.find(item => item.artifactHash === final.artifactHash)
+    expect(validation?.validations).toMatchObject([{ method: 'browser_assertions', status: 'passed', checks: [{ id: 'html.loads', status: 'passed' }] }])
+    expect(pageCommand()).toMatchObject({ commandId: blocked.commandId, executionId: blocked.executionId, grantId: original.grantId, state: 'settled' })
+    expect(grantIssue.getOwnerExecutionGrant(f.subject)).toMatchObject({ grantId: original.grantId, state: 'active' })
+    expect(cssCommands().map(({ commandId, actualCostMicros }) => ({ commandId, actualCostMicros }))).toEqual(cssBefore)
+    expect(accepted.readLatestAcceptedArtifact(f.project.id, cssTask.id)).toEqual(originalArtifact)
+    expect(requests()).toEqual({ count: 1 })
+    expect(businessCalls.slice(firstCall).map(({ taskTitle, role }) => [taskTitle, role])).toEqual([
+      [CODE_BRIEF_TITLE, 'executor'], [CODE_BRIEF_TITLE, 'reviewer'], ['实现页面', 'executor'], ['实现页面', 'reviewer'],
+    ])
+  } finally {
+    await stopManagement()
+    stopWake()
+    browser.setOwnerRuntimeBrowserRunner(null)
+    const manager = managementStore.getOwnerManager(f.project.id)
+    if (manager?.status === 'active') managementStore.setOwnerManagerStatus(f.project.id, manager.revision, 'paused')
+  }
+}, 120_000)
+
+test.each(['没有页面半成品', '有页面半成品', '后继试图改原样式'])('Given 上一批已验收样式而页面失败（%s） When 接替页面任务 Then 新工作树使用原版样式并仅支付剩余步骤', async scenario => {
+  let finishDevelopment = false
+  const changeRetainedFile = scenario === '后继试图改原样式'
+  const throughConversation = scenario === '有页面半成品'
+  installRunner(() => finishDevelopment, { codeBrief: true, partialPage: throughConversation, changeRetainedFile, throughConversation })
+  const f = await fixture(true, throughConversation)
+  const accepted = await import('./project-owner-accepted-artifact')
+  const browser = await import('./owner-runtime-browser-verifier')
+  const settlement = await import('./project-owner-execution-settlement')
+  const conversation = await import('./project-owner-management-questions')
+  const nativeBrowser = throughConversation && process.platform === 'darwin'
+    ? (await import('./testing/owner-electron-browser-runner')).createOwnerElectronBrowserRunner(directory)
+    : undefined
+  let browserCalls = 0
+  browser.setOwnerRuntimeBrowserRunner(async input => {
+    browserCalls += 1
+    expect(input.resourcePaths?.map(path => path.split('/').at(-1))).toEqual(['base.css'])
+    expect(readFileSync(input.filePath, 'utf8')).toContain('href="base.css"')
+    if (nativeBrowser) return nativeBrowser(input)
+    return { relativePath: 'index.html', durationMs: 1, timedOut: false,
+      checks: input.templates.map(template => ({ id: template.id, title: template.title, status: 'passed', detail: '页面和冻结样式齐备' })) }
+  })
+  for (const event of managementStore.listPendingOwnerManagementEvents(f.project.id)) managementStore.consumeOwnerManagementEvent(event)
+  const stopWake = scheduleEvents.onOwnerAutonomousScheduleWake(projectId => { if (projectId === f.project.id) void scheduler.runOwnerAutonomousSchedule(projectId) })
+  const stopManagement = management.startOwnerManagementLoop()
+  try {
+    const preview = material.previewOwnerTaskMaterialization(f.subject, f.materializationInput)
+    const original = await executionLaunch.launchOwnerPreparedExecution(
+      { ...f.subject, input: f.materializationInput, previewFingerprint: preview.previewFingerprint }, { schedule: async () => {} },
+    )
+    await scheduler.runOwnerAutonomousSchedule(f.project.id)
+    const cssTask = await untilBriefAccepted(f, CODE_BRIEF_TITLE)
+    const originalArtifact = accepted.readLatestAcceptedArtifact(f.project.id, cssTask.id)!
+    const originalUsage = settlement.readOwnerGrantUsage(original.grantId)
+    finishDevelopment = true
+    if (throughConversation) {
+      const { sendOwnerManagementMessage } = await import('./project-owner-management-conversation')
+      sendOwnerManagementMessage({ ...f.subject, conversationId: managementStore.getOwnerManager(f.project.id)!.conversationId, requestId: randomUUID(), expectedGoalRevision: 1, content: CONTINUE_PAGE })
+    } else {
+      const supersession = recovery.planMixedBatchSupersession(f.subject, original.materializationId)
+      const next = await prepareSupersedingBatch(f, TWO_STEPS(f.preparationRoleKey, true), '保留样式并接替页面')
+      const materialized = material.materializeOwnerTasks(f.subject, next.materializationInput, next.preview.previewFingerprint)
+      recovery.recordMixedBatchSupersession(f.subject, supersession, materialized.id)
+      await executionLaunch.launchOwnerPreparedExecution(
+        { ...f.subject, input: next.materializationInput, previewFingerprint: next.preview.previewFingerprint }, { schedule: async () => {} },
+      )
+      await scheduler.runOwnerAutonomousSchedule(f.project.id)
+    }
+    const delivery = () => conversation.getOwnerManagementConversation(f.project.id).messages.find(message => message.kind === 'delivery')?.delivery
+    if (changeRetainedFile) {
+      const taskId = material.getOwnerTaskMaterialization(f.subject).materialization!.links[0]!.taskId
+      await until(() => executionCommand.listOwnerExecutionCommands(f.subject).some(command => command.taskId === taskId && command.executionStatus === 'failed'), '修改原版样式导致冻结失败')
+      expect(store.listAgentExecutionsByEntity('task', taskId).some(execution => execution.error?.includes('base.css'))).toBe(true)
+      expect(delivery()).toBeUndefined()
+      expect(browserCalls).toBe(0)
+      expect(accepted.readLatestAcceptedArtifact(f.project.id, cssTask.id)).toEqual(originalArtifact)
+      return
+    }
+    await until(() => Boolean(delivery()), '接替批次交付完整页面', 30_000, () => ({
+      commands: executionCommand.listOwnerExecutionCommands(f.subject).map(c => ({ title: c.taskTitle, role: c.role, status: c.executionStatus })),
+      failures: store.listAgentExecutionsByProject(f.project.id).filter(item => item.status === 'failed').map(item => item.error),
+      messages: conversation.getOwnerManagementConversation(f.project.id).messages.slice(-7).map(message => message.content),
+    }))
+    const resumed = material.getOwnerTaskMaterialization(f.subject).materialization!
+    expect(resumed.preview.retainedSteps).toEqual([{ stepKey: 'brief', taskId: cssTask.id, artifactHash: originalArtifact.artifactHash, dependedOnBy: ['delivery'] }])
+    expect(resumed.preview.projections.map(item => item.stepKey)).toEqual(['delivery'])
+    const current = grantIssue.getOwnerExecutionGrant(f.subject)!
+    expect(current.ownerManagementDelegationId).toBe(original.ownerManagementDelegationId)
+    expect(current.grantId).not.toBe(original.grantId)
+    const final = delivery()!.items.find(item => item.stepKey === 'delivery')!
+    const files = JSON.parse(final.content).files as Array<{ file: { path: string }; newContent: string }>
+    expect(files.map(item => item.file.path).sort()).toEqual(['base.css', 'index.html'])
+    expect(files.find(item => item.file.path === 'base.css')?.newContent).toBe(BASE_CSS)
+    expect(accepted.readLatestAcceptedArtifact(f.project.id, cssTask.id)).toEqual(originalArtifact)
+    expect(browserCalls).toBe(1)
+    if (nativeBrowser) {
+      const validation = conversation.getOwnerManagementConversation(f.project.id).deliveryValidations?.find(item => item.artifactHash === final.artifactHash)
+      expect(validation?.validations).toMatchObject([{ method: 'browser_assertions', status: 'passed', checks: [{ id: 'html.loads', status: 'passed' }] }])
+    }
+    expect(executionCommand.listOwnerExecutionCommands(f.subject).filter(command => command.taskTitle === CODE_BRIEF_TITLE)).toHaveLength(2)
+    expect(settlement.readOwnerGrantUsage(original.grantId)).toEqual(originalUsage)
+    expect(execFileSync('git', ['status', '--porcelain'], { cwd: f.repo, encoding: 'utf8' })).toBe('')
+  } finally {
+    await stopManagement()
+    stopWake()
+    browser.setOwnerRuntimeBrowserRunner(null)
+    const manager = managementStore.getOwnerManager(f.project.id)
+    if (manager?.status === 'active') managementStore.setOwnerManagerStatus(f.project.id, manager.revision, 'paused')
+  }
+}, 120_000)
+
 /**
  * 场景三：新 B 实际收到旧 A 的正文。
  *
  * 只断言 retainedSteps 存在不足以证明交接真的发生——必须看 B 启动时的
  * 冻结提示里是否含 A 的已验收正文。
  */
-test('Given接替批次 WhenB实际启动 Then提示里带A的已验收正文', async () => {
-  installRunner()
+test('Given接替批次 When B 带 A 的已验收正文完成交付 Then整份方案完成且不重复执行 A', async () => {
+  let finishDevelopment = false
+  installRunner(() => finishDevelopment)
   const f = await fixture()
   for (const event of managementStore.listPendingOwnerManagementEvents(f.project.id)) managementStore.consumeOwnerManagementEvent(event)
   const stopWake = scheduleEvents.onOwnerAutonomousScheduleWake(projectId => { if (projectId === f.project.id) void scheduler.runOwnerAutonomousSchedule(projectId) })
@@ -511,6 +766,7 @@ test('Given接替批次 WhenB实际启动 Then提示里带A的已验收正文', 
     const next = await prepareSupersedingBatch(f, TWO_STEPS(f.preparationRoleKey), '接替失败步骤')
     const materialized = material.materializeOwnerTasks(f.subject, next.materializationInput, next.preview.previewFingerprint)
     const deliveryTaskId = materialized.links.find(link => link.stepKey === 'delivery')!.taskId
+    finishDevelopment = true
 
     // 走真实启动路径：新批次发行授权后由调度器派工，
     // B 的命令提示由 resolveUpstreamArtifactHandoffs 构造。
@@ -528,6 +784,10 @@ test('Given接替批次 WhenB实际启动 Then提示里带A的已验收正文', 
     // 交接块必须存在且含 A 的已验收正文。
     expect(execution.prompt).toContain('<untrusted-upstream-artifacts>')
     expect(execution.prompt).toContain(BRIEF_QUOTE)
+    const delivery = await import('./project-owner-management-delivery')
+    const plan = plans.getProjectOwnerPlanDraft(f.project.id)!
+    await until(() => delivery.hasCompleteOwnerManagementDelivery(f.project.id, undefined, plan), '整份方案已交付')
+    expect(executionCommand.listOwnerExecutionCommands(f.subject).filter(command => command.taskTitle === '形成规格')).toHaveLength(2)
   } finally {
     await stopManagement()
     stopWake()

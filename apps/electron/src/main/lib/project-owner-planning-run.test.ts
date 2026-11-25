@@ -84,6 +84,29 @@ test('Given 澄清 When 完成 Then 人答前无提案或补请求', () => {
   const f = accepted(prepared()); const { proposal: _proposal, ...binding } = f.response; const response = { ...binding, kind: 'needs_clarification', reason: '验收范围影响结果', questions: [{ key: 'audience', reasonType: 'source_conflict', question: '核心受众是谁？', why: '决定定位范围', options: [], sourceReferences: [{ sourceId: 'goal.objective', quote: '提出可评审的定位建议' }, { sourceId: 'project.title', quote: 'Owner定位' }] }] }
   const outcome = runService.recordOwnerPlanningRun(f.executionId, 'ai-sdk', { ...f.result, result: JSON.stringify(response) })!; expect(outcome.state).toBe('needs_clarification'); expect(outcome.clarification?.questions).toHaveLength(1); expect(outcome.clarification?.questions[0]?.sourceReferences).toEqual(response.questions[0]?.sourceReferences); expect(runService.getOwnerPlanningRunOutcome(f.executionId)?.clarification?.questions[0]?.sourceReferences).toEqual(response.questions[0]?.sourceReferences); expect(plans.getProjectOwnerPlanDraft(f.project.id)).toBeNull()
 })
+test.each([false, true])('Given 首轮澄清省略推荐选项且旧版本误拒（目标已变更=%s） When 重验原回执 Then 仅原目标可恢复提问', changed => {
+  const f = accepted(prepared())
+  const { proposal: _proposal, ...binding } = f.response
+  const response = { ...binding, kind: 'needs_clarification', reason: '需要选择时段',
+    questions: [{ key: 'shift', reasonType: 'missing_information', question: '甲还是乙？', why: '时段影响交接', options: ['甲', '乙'], recommended: null }] }
+  const result = { ...f.result, result: JSON.stringify(response), usage: { input_tokens: 3, output_tokens: 4 },
+    owner_planning_usage: { inputTokens: 3, outputTokens: 4, cacheReadTokens: null, cacheWriteTokens: null } }
+  const first = runService.recordOwnerPlanningRun(f.executionId, 'ai-sdk', result)!
+  expect(first.state).toBe('needs_clarification')
+  expect(first.clarification!.questions[0]).not.toHaveProperty('recommended')
+  const failed = { executionId: f.executionId, receiptId: first.receiptId, state: 'failed', detail: 'Owner规划澄清建议必须是字符串', protocolRejected: true }
+  store.getProjectDb().prepare('UPDATE project_owner_planning_run_outcomes SET payload=? WHERE execution_id=?')
+    .run(JSON.stringify({ ...failed, integrityHash: hash(failed) }), f.executionId)
+  store.updateAgentExecution(f.executionId, { status: 'failed', error: failed.detail })
+  if (changed) saveProjectOwnerGoalDraft(f.project.id, 1, { objective: '用户已自己选定新目标' })
+  expect(runService.recoverInitialOwnerPlanningResponse(f.executionId)).toBe(!changed)
+  expect(runService.recoverInitialOwnerPlanningResponse(f.executionId)).toBe(false)
+  expect(runService.getOwnerPlanningRunOutcome(f.executionId)?.state).toBe(changed ? 'failed' : 'needs_clarification')
+  expect(store.getAgentExecution(f.executionId)?.status).toBe('failed')
+  expect(runService.getOwnerPlanningRunReceipt(first.receiptId)?.responseText).toBe(result.result)
+  expect(plans.getProjectOwnerPlanDraft(f.project.id)).toBeNull()
+  expect(store.listAgentExecutionsByEntity('task', f.link.planningTaskId)).toHaveLength(1)
+})
 test('Given 无占位/错session/非stop/坏JSON When callback Then 不生成；费用不从兼容usage估算', () => {
   for (const variation of ['no_admission', 'wrong_session', 'length', 'bad_json']) {
     const f = accepted(prepared()); if (variation === 'no_admission') store.getProjectDb().prepare('DELETE FROM project_owner_planning_admissions WHERE execution_id = ?').run(f.executionId)

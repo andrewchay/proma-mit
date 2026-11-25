@@ -296,6 +296,118 @@ test.each(['到期', '撤销'])('Given首次规划无输出且授权%s When 确�
   }
 }, 15_000)
 
+test.each(['unchanged', 'revoked', 'replaced_after_recovery'] as const)('Given 首次规划结构被旧版拒绝（授权=%s） When 重复核对 Then 只在原授权内复用回执', async (authorization) => {
+  const f = fixture()
+  const input = { ...f.input, autonomousExecution: true as const }
+  let grant = issue({ ...f, input })
+  const runs = await import('./project-owner-planning-run-service')
+  const protocol = await import('./project-owner-planning-protocol')
+  try {
+    await startDelegatedOwnerPlanningTask(f.taskId)
+    const execution = store.listAgentExecutionsByProject(f.project.id)[0]!
+    const snapshot = resolveOwnerPlanningSession(execution.sessionId!)!
+    const raw = {
+      kind: 'plan_proposal', schemaVersion: 1,
+      binding: { projectId: f.project.id, goalVersion: snapshot.link.goalVersion, contextFingerprint: snapshot.context.fingerprint },
+      proposal: { summary: '交付产品定位建议', assumptions: [], risks: [] },
+      steps: [{ key: 'step-1', title: '形成建议', outcome: '可供审阅的定位建议', acceptanceCriteria: ['有明确的定位依据'], dependencies: [], roleKey: snapshot.context.sources.roles[0]!.key, deliveryKind: 'text' }],
+    }
+    const legacy = spyOn(protocol, 'parseProjectOwnerPlanningResponse').mockImplementationOnce(() => { throw new Error('Owner规划响应包含未知字段') })
+    try {
+      callbacks.get(execution.sessionId!)!.onComplete([], {
+        runtimeResult: { type: 'result', subtype: 'success', session_id: execution.sessionId!, finish_reason: 'stop', result: JSON.stringify(raw),
+          usage: { input_tokens: 10, output_tokens: 20 }, owner_planning_usage: { inputTokens: 10, outputTokens: 20, cacheReadTokens: null, cacheWriteTokens: null } },
+      })
+      await until(() => store.getAgentExecution(execution.id)?.status === 'failed')
+    } finally { legacy.mockRestore() }
+    const failure = runs.getOwnerPlanningRunOutcome(execution.id)!
+    const receipt = runs.getOwnerPlanningRunReceipt(failure.receiptId)
+    const priorBudget = service.getOwnerManagementDelegation(f.project.id).reservedCostMicros
+    const dispatched = calls
+    if (authorization === 'replaced_after_recovery') {
+      expect(runs.recoverInitialOwnerPlanningResponse(execution.id)).toBe(true)
+      expect(plans.getProjectOwnerPlanDraft(f.project.id)?.state).toBe('proposed')
+    }
+    if (authorization !== 'unchanged') service.revokeOwnerManagementDelegation(f.project.id, grant.id)
+    if (authorization === 'replaced_after_recovery') {
+      grant = issue({ ...f, input: { ...input, requestId: randomUUID() } })
+    }
+    reconcileOwnerManagement(f.project.id)
+    reconcileOwnerManagement(f.project.id)
+    expect(calls).toBe(dispatched)
+    expect(store.getAgentExecution(execution.id)?.status).toBe('failed')
+    expect(runs.getOwnerPlanningRunReceipt(failure.receiptId)).toEqual(receipt)
+    expect(service.getOwnerManagementDelegation(f.project.id).reservedCostMicros).toBe(priorBudget)
+    const recovered = runs.getOwnerPlanningRunOutcome(execution.id)
+    if (authorization === 'revoked') {
+      expect(recovered).toEqual(failure)
+      expect(plans.getProjectOwnerPlanDraft(f.project.id)).toBeNull()
+    } else if (authorization === 'replaced_after_recovery') {
+      expect(recovered).toMatchObject({ state: 'proposed', receiptId: failure.receiptId, planRevision: 1 })
+      expect(plans.listProjectOwnerPlanHistory(f.project.id).map(plan => plan.state)).toEqual(['proposed'])
+    } else {
+      expect(recovered).toMatchObject({ state: 'proposed', receiptId: failure.receiptId, planRevision: 1 })
+      expect(plans.listProjectOwnerPlanHistory(f.project.id).map(plan => plan.state)).toEqual(['proposed', 'confirmed'])
+      expect(getOwnerManagementConversation(f.project.id).messages.filter(message => message.kind === 'plan_proposal')).toHaveLength(1)
+    }
+  } finally { if (authorization !== 'revoked') service.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+})
+
+test.each([
+  { knownCost: false, replaceGrant: false },
+  { knownCost: true, replaceGrant: false },
+  { knownCost: true, replaceGrant: true },
+])('Given 规划改写目标原文 %j When 重复核对 Then 原授权最多准备一轮可计费纠正', async ({ knownCost, replaceGrant }) => {
+  const f = fixture()
+  const input = { ...f.input, autonomousExecution: true as const }
+  let grant = issue({ ...f, input })
+  const runs = await import('./project-owner-planning-run-service')
+  const failPlanning = async (taskId: string) => {
+    await startDelegatedOwnerPlanningTask(taskId)
+    const execution = store.listAgentExecutionsByEntity('task', taskId)[0]!
+    const source = resolveOwnerPlanningSession(execution.sessionId!)!
+    const result = JSON.stringify({
+      kind: 'plan_proposal', binding: { projectId: f.project.id, goalVersion: source.link.goalVersion, contextFingerprint: source.context.fingerprint },
+      proposal: { summary: '定位建议', assumptions: [], risks: [],
+        steps: [{ key: 'step-1', title: '写建议', outcome: '完整建议', acceptanceCriteria: ['有明确依据'], dependencies: [], deliveryKind: 'text', roleKey: source.context.sources.roles[0]!.key }],
+        criteriaTrace: [{ key: 'criterion-1', source: 'objective', sourceIndex: 0, sourceText: '改写用户目标', criticality: 'critical', stepKey: 'step-1', verification: 'manual_review' }],
+      },
+    })
+    callbacks.get(execution.sessionId!)!.onComplete([], { runtimeResult: {
+      type: 'result', subtype: 'success', session_id: execution.sessionId!, finish_reason: 'stop', result,
+      ...(knownCost ? { total_cost_usd: 0.0001 } : {}),
+      usage: { input_tokens: 10, output_tokens: 20 }, owner_planning_usage: { inputTokens: 10, outputTokens: 20, cacheReadTokens: null, cacheWriteTokens: null },
+    } })
+    await until(() => store.getAgentExecution(execution.id)?.status === 'failed')
+    expect(runs.getOwnerPlanningRunOutcome(execution.id)?.detail).toContain('追溯来源原文与目标不符')
+  }
+  const queued = () => store.getProjectDb().prepare("SELECT planning_task_id FROM project_owner_planning_links WHERE project_id=? AND json_extract(payload,'$.requestId') LIKE 'owner-initial-plan-retry:%'")
+    .all(f.project.id) as { planning_task_id: string }[]
+  try {
+    await failPlanning(f.taskId)
+    reconcileOwnerManagement(f.project.id)
+    reconcileOwnerManagement(f.project.id)
+    expect(queued()).toHaveLength(knownCost ? 1 : 0)
+    if (knownCost) {
+      const retryTaskId = queued()[0]!.planning_task_id
+      const { startControlledTask, getControlledTaskStartPreview } = await import('./controlled-project-task-service')
+      const preview = getControlledTaskStartPreview(retryTaskId)
+      await expect(startControlledTask({ taskId: retryTaskId, previewHash: preview.previewHash, acknowledgeModelCosts: true })).rejects.toThrow('原项目管理授权')
+      if (replaceGrant) {
+        service.revokeOwnerManagementDelegation(f.project.id, grant.id)
+        grant = issue({ ...f, input: { ...input, requestId: randomUUID() } })
+        await expect(startDelegatedOwnerPlanningTask(retryTaskId)).rejects.toThrow('原授权已变化')
+        expect(store.listAgentExecutionsByEntity('task', retryTaskId)).toHaveLength(0)
+        return
+      }
+      await failPlanning(retryTaskId)
+      reconcileOwnerManagement(f.project.id)
+      expect(queued()).toHaveLength(1)
+      expect(store.listAgentExecutionsByProject(f.project.id)).toHaveLength(2)
+    }
+  } finally { service.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+})
+
 test('Given失败回执使委托保持attention且用户已撤销 When确认新委托 Then持久撤销标记优先且不重发旧请求', async () => {
   const f = fixture(), grant = issue(f), before = calls
   await startDelegatedOwnerPlanningTask(f.taskId)
@@ -526,7 +638,7 @@ test('Given模型输出达到请求上限且委托资料已变化 When读取管�
   } })
   expect(service.getOwnerManagementDelegation(f.project.id)).toMatchObject({
     state: 'attention', detail: expect.stringContaining('不会自动重试'),
-    attentionCheck: { executionStatus: 'failed', outcomeState: 'failed', reason: 'output_limit', costSource: 'unknown' },
+    attentionCheck: { phase: 'planning', finishReason: 'length', executionStatus: 'failed', outcomeState: 'failed', reason: 'output_limit', costSource: 'unknown' },
   })
   service.revokeOwnerManagementDelegation(f.project.id, grant.id)
 })

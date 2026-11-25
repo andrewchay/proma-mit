@@ -1,6 +1,18 @@
 import { createHash } from 'node:crypto'
 import type { DevelopmentSnapshotFile } from '@gravitas/shared'
 
+/** 仅识别步骤冻结标准中，针对交付全文的明确字数上限。 */
+export function ownerTextDeliveryCharacterLimit(criteria: readonly string[]): number | null {
+  const limits = criteria.flatMap(criterion => criterion.normalize('NFKC').split(/[。!?;,\n]+/).flatMap(clause => {
+    const standalone = /^\s*(?:控制在|限制在)?\s*(\d+)\s*(?:字|个?字符)\s*(?:内|以内|之内)\s*$/.exec(clause)
+    const inside = /(?:全文|完整正文)\s*(?:控制在|限制在)?\s*(\d+)\s*(?:字|个?字符)\s*(?:内|以内|之内)/.exec(clause)
+    const atMost = /(?:^\s*|全文|完整正文)\s*(?:不超过|至多|最多)\s*(\d+)\s*(?:字|个?字符)(?!\d)/.exec(clause)
+    const limit = Number(standalone?.[1] ?? inside?.[1] ?? atMost?.[1])
+    return Number.isSafeInteger(limit) && limit > 0 ? [limit] : []
+  }))
+  return limits.length ? Math.min(...limits) : null
+}
+
 /** 文本按正文哈希，代码按冻结文件集合哈希；传输JSON不是源码版本的哈希域。 */
 export function deliveryContentMatchesArtifact(content: string, artifactHash: string): boolean {
   const sha = (value: string) => createHash('sha256').update(value, 'utf8').digest('hex')
@@ -96,4 +108,95 @@ export function applyOwnerTextInsertionProposal(
   const content = rows.join(newline)
   if (!matchesOwnerExactTextInsertion(rule.original, content, rule.line, rule.placement)) return null
   return { content, insertAfter }
+}
+
+/** 只有用户逐字引用插入位置和新增行时，才使用本地修订。 */
+export function parseOwnerLocalTextInsertion(feedback: string): { insertAfter: string; line: string } | null {
+  const text = feedback.trim().replace(/^这个成果版本需要修改。\s+/, '')
+  const match = /^(?:请)?(?:只|仅)在(?:「([^」\r\n]{1,240})」|“([^”\r\n]{1,240})”)(?:之后|后|下方|下面)(?:新增|添加|插入|增加)一行[：: \t]*(?:「([^」\r\n]{1,240})」|“([^”\r\n]{1,240})”)(?:[。！]?(?:\s*(?:原有内容全部保留|其余内容保持不变)[。！]?)?)$/.exec(text)
+  const insertAfter = match?.[1] ?? match?.[2]
+  const line = match?.[3] ?? match?.[4]
+  return insertAfter?.trim() && line?.trim() ? { insertAfter, line } : null
+}
+
+/** 只处理唯一的原文行；保留换行风格与结尾换行，保护代码围栏。 */
+export function applyOwnerLocalTextInsertion(original: string, rule: { insertAfter: string; line: string }): string | null {
+  const newline = original.includes('\r\n') ? '\r\n' : '\n'
+  const rows = original.split(newline)
+  if (/^(?: {4}|\t)|^\s*(?:[=-]+|(?:\*\s*){3,})$/.test(rule.line)
+    || rows.some(row => /[\r\n]/.test(row)) || rows.includes(rule.line)
+    || /^\s*(?:[#>|<`~]|[-+*]\s|\d+[.)]\s)/.test(rule.line)) return null
+  const index = rows.indexOf(rule.insertAfter)
+  if (index < 0 || rows.lastIndexOf(rule.insertAfter) !== index
+    || /^\s*(?:[>|<`~]|[-+*]\s|\d+[.)]\s)/.test(rows[index]!)
+    || /^\s*(?:[=-]+\s*$|\|)/.test(rows[index + 1] ?? '')) return null
+  let fence: string | undefined
+  for (const row of rows.slice(0, index + 1)) {
+    const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(row)
+    if (!marker) continue
+    if (!fence) fence = marker[1]
+    else if (marker[1]![0] === fence[0] && marker[1]!.length >= fence.length && !marker[2]!.trim()) fence = undefined
+  }
+  if (fence) return null
+  return applyOwnerTextInsertionProposal(JSON.stringify({ insertAfter: rule.insertAfter }), { original, line: rule.line })?.content ?? null
+}
+
+type OwnerLocalTextEdit =
+  | { kind: 'insert'; insertAfter: string; line: string }
+  | { kind: 'replace'; before: string; after: string }
+  | { kind: 'move'; line: string; insertAfter: string }
+  | { kind: 'move_total' }
+
+/** 本地修订只识别一条明确、可重放的修改指令。 */
+export function parseOwnerLocalTextEdit(feedback: string): OwnerLocalTextEdit | null {
+  const insertion = parseOwnerLocalTextInsertion(feedback)
+  if (insertion) return { kind: 'insert', ...insertion }
+  const text = feedback.trim().replace(/^这个成果版本需要修改。\s+/, '')
+  const replacement = /^(?:请)?(?:只|仅)把(?:「([^」\r\n]{1,240})」|“([^”\r\n]{1,240})”)(?:替换为|改为|改成)(?:「([^」\r\n]{1,240})」|“([^”\r\n]{1,240})”)(?:[，,。]\s*)?(?:(?:其他|其余)内容保持不变[。！]?)?$/.exec(text)
+  if (replacement) {
+    const before = replacement[1] ?? replacement[2]!
+    const after = replacement[3] ?? replacement[4]!
+    return before.trim() && after.trim() && before !== after ? { kind: 'replace', before, after } : null
+  }
+  const movement = /^(?:请)?(?:只|仅)(?:把|将)(?:「([^」\r\n]{1,240})」|“([^”\r\n]{1,240})”)一行(?:移动|移)到(?:「([^」\r\n]{1,240})」|“([^”\r\n]{1,240})”)(?:之后|后|下方)(?:[，,。]\s*)?(?:(?:其他|其余)内容保持不变[。！]?)?$/.exec(text)
+  if (movement) return { kind: 'move', line: movement[1] ?? movement[2]!, insertAfter: movement[3] ?? movement[4]! }
+  return /^(?:请)?(?:只|仅)(?:把|将)合计行(?:移动|移)到(?:主)?标题(?:之后|后|下方|下面)(?:[，,。]\s*)?(?:(?:其他|其余)内容保持不变[。！]?)?$/.test(text)
+    ? { kind: 'move_total' } : null
+}
+
+export function applyOwnerLocalTextEdit(original: string, edit: OwnerLocalTextEdit): string | null {
+  if (edit.kind === 'insert') return applyOwnerLocalTextInsertion(original, edit)
+  // 复杂 Markdown 结构的文本保留原评审路径。
+  if (/^ {0,3}(?:`{3,}|~{3,}|<)/m.test(original) || /<!--|-->/.test(original)) return null
+  if (edit.kind === 'replace') {
+    const { before, after } = edit
+    const index = original.indexOf(before)
+    if (index < 0 || index !== original.lastIndexOf(before) || /[<>|*_`~#\[\]\\]/.test(before + after)) return null
+    const lineStart = original.lastIndexOf('\n', index - 1) + 1
+    const end = original.indexOf('\n', index)
+    const line = original.slice(lineStart, end < 0 ? undefined : end)
+    const revisedLine = line.slice(0, index - lineStart) + after + line.slice(index - lineStart + before.length)
+    const markup = /^(?: {4}|\t)|^\s*(?:[<>|#]|[-+*]\s|\d+[.)]\s)|^\s*[=-]+\s*$/
+    const nextEnd = end < 0 ? -1 : original.indexOf('\n', end + 1)
+    const nextLine = end < 0 ? '' : original.slice(end + 1, nextEnd < 0 ? undefined : nextEnd)
+    if (markup.test(line) || markup.test(revisedLine) || /^\s*[=-]+\s*$/.test(nextLine)
+      || line.includes('|') || revisedLine.includes('|')) return null
+    return original.slice(0, index) + after + original.slice(index + before.length)
+  }
+  const newline = original.includes('\r\n') ? '\r\n' : '\n'
+  const rows = original.split(newline)
+  if (rows.some(row => /[\r\n]/.test(row))) return null
+  const totalRows = edit.kind === 'move_total' ? rows.filter(row => /^ {0,3}(?:\*\*)?(?:预算)?合计(?:\*\*)?[：:]\s*\S/.test(row)) : []
+  const line = edit.kind === 'move' ? edit.line : totalRows.length === 1 ? totalRows[0] : undefined
+  const title = edit.kind === 'move' ? edit.insertAfter : rows.find(row => row.trim())
+  if (!line || !title || line === title || !/^ {0,3}#{1,6} +\S/.test(title)
+    || /^(?: {4}|\t)|^\s*(?:[#>|<`~]|[-+*]\s|\d+[.)]\s)|^\s*[=-]+\s*$/.test(line)) return null
+  const from = rows.indexOf(line), anchor = rows.indexOf(title)
+  if (from < 1 || anchor < 0 || rows.lastIndexOf(line) !== from || rows.lastIndexOf(title) !== anchor
+    || rows[from - 1] !== '' || rows[from + 1] !== '' || rows[anchor + 1] !== ''
+    || from === anchor + 2 || from + 1 === rows.length - 1) return null
+  // 独立段落连同其后的空行移动，保留原有换行分隔。
+  rows.splice(from, 2)
+  rows.splice(rows.indexOf(title) + 2, 0, line, '')
+  return rows.join(newline)
 }

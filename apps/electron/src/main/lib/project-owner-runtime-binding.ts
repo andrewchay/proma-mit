@@ -237,9 +237,19 @@ export function resolveOwnerRuntimeBindingFromDefaults(projectId: string): Owner
   })
 }
 
-export function prepareOwnerPlanning(projectId: string, raw: unknown): OwnerPlanningLink {
+export const OWNER_QUALITY_RETRY_PREFIX = 'owner-quality-retry:'
+export const OWNER_INITIAL_PLAN_RETRY_PREFIX = 'owner-initial-plan-retry:'
+export const OWNER_BOUND_REVISION_RETRY_PREFIX = 'owner-bound-revision-retry:'
+export function ownerInitialPlanRetryRequestId(delegationId: string, goalRevision: number): string {
+  return `${OWNER_INITIAL_PLAN_RETRY_PREFIX}${delegationId}:${goalRevision}`
+}
+
+export function prepareOwnerPlanning(projectId: string, raw: unknown, mode: 'ordinary' | 'initial_protocol_retry' | 'bound_revision_retry' | 'quality_retry' = 'ordinary'): OwnerPlanningLink {
   const input = object(raw, ['requestId', 'taskId', 'expectedBindingRevision', 'expectedGoalRevision', 'expectedPlanRevision', 'expectedContextFingerprint', 'conversationMessageId'])
   const requestId = text(input.requestId, '请求ID', 128)
+  if (requestId.startsWith(OWNER_INITIAL_PLAN_RETRY_PREFIX) !== (mode === 'initial_protocol_retry')) throw new Error('首份规划纠正请求只能由管理循环准备')
+  if (requestId.startsWith(OWNER_BOUND_REVISION_RETRY_PREFIX) !== (mode === 'bound_revision_retry')) throw new Error('交付修订纠正请求只能由管理循环准备')
+  if (requestId.startsWith(OWNER_QUALITY_RETRY_PREFIX) !== (mode === 'quality_retry')) throw new Error('成果续验请求只能通过原验收确认准备')
   const taskId = input.taskId === undefined ? undefined : text(input.taskId, '目标任务ID', 128)
   const conversationMessageId = input.conversationMessageId === undefined ? undefined : text(input.conversationMessageId, '对话消息ID', 128)
   const bindingRevision = revision(input.expectedBindingRevision, 1), goalRevision = revision(input.expectedGoalRevision, 1), planRevision = revision(input.expectedPlanRevision)
@@ -289,7 +299,7 @@ export function prepareOwnerPlanning(projectId: string, raw: unknown): OwnerPlan
     // 已有执行/发送占位的历史不能被当作新请求重复使用。
     const managed = store.getProjectDb().prepare("SELECT l.request_id FROM project_owner_planning_links l WHERE l.project_id = ? AND l.request_id LIKE 'management:%' AND json_extract(l.payload, '$.purpose') = 'owner_planning' AND json_extract(l.payload, '$.targetTaskId') IS ? AND json_extract(l.payload, '$.bindingRevision') = ? AND json_extract(l.payload, '$.goalRevision') = ? AND json_extract(l.payload, '$.planRevision') = ? AND json_extract(l.payload, '$.contextFingerprint') = ? AND json_extract(l.payload, '$.conversationMessageId') IS ? AND NOT EXISTS (SELECT 1 FROM agent_executions e WHERE e.entity_type = 'task' AND e.entity_id = l.planning_task_id) AND NOT EXISTS (SELECT 1 FROM project_owner_planning_admissions a WHERE a.link_id = l.id) ORDER BY l.rowid DESC LIMIT 1")
       .get(projectId, taskId ?? null, bindingRevision, goalRevision, planRevision, contextFingerprint, conversationMessageId ?? null) as { request_id: string } | undefined
-    if (managed && managed.request_id !== requestId) return prepareOwnerPlanning(projectId, { ...input, requestId: managed.request_id })
+    if (mode === 'ordinary' && managed && managed.request_id !== requestId) return prepareOwnerPlanning(projectId, { ...input, requestId: managed.request_id })
     const id = randomUUID()
     const prepared = prepareControlledTask({ requestId: `owner-planning:${id}`, projectId, employeeId: binding.carrierId, workspaceId: binding.workspaceId, title: `Owner规划：${context.sources.task?.title ?? context.sources.project.title}`.slice(0, 200), description: '仅提出目标规划/必要澄清；不计作目标业务任务交付，不自动组织员工，不授权业务执行。', priority: 'medium' })
     const jsonOutput = facts.modelId === 'deepseek-flash' && getAgentProviderProtocol(getChannelById(binding.channelId)!.provider, 'ai-sdk') === 'openai-chat'

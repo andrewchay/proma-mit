@@ -107,8 +107,8 @@ export function OwnerDeliveredArtifact({ item, validation, onRequestChanges, fee
     <section className="space-y-2 rounded-lg bg-muted/40 p-3 text-sm" aria-label="当前成果版本与审阅依据">
       <p className="break-all text-xs text-muted-foreground">成果版本：<span className="font-mono">{item.artifactHash}</span></p>
       <div><p className="font-medium">完成标准</p>{item.acceptanceCriteria.length ? <ul className="mt-1 list-disc pl-5">{item.acceptanceCriteria.map((criterion, index) => <li key={`${index}-${criterion}`}>{criterion}</li>)}</ul> : <p className="mt-1 text-muted-foreground">此版本未附带完成标准。</p>}</div>
-      <p><span className="font-medium">独立评审：</span>{item.reviewerSummary || '未附带评审摘要'}</p>
-      <p><span className="font-medium">Owner 内部审阅：</span>{item.ownerDecision || '未附带审阅摘要'}</p>
+      <p><span className="font-medium">{item.localTextRevision ? '本地差异核对' : '独立评审'}：</span>{item.reviewerSummary || '未附带评审摘要'}</p>
+      <p><span className="font-medium">{item.localTextRevision ? '应用的修改' : 'Owner 内部审阅'}：</span>{item.ownerDecision || '未附带审阅摘要'}</p>
       {validation?.unavailable ? <p role="alert" className="text-xs text-destructive">当前研发成果的验证来源无法核对，不能据此认可通过。</p> : validation?.validations.length ? <ValidationRecords validation={validation} /> : <p className="text-xs text-muted-foreground">本卡片未展示独立的运行或浏览器验证记录；不能据此认定运行验证通过。</p>}
     </section>
     {codeFiles && <section aria-label="代码成果文件" className="space-y-2 rounded-lg bg-muted/40 p-3 text-sm"><p className="font-medium">代码成果文件</p><p className="text-xs text-muted-foreground">按路径分别下载；如文件相互引用，请保留显示的相对目录结构。删除项仅记录变化，不提供文件下载。</p><ul className="space-y-2">{codeFiles.map(file => <li key={file.path} className="flex flex-wrap items-center justify-between gap-2"><span className="break-all font-mono text-xs">{file.path} · {file.changeType === 'add' ? '新增' : file.changeType === 'modify' ? '修改' : '删除'}</span>{file.content !== null && <button type="button" className="rounded-lg bg-primary/10 px-3 py-1.5 text-xs text-primary" onClick={() => downloadCodeFile(file)}>下载文件</button>}</li>)}</ul></section>}

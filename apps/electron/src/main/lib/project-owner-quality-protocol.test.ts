@@ -244,3 +244,52 @@ test('Given返工决定引用原评审的说明缺陷和成功验证 When输出�
   artifact.validationEvidence[0]!.outputTruncated = true
   expect(() => parseOwnerQualityDecision(decision, c)).toThrow('引用不符')
 })
+
+test('Given签到牌评审已逐字引用JSON文件路径 When Owner独立判断并选择该条评审证据 Then 核实原路径而不重抄转义引号', async () => {
+  const { parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
+  const { buildOwnerObservationPrompt } = await import('./project-owner-observation-prompt')
+  const c = context(), delivery = c.conversation!.deliveryReview!
+  const criterion = '只交付一个自包含的 index.html'
+  const pathQuote = '"path":"index.html"'
+  delivery.developmentArtifact!.content = JSON.stringify({ files: [{ file: { path: 'index.html' }, oldContent: null, newContent: '<title>培训签到</title>' }] })
+  delivery.review!.criteria = [{ criterion, status: 'met', evidence: '唯一交付是自包含签到牌', quote: pathQuote }]
+  const decision = { ...acceptDecision(), criteria: [{ criterion, status: 'met', evidence: '读取快照后确认只有一个页面且资源自包含', quote: { from: 'reviewer' } }] }
+
+  expect(() => parseOwnerQualityDecision(decision, c)).toThrow()
+  delivery.qualityDecisionBindingVersion = 2
+  expect(buildOwnerObservationPrompt(c)).toContain('{"from":"reviewer"}')
+  const { buildProjectOwnerPlanningRequest, resolveProjectOwnerPlanningRequest } = await import('./project-owner-planning-protocol')
+  c.sources.roles = [{ key: 'requirements-analyst', name: '需求分析师', version: '1.0.0', sourceSha256: 'a'.repeat(64), rulesSha256: 'b'.repeat(64) }]
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const current = buildProjectOwnerPlanningRequest(c)
+  expect(current.systemPrompt).toContain('{"from":"reviewer"}')
+  const legacy = structuredClone(c)
+  legacy.conversation!.deliveryReview!.qualityDecisionBindingVersion = 1
+  const historical = buildProjectOwnerPlanningRequest(legacy)
+  expect(historical.systemPrompt).not.toContain('{"from":"reviewer"}')
+  expect(resolveProjectOwnerPlanningRequest(legacy, createHash('sha256').update(JSON.stringify(historical)).digest('hex'))).toEqual(historical)
+  expect(() => parseOwnerQualityDecision(decision, legacy)).toThrow('引用不符')
+  expect(parseOwnerQualityDecision(decision, c).criteria[0]?.quote).toBe(pathQuote)
+  for (const quote of [{ from: 'reviewer', path: 'other.html' }, { from: 'other-reviewer' }, '"path":"other.html"']) {
+    expect(() => parseOwnerQualityDecision({ ...decision, criteria: [{ ...decision.criteria[0], quote }] }, c)).toThrow()
+  }
+  expect(() => parseOwnerQualityDecision({ ...decision, criteria: [{ ...decision.criteria[0], criterion: '另一条标准' }] }, c)).toThrow()
+  expect(() => parseOwnerQualityDecision({ ...decision, findings: [{ severity: 'high', description: '有缺陷', requestedChange: '需修复' }] }, c)).toThrow()
+  delivery.review!.criteria[0]!.quote = '"path":"other.html"'
+  expect(() => parseOwnerQualityDecision(decision, c)).toThrow()
+})
+
+test('Given新版完整决策将原标准分组重排 When核验 Then按准确名称恢复冻结顺序且拒绝遗漏与重复', async () => {
+  const { parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
+  const c = context(), delivery = c.conversation!.deliveryReview!, review = delivery.review!
+  const revisedCriterion = { ...review.criteria[0]!, criterion: '合计行在标题后且原位置已删除' }
+  review.criteria.unshift(revisedCriterion)
+  const decision = { ...acceptDecision(), criteria: [review.criteria[1]!, revisedCriterion] }
+  delivery.qualityDecisionBindingVersion = 1
+  expect(() => parseOwnerQualityDecision(decision, c)).toThrow('与准确评审/成果不匹配')
+  delivery.qualityDecisionBindingVersion = 2
+  expect(parseOwnerQualityDecision(decision, c).criteria.map(item => item.criterion)).toEqual(review.criteria.map(item => item.criterion))
+  for (const criteria of [[revisedCriterion], [revisedCriterion, revisedCriterion], [revisedCriterion, { ...review.criteria[1]!, criterion: '未知标准' }]]) {
+    expect(() => parseOwnerQualityDecision({ ...decision, criteria }, c)).toThrow()
+  }
+})

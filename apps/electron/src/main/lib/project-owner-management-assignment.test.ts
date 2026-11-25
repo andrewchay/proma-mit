@@ -1312,6 +1312,53 @@ test('Given 确认事务回滚或旧方案来源失效 When 后台处理 Then �
   expect(listOwnerExecutionAssignmentRuns({ projectId: task.project.id })).toHaveLength(0)
 }, 20_000)
 
+test('Given 只授权一个任务 When Owner 完成派工验收 Then 相邻任务没有运行记录或交付状态', async () => {
+  const f = fixture('complete', true)
+  const sibling = store.createTask(f.project.id, { title: '同项目另一条待办', description: '' })
+  confirm(f)
+  const authorized = authorize(f, true, 8)
+  const registry = new Map<string, (event: unknown, request: unknown) => unknown>()
+  const { PROJECT_IPC_CHANNELS } = await import('@gravitas/shared')
+  const { registerProjectOwnerExecutionIpcHandlers } = await import('./project-owner-execution-ipc')
+  registerProjectOwnerExecutionIpcHandlers({ handle: (name, handler) => { registry.set(name, handler) } })
+  const readSchedule = (taskId?: string) => registry.get(PROJECT_IPC_CHANNELS.GET_OWNER_AUTONOMOUS_SCHEDULE_STATUS)!(undefined,
+    { projectId: f.project.id, ...(taskId ? { taskId } : {}) })
+  const { runOwnerAutonomousSchedule, getOwnerAutonomousScheduleStatus } = await import('./project-owner-autonomous-scheduler')
+  const { onOwnerAutonomousScheduleWake } = await import('./project-owner-autonomous-scheduler-events')
+  const stopSchedule = onOwnerAutonomousScheduleWake(id => { if (id === f.project.id) void runOwnerAutonomousSchedule(id) })
+  const stop = startOwnerManagementLoop()
+  try {
+    const deliveries = () => getOwnerManagementConversation(f.project.id).messages.filter(message => message.kind === 'delivery')
+    await until(() => deliveries().length > 0, () => ({
+      schedule: getOwnerAutonomousScheduleStatus(f.project.id, f.taskId),
+      messages: getOwnerManagementConversation(f.project.id).messages.map(message => message.content).slice(-6),
+      tasks: store.listTasks(f.project.id).map(task => ({ title: task.title, status: task.status, link: task.ownerStepLinkId })),
+    }))
+    expect(deliveries()).toHaveLength(1)
+    expect(deliveries()[0]).toMatchObject({ taskId: f.taskId, delivery: { items: [{ stepKey: 'brief' }] } })
+    const arranging = getOwnerManagementConversation(f.project.id).messages.filter(message => message.content.includes('推进团队安排'))
+    expect(arranging).not.toHaveLength(0)
+    expect(arranging.every(message => message.taskId === f.taskId)).toBe(true)
+    const db = store.getProjectDb()
+    const grant = db.prepare('SELECT id, task_id, owner_management_delegation_id FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id) as { id: string; task_id: string; owner_management_delegation_id: string }
+    expect(grant).toMatchObject({ task_id: f.taskId, owner_management_delegation_id: authorized.id })
+    const commands = db.prepare('SELECT source_task_id, role, state FROM project_owner_execution_commands WHERE project_id=? ORDER BY rowid').all(f.project.id)
+    expect(commands).toEqual([
+      { source_task_id: f.taskId, role: 'executor', state: 'settled' },
+      { source_task_id: f.taskId, role: 'reviewer', state: 'settled' },
+    ])
+    expect(await readSchedule(f.taskId)).toMatchObject({ ok: true, value: { grantId: grant.id, deliveryPublished: true, runReservations: 2 } })
+    const unrelated = await readSchedule(sibling.id)
+    expect(unrelated).toMatchObject({ ok: true, value: { state: 'no_grant', committedCostMicros: 0, runReservations: 0 } })
+    expect(unrelated).not.toHaveProperty('value.grantId')
+    expect(unrelated).not.toHaveProperty('value.deliveryPublished')
+    expect(await readSchedule()).toMatchObject({ ok: true, value: { grantId: grant.id, deliveryPublished: true } })
+    const execution = store.listAgentExecutionsByEntity('task', f.taskId!).find(item => item.ownerCommandId)!
+    expect(await registry.get(PROJECT_IPC_CHANNELS.RECHECK_OWNER_DEVELOPMENT_WORKSPACE)!(undefined,
+      { projectId: f.project.id, taskId: sibling.id, executionId: execution.id })).toMatchObject({ ok: false, error: { message: '执行不属于当前Owner任务' } })
+  } finally { await stop(); stopSchedule() }
+}, 30000)
+
 
 for (const team of ['general', 'missing-role', 'mixed'] as const) {
   test(`Given项目已有 ${team} 员工 When确认方案 Then后台安排且不改员工档案`, async () => {

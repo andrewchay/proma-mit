@@ -11,6 +11,7 @@ import { getOwnerExecutionRevalidation } from './project-owner-execution-revalid
 import { ownerExecutionObject } from './project-owner-execution-source'
 import * as store from './project-sqlite-store'
 import { startOwnerCommandExecution } from './agent-employee-service'
+import { DevelopmentWorkspaceBlockedError } from './agent-development-worktree'
 
 interface OwnerDispatchCommandRow {
   id: string
@@ -26,6 +27,7 @@ interface OwnerDispatchCommandRow {
   reserved_cost_micros: number
 }
 interface OwnerDispatchGrantRow {
+  task_id: string | null
   state: string
   dispatch_mode: string
   revalidation_id: string
@@ -42,9 +44,15 @@ interface OwnerDispatchGrantRow {
   runtime: string
   expires_at: number
 }
+interface OwnerDispatchResult {
+  commandId: string
+  executionId: string
+  started: boolean
+  workspaceBlocked?: true
+}
 
 /** 唯一派发入口只接受 command 身份、确认指纹与独立执行确认；其余运行参数全部从权威库重建。 */
-async function dispatchOwnerCommandExecutionForMode(raw: unknown, expectedMode: 'manual' | 'autonomous'): Promise<{ commandId: string; executionId: string; started: boolean }> {
+async function dispatchOwnerCommandExecutionForMode(raw: unknown, expectedMode: 'manual' | 'autonomous'): Promise<OwnerDispatchResult> {
   assertLocalActorEnabled()
   const input = ownerExecutionObject(raw, ['commandId', 'ackFingerprint', 'acknowledgeExecution'])
   if (typeof input.commandId !== 'string' || !input.commandId.trim()
@@ -72,7 +80,7 @@ async function dispatchOwnerCommandExecutionForMode(raw: unknown, expectedMode: 
   const employee = store.getAgentEmployee(command.employee_id)
   const channel = getChannelById(runtime.channelId)
   const workspace = getAgentWorkspace(grant.workspace_id)
-  const view = getOwnerExecutionRevalidation({ projectId: command.project_id })
+  const view = getOwnerExecutionRevalidation({ projectId: command.project_id, ...(grant.task_id ? { taskId: grant.task_id } : {}) })
   const record = view.revalidation
   const task = store.getTask(command.source_task_id)
   const frozenTask = record?.source.tasks.find((item) => item.taskId === command.source_task_id)
@@ -97,20 +105,25 @@ async function dispatchOwnerCommandExecutionForMode(raw: unknown, expectedMode: 
   if (command.role === 'reviewer') assertOwnerReviewerTextDelivery(command.id)
   const link = database.prepare('SELECT revalidation_revision FROM project_owner_execution_command_links WHERE command_id=? AND execution_id=?').get(command.id, execution.id) as { revalidation_revision: number } | undefined
   if (!link || link.revalidation_revision !== record.revision) throw new Error('Owner命令与重验证版本链接不一致')
-  const started = await startOwnerCommandExecution({
-    executionId: execution.id,
-    commandId: command.id,
-    role: command.role as 'executor' | 'reviewer',
-    expectedRevalidationRevision: link.revalidation_revision,
-    reservedCostMicros: command.reserved_cost_micros,
-  })
-  return { commandId: command.id, executionId: execution.id, started }
+  try {
+    const started = await startOwnerCommandExecution({
+      executionId: execution.id,
+      commandId: command.id,
+      role: command.role as 'executor' | 'reviewer',
+      expectedRevalidationRevision: link.revalidation_revision,
+      reservedCostMicros: command.reserved_cost_micros,
+    })
+    return { commandId: command.id, executionId: execution.id, started }
+  } catch (error) {
+    if (error instanceof DevelopmentWorkspaceBlockedError) return { commandId: command.id, executionId: execution.id, started: false, workspaceBlocked: true }
+    throw error
+  }
 }
 /** IPC 人工派发入口：不能消费 autonomous command。 */
-export function dispatchOwnerCommandExecution(raw: unknown): Promise<{ commandId: string; executionId: string; started: boolean }> {
+export function dispatchOwnerCommandExecution(raw: unknown): Promise<OwnerDispatchResult> {
   return dispatchOwnerCommandExecutionForMode(raw, 'manual')
 }
 /** 仅供 main Scheduler 使用，不注册为 Renderer IPC。 */
-export function dispatchAutonomousOwnerCommandExecution(raw: unknown): Promise<{ commandId: string; executionId: string; started: boolean }> {
+export function dispatchAutonomousOwnerCommandExecution(raw: unknown): Promise<OwnerDispatchResult> {
   return dispatchOwnerCommandExecutionForMode(raw, 'autonomous')
 }

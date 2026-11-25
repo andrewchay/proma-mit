@@ -4,7 +4,7 @@ import * as store from './project-sqlite-store'
 import { ownerExecutionHash } from './project-owner-execution-hash'
 import { getOwnerManager } from './project-owner-management-store'
 import { assertOwnerManagementTask, getOwnerManagementDelegation } from './project-owner-management-delegation'
-import { assertOwnerReviewerTextDelivery } from './project-owner-text-delivery'
+import { assertOwnerReviewerTextDelivery, ownerTextDeliveryLengthViolation } from './project-owner-text-delivery'
 import { listOwnerTechnicalReviewEvidence } from './project-owner-technical-review'
 import { getOwnerExecutionRevalidation } from './project-owner-execution-revalidation'
 import { ownerTaskDeliveryKind, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
@@ -13,8 +13,7 @@ import { getPilotPolicy } from './project-pilot-policy'
 import { readOwnerGrantUsage } from './project-owner-execution-settlement'
 import { requestOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
 import { matchesOwnerExactTextInsertion } from './project-owner-delivery-content'
-import { isOwnerCounterSupplementCurrent, readOwnerCounterSupplement } from './project-owner-counter-supplement'
-import { OWNER_COUNTER_SUPPLEMENT_COMMAND } from './development-validation-service'
+import { findOwnerCounterSupplementValidation, isOwnerCounterSupplementCurrent, readOwnerCounterSupplement } from './project-owner-counter-supplement'
 import { isCompletedStatus } from './task-status-logic'
 import { isOwnerEvidenceGapRework, OWNER_ACCEPT_WITH_FINDINGS, parseOwnerQualityDecision } from './project-owner-quality-protocol'
 
@@ -23,7 +22,7 @@ export interface OwnerQualityAction {
   reviewerCommandId: string; artifactHash: string; reworkOrdinal: number; decision: OwnerQualityDecision
   state: 'accepted' | 'rework_authorized' | 'escalated' | 'blocked'; detail: string; conditionFingerprint?: string; createdAt: number
   recoveredFromOwnerExecutionId?: string
-  enforcedConstraint?: 'exact_text_insertion'
+  enforcedConstraint?: 'exact_text_insertion' | 'full_text_character_limit'
 }
 function runs() { return require('./project-owner-planning-run-service') as typeof import('./project-owner-planning-run-service') }
 function managementTaskId(ownerExecutionId: string): string | undefined {
@@ -55,7 +54,8 @@ function parseActionRow(row: OwnerQualityActionRow): OwnerQualityAction {
   if (!outcome?.qualityDecision || ownerExecutionHash(value) !== row.integrity_hash || value.reviewerCommandId !== row.reviewer_command_id || value.ownerExecutionId !== row.owner_execution_id || value.projectId !== row.project_id || value.grantId !== row.grant_id || value.taskId !== row.task_id || value.createdAt !== row.created_at || value.conditionFingerprint !== undefined && !/^[a-f0-9]{64}$/.test(value.conditionFingerprint) || !['accepted', 'rework_authorized', 'escalated', 'blocked'].includes(value.state) || value.ownerReceiptId !== receipt?.id || receipt?.projectId !== value.projectId || ownerExecutionHash(outcome?.qualityDecision) !== ownerExecutionHash(value.decision)) throw new Error('Owner质量动作与原始决定证据不一致')
   const artifactHash = developmentArtifact?.contentHash ?? artifact?.contentSha256
   const artifactReworkOrdinal = developmentArtifact?.reworkOrdinal ?? artifact?.reworkOrdinal
-  if (observation?.commandId !== value.reviewerCommandId || observation.grantId !== value.grantId || observation.businessTaskId !== value.taskId || artifactHash !== value.artifactHash || artifactReworkOrdinal !== value.reworkOrdinal || getOwnerManager(value.projectId)?.ownerId !== value.actor || (value.state === 'accepted' && value.decision.verdict !== 'accept') || (value.enforcedConstraint !== undefined && (value.enforcedConstraint !== 'exact_text_insertion' || value.state !== 'rework_authorized' || value.decision.verdict === 'escalate')) || (value.state === 'rework_authorized' && value.decision.verdict !== 'rework' && value.enforcedConstraint !== 'exact_text_insertion') || (value.state === 'escalated' && value.decision.verdict !== 'escalate')) throw new Error('Owner质量动作的身份、成果或决定类型不一致')
+  const enforced = value.enforcedConstraint === 'exact_text_insertion' || value.enforcedConstraint === 'full_text_character_limit'
+  if (observation?.commandId !== value.reviewerCommandId || observation.grantId !== value.grantId || observation.businessTaskId !== value.taskId || artifactHash !== value.artifactHash || artifactReworkOrdinal !== value.reworkOrdinal || getOwnerManager(value.projectId)?.ownerId !== value.actor || (value.state === 'accepted' && value.decision.verdict !== 'accept') || (value.enforcedConstraint !== undefined && (!enforced || value.state !== 'rework_authorized' || value.decision.verdict === 'escalate')) || (value.state === 'rework_authorized' && value.decision.verdict !== 'rework' && !enforced) || (value.state === 'escalated' && value.decision.verdict !== 'escalate')) throw new Error('Owner质量动作的身份、成果或决定类型不一致')
   const recovery = original?.deliveryReview?.qualityRecovery
   if (value.recoveredFromOwnerExecutionId && (!recovery || recovery.previousExecutionId !== value.recoveredFromOwnerExecutionId || recovery.conditionFingerprint !== value.conditionFingerprint)) throw new Error('Owner质量恢复动作未绑定前次阻断与新事实指纹')
   return value
@@ -161,7 +161,10 @@ function execute(value: OwnerQualityAction, planningTaskId: string): Pick<OwnerQ
   if (!artifact || artifact.contentHash !== value.artifactHash || artifact.taskId !== value.taskId || artifact.grantId !== value.grantId || artifact.reworkOrdinal !== value.reworkOrdinal) throw new Error('质量决定对应的完整成果无法核验')
   const command = store.getProjectDb().prepare("SELECT c.state,c.actual_cost_micros,c.usage_evidence,e.status FROM project_owner_execution_commands c JOIN agent_executions e ON e.id=c.execution_id AND e.owner_command_id=c.id WHERE c.id=? AND c.role='reviewer'").get(value.reviewerCommandId) as { state: string; actual_cost_micros: number | null; usage_evidence: string | null; status: string } | undefined
   if (!command || command.state !== 'settled' || command.actual_cost_micros === null || !command.usage_evidence || command.status !== 'completed') throw new Error('独立评审费用或执行终态未核验')
-  if (store.getProjectDb().prepare("SELECT 1 FROM project_owner_execution_commands WHERE grant_id=? AND source_task_id=? AND (rework_ordinal>? OR state IN ('reserved','queued','running','needs_reconcile')) LIMIT 1").get(value.grantId, value.taskId, value.reworkOrdinal)) throw new Error('任务已有更新轮次、在途命令或未知费用')
+  const { readOwnerDocumentReviewRetry } = require('./project-owner-document-review-retry') as typeof import('./project-owner-document-review-retry')
+  const retry = readOwnerDocumentReviewRetry({ reviewerId: value.reviewerCommandId })
+  const recoveredReview = retry?.reason === 'interrupted_review' ? retry : null
+  if (store.getProjectDb().prepare("SELECT 1 FROM project_owner_execution_commands WHERE grant_id=? AND source_task_id=? AND id<>? AND (rework_ordinal>? OR state IN ('reserved','queued','running','needs_reconcile')) LIMIT 1").get(value.grantId, value.taskId, recoveredReview?.previousReviewerId ?? '', value.reworkOrdinal)) throw new Error('任务已有更新轮次、在途命令或未知费用')
   const task = store.getTask(value.taskId)
   if (!task || task.projectId !== value.projectId || task.ownerStepLinkId !== artifact.stepLinkId || task.status !== 'paused') throw new Error('任务已变更或不再等待Owner质量决定')
   if (store.listTaskBlockers(value.projectId).some(item => item.taskId === value.taskId)) throw new Error('任务仍有未解除的权威依赖')
@@ -169,18 +172,22 @@ function execute(value: OwnerQualityAction, planningTaskId: string): Pick<OwnerQ
   const { readOwnerExactTextInsertion } = require('./project-owner-execution-command') as typeof import('./project-owner-execution-command')
   const insertion = ownerTaskDeliveryKind(frozen, value.taskId) === 'text' ? readOwnerExactTextInsertion(frozen) : null
   const outOfScope = insertion !== null && !matchesOwnerExactTextInsertion(insertion.original, artifact.content, insertion.line, insertion.placement)
-  if (outOfScope || value.decision.verdict === 'rework') {
-    if (!outOfScope && isOwnerEvidenceGapRework(value.decision)) {
+  const lengthViolation = ownerTextDeliveryLengthViolation(frozen, value.taskId, artifact.content)
+  if (insertion && !outOfScope && lengthViolation) throw new Error(`${lengthViolation}按要求保留原文并仅新增指定行后会超过上限，请确认是否放宽字数或允许删减原文。`)
+  if (outOfScope || lengthViolation || value.decision.verdict === 'rework') {
+    if (recoveredReview) return { state: 'blocked', detail: '原文件已重新评审，发现需要修改的事项。请先确认修改范围。' }
+    if (!outOfScope && !lengthViolation && isOwnerEvidenceGapRework(value.decision)) {
       return { state: 'blocked', detail: '独立评审缺少运行验证证据；已保存Owner提出的验证要求。现有授权未包含对应验证，暂不重复执行员工或宣称验收。' }
     }
     const usage = readOwnerGrantUsage(value.grantId)
-    if (value.reworkOrdinal >= frozen.budget.maxRework || frozen.budget.maxRuns - usage.runReservations < 2 || usage.committedCostMicros >= frozen.budget.maxCostMicros) throw new Error(outOfScope ? '候选稿超出用户限定的单行新增范围，原文已保留；授权内返工额度已用尽。' : '授权返工次数、执行/复验请求或费用额度不足，需协商边界')
+    if (value.reworkOrdinal >= frozen.budget.maxRework || frozen.budget.maxRuns - usage.runReservations < 2 || usage.committedCostMicros >= frozen.budget.maxCostMicros) throw new Error(outOfScope ? '候选稿超出用户限定的单行新增范围，原文已保留；授权内返工额度已用尽。' : `${lengthViolation ?? ''}授权返工次数、执行/复验请求或费用额度不足，需协商边界。`)
+    if (lengthViolation && !outOfScope) return { state: 'rework_authorized', enforcedConstraint: 'full_text_character_limit', detail: lengthViolation }
     return { state: 'rework_authorized', ...(outOfScope ? { enforcedConstraint: 'exact_text_insertion' as const } : {}), detail: outOfScope ? '候选稿超出用户限定的单行新增范围，已按原文安排授权内返工。' : 'Owner已按具体缺陷安排授权内返工；调度器将复核许可后启动执行与复验。' }
   }
   // 历史决定可读不代表现在可执行；首次验收必须重新核对当前时效与完整协议。
   const planning = readOwnerPlanningSnapshot(planningTaskId)
   if (!planning) throw new Error('Owner质量决定的冻结来源缺失')
-  const counterValidation = planning.context.conversation?.deliveryReview?.review?.validationEvidence?.find(item => item.command === OWNER_COUNTER_SUPPLEMENT_COMMAND)
+  const counterValidation = findOwnerCounterSupplementValidation(planning.context.conversation?.deliveryReview?.review)
   if (counterValidation) {
     const supplement = readOwnerCounterSupplement(value.reviewerCommandId, counterValidation.validationId)
     if (!supplement || !isOwnerCounterSupplementCurrent(supplement)) throw new Error('计数器交互补测已过期或成果已变化')

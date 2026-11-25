@@ -82,7 +82,11 @@ window.dialogueFixture={setBlockedReview:async value=>{blockedReview=value;await
       'Owner 决定等待独立评审及成果证据通过核对。',
     ])
     await page.getByLabel('需要你决定').getByRole('heading', { name: '需要你决定', exact: true }).waitFor()
-    await page.getByLabel('项目风险').getByText('资料不足时再协商').waitFor()
+    const risks = page.getByLabel('项目风险')
+    const risk = risks.getByText('资料不足时再协商')
+    expect(await risk.isVisible()).toBe(false)
+    await risks.getByText('方案风险', { exact: true }).click()
+    await risk.waitFor()
     await page.evaluate('window.dialogueFixture.setStaleGrant()')
     await page.evaluate('window.testStaleAssignment()')
     const staleAction = page.getByLabel('团队安排需要重新核对')

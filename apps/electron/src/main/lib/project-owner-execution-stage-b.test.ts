@@ -1805,7 +1805,7 @@ test('Given Owner流式响应尚未结束 WhenRuntime读取首块 Then增量已�
     async start(controller) {
       controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"你"}}]}\n\n'))
       await release
-      controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"好"}}],"usage":{"prompt_tokens":80,"completion_tokens":20}}\n\n'))
+      controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"好"},"finish_reason":"stop"}],"usage":{"prompt_tokens":80,"completion_tokens":20}}\n\n'))
       controller.enqueue(encoder.encode('data: [DONE]\n\n'))
       controller.close()
     },
@@ -1842,6 +1842,67 @@ test('Given Owner流式响应没有用量回执 When流结束 Then请求进入�
   await requestExit.awaitOwnerRequestSettlements({ commandId: s.commandId })
   expect(s.reservationState()).toEqual({ state: 'needs_reconcile' })
   await expect(requestExit.awaitOwnerExecutionRequestsSettled(s.sessionId)).rejects.toThrow('尚未确认')
+})
+
+test.each([false, true])('Given 费用帧跨网络块到达（收到协议末帧=%s） When 连接仍开着 Then 只结算完整协议回执', async terminal => {
+  const encoder = new TextEncoder()
+  let upstream: ReadableStreamDefaultController<Uint8Array> | undefined
+  const s = streamingOwnerRequest('owner-streaming-terminal-usage', () => new ReadableStream<Uint8Array>({
+    start(controller) {
+      upstream = controller
+      controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"进行中"}}],"usage":{"prompt_tokens":20,"completion_tokens":1}}\r\n\r\n'))
+      controller.enqueue(encoder.encode('data: {"choices":[],"usage":{"prompt_tokens":80,'))
+      controller.enqueue(encoder.encode('"completion_tokens":20}}\r\n\r\n'))
+      if (terminal) {
+        controller.enqueue(encoder.encode('data: [DO'))
+        controller.enqueue(encoder.encode('NE]\r\n\r\n'))
+      }
+    },
+  }))
+  const abort = new AbortController()
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+  try {
+    const response = await s.send(abort.signal)
+    reader = response.body!.getReader()
+    let clientBody = ''
+    const decoder = new TextDecoder()
+    while (!clientBody.includes(terminal ? '[DONE]\r\n\r\n' : '"completion_tokens":20}}\r\n\r\n')) {
+      const chunk = await reader.read()
+      if (chunk.done) throw new Error('协议回执被截断')
+      clientBody += decoder.decode(chunk.value, { stream: true })
+    }
+    if (terminal) await Bun.sleep(20)
+    expect(s.reservationState()).toEqual({ state: terminal ? 'settled' : 'reserved' })
+    abort.abort()
+    await requestExit.awaitOwnerRequestSettlements({ commandId: s.commandId })
+    const row = store.getProjectDb().prepare('SELECT state,settled_cost_micros FROM project_owner_execution_request_reservations WHERE command_id=?').get(s.commandId) as { state: string; settled_cost_micros: number | null }
+    expect(row.state).toBe(terminal ? 'settled' : 'needs_reconcile')
+    if (terminal) {
+      expect(row.settled_cost_micros).toBe(100)
+    } else expect(row.settled_cost_micros).toBeNull()
+  } finally {
+    abort.abort()
+    try { upstream?.close() } catch { /* 上游已经结束 */ }
+    void reader?.cancel().catch(() => {})
+    await requestExit.awaitOwnerRequestSettlements({ commandId: s.commandId })
+  }
+})
+
+test.each(['progress', 'usage-only', 'finished', 'done-without-final-usage'] as const)('Given 服务商流完整性为 %s When 连接正常关闭 Then 只接收终态用量', async state => {
+  const s = streamingOwnerRequest('owner-streaming-eof-usage', () => new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: ' + JSON.stringify({
+        choices: state === 'usage-only' ? [] : [{ finish_reason: state === 'finished' ? 'stop' : null }],
+        usage: { prompt_tokens: 20, completion_tokens: 10 },
+      }) + '\n\n'))
+      if (state === 'done-without-final-usage') controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'))
+      controller.close()
+    },
+  }))
+  const response = await s.send()
+  await new Response(response.body!).text()
+  await requestExit.awaitOwnerRequestSettlements({ commandId: s.commandId })
+  expect(s.reservationState()).toEqual({ state: state === 'finished' ? 'settled' : 'needs_reconcile' })
 })
 
 

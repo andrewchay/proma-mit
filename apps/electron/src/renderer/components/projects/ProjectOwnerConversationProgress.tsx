@@ -35,13 +35,14 @@ function acceptedDeliveryReference(messages: readonly OwnerManagementMessage[], 
 }
 
 function progressLabel(state: string | undefined, nextAction: string | undefined): string {
+  if (state === 'needs_reconcile') return '当前工作已暂停，需核对执行状态或费用后继续。'
+  if (state === 'stale') return '项目资料或授权已变化，需重新核对后继续。'
   if (nextAction === 'await_business_acceptance') return '成果已准备好，等待你审阅。'
   if (nextAction === 'await_owner_quality') return 'Owner 正在核对成果与质量依据。'
   if (nextAction === 'human_decision') return 'Owner 已暂停推进，请查看问题与处理建议。'
   if (nextAction === 'rework' || nextAction === 'review' || nextAction === 'execute') return 'Owner 正在组织团队继续推进。'
   if (state === 'running' || state === 'ready') return 'Owner 正在组织团队推进目标。'
   if (state === 'paused') return '当前工作已暂停。'
-  if (state === 'needs_reconcile' || state === 'stale') return 'Owner 正在核对工作状态与授权范围。'
   if (state === 'expired' || state === 'archived') return '本次执行已结束。'
   return 'Owner 正在准备下一步。'
 }
@@ -153,7 +154,6 @@ export function ProjectOwnerConversationProgress({ subject }: { subject: Project
     })
   }
   return <section className="mt-4 space-y-3 rounded-2xl bg-muted/30 p-4 shadow-sm" aria-label="Owner项目进度与成果">
-    <h4 className="font-semibold">项目进展</h4>
     <p role="status" className="text-sm">{waitingForUser ? 'Owner 正在等你处理一项待确认内容。' : hasAttention ? 'Owner 提出需要关注的事项，请查看最新说明。' : progress.loading && !progress.loaded ? '正在读取最新进展…' : progress.error && !progress.loaded ? '暂时无法读取最新进展。' : dispatchControl?.control?.paused ? '后续自主派工已暂停；已运行的执行继续。' : completedDelivery ? '本轮成果已交付，可在对话中查看和审阅。' : progressLabel(progress.schedule?.state, progress.schedule?.nextAction)}</p>
     {waitingForUser && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-500/10 p-3 text-sm"><p>请查看 Owner 的最新说明并直接回复；确认前，受影响的新工作不会启动，其他仍在已确认范围内的工作可以继续。</p><button type="button" className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground" onClick={focusReplyComposer}>回复 Owner</button></div>}
     {progress.error && <p role="alert" className="text-xs text-destructive">最新进展读取失败；已保留上次记录，不会据此重新启动工作。</p>}
@@ -169,7 +169,7 @@ export function ProjectOwnerConversationProgress({ subject }: { subject: Project
       <h5 className="text-sm font-medium">员工工作监控</h5>
       <p className="text-xs text-muted-foreground">可在这里只读查看员工的具体输出与工具记录；讨论、调整和问题反馈统一交给 Owner。</p>
       {employeeCommands.map(command => <article key={command.commandId} className="space-y-3 rounded-xl bg-card p-3 shadow-sm">
-        <div className="min-w-0"><p className="truncate text-sm font-medium">{command.taskTitle}</p><p className="text-xs text-muted-foreground">{command.role === 'reviewer' ? '独立评审' : command.role === 'executor' ? '执行员工' : '员工'} · {command.state === 'running' ? '正在工作' : command.state === 'queued' ? '等待启动' : command.state === 'settled' && command.executionStatus === 'completed' ? '已完成' : command.state === 'needs_reconcile' || command.state === 'unknown' ? '需要核对' : command.executionStatus ?? command.state}</p></div>
+        <div className="min-w-0"><p className="truncate text-sm font-medium">{command.taskTitle}</p><p className="text-xs text-muted-foreground">{command.role === 'reviewer' ? '独立评审' : command.role === 'executor' ? '执行员工' : '员工'} · {command.reviewReplaced ? '历史评审，费用记录保留' : command.state === 'running' ? '正在工作' : command.state === 'queued' ? '等待启动' : command.state === 'settled' && command.executionStatus === 'completed' ? '已完成' : command.state === 'needs_reconcile' || command.state === 'unknown' ? '需要核对' : command.executionStatus ?? command.state}</p></div>
         {command.executionId && isExecutionStatus(command.executionStatus) && <div>{(command.executionStatus === 'running' || command.executionStatus === 'queued') && <p className="text-xs text-muted-foreground">只影响这次执行；停止是否生效及费用仍需核对，不会暂停其他工作。</p>}<AgentExecutionStopButton execution={{ id: command.executionId, status: command.executionStatus, entityType: 'task', entityId: command.taskId }} onChanged={refreshProgress} /></div>}
         {command.state === 'queued' ? <span className="text-xs text-muted-foreground">会话将在员工启动时建立</span> : <button type="button" className={button} aria-expanded={monitoredCommandId === command.commandId} onClick={() => setMonitoredCommandId(value => value === command.commandId ? '' : command.commandId)}>{monitoredCommandId === command.commandId ? '收起工作记录' : '查看工作记录（只读）'}</button>}
         {monitoredCommandId === command.commandId && <OwnerEmployeeMonitor key={command.commandId} projectId={subject.projectId} command={command} onFeedback={() => feedbackToOwner(command)} />}

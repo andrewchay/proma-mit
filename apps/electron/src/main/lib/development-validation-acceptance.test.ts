@@ -138,6 +138,10 @@ test('Given 冻结浏览器成功回执 When Reviewer 引用命令字段 Then �
   const quote = `"command":${JSON.stringify(evidence.command)}`
   expect(containsOwnerValidationEvidenceQuote([evidence], quote)).toBe(true)
   expect(containsOwnerValidationEvidenceQuote([evidence], evidence.command)).toBe(true)
+  const digest = `"rawOutputSha256":${JSON.stringify(evidence.rawOutputSha256)}`
+  expect(containsOwnerValidationEvidenceQuote([evidence], digest)).toBe(true)
+  expect(containsOwnerValidationEvidenceQuote([evidence], `"validationId":${JSON.stringify(evidence.validationId)}`)).toBe(true)
+  expect(containsOwnerValidationEvidenceQuote([{ ...evidence, outputTail: '改写输出' }], digest)).toBe(false)
   expect(containsOwnerValidationEvidenceQuote([evidence], 'browser:html.loads')).toBe(false)
   expect(containsOwnerValidationEvidenceQuote([{ ...evidence, status: 'failed', exitCode: 1 }], quote)).toBe(false)
   expect(containsOwnerValidationEvidenceQuote([{ ...evidence, outputTail: '改写输出' }], quote)).toBe(false)

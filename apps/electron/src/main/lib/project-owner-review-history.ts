@@ -1,7 +1,7 @@
 import type { OwnerReviewHistory } from '@gravitas/shared'
 import { readOwnerQualityAction } from './project-owner-quality-actions'
 import { listOwnerTechnicalReviewEvidence } from './project-owner-technical-review'
-import { canRetryOwnerMarkdownReview } from './project-owner-document-review-retry'
+import { canRetryOwnerMarkdownReview, readInterruptedOwnerMarkdownReview } from './project-owner-document-review-retry'
 import { canSupplementOwnerCounterReview, readOwnerCounterSupplement } from './project-owner-counter-supplement'
 import { isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
 import * as store from './project-sqlite-store'
@@ -79,7 +79,11 @@ export function listOwnerReviewHistory(projectId: string): OwnerReviewHistory[] 
       && !store.getProjectDb().prepare(`SELECT 1 FROM project_owner_document_review_retries retry
         JOIN project_owner_execution_commands c ON c.id=retry.reviewer_id WHERE retry.previous_reviewer_id=?`).get(review.reviewerCommandId)
       ? review.reviewerCommandId : undefined
+    let interruptedMarkdownReview = false
+    if (round.reviewer_id && round.state === 'needs_reconcile' && round.execution_status === 'failed') {
+      try { interruptedMarkdownReview = Boolean(readInterruptedOwnerMarkdownReview(projectId, round.reviewer_id)) } catch { /* 证据无法核验时保留原暂停状态。 */ }
+    }
     steps.push({ label: 'Owner 决定', detail: decision, ...(decidedAt === undefined ? {} : { at: decidedAt }) })
-    return { id: round.id, ...(round.scope_id ? { taskId: round.scope_id } : {}), businessTaskId: round.task_id, ...(qualityState ? { qualityState } : {}), ...(counterSupplementReviewerId ? { counterSupplementReviewerId } : {}), ...(markdownRetry ? { markdownRetryReviewerId: markdownRetry } : {}), title: store.getTask(round.task_id)?.title ?? '项目任务', reworkOrdinal: round.ordinal, steps }
+    return { id: round.id, ...(round.scope_id ? { taskId: round.scope_id } : {}), businessTaskId: round.task_id, ...(qualityState ? { qualityState } : {}), ...(counterSupplementReviewerId ? { counterSupplementReviewerId } : {}), ...(markdownRetry || interruptedMarkdownReview ? { markdownRetryReviewerId: markdownRetry ?? round.reviewer_id! } : {}), ...(interruptedMarkdownReview ? { interruptedMarkdownReview: true as const } : {}), title: store.getTask(round.task_id)?.title ?? '项目任务', reworkOrdinal: round.ordinal, steps }
   })
 }

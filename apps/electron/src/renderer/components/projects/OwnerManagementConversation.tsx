@@ -19,6 +19,7 @@ import { OwnerDesignBrief } from './OwnerDesignBrief'
 import { findLatestDeliveryReview, findReferencedDelivery } from './owner-delivery-reference'
 import { OwnerManagementQuestions } from './OwnerManagementQuestions'
 import { OwnerAcceptanceCard } from './OwnerAcceptanceCard'
+import { OwnerDeliveryBrowserRefresh } from './OwnerDeliveryBrowserRefresh'
 import { OwnerDeliveredDecisionCard } from './OwnerDeliveredDecisionCard'
 import { ownerAcceptanceChainsAtom, ownerAcceptancePendingAtom, rememberOwnerAcceptanceChainAtom } from '@/atoms/owner-acceptance-chain-atoms'
 import { ownerDiscussionTimeline, type OwnerDiscussionEntry } from './owner-discussion-timeline'
@@ -140,6 +141,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const reviewHistory = editor.view?.reviewHistory?.filter(round => taskId === undefined || round.taskId === taskId) ?? []
   const escalatedReviews = reviewHistory.filter((round, index) => round.businessTaskId && round.qualityState === 'escalated' && reviewHistory.findIndex(item => item.businessTaskId === round.businessTaskId) === index)
   const blockedReviews = reviewHistory.filter((round, index) => round.businessTaskId && round.qualityState === 'blocked' && reviewHistory.findIndex(item => item.businessTaskId === round.businessTaskId) === index)
+  const interruptedReviews = reviewHistory.filter(round => round.interruptedMarkdownReview)
   const [counterSupplement, setCounterSupplement] = useState<{ projectId: string; reviewerId: string; pending: boolean; message: string }>()
   const supplementReview = async (reviewerId: string, markdown: boolean) => {
     setCounterSupplement({ projectId, reviewerId, pending: true, message: '' })
@@ -166,8 +168,8 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     const reviewerId = round.markdownRetryReviewerId ?? round.counterSupplementReviewerId
     const state = counterSupplement?.projectId === projectId && counterSupplement.reviewerId === reviewerId ? counterSupplement : undefined
     return reviewerId && <div className="mt-2 space-y-1">
-      {markdown && <p className="text-xs text-muted-foreground">对原 Markdown 文件重新验证，再在现有额度内启动一次独立评审，不重写文件。</p>}
-      <button type="button" className="text-primary underline" disabled={state?.pending} onClick={() => void supplementReview(reviewerId, markdown)}>{state?.pending ? '正在验证…' : markdown ? '保留原文件并重新评审' : '补测加一和重置'}</button>
+      {markdown && <p className="text-xs text-muted-foreground">{round.interruptedMarkdownReview ? '确认后，对同一份文件补齐验证，并在现有额度内重新评审一次。上次评审已在本机停止，服务商处理情况和费用仍待核对，原请求继续占用预算。' : '对原 Markdown 文件重新验证，再在现有额度内启动一次独立评审，不重写文件。'}</p>}
+      <button type="button" className="text-primary underline" disabled={state?.pending} onClick={() => void supplementReview(reviewerId, markdown)}>{state?.pending ? '正在验证…' : markdown ? round.interruptedMarkdownReview ? '确认重新评审原文件' : '保留原文件并重新评审' : '补测加一和重置'}</button>
 
     </div>
   }
@@ -253,6 +255,8 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const waitingMessage = getOwnerWaitingMessage(messages, taskId)
   const decisionLabel = waitingMessage?.kind !== 'attention' ? getOwnerWaitingLabel(messages, taskId, delegation.view?.state) : null
   const waitingForDecision = decisionLabel !== null
+  const originalGoalBlock = messages.findLast(message => message.kind === 'attention'
+    && message.eventId === `owner-delivery-original-goal-blocked:${grant.grant?.grantId}`)
   const authorizationDecision = Boolean(delegation.view?.initialPlanningRecovery) || ['none', 'expired', 'stale', 'revoked', 'exhausted'].includes(delegation.view?.state ?? '')
   // 执行阻塞与执行区共用同一份推导：两处各自判断会出现“这里说暂无事项、那里说已阻塞”。
   const executionAttention = deriveOwnerExecutionAttention({
@@ -281,7 +285,9 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const acceptanceSchedule = pendingAcceptance ? { projectId, state: 'waiting' as const, nextAction: 'await_business_acceptance' as const, grantId: pendingAcceptance.grantId, taskId: pendingAcceptance.taskId, reworkOrdinal: pendingAcceptance.reworkOrdinal, reservedCostMicros: 0, committedCostMicros: 0, runReservations: 0, reason: '' } : awaitingBusinessAcceptance ? teamUsage : undefined
   const deliveredRound = grant.grant?.dispatchMode === 'autonomous' && hasCompletedOwnerDelivery(messages, usage.commands, taskId, plan.snapshot?.planVersion, grant.grant.grantId)
     ? messages.findLast(message => message.kind === 'delivery' && message.delivery?.planVersion === plan.snapshot?.planVersion && message.eventId?.startsWith(`owner-delivery:${grant.grant!.grantId}:`)) : undefined
-  const pendingDeliveredItem = deliveredRound?.delivery?.items.find(item => !findLatestDeliveryReview(editor.view?.messages ?? [], taskId, { messageId: deliveredRound.id, stepKey: item.stepKey, artifactHash: item.artifactHash }))
+  const pendingDeliveredItems = deliveredRound?.delivery?.items.filter(item => !findLatestDeliveryReview(editor.view?.messages ?? [], taskId, { messageId: deliveredRound.id, stepKey: item.stepKey, artifactHash: item.artifactHash }))
+  const pendingDeliveredItem = pendingDeliveredItems?.find(item => item.localTextRevision?.previousMessageId === deliveredRound?.delivery?.localTextRevisionOf && item.localTextRevision)
+    ?? pendingDeliveredItems?.[0]
   const pendingDeliveredReference = deliveredRound && pendingDeliveredItem ? { messageId: deliveredRound.id, stepKey: pendingDeliveredItem.stepKey, artifactHash: pendingDeliveredItem.artifactHash } : undefined
   const validationFor = (reference: OwnerManagementDeliveryReference | null | undefined) => reference ? editor.view?.deliveryValidations?.find(record => record.messageId === reference.messageId && record.artifactHash === reference.artifactHash && (!reference.stepKey || record.stepKey === reference.stepKey)) : undefined
   const acceptanceBlocker = ownerDeliveryValidationBlocker(validationFor(pendingDeliveredReference))
@@ -319,10 +325,14 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   }
   const employeeRunning = usage.commands.some(command => command.grantId === grant.grant?.grantId
     && command.state === 'running' && command.executionStatus === 'running')
+  const lastRequest = delegation.view?.state === 'attention' ? delegation.view.attentionCheck : undefined
+  const truncatedFinalReview = lastRequest?.phase === 'quality_decision' && lastRequest.finishReason === 'length'
   const currentStatus = editor.loading && !editor.view ? '正在读取项目状态'
     : editor.error ? '项目状态读取失败，需要重新读取'
       : pendingAction ? '员工操作等待你的逐次确认'
+        : truncatedFinalReview ? '成果验收中断，原成果已保留'
         : executionAttention ? executionAttention.title
+          : originalGoalBlock ? '整体交付尚未满足原目标'
           : latestAttention ? 'Owner 提出需要关注的事项'
           : blockedReviews.length > 0 ? '成果质量决定被阻断，需要核对'
           : delegation.view?.state === 'attention' ? '项目管理需要核对'
@@ -332,6 +342,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
               : authorizationDecision && editor.view?.manager ? '项目管理授权需要确认'
               : evidenceBlocker ? '成果验证证据需要核对'
               : awaitingBusinessAcceptance ? '成果等待人工业务验收'
+              : pendingDeliveredItem ? '成果待你审阅'
               : waitingForDecision || escalatedReviews.length > 0 || hasOpenQuestions || hasPendingChange ? 'Owner 正在等待你的决定'
                 : ownerProcessing ? 'Owner 正在处理项目工作'
                   : employeeRunning ? '团队正在处理项目工作'
@@ -350,7 +361,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     ? findReferencedDelivery(editor.view?.messages ?? [], taskId, composer.deliveryReference)
     : undefined
   const composerBlocker = composer.deliveryReviewDecision === 'accepted' ? ownerDeliveryValidationBlocker(validationFor(composer.deliveryReference)) : null
-  const canSendMessage = !composer.sending && Boolean(composer.text.trim() || composer.deliveryReviewDecision) && composer.text.trim().length + (composer.deliveryReviewDecision ? 18 : 0) <= 4000 && (!composerBlocker || Boolean(composer.pending))
+  const canSendMessage = !composer.sending && Boolean(composer.pending || composer.text.trim() || composer.deliveryReviewDecision === 'accepted') && composer.text.trim().length + (composer.deliveryReviewDecision ? 18 : 0) <= 4000 && (!composerBlocker || Boolean(composer.pending))
     && !(composer.deliveryReference && !referencedDelivery)
   const selectDelivery = (reference: { messageId: string; stepKey: string; artifactHash: string }): void => { onShowOwner?.(); setSelectedDelivery(reference); if (!wideScreen) setDiscussionOpen(false) }
   const selectedArtifact = selectedDelivery ? findReferencedDelivery(editor.view?.messages ?? [], taskId, selectedDelivery) : undefined
@@ -419,11 +430,13 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     {editor.error && <div className="space-y-2"><p role="alert" className="text-sm text-destructive">Owner对话读取失败：{editor.error}</p><button type="button" className="text-xs text-primary underline" disabled={editor.loading} onClick={() => void load(projectId)}>重新读取 Owner 对话</button></div>}
     {!editor.view?.manager && delegation.view?.state === 'none' && !plan.snapshot && <p role="status" className="rounded-xl bg-primary/5 px-4 py-3 text-sm leading-6">Owner尚未开始规划：当前没有已确认的项目总模型费用额度。请在授权设置中确认预算与有效期；确认后，Owner会在额度内自动整理方案并回到这里回应。</p>}
     <div className={cn('grid min-w-0 items-start gap-0', discussionOpen ? 'xl:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)]' : 'xl:grid-cols-[minmax(0,1fr)_auto]')}><section className="min-w-0 xl:pr-7" aria-label="Owner当前工作台"><div hidden={showProjectDetails} className="space-y-6">
-      <section className="rounded-xl bg-primary/10 px-5 py-4" aria-label="Owner当前状态"><h3 className="text-base font-semibold">{currentStatus}</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">{editor.view?.stateProjection ? `上次状态核对：${new Date(editor.view.stateProjection.lastReconciledAt).toLocaleString('zh-CN')}` : '状态以项目当前记录为准。'}</p></section>
+      <section className="rounded-xl bg-primary/10 px-5 py-4" aria-label="Owner当前状态"><h3 className="text-base font-semibold">{currentStatus}</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">{truncatedFinalReview ? '最后一次验收输出被截断。可在授权设置中查看原请求和费用记录。' : editor.view?.stateProjection ? `上次状态核对：${new Date(editor.view.stateProjection.lastReconciledAt).toLocaleString('zh-CN')}` : '状态以项目当前记录为准。'}</p></section>
       {selectedDelivery && selectedArtifact && <section ref={artifactWorkspaceRef} tabIndex={-1} className="rounded-xl bg-muted/40 p-4" aria-label="成果工作区">
         <div className="mb-3 flex items-center justify-between gap-3"><h3 className="font-semibold">成果工作区</h3><button type="button" className="text-sm text-primary underline" onClick={() => setSelectedDelivery(null)}>关闭成果</button></div>
         <div className="mb-4 rounded-lg bg-background/70 p-3" aria-label="审阅这个成果版本">
           <p className="text-sm font-medium">记录你的审阅决定</p><p className="mt-1 text-xs text-muted-foreground">决定只关联当前成果版本，发送后进入 Owner 对话；不会自动完成任务或批准发布。</p>
+          {selectedDelivery.messageId === deliveredRound?.id && <OwnerDeliveryBrowserRefresh key={`${selectedDelivery.messageId}:${selectedDelivery.stepKey}`}
+            subject={subject} record={validationFor(selectedDelivery)} onChanged={() => load(projectId)} />}
           {selectedBlocker && <p role="alert" className="mt-2 text-sm text-amber-700">{selectedBlocker}</p>}
           {selectedReview && <p role="status" className="mt-2 text-sm">{selectedReview.deliveryReviewDecision === 'accepted' ? '你已认可这个成果版本' : '你已提出这个成果版本需要修改'} · {new Date(selectedReview.createdAt).toLocaleString('zh-CN')}</p>}
           <div className="mt-3 flex flex-wrap gap-2">{([{ value: 'accepted', label: '认可这个版本' }, { value: 'changes_requested', label: '需要修改' }] as const).map(choice => <button type="button" key={choice.value} disabled={composer.sending || Boolean(composer.pending) || !editor.view?.manager || (choice.value === 'accepted' && Boolean(selectedBlocker))} aria-pressed={composer.deliveryReviewDecision === choice.value && composer.deliveryReference?.messageId === selectedDelivery.messageId && composer.deliveryReference?.artifactHash === selectedDelivery.artifactHash && composer.deliveryReference?.stepKey === selectedDelivery.stepKey} className="rounded-lg bg-primary/10 px-3 py-2 text-sm text-primary disabled:opacity-50 aria-pressed:bg-primary aria-pressed:text-primary-foreground" onClick={() => { edit({ subject, text: composer.text, deliveryReference: selectedDelivery, deliveryReviewDecision: choice.value }); focusReplyComposer() }}>{choice.label}</button>)}</div>
@@ -434,9 +447,12 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
       <div className="space-y-6">
         <section className="min-w-0 space-y-4 rounded-xl bg-card p-5 shadow-sm ring-1 ring-border/40 sm:p-6" aria-label="需要你决定">
           <h4 className="text-base font-semibold">需要你决定</h4>
-          {pendingDeliveredItem && pendingDeliveredReference && <OwnerDeliveredDecisionCard subject={subject} item={pendingDeliveredItem} reference={pendingDeliveredReference} acceptanceBlocker={acceptanceBlocker} onOpen={() => selectDelivery(pendingDeliveredReference)} />}
-          {!editor.loading && editor.view && !pendingAction && !latestWorkspaceProposal && !needsArrangementRetry && !authorizationDecision && !waitingForDecision && !hasOpenQuestions && !hasPendingChange && !acceptanceSchedule && !pendingDeliveredItem && !executionAttention && escalatedReviews.length === 0 && blockedReviews.length === 0
+          {pendingDeliveredItem && pendingDeliveredReference && <OwnerDeliveredDecisionCard subject={subject} item={pendingDeliveredItem} reference={pendingDeliveredReference} acceptanceBlocker={acceptanceBlocker}
+            browserRefresh={<OwnerDeliveryBrowserRefresh key={`${pendingDeliveredReference.messageId}:${pendingDeliveredReference.stepKey}`} subject={subject}
+              record={validationFor(pendingDeliveredReference)} onChanged={() => load(projectId)} />} onOpen={() => selectDelivery(pendingDeliveredReference)} />}
+          {!editor.loading && editor.view && !pendingAction && !latestWorkspaceProposal && !needsArrangementRetry && !authorizationDecision && !waitingForDecision && !hasOpenQuestions && !hasPendingChange && !acceptanceSchedule && !pendingDeliveredItem && !executionAttention && !originalGoalBlock && escalatedReviews.length === 0 && blockedReviews.length === 0 && interruptedReviews.length === 0
             && <p className="text-sm text-muted-foreground">暂无待你决定的事项。</p>}
+          {originalGoalBlock && <div className="rounded-lg bg-amber-500/10 p-3 text-sm"><p>{originalGoalBlock.content}</p><button type="button" className="mt-2 text-primary underline" onClick={focusReplyComposer}>回复 Owner 补齐交付</button></div>}
           {acceptanceSchedule && <OwnerAcceptanceCard projectId={projectId} schedule={acceptanceSchedule} commands={usage.commands} onChanged={() => { void refreshCommandProgress(subject) }} feedbackDisabled={composer.sending || Boolean(composer.pending || composer.deliveryReference || composer.deliveryReviewDecision) || !editor.view?.manager} feedbackCapacity={Math.max(0, 3700 - composer.text.length)} onDiscuss={(delivery, excerpt, intent) => { const context = `交付「${delivery.title}」版本 ${delivery.version}（记录 ${delivery.id}）${excerpt ? `，${intent === 'question' ? '想询问' : '希望修改'}：\n“${excerpt}”` : '：'}\n`; const text = `${composer.text}${composer.text.trim() ? '\n\n' : ''}${context}`; if (text.length > 4000) return; edit({ subject, text }); focusReplyComposer() }} />}
           {acceptanceSchedule && (composer.deliveryReference || composer.deliveryReviewDecision) && <p className="text-xs text-muted-foreground">对话草稿已关联另一成果。请先发送或取消该关联，再对这个交付点选反馈。</p>}
           {escalatedReviews.map(round => <div key={round.id} className="space-y-2 rounded-lg bg-amber-500/10 p-3 text-sm" aria-label="质量决定需协商"><p className="font-medium">{round.title} · 需要你决定</p><p className="whitespace-pre-wrap break-words">{round.steps.find(step => step.label === 'Owner 决定')?.detail ?? '请与 Owner 协商未解决的质量事项。'}</p><button type="button" className="text-primary underline" onClick={focusReplyComposer}>回复 Owner</button>{reviewRecoveryControl(round)}</div>)}
@@ -447,20 +463,15 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
               && <a href={`#${planDetailsId}`} className="text-primary underline underline-offset-4">查看方案与确认项</a>}
             {waitingMessage?.kind === 'configuration_required' && children && <a href={`#${settingsId}`} className="text-primary underline underline-offset-4">查看项目配置</a>}
           </div>}
+          {interruptedReviews.map(round => <div key={round.id} className="space-y-2 rounded-lg bg-amber-500/10 p-3 text-sm" aria-label="恢复独立评审"><p className="font-medium">{round.title} · 可以重新评审原文件</p>{reviewRecoveryControl(round)}</div>)}
           {executionAttention && <OwnerExecutionBlockerNotice
+            key={executionAttention.recheckExecutionId}
             attention={executionAttention}
-            onOpenEvidence={() => revealDiscussionTarget('owner-project-progress')}
-            onRecheckWorkspace={() => {
-              const executionId = executionAttention.recheckExecutionId
-              if (!executionId) return
-              void window.electronAPI.paa.project.recheckOwnerDevelopmentWorkspace({ ...subject, executionId })
-                .then(result => {
-                  if (!result.ok) throw new Error(result.error.message)
-                  if (result.value.state !== 'clean') return
-                  void load(projectId)
-                  void refreshCommandProgress(subject)
-                })
-                .catch(() => { /* 失败时保留原提示，不静默假装已解决 */ })
+            subject={subject}
+            onOpenEvidence={() => revealOwnerHistoryTarget('owner-project-progress')}
+            onWorkspaceCleared={() => {
+              void load(projectId)
+              void refreshCommandProgress(subject)
             }}
           />}
           {authorizationDecision && children && <div className="space-y-2"><p className="text-sm font-medium">{delegation.view?.state === 'none' ? '确认项目预算与管理范围' : '项目管理授权需要核对'}</p>{children}</div>}
@@ -484,11 +495,10 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
         <section className="min-w-0 border-b border-border/50 pb-5" aria-label="项目风险">
           <h4 className="text-sm font-semibold">风险与关注事项</h4>
           {evidenceBlocker && evidenceRisk && <div className="mt-3 rounded-xl bg-amber-500/10 p-3 text-sm" role="alert"><p className="font-medium">成果验证证据需要核对</p><p className="mt-1">{evidenceBlocker}</p><button type="button" className="mt-2 text-primary underline" onClick={() => selectDelivery(evidenceRisk.reference)}>查看成果和证据</button></div>}
-          {planRisks.length > 0 && <ul className="mt-2 list-disc space-y-1 pl-5 text-sm [overflow-wrap:anywhere]">{planRisks.map((risk, index) => <li key={index}>{risk}</li>)}</ul>}
+          {planRisks.length > 0 && <details className="mt-2 text-sm"><summary className="cursor-pointer">方案风险</summary><ul className="mt-2 list-disc space-y-1 pl-5 [overflow-wrap:anywhere]">{planRisks.map((risk, index) => <li key={index}>{risk}</li>)}</ul></details>}
           {counterSupplementNotice && <p role="status" className="mt-2 text-sm">{counterSupplementNotice}</p>}
           {blockedReviews.map(round => <div key={round.id} className="mt-3 rounded-xl bg-amber-500/10 p-3 text-sm" aria-label="质量阻断"><p className="font-medium">{round.title} · 质量决定被阻断</p><p className="mt-1 whitespace-pre-wrap break-words">{round.steps.find(step => step.label === 'Owner 决定')?.detail ?? '请核对当前质量决定和恢复条件。'}</p>{reviewRecoveryControl(round)}</div>)}
           {delegation.view?.state === 'attention' && !authorizationDecision && children && <a href={`#${settingsId}`} className="mt-2 block text-sm text-primary underline underline-offset-4">上次请求待核对，查看请求记录</a>}
-          {!evidenceBlocker && !latestAttention && !priorAttention && blockedReviews.length === 0 && delegation.view?.state !== 'attention' && planRisks.length === 0 && <p className="mt-2 text-sm text-muted-foreground">暂无已记录的风险提示，不代表已完成全面风险检查。</p>}
           {priorAttention && <p className="mt-2 text-xs text-muted-foreground">此前 Owner 曾提出关注事项；后续进展是否解决该事项，请查看 <button type="button" className="text-primary underline" onClick={() => revealDiscussionTarget(`owner-message-${priorAttention.id}`)}>历史记录</button>核对。</p>}
           {latestAttention && <section className="mt-3 space-y-2 rounded-lg bg-amber-500/10 px-3 py-2" role="alert" aria-label="Owner最新处理结果">
             <div className="flex flex-wrap items-center justify-between gap-2"><h4 className="font-semibold">Owner 最新处理结果</h4><time className="text-xs text-muted-foreground">{new Date(latestAttention.createdAt).toLocaleString('zh-CN')}</time></div>
@@ -498,7 +508,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
             </div>
           </section>}
         </section>
-        <section id="owner-project-progress" className="min-w-0" aria-label="项目进展">
+        <section className="min-w-0" aria-label="项目进展">
           <h4 className="text-sm font-semibold">项目进展</h4>
           {(assignmentTrace || ownerProcessing) && <div className="mt-3 rounded-xl bg-primary/5 px-4 py-3 text-sm" role="status" aria-label="Owner组织进度">
           <div className="flex items-center gap-2">
@@ -507,7 +517,10 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
           </div>
           {assignmentActive && !waitingForUser && <p className="mt-1 text-xs text-muted-foreground">{elapsedLabel(clock - assignmentTrace.createdAt)}；这类安排没有可靠的固定预计时长。{clock - assignmentTrace.createdAt >= ORGANIZATION_STALL_HINT_MS ? '暂时还没有新进展；Owner会继续检查处理状态，你不必重复发送。收到结果或需要你决定的事项时，我会在这里更新。' : ''}</p>}
           </div>}
-          {progress ?? (!assignmentTrace && !ownerProcessing && <p className="mt-2 text-sm text-muted-foreground">暂无新的进展记录。</p>)}
+          {progress && <details id="owner-project-progress" key={projectId} tabIndex={-1} className="mt-3 rounded-xl bg-muted/40 p-4">
+            <summary className="cursor-pointer text-sm font-medium">员工进展与运行记录</summary>
+            {progress}
+          </details>}
           {reviewHistory.length > 0 && <details className="mt-3 rounded-xl bg-muted/40 p-4">
             <summary className="cursor-pointer text-sm font-medium">查看进展与决策依据</summary>
             {reviewHistory.map(round => <section key={round.id} className="mt-3 rounded-lg bg-background/70 p-3">

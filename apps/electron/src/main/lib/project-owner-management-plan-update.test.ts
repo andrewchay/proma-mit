@@ -59,18 +59,32 @@ test('Given独立检查要求修改 WhenOwner记录观察 Then主动给出发现
   expect(content).toContain('超出已确认的目标、资料或费用边界')
 })
 
-test('Given独立检查通过 WhenOwner记录观察 Then说明可进入交付且不要求追加授权', () => {
+test('Given独立检查声称可以交付 WhenOwner尚未验收 Then只报告等待验收且不转述未核实摘要', () => {
   const project = projectWithOwner()
   management.recordOwnerManagementObservation(project.id, 1, observation({
-    review: { verdict: 'approved', summary: '逐条核对通过', findings: ['建议补充图表标注'] },
+    review: { verdict: 'approved', summary: '正文37字，所有事实正确，可以交付', findings: ['建议补充图表标注'] },
   }), 'task-1', 'hash-approved')
 
-  const messages = planUpdateMessages(project.id)
-  expect(messages).toHaveLength(1)
-  expect(messages[0]).toContain('发现：独立检查通过（逐条核对通过）')
-  expect(messages[0]).toContain('仍记录 1 项非阻断项')
-  expect(messages[0]).toContain('影响：成果可以进入交付，不需要为此改动方案或追加授权')
-  expect(messages[0]).toContain('建议：我继续整理交付说明')
+  expect(planUpdateMessages(project.id)).toEqual(['独立检查已提交通过意见，当前等待最终验收。交付后，成果会在当前对话中显示。'])
+  const observed = management.listPendingOwnerManagementEvents(project.id).find(event => event.kind === 'execution_observed')!
+  const saved = management.getOwnerManagementMessage(project.id, observed.sourceId!)
+  expect(saved?.executionObservation?.review?.summary).toBe('正文37字，所有事实正确，可以交付')
+  expect(management.getOwnerManagementView(project.id).messages.some(message => message.kind === 'delivery')).toBe(false)
+})
+
+test('Given旧版已写入评审进度 When重放同一观察 Then保留原记录且不重复播报', () => {
+  const project = projectWithOwner()
+  const hash = 'legacy-approved'
+  const legacy = management.appendOwnerManagementMessage({ projectId: project.id, taskId: 'task-1', goalRevision: 1,
+    eventId: `execution-observation:${project.id}:1:${hash}:plan-update`, role: 'assistant', kind: 'management_progress', content: '旧版评审进度' })
+  management.recordOwnerManagementObservation(project.id, 1, observation({ review: { verdict: 'approved', summary: '通过', findings: [] } }), 'task-1', hash)
+  expect(planUpdateMessages(project.id)).toEqual([legacy.content])
+  const pending = management.listPendingOwnerManagementEvents(project.id).filter(event => event.kind === 'execution_observed')
+  expect(pending).toHaveLength(1)
+  management.consumeOwnerManagementEvent(pending[0]!)
+  management.recordOwnerManagementObservation(project.id, 1, observation({ review: { verdict: 'approved', summary: '通过', findings: [] } }), 'task-1', hash)
+  expect(management.listPendingOwnerManagementEvents(project.id).filter(event => event.kind === 'execution_observed')).toHaveLength(0)
+  expect(management.getOwnerManagementMessage(project.id, legacy.id)).toEqual(legacy)
 })
 
 test('Given检查结论不是通过或不通过 WhenOwner记录观察 Then按事实说明且不自动返工', () => {

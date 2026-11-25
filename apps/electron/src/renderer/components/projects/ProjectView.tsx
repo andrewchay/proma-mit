@@ -555,9 +555,8 @@ export function ProjectView(): React.ReactElement {
           <OwnerConversationUpdates projects={projects.filter((project) => !project.archivedAt)} onOpen={(projectId, taskId) => navigateToOwner({ projectId, ...(taskId ? { taskId } : {}), at: Date.now() })} />
           <OwnerProjectStatusList
             projects={projects.filter((project) => !project.archivedAt)}
-            messagesByProject={new Map()}
             loadStatus={loadOwnerStatus}
-            onOpen={(projectId) => navigateToOwner({ projectId, at: Date.now() })}
+            onOpen={(projectId, taskId) => navigateToOwner({ projectId, ...(taskId ? { taskId } : {}), at: Date.now() })}
           />
           <ProjectList
             projects={projects}
@@ -571,7 +570,10 @@ export function ProjectView(): React.ReactElement {
   }
 
   // 项目默认页保留 Owner 对话，同时恢复现有任务、看板与项目详情入口。
-  return <ProjectDetail key={selectedProject.id} project={selectedProject} onBack={() => setSelectedProject(null)} onRefresh={loadProjects} />
+  return <ProjectDetail key={selectedProject.id} project={selectedProject} onBack={() => {
+    navigateToOwner(null)
+    setSelectedProject(null)
+  }} onRefresh={loadProjects} />
 }
 
 // ===== 头部 =====
@@ -1061,8 +1063,14 @@ function ProjectDetail({
   const [detailsHost, setDetailsHost] = useState<HTMLDivElement | null>(null)
   const [detailsWasOpened, setDetailsWasOpened] = useState(false)
   const showOwner = useCallback(() => { setPrimaryTab('owner') }, [setPrimaryTab])
-  const ownerNavigation = useAtomValue(ownerConversationNavigationAtom)
-  useEffect(() => { if (ownerNavigation?.projectId === project.id) setDetailTab(ownerNavigation.taskId ? 'tasks' : 'pilot') }, [ownerNavigation, project.id])
+  const [ownerNavigation, navigateToOwner] = useAtom(ownerConversationNavigationAtom)
+  const ownerTaskId = ownerNavigation?.projectId === project.id ? ownerNavigation.taskId : undefined
+  useEffect(() => {
+    if (ownerNavigation?.projectId === project.id) {
+      showOwner()
+      setDetailTab(ownerNavigation.taskId ? 'tasks' : 'pilot')
+    }
+  }, [ownerNavigation, project.id, showOwner])
   const [pilotTaskFocus, setPilotTaskFocus] = useState<{ taskId: string; subTaskId?: string } | null>(null)
   // R-P1-01：项目概览无任务/顶部 CTA 打开统一创建入口
   const [showOverviewCreate, setShowOverviewCreate] = useState(false)
@@ -1372,7 +1380,8 @@ function ProjectDetail({
               {([{ key: 'tasks', label: '任务' }, { key: 'chain', label: '成果' }, { key: 'knowledge', label: '资料' }, { key: 'pilot', label: blockers.length > 0 ? `更多 · ${blockers.length} 项阻塞` : '更多' }] as const).map(item => <button role="tab" aria-selected={primaryTab === item.key} key={item.key} type="button" className={primaryTab === item.key ? 'border-b-2 border-primary pb-3 font-medium' : 'border-b-2 border-transparent pb-3 text-muted-foreground hover:text-foreground'} onClick={() => { setDetailTab(item.key); setDetailsWasOpened(true); setPrimaryTab(item.key) }}>{item.label}</button>)}
             </nav>
           </div>
-          <ProjectOwnerHome projectId={project.id} showProjectDetails={primaryTab !== 'owner'} projectDetailsKind={primaryTab === 'owner' ? undefined : primaryTab} onProjectDetailsHost={setDetailsHost} onShowOwner={showOwner} />
+          {primaryTab === 'owner' && ownerTaskId && <button type="button" className="px-4 py-2 text-sm text-primary underline" onClick={() => navigateToOwner(null)}>返回项目 Owner</button>}
+          <ProjectOwnerHome projectId={project.id} taskId={ownerTaskId} showProjectDetails={primaryTab !== 'owner'} projectDetailsKind={primaryTab === 'owner' ? undefined : primaryTab} onProjectDetailsHost={setDetailsHost} onShowOwner={showOwner} />
           <ProjectDetailsPlacement key={project.id} target={detailsHost} visible={detailsActive}>{detailsWasOpened && <div hidden={!detailsActive} className="mt-6 rounded-xl bg-card p-4 shadow-sm">
       {/* 项目操作栏 */}
       <div className="flex flex-wrap items-start justify-between gap-3 px-3 py-3">
