@@ -134,8 +134,9 @@ export async function createNewMediaAuditEntry(input: CreateNewMediaAuditInput):
 export async function appendNewMediaAudit(
   entry: NewMediaAuditEntry,
   coRecords: Array<{ kind: string; value: { id: string } }> = [],
+  beforeWrite?: () => void,
 ): Promise<void> {
-  await putNewMediaRecords([...coRecords, { kind: NEW_MEDIA_AUDIT_KIND, value: entry }])
+  await putNewMediaRecords([...coRecords, { kind: NEW_MEDIA_AUDIT_KIND, value: entry }], beforeWrite)
 }
 
 export async function listNewMediaAudit(options: { domain?: NewMediaAuditDomain; subjectId?: string } = {}): Promise<NewMediaAuditEntry[]> {

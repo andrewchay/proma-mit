@@ -18,3 +18,10 @@ test('Given 未知动作核对 When 初始化答案 Then 不预选可能解除�
 test('Given 普通问答 When 初始化答案 Then 保留默认首项体验', () => {
   expect(createInitialAskUserAnswer('question', question).selected).toEqual(['未生效，允许重试'])
 })
+
+test('Computer Use 接管不会预选已完成', () => {
+  expect(createInitialAskUserAnswer('computer_use_takeover', {
+    question: '完成敏感操作后继续吗？',
+    options: [{ label: '我已完成，可继续' }, { label: '取消' }],
+  }).selected).toEqual([])
+})

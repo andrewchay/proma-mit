@@ -23,8 +23,8 @@ function audit(handoffId: string, event: XiaohongshuHandoffAuditEntry['event'], 
   return createNewMediaAuditEntry({ domain: 'handoff', event, actor, subjectId: handoffId, detail, metadata })
 }
 
-async function persistHandoff(record: XiaohongshuHandoff, entry: Promise<NewMediaAuditEntry>): Promise<void> {
-  await appendNewMediaAudit(await entry, [{ kind: HANDOFF_KIND, value: record }])
+async function persistHandoff(record: XiaohongshuHandoff, entry: Promise<NewMediaAuditEntry>, beforeWrite?: () => void): Promise<void> {
+  await appendNewMediaAudit(await entry, [{ kind: HANDOFF_KIND, value: record }], beforeWrite)
 }
 
 function safeName(title: string): string {
@@ -83,6 +83,12 @@ export async function listXiaohongshuHandoffs(): Promise<XiaohongshuHandoff[]> {
   return listNewMediaRecords(HANDOFF_KIND)
 }
 
+export async function getPreparedXiaohongshuHandoff(draftId: string): Promise<XiaohongshuHandoff> {
+  const handoff = (await listXiaohongshuHandoffs()).find(item => item.draftId === draftId)
+  if (!handoff) throw new Error('请先在新媒体工作台预览并准备这篇小红书交接。')
+  return handoff
+}
+
 export async function getXiaohongshuBrowserDraft(handoffId: string): Promise<XiaohongshuEditorCopy> {
   const handoff = await requireHandoff(handoffId)
   if (handoff.status === 'user_confirmed_published') throw new Error('这篇内容已确认发布，请新建草稿。')
@@ -102,15 +108,17 @@ export async function readXiaohongshuHandoffCover(handoffId: string): Promise<Bu
   return design.png
 }
 
-export async function recordXiaohongshuDraftReadback(handoffId: string): Promise<void> {
+export async function recordXiaohongshuDraftReadback(handoffId: string, beforeRecord?: () => void): Promise<void> {
   const { draftId } = await requireHandoff(handoffId)
   await withDirectorDraftLock(draftId, async () => {
     const handoff = await requireHandoff(handoffId)
+    beforeRecord?.()
     if (handoff.status === 'user_confirmed_published' || handoff.draftReadbackAt !== undefined) return
     const now = Date.now()
     await persistHandoff(
       { ...handoff, draftReadbackAt: now, updatedAt: now },
       audit(handoffId, 'draft_readback_verified', 'local-user', '已核对小红书草稿页显示的标题与正文。'),
+      beforeRecord,
     )
   })
 }

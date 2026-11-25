@@ -445,10 +445,11 @@ function readRecordCreatedAt(kind: string, id: string): number {
   }
 }
 
-export async function putNewMediaRecords(records: Array<{ kind: string; value: { id: string } }>): Promise<void> {
+export async function putNewMediaRecords(records: Array<{ kind: string; value: { id: string } }>, beforeWrite?: () => void): Promise<void> {
   await initNewMediaDb()
   const db = requireDb()
   const now = Date.now()
+  beforeWrite?.()
   db.exec('BEGIN IMMEDIATE;')
   try {
     for (const { kind, value } of records) {

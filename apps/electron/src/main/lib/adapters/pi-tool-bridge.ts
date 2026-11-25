@@ -48,6 +48,7 @@ export const PI_PROMA_GOAL_CHECKPOINT_TOOL_NAME = 'GoalCheckpoint'
 /** 只桥接新媒体总监使用的明确工具，其他插件仍须单独审查。 */
 const DIRECTOR_TOOL_NAMES = new Set([
   'nm_director_brand', 'nm_director_plan', 'nm_director_confirm_plan',
+  'nm_director_xhs_draft_takeover',
   'nm_director_delegate', 'nm_director_list_role_results', 'nm_director_save_xiaohongshu_copy', 'nm_director_save_wechat_copy', 'nm_director_save_design',
 ])
 
