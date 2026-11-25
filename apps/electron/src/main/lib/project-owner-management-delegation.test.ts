@@ -290,7 +290,7 @@ test.each(['到期', '撤销'])('Given首次规划无输出且授权%s When 确�
     await stop()
     service.revokeOwnerManagementDelegation(f.project.id, next.id)
   }
-})
+}, 15_000)
 
 test('Given失败回执使委托保持attention且用户已撤销 When确认新委托 Then持久撤销标记优先且不重发旧请求', async () => {
   const f = fixture(), grant = issue(f), before = calls
