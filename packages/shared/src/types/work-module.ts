@@ -1131,6 +1131,10 @@ export const NEW_MEDIA_IPC_CHANNELS = {
   CONFIRM_DIRECTOR_WECHAT_NOT_CREATED: 'new-media:confirm-director-wechat-not-created',
   LIST_XHS_HANDOFFS: 'new-media:list-xhs-handoffs',
   PREPARE_XHS_HANDOFF: 'new-media:prepare-xhs-handoff',
+  OPEN_XHS_DRAFT_BROWSER: 'new-media:open-xhs-draft-browser',
+  FILL_XHS_DRAFT_BROWSER: 'new-media:fill-xhs-draft-browser',
+  VERIFY_XHS_DRAFT_BROWSER: 'new-media:verify-xhs-draft-browser',
+  EXPORT_XHS_COVER: 'new-media:export-xhs-cover',
   EXPORT_XHS_HANDOFF: 'new-media:export-xhs-handoff',
   CONFIRM_XHS_PUBLISHED: 'new-media:confirm-xhs-published',
   GET_XHS_HANDOFF_AUDIT: 'new-media:get-xhs-handoff-audit',
@@ -1635,6 +1639,8 @@ export interface XiaohongshuHandoff {
   packageFileName: string
   designAssetId?: string
   packageSha256?: string
+  /** 官方创作窗口的草稿页文案核对时间。 */
+  draftReadbackAt?: number
   warnings: string[]
   handedOffAt?: number
   handedOffBy?: string
@@ -1643,7 +1649,7 @@ export interface XiaohongshuHandoff {
   createdAt: number
   updatedAt: number
 }
-export type XiaohongshuHandoffAuditEvent = 'prepared' | 'exported' | 'user_confirmed_published'
+export type XiaohongshuHandoffAuditEvent = 'prepared' | 'exported' | 'draft_readback_verified' | 'user_confirmed_published'
 export interface XiaohongshuHandoffAuditEntry {
   id: string
   handoffId: string

@@ -2335,6 +2335,10 @@ export interface ElectronAPI {
       xiaohongshuHandoff: {
         list: () => Promise<import('@gravitas/shared').XiaohongshuHandoff[]>
         prepare: (draftId: string, expectedDesignAssetId?: string | null) => Promise<import('@gravitas/shared').XiaohongshuHandoff>
+        openDraftBrowser: (handoffId: string) => Promise<void>
+        fillDraftBrowser: (handoffId: string) => Promise<void>
+        verifyDraftBrowser: (handoffId: string) => Promise<void>
+        exportCover: (handoffId: string) => Promise<boolean>
         exportPackage: (handoffId: string) => Promise<import('@gravitas/shared').XiaohongshuHandoffExportResult>
         confirmPublished: (handoffId: string, actor: string) => Promise<import('@gravitas/shared').XiaohongshuHandoff>
         audit: (handoffId: string) => Promise<import('@gravitas/shared').XiaohongshuHandoffAuditEntry[]>
@@ -5184,6 +5188,10 @@ const electronAPI: ElectronAPI = {
       xiaohongshuHandoff: {
         list: () => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.LIST_XHS_HANDOFFS),
         prepare: (draftId, expectedDesignAssetId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.PREPARE_XHS_HANDOFF, draftId, expectedDesignAssetId),
+        openDraftBrowser: (handoffId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.OPEN_XHS_DRAFT_BROWSER, handoffId),
+        fillDraftBrowser: (handoffId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.FILL_XHS_DRAFT_BROWSER, handoffId),
+        verifyDraftBrowser: (handoffId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.VERIFY_XHS_DRAFT_BROWSER, handoffId),
+        exportCover: (handoffId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.EXPORT_XHS_COVER, handoffId),
         exportPackage: (handoffId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.EXPORT_XHS_HANDOFF, handoffId),
         confirmPublished: (handoffId, actor) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.CONFIRM_XHS_PUBLISHED, handoffId, actor),
         audit: (handoffId) => ipcRenderer.invoke(NEW_MEDIA_IPC_CHANNELS.GET_XHS_HANDOFF_AUDIT, handoffId),

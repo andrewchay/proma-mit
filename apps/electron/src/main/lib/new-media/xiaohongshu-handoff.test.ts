@@ -3,14 +3,21 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import AdmZip from 'adm-zip'
+import { PNG } from 'pngjs'
 import { createContentDraft, resetContentOperationsForTests } from './content-operations'
 import { closeNewMediaDb } from './new-media-sqlite-store'
+import { saveDirectorDesign } from './director-design'
+import { confirmDirectorPlan, createDirectorBrand, createDirectorPlan, createDirectorXiaohongshuDraft } from './director-workflow'
 import {
   buildXiaohongshuHandoffPackage,
   confirmXiaohongshuPublished,
   exportXiaohongshuHandoff,
   getXiaohongshuHandoffAudit,
+  getXiaohongshuBrowserDraft,
+  listXiaohongshuHandoffs,
   prepareXiaohongshuHandoff,
+  readXiaohongshuHandoffCover,
+  recordXiaohongshuDraftReadback,
 } from './xiaohongshu-handoff'
 
 let testDir = ''
@@ -19,6 +26,30 @@ afterEach(async () => { await resetContentOperationsForTests() })
 afterAll(() => { closeNewMediaDb(); delete process.env.PROMA_TEST_CONFIG_DIR; rmSync(testDir, { recursive: true, force: true }) })
 
 describe('小红书发布交接', () => {
+  test('浏览器交接只读取已确认总监方案的文案', async () => {
+    const local = await createContentDraft('旧草稿', ['xiaohongshu'])
+    const localHandoff = await prepareXiaohongshuHandoff(local.id)
+    await expect(getXiaohongshuBrowserDraft(localHandoff.id)).rejects.toThrow('请先确认')
+    const brand = await createDirectorBrand('英语品牌', '成人英语练习')
+    const plan = await createDirectorPlan(brand.id, 'xiaohongshu', '每日口语')
+    await confirmDirectorPlan(plan.id)
+    const draft = await createDirectorXiaohongshuDraft({ planId: plan.id, title: '英语练习', body: '练习正文', hashtags: ['口语', '#英语'] })
+    const png = PNG.sync.write(new PNG({ width: 1, height: 1 }))
+    const asset = await saveDirectorDesign(draft.id, '<svg viewBox="0 0 1080 1440"></svg>', async () => png)
+    const handoff = await prepareXiaohongshuHandoff(draft.id, asset.id)
+    expect(await getXiaohongshuBrowserDraft(handoff.id)).toEqual({ title: '英语练习', body: '练习正文\n\n#口语 #英语' })
+    expect(await readXiaohongshuHandoffCover(handoff.id)).toEqual(png)
+    await Promise.all([
+      recordXiaohongshuDraftReadback(handoff.id),
+      exportXiaohongshuHandoff(handoff.id, join(testDir, '交付包.zip')),
+      recordXiaohongshuDraftReadback(handoff.id),
+    ])
+    const saved = (await listXiaohongshuHandoffs()).find(item => item.id === handoff.id)
+    expect(saved?.draftReadbackAt).toBeNumber()
+    expect(saved?.status).toBe('handed_off')
+    expect((await getXiaohongshuHandoffAudit(handoff.id)).filter(entry => entry.event === 'draft_readback_verified')).toHaveLength(1)
+  })
+
   test('准备交接不会伪装成已发布', async () => {
     const draft = await createContentDraft('秋季新品体验 #新品', ['xiaohongshu'])
     const handoff = await prepareXiaohongshuHandoff(draft.id)
