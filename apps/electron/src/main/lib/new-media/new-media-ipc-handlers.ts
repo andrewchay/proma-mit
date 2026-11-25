@@ -9,6 +9,7 @@
 import type { OpenDialogOptions, WebContents } from 'electron'
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { NEW_MEDIA_IPC_CHANNELS } from '@gravitas/shared'
+import { writeFile } from 'node:fs/promises'
 import { withNewMediaIpcValidation } from './new-media-ipc-validation'
 
 export function registerNewMediaIpcHandlers(): void {
@@ -438,6 +439,28 @@ export function registerNewMediaIpcHandlers(): void {
     const v = await nmValidation()
     const expected = expectedDesignAssetId === undefined || expectedDesignAssetId === null ? expectedDesignAssetId : v.requireId(expectedDesignAssetId, 'expectedDesignAssetId')
     return (await import('./xiaohongshu-handoff')).prepareXiaohongshuHandoff(v.requireId(draftId, 'draftId'), expected)
+  })
+  handle(NEW_MEDIA_IPC_CHANNELS.OPEN_XHS_DRAFT_BROWSER, async (_: unknown, handoffId: unknown) => {
+    const id = (await nmValidation()).requireId(handoffId, 'handoffId')
+    await (await import('./xiaohongshu-draft-browser')).openXiaohongshuDraftBrowser(id)
+  })
+  handle(NEW_MEDIA_IPC_CHANNELS.FILL_XHS_DRAFT_BROWSER, async (_: unknown, handoffId: unknown) => {
+    const id = (await nmValidation()).requireId(handoffId, 'handoffId')
+    await (await import('./xiaohongshu-draft-browser')).operateXiaohongshuDraftBrowser(id, 'fill')
+  })
+  handle(NEW_MEDIA_IPC_CHANNELS.VERIFY_XHS_DRAFT_BROWSER, async (_: unknown, handoffId: unknown) => {
+    const id = (await nmValidation()).requireId(handoffId, 'handoffId')
+    await (await import('./xiaohongshu-draft-browser')).operateXiaohongshuDraftBrowser(id, 'verify')
+  })
+  handle(NEW_MEDIA_IPC_CHANNELS.EXPORT_XHS_COVER, async (event, handoffId: unknown) => {
+    const id = (await nmValidation()).requireId(handoffId, 'handoffId')
+    const png = await (await import('./xiaohongshu-handoff')).readXiaohongshuHandoffCover(id)
+    const owner = BrowserWindow.fromWebContents(event.sender) ?? BrowserWindow.getFocusedWindow()
+    const options = { title: '保存小红书封面', defaultPath: '小红书封面.png', filters: [{ name: 'PNG 图片', extensions: ['png'] }] }
+    const result = owner ? await dialog.showSaveDialog(owner, options) : await dialog.showSaveDialog(options)
+    if (result.canceled || !result.filePath) return false
+    await writeFile(result.filePath, png)
+    return true
   })
   handle(NEW_MEDIA_IPC_CHANNELS.EXPORT_XHS_HANDOFF, async (event, handoffId: unknown) => {
     const resolvedHandoffId = (await nmValidation()).requireId(handoffId, 'handoffId')

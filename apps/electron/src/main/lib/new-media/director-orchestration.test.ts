@@ -50,6 +50,10 @@ test('实际子代理编排将设计和文案收紧为只读，即使父会话�
     expect(observed?.disableTools).toBe(true)
     expect(observed?.systemPromptMode).toBe('direct')
     expect(observed?.systemPrompt).toContain(role === 'new-media-designer' ? '设计师' : '文案')
+    if (role === 'new-media-copywriter') {
+      expect(observed?.systemPrompt).toContain('林桂枝方法')
+      expect(observed?.systemPrompt).toContain('许舜英方法')
+    }
     expect(observed?.prompt).toContain('已确认的创作任务')
     expect(observed?.thinkingLevel).toBeUndefined()
   }

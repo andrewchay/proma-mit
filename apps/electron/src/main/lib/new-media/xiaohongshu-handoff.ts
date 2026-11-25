@@ -12,6 +12,8 @@ import { appendNewMediaAudit, createNewMediaAuditEntry, listNewMediaAudit } from
 import { getNewMediaRecord, listNewMediaRecords } from './new-media-sqlite-store'
 import { getLatestDirectorDesign, readDirectorDesign } from './director-design'
 import { withDirectorDraftLock } from './director-draft-lock'
+import { getDirectorPlan } from './director-workflow'
+import type { XiaohongshuEditorCopy } from './xiaohongshu-draft-editor'
 
 const DRAFT_KIND = 'content-draft'
 const HANDOFF_KIND = 'xiaohongshu-handoff'
@@ -81,6 +83,38 @@ export async function listXiaohongshuHandoffs(): Promise<XiaohongshuHandoff[]> {
   return listNewMediaRecords(HANDOFF_KIND)
 }
 
+export async function getXiaohongshuBrowserDraft(handoffId: string): Promise<XiaohongshuEditorCopy> {
+  const handoff = await requireHandoff(handoffId)
+  if (handoff.status === 'user_confirmed_published') throw new Error('这篇内容已确认发布，请新建草稿。')
+  const draft = await requireDraft(handoff.draftId)
+  const plan = draft.directorPlanId ? await getDirectorPlan(draft.directorPlanId) : null
+  if (plan?.status !== 'confirmed' || plan.channel !== 'xiaohongshu') throw new Error('请先确认小红书运营方案并准备交接。')
+  const copy = draft.platformCopies.xiaohongshu!
+  const tags = copy.hashtags.map(tag => tag.startsWith('#') ? tag : '#' + tag)
+  return { title: copy.title, body: [copy.body.trim(), tags.join(' ')].filter(Boolean).join('\n\n') }
+}
+
+export async function readXiaohongshuHandoffCover(handoffId: string): Promise<Buffer> {
+  const handoff = await requireHandoff(handoffId)
+  if (!handoff.designAssetId) throw new Error('这篇交接没有可保存的封面。')
+  const design = await readDirectorDesign(handoff.designAssetId)
+  if (design.asset.draftId !== handoff.draftId) throw new Error('设计素材与草稿不匹配')
+  return design.png
+}
+
+export async function recordXiaohongshuDraftReadback(handoffId: string): Promise<void> {
+  const { draftId } = await requireHandoff(handoffId)
+  await withDirectorDraftLock(draftId, async () => {
+    const handoff = await requireHandoff(handoffId)
+    if (handoff.status === 'user_confirmed_published' || handoff.draftReadbackAt !== undefined) return
+    const now = Date.now()
+    await persistHandoff(
+      { ...handoff, draftReadbackAt: now, updatedAt: now },
+      audit(handoffId, 'draft_readback_verified', 'local-user', '已核对小红书草稿页显示的标题与正文。'),
+    )
+  })
+}
+
 export async function buildXiaohongshuHandoffPackage(handoffId: string): Promise<Buffer> {
   const handoff = await requireHandoff(handoffId)
   const draft = await requireDraft(handoff.draftId)
@@ -119,6 +153,11 @@ export async function buildXiaohongshuHandoffPackage(handoffId: string): Promise
 
 export async function exportXiaohongshuHandoff(handoffId: string, destinationPath: string, actor = 'local-user'): Promise<XiaohongshuHandoff> {
   if (!destinationPath.trim()) throw new Error('导出路径不能为空')
+  const { draftId } = await requireHandoff(handoffId)
+  return withDirectorDraftLock(draftId, () => exportXiaohongshuHandoffLocked(handoffId, destinationPath, actor))
+}
+
+async function exportXiaohongshuHandoffLocked(handoffId: string, destinationPath: string, actor: string): Promise<XiaohongshuHandoff> {
   const handoff = await requireHandoff(handoffId)
   if (handoff.status === 'user_confirmed_published') throw new Error('已确认发布的交接不能重新导出')
   const buffer = await buildXiaohongshuHandoffPackage(handoffId)
@@ -143,10 +182,15 @@ export async function exportXiaohongshuHandoff(handoffId: string, destinationPat
 }
 
 export async function confirmXiaohongshuPublished(handoffId: string, actor: string): Promise<XiaohongshuHandoff> {
+  const { draftId } = await requireHandoff(handoffId)
+  return withDirectorDraftLock(draftId, () => confirmXiaohongshuPublishedLocked(handoffId, actor))
+}
+
+async function confirmXiaohongshuPublishedLocked(handoffId: string, actor: string): Promise<XiaohongshuHandoff> {
   const handoff = await requireHandoff(handoffId)
   const confirmedBy = actor.trim()
   if (!confirmedBy) throw new Error('确认人不能为空')
-  if (handoff.status === 'draft_ready') throw new Error('必须先完成发布交接，才能由用户确认已发布')
+  if (handoff.status === 'draft_ready' && handoff.draftReadbackAt === undefined) throw new Error('必须先完成发布交接，才能由用户确认已发布')
   if (handoff.status === 'user_confirmed_published') return handoff
   const confirmed: XiaohongshuHandoff = {
     ...handoff,
@@ -163,7 +207,7 @@ export async function confirmXiaohongshuPublished(handoffId: string, actor: stri
 }
 
 export async function getXiaohongshuHandoffAudit(handoffId: string): Promise<XiaohongshuHandoffAuditEntry[]> {
-  const order = ['prepared', 'exported', 'user_confirmed_published']
+  const order = ['prepared', 'exported', 'draft_readback_verified', 'user_confirmed_published']
   const entries = await listNewMediaAudit({ domain: 'handoff', subjectId: handoffId })
   return entries
     .map((entry) => ({
