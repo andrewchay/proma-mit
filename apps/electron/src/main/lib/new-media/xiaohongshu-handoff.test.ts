@@ -39,6 +39,11 @@ describe('小红书发布交接', () => {
     const handoff = await prepareXiaohongshuHandoff(draft.id, asset.id)
     expect(await getXiaohongshuBrowserDraft(handoff.id)).toEqual({ title: '英语练习', body: '练习正文\n\n#口语 #英语' })
     expect(await readXiaohongshuHandoffCover(handoff.id)).toEqual(png)
+    let checks = 0
+    await expect(recordXiaohongshuDraftReadback(handoff.id, () => {
+      if (++checks > 1) throw new Error('会话已取消')
+    })).rejects.toThrow('会话已取消')
+    expect((await listXiaohongshuHandoffs()).find(item => item.id === handoff.id)?.draftReadbackAt).toBeUndefined()
     await Promise.all([
       recordXiaohongshuDraftReadback(handoff.id),
       exportXiaohongshuHandoff(handoff.id, join(testDir, '交付包.zip')),

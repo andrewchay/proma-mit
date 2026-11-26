@@ -10,6 +10,13 @@ function assertActive(handoffId: string): BrowserWindow {
   return active.window
 }
 
+export function revealXiaohongshuDraftBrowser(handoffId: string): void {
+  const window = assertActive(handoffId)
+  if (URL.parse(window.webContents.getURL())?.origin !== XHS_CREATOR_ORIGIN) throw new Error('请在创作窗口打开小红书官方页面。')
+  // 接管说明在总监会话中显示，保持会话窗口的焦点。
+  window.showInactive()
+}
+
 export async function openXiaohongshuDraftBrowser(handoffId: string): Promise<void> {
   await getXiaohongshuBrowserDraft(handoffId)
   if (active && !active.window.isDestroyed()) {
@@ -49,9 +56,10 @@ export async function openXiaohongshuDraftBrowser(handoffId: string): Promise<vo
   }
 }
 
-export async function operateXiaohongshuDraftBrowser(handoffId: string, action: 'fill' | 'verify'): Promise<void> {
+export async function operateXiaohongshuDraftBrowser(handoffId: string, action: 'fill' | 'verify', assertAllowed?: () => void): Promise<void> {
   const window = assertActive(handoffId)
   const { title, body } = await getXiaohongshuBrowserDraft(handoffId)
+  assertAllowed?.()
   if (window !== assertActive(handoffId)) throw new Error('创作窗口已切换，请重新打开草稿。')
   const url = URL.parse(window.webContents.getURL())
   const matchesEditor = url?.origin === XHS_CREATOR_ORIGIN && url.pathname === XHS_IMAGE_EDITOR_PATH && url.searchParams.get('target') === 'image'
@@ -62,10 +70,11 @@ export async function operateXiaohongshuDraftBrowser(handoffId: string, action: 
     ], true)
     : 'editor_unavailable'
   if (window !== assertActive(handoffId)) throw new Error('创作窗口已切换，请重新打开草稿。')
-  window.show()
+  assertAllowed?.()
+  if (action === 'fill') window.show()
   if (action === 'verify') {
     if (result === 'verified' && window.webContents.getURL() === url?.href) {
-      await recordXiaohongshuDraftReadback(handoffId)
+      await recordXiaohongshuDraftReadback(handoffId, assertAllowed)
       return
     }
     if (result === 'mismatch') throw new Error('重开的草稿文案与这篇交接不一致，请核对打开的是哪篇草稿。')

@@ -6,8 +6,9 @@ export interface AskUserAnswerState {
   showCustom: boolean
 }
 
-/** 高风险核对请求不预选会解除重试拦截的答案。 */
+/** 接管完成和高风险核对都需要用户主动选择。 */
 export function createInitialAskUserAnswer(kind: AskUserRequest['kind'], question: AskUserQuestion): AskUserAnswerState {
-  const selected = kind === 'unknown_action_resolution' ? [] : question.options[0] ? [question.options[0].label] : []
+  const requiresExplicitChoice = kind === 'unknown_action_resolution' || kind === 'computer_use_takeover'
+  const selected = !requiresExplicitChoice && question.options[0] ? [question.options[0].label] : []
   return { selected, customText: '', showCustom: false }
 }

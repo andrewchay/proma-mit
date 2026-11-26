@@ -57,6 +57,10 @@ export async function runGuardedToolCall<T>(input: {
     if ((input.tool.name === 'nm_director_confirm_plan' && input.tool.execute === executeDirectorConfirm)
       || (input.tool.name === 'nm_director_delegate' && input.tool.execute === executeDirectorDelegate)) return input.execute()
   }
+  if (input.tool.name === 'nm_director_xhs_draft_takeover') {
+    const { executeXiaohongshuDraftTakeover } = await import('../new-media/xiaohongshu-draft-takeover')
+    if (input.tool.execute === executeXiaohongshuDraftTakeover) return input.execute()
+  }
   const maxAttempts = Math.max(1, input.retry?.maxAttempts ?? 1)
   const spec = await planLockSpec(input.tool, input.args, input.ctx)
   const retryable = maxAttempts > 1 && spec.mode === 'shared'

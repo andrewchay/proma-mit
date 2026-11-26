@@ -204,10 +204,13 @@ async function executeComputerUseRequestTakeoverUnchecked(input: unknown, ctx: T
   const question = '完成敏感操作后继续吗？'
   const response = await ctx.onAskUser({
     interactionType: 'computer_use_takeover',
-    questions: [{ question, header: '需要你接管', options: [{ label: '我已完成，可继续' }, { label: '取消' }] }],
+    questions: [{
+      question, header: '需要你接管',
+      options: [{ label: '我已完成，可继续', description: instruction }, { label: '取消' }],
+    }],
   }, ctx.abortSignal)
   const answer = response.behavior === 'allow' ? response.answers[question] : undefined
-  const completed = answer === '我已完成，可继续'
+  const completed = answer === '我已完成，可继续' && !ctx.abortSignal.aborted
   recordAudit(ctx, 'takeover', { reason, completed })
   return completed ? result({ message: '用户已完成接管，可继续执行' }) : error('用户取消接管')
 }

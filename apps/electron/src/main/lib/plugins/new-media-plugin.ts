@@ -12,6 +12,7 @@ import { createDirectorBrand, updateDirectorBrand, listDirectorBrands, createDir
 import { executeDirectorConfirm, executeDirectorDelegate } from '../new-media/director-interaction-tools'
 import { saveDirectorDesign } from '../new-media/director-design'
 import { assertDirectorToolActive } from '../new-media/director-tool-gate'
+import { executeXiaohongshuDraftTakeover } from '../new-media/xiaohongshu-draft-takeover'
 
 const NEW_MEDIA_SKILLS = ['nm-content-operator', 'nm-community-manager', 'nm-social-listening', 'nm-social-reporting', 'nm-trend-radar', 'nm-controlled-outbound'] as const
 const DEFAULT_ENABLED_CAPABILITIES: readonly string[] = []
@@ -86,6 +87,12 @@ const HASHTAGS_PARAMETER = { type: 'array', description: '话题标签字符串�
 
 function contentTools(): RuntimeToolDefinition[] {
   const tools: RuntimeToolDefinition[] = [
+    {
+      name: 'nm_director_xhs_draft_takeover',
+      description: '用户明确要求暂存小红书时，为已审核并打开在官方创作窗口中的草稿请求 Computer Use 用户接管。用户亲自暂存、重开草稿，之后本工具核对文案。草稿 ID 来自保存文案工具。',
+      parameters: { type: 'object', properties: { draft_id: { type: 'string' } }, required: ['draft_id'] },
+      execute: executeXiaohongshuDraftTakeover,
+    },
     {
       name: 'nm_director_delegate',
       description: '向文案或设计角色委派已确认方案的制作任务，并保存真实返回结果。未确认时不调用角色。设计会提供可用的 OpenDesign 品牌和工艺参考。',
@@ -382,8 +389,8 @@ function contentTools(): RuntimeToolDefinition[] {
   return tools.flatMap(tool => {
     if (!tool.name.startsWith('nm_director_')) return [tool]
     if (!hasNewMediaContentCapability()) return []
-    // 两个等待型入口需要保持函数身份，以便调度器只信任对应实现。
-    if (tool.execute === executeDirectorConfirm || tool.execute === executeDirectorDelegate) return [tool]
+    // 等待型入口保留函数身份，以便调度器只信任对应实现。
+    if (tool.execute === executeDirectorConfirm || tool.execute === executeDirectorDelegate || tool.execute === executeXiaohongshuDraftTakeover) return [tool]
     return [{ ...tool, execute: async (input: unknown, ctx: import('../agent-runtime/types').ToolContext) => {
       try { assertDirectorToolActive(ctx); return await tool.execute(input, ctx) }
       catch (error) { return { toolCallId: '', content: error instanceof Error ? error.message : '新媒体能力不可用', isError: true } }
@@ -413,7 +420,10 @@ export function newMediaPluginRuntime(): BuiltinPluginRuntime {
     contributeTools: contentTools,
     contributePrompts: () => isNewMediaEnabled() ? [
       '新媒体工具的本地草稿、排程与模拟回执不代表已经发布。任何真实外发必须经用户明确确认并取得真实平台回执。',
-      ...(hasNewMediaContentCapability() ? ['用户要求新媒体总监时，负责品牌、策略和统筹。使用 nm_director_brand 保存品牌简报，使用 nm_director_plan 保存具体方案并调用 nm_director_confirm_plan 等待用户确认；确认后调用 nm_director_delegate 分别委派 copywriter 和 designer，将文案结果传给设计角色。小红书文案用 nm_director_save_xiaohongshu_copy 保存；公众号文案用 nm_director_save_wechat_copy 保存。再用 nm_director_save_design 保存设计角色生成的 SVG 并渲染 PNG；向用户展示结果，提示在工作台预览和交接。若角色或设计素材不可用须如实说明，不得声称完成发布。'] : []),
+      ...(hasNewMediaContentCapability() ? [
+        '用户要求新媒体总监时，负责品牌、策略和统筹。使用 nm_director_brand 保存品牌简报，使用 nm_director_plan 保存具体方案并调用 nm_director_confirm_plan 等待用户确认；确认后调用 nm_director_delegate 分别委派 copywriter 和 designer，将文案结果传给设计角色。小红书文案用 nm_director_save_xiaohongshu_copy 保存；公众号文案用 nm_director_save_wechat_copy 保存。再用 nm_director_save_design 保存设计角色生成的 SVG 并渲染 PNG；向用户展示结果，提示在工作台预览和交接。若角色或设计素材不可用须如实说明，不得声称完成发布。',
+        '用户明确要求暂存小红书草稿时，先请用户在工作台预览并准备交接，打开官方创作窗口、上传封面并填入文案。接着用 nm_director_xhs_draft_takeover 暂停并交给用户操作，收到工具核对结果后再报告。发布由用户在平台操作。',
+      ] : []),
     ] : [],
     contributeSkills,
   }
