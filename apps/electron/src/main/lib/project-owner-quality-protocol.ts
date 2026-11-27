@@ -1,4 +1,5 @@
 import { bindOwnerEvidenceRows } from './project-owner-evidence-reference'
+import { findOwnerClosedWorklistConflict } from './project-owner-delivery-content'
 /** Owner质量判断纯协议。判断不等于执行，不读文件或改业务状态。 */
 import type { OwnerQualityDecision, ProjectOwnerPlanningContext } from '@gravitas/shared'
 import { containsOwnerValidationEvidenceQuote, isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
@@ -57,7 +58,10 @@ export function parseOwnerQualityDecision(raw: unknown, context: ProjectOwnerPla
     && freshValidation?.some(item => item.attemptState === 'completed' && item.freshness === 'fresh'
       && item.status === 'failed' && Number.isSafeInteger(item.exitCode) && item.exitCode !== 0
       && item.timedOut === false && item.outputTruncated === false && !isOwnerValidationEvidenceExpired(item, validationTime))
-  if (sharedReviewerCriteria && (value.criteria === 'reviewer' || failedRunReworkPlaceholder) && delivery.qualityDecisionBindingVersion === 2
+  const verifiedWorklistRework = value.verdict === 'rework' && review.verdict === 'changes_requested'
+    && Boolean(artifact) && Array.isArray(value.criteria) && value.criteria.length === 0
+    && Boolean(findOwnerClosedWorklistConflict(context.goal.goal, artifactContent))
+  if (sharedReviewerCriteria && (value.criteria === 'reviewer' || failedRunReworkPlaceholder || verifiedWorklistRework) && delivery.qualityDecisionBindingVersion === 2
     && agreesWithReview && review.criteria.length > 0
     && review.criteria.every(item => item.status !== 'met' || typeof item.quote === 'string' && item.quote.trim())) {
     value.criteria = review.criteria.map(item => ({

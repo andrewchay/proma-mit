@@ -393,6 +393,30 @@ test('Given 同版浏览器验证失败 When Owner明确返工但错写标准占
   }
 })
 
+test('Given 已核实封闭清单多出签字 When Owner返工但漏填标准 Then 仅恢复原检查结论', async () => {
+  const { parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
+  const c = context(), delivery = c.conversation!.deliveryReview!, review = delivery.review!
+  const content = '一、核对钥匙\n二、检查对讲机\n三、记录巡检\n## 签收栏'
+  delivery.artifact = { schemaVersion: 1, projectId: 'project-1', grantId: 'grant-1', commandId: 'exec-cmd',
+    executionId: 'exec-run', sessionId: 'session', taskId: 'task-1', stepLinkId: 'link-1', sourceHash: 'd'.repeat(64),
+    planRevision: 2, reworkOrdinal: 0, messageId: 'message', content, contentSha256: 'c'.repeat(64),
+    byteLength: Buffer.byteLength(content), capturedAt: 1, integrityHash: 'e'.repeat(64) }
+  delete delivery.developmentArtifact
+  c.goal.goal.objective = '只有三项工作：核对钥匙、检查对讲机、记录巡检。'
+  delivery.qualityDecisionBindingVersion = 2
+  review.verdict = 'changes_requested'
+  Object.assign(review.criteria[0]!, { status: 'not_met', quote: null })
+  const findings = [{ severity: 'high', description: '新增签收栏', requestedChange: '去掉签收栏' }]
+  const decision = { ...acceptDecision(), verdict: 'rework', criteria: [], findings }
+  const parse = (raw: unknown, shared = true) => parseOwnerQualityDecision(raw, c, Date.now(), shared)
+  expect(parse(decision)).toMatchObject({ verdict: 'rework', criteria: [{ status: 'not_met' }], findings })
+  expect(() => parse({ ...decision, verdict: 'accept', findings: [] })).toThrow()
+  expect(() => parse({ ...decision, findings: [] })).toThrow()
+  expect(() => parse(decision, false)).toThrow()
+  c.goal.goal.objective += '请提供签收栏。'
+  expect(() => parse(decision)).toThrow()
+})
+
 test('Given 冻结质量回执携带空备注 When 解析 Then 保留决定并严格核验身份和成果', async () => {
   const { parseProjectOwnerPlanningResponse } = await import('./project-owner-planning-protocol')
   const c = context()
