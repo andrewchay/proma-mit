@@ -1,3 +1,4 @@
+import { getOwnerManager } from './project-owner-management-store'
 import { assertLocalActorEnabled } from './project-owner-plan-service'
 import { requestOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
 import * as store from './project-sqlite-store'
@@ -31,11 +32,21 @@ export function assertOwnerDispatchNotPaused(projectId: string, grantId: string)
 }
 
 /** 已预留命令也必须受原项目管理授权约束，不能继承新授权。 */
-export function assertOwnerDispatchManagementCurrent(projectId: string, grantId: string): void {
+export function assertOwnerDispatchManagementCurrent(projectId: string, grantId: string, qualityRetryExecutionId?: string): void {
   const grant = store.getProjectDb().prepare('SELECT task_id, owner_management_delegation_id FROM project_owner_execution_grants WHERE project_id=? AND id=?').get(projectId, grantId) as { task_id: string | null; owner_management_delegation_id: string | null } | undefined
   if (!grant?.owner_management_delegation_id) throw new Error('自主执行未绑定可核验的项目管理授权')
-  const management = (require('./project-owner-management-delegation') as typeof import('./project-owner-management-delegation')).getOwnerManagementDelegation(projectId, grant.task_id ?? undefined)
-  if (management.delegation?.id !== grant.owner_management_delegation_id || !['active', 'exhausted'].includes(management.state)) throw new Error('原项目管理授权已变化或失效，不能继续派工')
+  const { assertOwnerQualityRetryBudget, getOwnerManagementDelegation } = require('./project-owner-management-delegation') as typeof import('./project-owner-management-delegation')
+  const management = getOwnerManagementDelegation(projectId, grant.task_id ?? undefined)
+  if (management.delegation?.id !== grant.owner_management_delegation_id) throw new Error('原项目管理授权已变化或失效，不能继续派工')
+  if (qualityRetryExecutionId) {
+    // 只为用户已确认的原成果续验开放浏览器检查，队列等待后重新核对授权范围和额度。
+    if (getOwnerManager(projectId)?.status !== 'active' || management.state !== 'attention'
+      || management.attentionCheck?.phase !== 'quality_decision' || management.attentionCheck.finishReason !== 'length'
+      || management.attentionCheck.retryExecutionId !== qualityRetryExecutionId) throw new Error('当前没有可续验的截断请求')
+    assertOwnerQualityRetryBudget(management)
+    return
+  }
+  if (!['active', 'exhausted'].includes(management.state)) throw new Error('原项目管理授权已变化或失效，不能继续派工')
   if (management.reservedCostMicros > management.delegation.maxCostMicros) throw new Error('项目累计占额超过授权预算，不能继续派工')
 }
 

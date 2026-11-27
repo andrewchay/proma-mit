@@ -2000,15 +2000,18 @@ test('Given 子任务漏写原目标的预算标准 When 子任务被验收 Then
   } finally { await f.stop() }
 }, 30000)
 
-test('Given评审和Owner放行矛盾案例 When整体交付复核原目标 Then 阻止发布并说明姓名和时间冲突', async () => {
+test('Given评审和Owner试图放行矛盾候补案例 When核对原稿与质量决定 Then在交付前拒绝并保留冲突依据', async () => {
   const f = await fixture({ rosterScenario: 'final_gate' })
   try {
-    await until(() => managementConversation.getOwnerManagementConversation(f.project.id).messages
-      .some(message => message.eventId === `owner-delivery-original-goal-blocked:${f.grant.grantId}`), f.project.id)
-    const view = managementConversation.getOwnerManagementConversation(f.project.id)
-    expect(actionRows(f.project.id).map(item => item.state)).toEqual(['accepted'])
-    expect(view.messages.some(message => message.kind === 'delivery')).toBe(false)
-    expect(view.messages.some(message => message.kind === 'attention' && message.content.includes('唯一缺席者是「乙」'))).toBe(true)
+    const projectId = f.project.id
+    await until(() => store.listAgentExecutionsByProject(projectId)
+      .some(run => run.status === 'failed' && run.error === 'Owner不能在独立检查未通过或标准未满足时接受成果'), projectId)
+    const review = store.getProjectDb().prepare('SELECT response_json, original_response_text FROM project_owner_technical_reviews WHERE project_id=?')
+      .get(projectId) as { response_json: string; original_response_text: string }
+    expect(JSON.parse(review.original_response_text)).toMatchObject({ verdict: 'approved' })
+    expect(JSON.parse(review.response_json)).toMatchObject({ verdict: 'blocked', blockerReason: expect.stringContaining('唯一缺席者是「乙」') })
+    expect(actionRows(projectId)).toHaveLength(0)
+    expect(managementConversation.getOwnerManagementConversation(projectId).messages.some(message => message.kind === 'delivery')).toBe(false)
   } finally { await f.stop() }
 }, 30000)
 

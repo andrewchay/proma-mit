@@ -129,7 +129,7 @@ async function prepareRetry(projectId: string, taskId: string | undefined, execu
     if (artifact?.validationEvidence.some(item => isOwnerValidationEvidenceExpired(item))) {
       const attemptIds = browserRefreshIds(retryId, delivery)
       if (!attemptIds) throw new Error('此成果的过期验证需要单独核对')
-      const result = await refreshOwnerQualityBrowserEvidence({ ...artifact, requestId: retryId, failedValidationId, artifactHash: artifact.contentHash })
+      const result = await refreshOwnerQualityBrowserEvidence({ ...artifact, requestId: retryId, qualityRetryExecutionId: executionId, failedValidationId, artifactHash: artifact.contentHash })
       if (result.status === 'failed' && result.exitCode === 1) {
         if (result.id === attemptIds[0]) return { failedValidationId: result.id }
         throw new Error('浏览器检查重试后仍失败，已保留两次检查记录，请核对成果。')

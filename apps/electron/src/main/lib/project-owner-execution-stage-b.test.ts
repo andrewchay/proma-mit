@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, mock, spyOn, test } from 'bun:test'
+import { afterAll, beforeAll, beforeEach, expect, mock, spyOn, test } from 'bun:test'
 import { createHash, randomUUID } from 'node:crypto'
 import type { ProviderType } from '@gravitas/shared'
 import { execFileSync, spawn } from 'node:child_process'
@@ -58,6 +58,10 @@ function boundToolCtx(cwd: string, sessionId: string) {
   return ctx
 }
 beforeAll(async () => { await store.initProjectDb(); policy = await import('./project-pilot-policy') })
+beforeEach(() => {
+  // 上一个场景的模拟运行不能占用下一个独立场景的本机并发名额。
+  store.getProjectDb().prepare("UPDATE agent_executions SET status='cancelled', completed_at=? WHERE status='running'").run(Date.now())
+})
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
 function fixture(modelId = 'glm-5.3-flash', dispatchMode: 'manual' | 'autonomous' = 'manual', withDependentTask = false, baseUrl = 'https://example.invalid', splitRoleEmployee = false, provider: ProviderType = 'openai', maxRework = 0, maxRuns?: number, maxCostMicros = 1000000, roleBudgetCapMicros?: number, independentTasks = false, taskScopedGoal = false) {
   const project = store.createProject({ title: 'StageB fixture', description: '' })

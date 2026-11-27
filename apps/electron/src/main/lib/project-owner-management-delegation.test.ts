@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, mock, spyOn, test } from 'bun:test'
+import { afterAll, beforeAll, beforeEach, expect, mock, spyOn, test } from 'bun:test'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -43,6 +43,10 @@ beforeAll(async () => {
     claimOwnerPlanningProviderRequest(input.sessionId, body, new URL(getChannelById(source.binding.channelId)!.baseUrl + '/chat/completions'))
     callbacks.set(input.sessionId, handlers)
   })
+})
+beforeEach(() => {
+  // 上一个场景的模拟运行不能占用下一个独立场景的本机并发名额。
+  store.getProjectDb().prepare("UPDATE agent_executions SET status='cancelled', completed_at=? WHERE status='running'").run(Date.now())
 })
 afterAll(() => { employees.stopAgentEmployeeHeartbeat(); store.closeProjectDb(); if (previous === undefined) delete process.env.PROMA_TEST_CONFIG_DIR; else process.env.PROMA_TEST_CONFIG_DIR = previous; rmSync(directory, { recursive: true, force: true }) })
 function fixture(modelId = 'deepseek-flash', provider: ProviderType = 'openai', apiKey = 'fake', goal: unknown = { objective: '形成产品定位建议', constraints: [] }, baseUrl = 'https://example.invalid/v1') {

@@ -186,7 +186,7 @@ export function readOwnerBrowserRefreshAttempt(source: {
 
 // 同一续验请求只补跑原授权的浏览器加载检查，验证尝试留在原执行会话。
 export async function refreshOwnerQualityBrowserEvidence(source: {
-  requestId: string; failedValidationId?: string; taskId: string; executorExecutionId: string; executorCommandId: string
+  requestId: string; qualityRetryExecutionId?: string; failedValidationId?: string; taskId: string; executorExecutionId: string; executorCommandId: string
   grantId: string; stepLinkId: string; sourceHash: string; artifactHash: string
 }): Promise<DevelopmentValidationResult> {
   const { requestId, taskId, executorExecutionId, artifactHash } = source
@@ -212,7 +212,7 @@ export async function refreshOwnerQualityBrowserEvidence(source: {
   }
   const reservation = reserveOwnerDevelopmentValidationAttempt(world.sessionDirectory, attempt)
   let result: DevelopmentValidationResult
-  if (reservation.kind === 'reserved') result = await runFrozenDevelopmentValidation(world, command, { timeoutMs: 20_000, validationId, grantId: source.grantId })
+  if (reservation.kind === 'reserved') result = await runFrozenDevelopmentValidation(world, command, { timeoutMs: 20_000, validationId, grantId: source.grantId, qualityRetryExecutionId: source.qualityRetryExecutionId })
   else {
     try { result = readDevelopmentValidationEvidence(taskId, executorExecutionId, validationId).result }
     catch { throw new DevelopmentValidationError('上次浏览器补跑的结果无法核对，已保留尝试记录。本次未发送验收请求。') }
@@ -234,18 +234,18 @@ export function runOwnerMarkdownSupplement(taskId: string, executionId: string, 
   })
 }
 
-function assertQueuedOwnerValidationGrant(projectId: string, grantId: string): void {
+function assertQueuedOwnerValidationGrant(projectId: string, grantId: string, qualityRetryExecutionId?: string): void {
   const grant = getProjectDb().prepare("SELECT dispatch_mode FROM project_owner_execution_grants WHERE id=? AND project_id=? AND state='active' AND expires_at>?")
     .get(grantId, projectId, Date.now()) as { dispatch_mode: string } | undefined
   if (!grant) throw new DevelopmentValidationError('等待浏览器验证期间授权已撤销或过期')
   if (grant.dispatch_mode === 'autonomous') {
     const { assertOwnerDispatchManagementCurrent, assertOwnerDispatchNotPaused } = require('./project-owner-dispatch-control') as typeof import('./project-owner-dispatch-control')
-    assertOwnerDispatchManagementCurrent(projectId, grantId)
+    assertOwnerDispatchManagementCurrent(projectId, grantId, qualityRetryExecutionId)
     assertOwnerDispatchNotPaused(projectId, grantId)
   }
 }
 
-async function runFrozenDevelopmentValidation(world: ValidationWorld, trimmed: string, options: { timeoutMs?: number; validationId?: string; grantId?: string }): Promise<DevelopmentValidationResult> {
+async function runFrozenDevelopmentValidation(world: ValidationWorld, trimmed: string, options: { timeoutMs?: number; validationId?: string; grantId?: string; qualityRetryExecutionId?: string }): Promise<DevelopmentValidationResult> {
   if (!developmentWorktreeMatchesSnapshot(world.worktreePath, world.snapshot, world.snapshotScope)) {
     throw new DevelopmentValidationError('工作目录与冻结快照不一致，请先返工或重新交付')
   }
@@ -272,7 +272,7 @@ async function runFrozenDevelopmentValidation(world: ValidationWorld, trimmed: s
         timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         beforeStart: () => {
           try {
-            if (options.grantId) assertQueuedOwnerValidationGrant(world.binding.projectId, options.grantId)
+            if (options.grantId) assertQueuedOwnerValidationGrant(world.binding.projectId, options.grantId, options.qualityRetryExecutionId)
             if (!validationWorldStillMatches(world)) return '等待浏览器验证期间工作目录或冻结授权范围已变更，未运行验证'
           } catch (error) {
             return error instanceof Error ? error.message + '，未运行验证' : '原验证授权不可用，未运行验证'
