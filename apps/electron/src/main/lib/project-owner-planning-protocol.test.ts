@@ -783,7 +783,7 @@ test('Given 单文件文本统计计划另派研发人员实测 When 冻结方�
   const trace = { key: 'runtime', source: 'objective', sourceIndex: 0, sourceText: criterion, criticality: 'critical', stepKey: verify.key, verification: 'manual_review' }
   const input = { ...raw, proposal: { ...raw.proposal, steps: [start, verify], criteriaTrace: [trace] } }
   const request = buildProjectOwnerPlanningRequest(c)
-  expect(usesOwnerBrowserVerificationRouting(request)).toBe('single-file')
+  expect(usesOwnerBrowserVerificationRouting(request)).toBe('same-file-receipt')
   expect(parseProjectOwnerPlanningResponse(input, c, Date.now(), true, true, false, false, 'single-file')).toMatchObject({
     proposal: { steps: [{ key: start.key, acceptanceCriteria: [...start.acceptanceCriteria, criterion] }], criteriaTrace: [{ stepKey: start.key }] },
   })
@@ -793,4 +793,33 @@ test('Given 单文件文本统计计划另派研发人员实测 When 冻结方�
   expect(parseProjectOwnerPlanningResponse(input, c, Date.now(), true, true, false, false, usesOwnerBrowserVerificationRouting(historical))).toMatchObject({
     proposal: { steps: [start, verify], criteriaTrace: [{ stepKey: verify.key }] },
   })
+})
+
+test('Given 单文件成果的真实浏览器回执以同一文件版本开头 When 规划冻结 Then 回执跟随文件验收', async () => {
+  const { buildProjectOwnerPlanningRequest, parseProjectOwnerPlanningResponse, resolveProjectOwnerPlanningRequest, usesOwnerBrowserVerificationRouting } = await import('./project-owner-planning-protocol')
+  const c = context()
+  c.goal.goal.objective = '在项目工作区根目录只交付 index.html，一个自包含页面。用真实浏览器核对鼠标和 Tab、Enter 键，提交同一文件版本的回执。'
+  c.sources.roles.push({ ...c.sources.roles[0]!, key: 'delivery-verifier', name: '交付核验员' })
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const raw = proposal(c)
+  const start = { ...raw.proposal.steps[0]!, title: '实现自包含 index.html 计数器', deliveryKind: 'development' }
+  const criterion = '同一文件版本附实际浏览器回执'
+  const review = { ...start, key: 'verify', title: '同一文件版本浏览器实测回执', outcome: '基于冻结文件版本的真实浏览器操作回执',
+    deliveryKind: 'text', roleKey: 'delivery-verifier', dependencies: [start.key], acceptanceCriteria: [criterion] }
+  const input = { ...raw, proposal: { ...raw.proposal, steps: [start, review] } }
+  const routing = usesOwnerBrowserVerificationRouting(buildProjectOwnerPlanningRequest(c))
+  expect(routing).toBe('same-file-receipt')
+  expect(parseProjectOwnerPlanningResponse(input, c, Date.now(), true, true, false, false, routing)).toMatchObject({
+    proposal: { steps: [{ key: start.key, acceptanceCriteria: [...start.acceptanceCriteria, criterion] }] },
+  })
+  const prior = buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, 'single-file')
+  const hash = createHash('sha256').update(JSON.stringify(prior)).digest('hex')
+  const replay = resolveProjectOwnerPlanningRequest(c, hash)
+  expect(replay).toEqual(prior)
+  expect(usesOwnerBrowserVerificationRouting(replay)).toBe('single-file')
+  expect(parseProjectOwnerPlanningResponse(input, c, Date.now(), true, true, false, false, 'single-file')).toMatchObject({ proposal: { steps: [start, review] } })
+  const separate = { ...c, goal: { ...c.goal, goal: { ...c.goal.goal, objective: c.goal.goal.objective + '请单独提交一份浏览器实测回执。' } } }
+  separate.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: separate.goal.revision, goal: separate.goal.goal, sources: separate.sources })).digest('hex')
+  const separateResponse = { ...proposal(separate), proposal: { ...input.proposal } }
+  expect(parseProjectOwnerPlanningResponse(separateResponse, separate, Date.now(), true, true, false, false, routing)).toMatchObject({ proposal: { steps: [start, review] } })
 })

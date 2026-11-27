@@ -389,7 +389,8 @@ const BROWSER_VERIFICATION_INSTRUCTION = '实际浏览器验证须与对应 deve
 const BROWSER_RECEIPT_INSTRUCTION = '绑定同一文件版本的实测回执属于实际浏览器验收；即使步骤标题写成核对、整理回执，也由研发结果及其冻结运行证据提供，无需纯文本人员重复实测。'
 
 const SINGLE_FILE_BROWSER_INSTRUCTION = '当前仅交付一个网页文件。由同一研发步骤先实现再在该文件版本上实测；无需将实测另拆为派工，独立评审仍然单独运行。'
-type BrowserVerificationRouting = boolean | 'legacy' | 'single-file'
+const SAME_FILE_BROWSER_RECEIPT_INSTRUCTION = '以同一文件版本、同版成果开头的浏览器实测回执同样随该研发步骤验收。'
+type BrowserVerificationRouting = boolean | 'legacy' | 'single-file' | 'same-file-receipt'
 
 function requestsSingleFileBrowserVerification(context: ProjectOwnerPlanningContext): boolean {
   if (!requestsBrowserVerification(context)) return false
@@ -401,6 +402,7 @@ function requestsSingleFileBrowserVerification(context: ProjectOwnerPlanningCont
 }
 
 export function usesOwnerBrowserVerificationRouting(request?: ProjectOwnerPlanningRequest | null): BrowserVerificationRouting {
+  if (request?.systemPrompt.includes(SAME_FILE_BROWSER_RECEIPT_INSTRUCTION)) return 'same-file-receipt'
   if (request?.systemPrompt.includes(SINGLE_FILE_BROWSER_INSTRUCTION)) return 'single-file'
   if (request?.systemPrompt.includes(BROWSER_RECEIPT_INSTRUCTION)) return true
   return request?.systemPrompt.includes(BROWSER_VERIFICATION_INSTRUCTION) ? 'legacy' : false
@@ -415,12 +417,20 @@ function requestsBrowserVerification(context: ProjectOwnerPlanningContext): bool
 /** 浏览器实测随代码版本验收。只有用户要求另行交付的报告才单独派工。 */
 function foldBrowserVerification(proposal: ProjectOwnerPlanProposal, context: ProjectOwnerPlanningContext, routing: BrowserVerificationRouting): ProjectOwnerPlanProposal {
   if (!requestsBrowserVerification(context)) return proposal
+  if (routing === 'same-file-receipt') {
+    const { objective, constraints, acceptanceCriteria } = context.goal.goal
+    if ([objective, ...constraints, ...acceptanceCriteria].some(text =>
+      /(?:另(?:行|外|附|交)|单独|独立)[^。！？；，\n]{0,24}(?:浏览器|实测|测试|验证|验收)[^。！？；，\n]{0,12}回执/.test(text))) return proposal
+  }
   const title = /^(?:(?:完成|执行|进行|实际|真实)\s*)?(?:浏览器(?:实测|验证|核验|测试)|browser (?:verification|tests?))/i
   const receipt = /^(?:(?:整理|生成|提交|记录|完成)\s*)?(?:真实|实际)?\s*浏览器.{0,16}(?:核对|回执)/i
+  const singleFile = routing === 'single-file' || routing === 'same-file-receipt'
+  const sameFileReceipt = /^(?:基于)?(?:同一(?:文件|成果|代码)版本|同版(?:文件|成果|代码)?)的?\s*(?:真实|实际)?浏览器(?:实测|验证|核验|测试).{0,12}回执/i
   const candidates = proposal.steps.filter(step => (step.deliveryKind === 'text'
-    || routing === 'single-file' && proposal.steps.length === 2 && step.deliveryKind === 'development'
+    || singleFile && proposal.steps.length === 2 && step.deliveryKind === 'development'
       && !/(?:修复|新增|改写|重构|实现|修改|交付(?:源码|报告))/.test(step.title))
-    && (title.test(step.title) || routing !== 'legacy' && receipt.test(step.title))
+    && (title.test(step.title) || routing !== 'legacy' && receipt.test(step.title)
+      || routing === 'same-file-receipt' && sameFileReceipt.test(step.title))
     && step.dependencies.length === 1 && !step.sourceReferences?.length
     && !proposal.steps.some(other => other.dependencies.includes(step.key)))
   if (candidates.length !== 1) return proposal
@@ -477,7 +487,7 @@ export function usesSingleTextReviewFolding(request?: ProjectOwnerPlanningReques
   return request?.systemPrompt.includes(SINGLE_TEXT_REVIEW_INSTRUCTION) === true
 }
 
-export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningContext, format: 'legacy' | 'fragment' | 'envelope' = 'envelope', strictOutputHints = true, qualityEnvelope = true, scopedObservationPrompt = true, independentReviewLane = true, explicitQualityQuotes = true, scopedFileChangePrompt = true, requireDeliveryKind = true, showStructureExample = true, correctStepExamples = true, catalogFeedbackExample = true, scopedSourceInspection = format === 'envelope' && strictOutputHints && qualityEnvelope && scopedObservationPrompt && independentReviewLane && explicitQualityQuotes && scopedFileChangePrompt && requireDeliveryKind && showStructureExample && correctStepExamples && catalogFeedbackExample, fileDeliveryGuidance = scopedSourceInspection, canonicalPlanExample = fileDeliveryGuidance, scopedTextCriteria = canonicalPlanExample, completeBoundFeedbackExample = scopedTextCriteria, foldSingleTextReviewLane = completeBoundFeedbackExample, boundQualityQuotes = completeBoundFeedbackExample, numberedEvidence = boundQualityQuotes, sharedReviewerCriteria = numberedEvidence, browserVerificationRouting: BrowserVerificationRouting = sharedReviewerCriteria ? 'single-file' : false, fixedBudgetGrounding = sharedReviewerCriteria, rosterGrounding = fixedBudgetGrounding): ProjectOwnerPlanningRequest {
+export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningContext, format: 'legacy' | 'fragment' | 'envelope' = 'envelope', strictOutputHints = true, qualityEnvelope = true, scopedObservationPrompt = true, independentReviewLane = true, explicitQualityQuotes = true, scopedFileChangePrompt = true, requireDeliveryKind = true, showStructureExample = true, correctStepExamples = true, catalogFeedbackExample = true, scopedSourceInspection = format === 'envelope' && strictOutputHints && qualityEnvelope && scopedObservationPrompt && independentReviewLane && explicitQualityQuotes && scopedFileChangePrompt && requireDeliveryKind && showStructureExample && correctStepExamples && catalogFeedbackExample, fileDeliveryGuidance = scopedSourceInspection, canonicalPlanExample = fileDeliveryGuidance, scopedTextCriteria = canonicalPlanExample, completeBoundFeedbackExample = scopedTextCriteria, foldSingleTextReviewLane = completeBoundFeedbackExample, boundQualityQuotes = completeBoundFeedbackExample, numberedEvidence = boundQualityQuotes, sharedReviewerCriteria = numberedEvidence, browserVerificationRouting: BrowserVerificationRouting = sharedReviewerCriteria ? 'same-file-receipt' : false, fixedBudgetGrounding = sharedReviewerCriteria, rosterGrounding = fixedBudgetGrounding): ProjectOwnerPlanningRequest {
   validateContext(context)
   const fixedBudget = fixedBudgetGrounding && !context.conversation ? readOwnerFixedBudget(context.goal.goal) : null
   const rosterDeadline = rosterGrounding && !context.conversation ? readOwnerRosterDeadlineInstruction(context.goal.goal) : null
@@ -575,7 +585,8 @@ export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningCo
     ...(rosterDeadline ? [ROSTER_GROUNDING_INSTRUCTION, rosterDeadline] : []),
     ...(fixedBudget ? [`${FIXED_BUDGET_INSTRUCTION} 合计 ${fixedBudget.total / 100} 元，余额 ${fixedBudget.balance / 100} 元。`] : []),
     ...(browserVerificationRouting && requestsBrowserVerification(context)
-      ? [BROWSER_VERIFICATION_INSTRUCTION, ...(browserVerificationRouting !== 'legacy' ? [BROWSER_RECEIPT_INSTRUCTION] : []), ...(browserVerificationRouting === 'single-file' && requestsSingleFileBrowserVerification(context) ? [SINGLE_FILE_BROWSER_INSTRUCTION] : [])] : []),
+      ? [BROWSER_VERIFICATION_INSTRUCTION, ...(browserVerificationRouting !== 'legacy' ? [BROWSER_RECEIPT_INSTRUCTION] : []), ...((browserVerificationRouting === 'single-file' || browserVerificationRouting === 'same-file-receipt') && requestsSingleFileBrowserVerification(context)
+        ? [SINGLE_FILE_BROWSER_INSTRUCTION, ...(browserVerificationRouting === 'same-file-receipt' ? [SAME_FILE_BROWSER_RECEIPT_INSTRUCTION] : [])] : [])] : []),
     ...(canonicalPlanExample ? [
       '只有一件小型交付物时优先写一个实现步骤，将随附的走查、核对记录和验证要求放入该步骤的验收标准。系统自动安排独立评审，除非用户要求另一件独立产物，不把复核另拆成步骤。',
     ] : []),
@@ -692,8 +703,8 @@ export function resolveProjectOwnerPlanningRequest(context: ProjectOwnerPlanning
     if (matched) return matched
   }
   if (requestsBrowserVerification(context)) {
-    for (const routing of [true, 'legacy', false] as const) {
-      const prior = buildProjectOwnerPlanningRequest(context, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, routing, routing === true)
+    for (const routing of ['single-file', true, 'legacy', false] as const) {
+      const prior = buildProjectOwnerPlanningRequest(context, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, routing, routing === true || routing === 'single-file')
       const matched = matchRequest(prior)
       if (matched) return matched
     }
