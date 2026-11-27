@@ -521,6 +521,47 @@ test('Given 待审方案 When 用户确认方案与管理预算 Then 原子确�
   service.revokeOwnerManagementDelegation(f.project.id, grant.id)
 })
 
+test.each([false, true])('Given Owner规划因并发满额排队 When 腾出位置（经历重启=%s） Then 启动原执行一次并沿用原占额', async restart => {
+  const f = fixture(), grant = issue(f), before = calls
+  const occupied = Array.from({ length: employees.GLOBAL_CONCURRENCY_LIMIT }, () => store.createAgentExecution({
+    id: randomUUID(), projectId: store.createProject({ title: '占用并发位置', description: '' }).id, entityType: 'task', entityId: randomUUID(), agentId: f.employee.id,
+    sessionId: '', executor: 'headless', prompt: '占用并发位置', status: 'running', startedAt: Date.now(),
+  }))
+  const queued = await startDelegatedOwnerPlanningTask(f.taskId)
+  expect(queued.status).toBe('queued')
+  expect(calls).toBe(before)
+  const originalClaim = service.getOwnerManagementClaim(f.taskId)
+  if (restart) {
+    store.closeProjectDb()
+    await store.initProjectDb()
+    store.updateAgentExecution(occupied[0]!.id, { status: 'completed', completedAt: Date.now() })
+  }
+  const attempt = spyOn(employees, 'tryStartExecution')
+  const stop = startOwnerManagementLoop()
+  try {
+    if (!restart) {
+      await until(() => attempt.mock.calls.some(([id]) => id === queued.executionId))
+      expect(store.getAgentExecution(queued.executionId)?.status).toBe('queued')
+      store.updateAgentExecution(occupied[0]!.id, { status: 'completed', completedAt: Date.now() })
+      const { requestOwnerManagementWake } = await import('./project-owner-management-events')
+      requestOwnerManagementWake(occupied[0]!.projectId)
+    }
+    await until(() => calls === before + 1 && store.getAgentExecution(queued.executionId)?.status === 'running')
+    const running = store.getAgentExecution(queued.executionId)!
+    await until(() => callbacks.has(running.sessionId))
+    expect(service.getOwnerManagementClaim(f.taskId)).toEqual(originalClaim)
+    expect(store.listAgentExecutionsByEntity('task', f.taskId).map(run => run.id)).toEqual([queued.executionId])
+    clarify(f.taskId)
+    await until(() => store.getAgentExecution(queued.executionId)?.status === 'completed')
+    expect(calls).toBe(before + 1)
+  } finally {
+    await stop()
+    attempt.mockRestore()
+    for (const run of occupied) store.updateAgentExecution(run.id, { status: 'completed', completedAt: Date.now() })
+    service.revokeOwnerManagementDelegation(f.project.id, grant.id)
+  }
+})
+
 test('Given 无委托 When 内部入口启动 Then 排队与准备状态一起回滚，不调用runner', async () => {
   const f = fixture(), before = calls
   await expect(startDelegatedOwnerPlanningTask(f.taskId)).rejects.toThrow('委托')

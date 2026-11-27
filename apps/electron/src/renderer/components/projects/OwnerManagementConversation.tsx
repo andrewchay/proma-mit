@@ -255,17 +255,31 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const waitingMessage = getOwnerWaitingMessage(messages, taskId)
   const decisionLabel = waitingMessage?.kind !== 'attention' ? getOwnerWaitingLabel(messages, taskId, delegation.view?.state) : null
   const waitingForDecision = decisionLabel !== null
-  const originalGoalBlock = messages.findLast(message => message.kind === 'attention'
-    && message.eventId === `owner-delivery-original-goal-blocked:${grant.grant?.grantId}`)
   const authorizationDecision = Boolean(delegation.view?.initialPlanningRecovery) || ['none', 'expired', 'stale', 'revoked', 'exhausted'].includes(delegation.view?.state ?? '')
-  // 执行阻塞与执行区共用同一份推导：两处各自判断会出现“这里说暂无事项、那里说已阻塞”。
+  const currentSchedule = grant.grant && usage.schedule?.grantId === grant.grant.grantId ? usage.schedule : null
+  const resourceSchedule = usage.schedule?.nextAction === 'await_local_resources' ? usage.schedule : null
+  const refreshResourceWait = resourceSchedule !== null
+  useEffect(() => {
+    if (editor.view?.manager && !usage.loaded) void refreshCommandProgress(subject)
+  }, [editor.view?.manager, usage.loaded, refreshCommandProgress, subject])
+  useEffect(() => {
+    if (!refreshResourceWait) return
+    const timer = window.setInterval(() => { void refreshCommandProgress(subject) }, 4000)
+    return () => window.clearInterval(timer)
+  }, [refreshResourceWait, refreshCommandProgress, subject])
+  const completedDelivery = grant.grant?.dispatchMode === 'autonomous'
+    && hasCompletedOwnerDelivery(messages, usage.commands, taskId, plan.snapshot?.planVersion, grant.grant.grantId)
+  const originalGoalBlock = !completedDelivery && messages.findLast(message => message.kind === 'attention'
+    && message.eventId === `owner-delivery-original-goal-blocked:${grant.grant?.grantId}`)
+  const currentCommands = usage.commands.filter(command => command.grantId === grant.grant?.grantId)
+  // 执行阻塞与执行区共用同一份推导。旧授权的调度和命令只在历史中展示。
   const executionAttention = deriveOwnerExecutionAttention({
     grantState: grant.grant?.state,
-    scheduleState: usage.schedule?.state,
-    nextAction: usage.schedule?.nextAction,
-    commands: usage.commands,
-    currentSchedule: usage.schedule?.grantId === grant.grant?.grantId ? usage.schedule : null,
-    completed: Boolean(grant.grant?.dispatchMode === 'autonomous' && hasCompletedOwnerDelivery(messages, usage.commands, taskId, plan.snapshot?.planVersion, grant.grant?.grantId)),
+    scheduleState: currentSchedule?.state,
+    nextAction: currentSchedule?.nextAction,
+    commands: currentCommands,
+    currentSchedule,
+    completed: completedDelivery,
   })
   // 已确认方案但当前版本没有任何「提出安排」结论时，重排入口必须可达：
   // 只按最新消息是否为 attention 判断，会让后续对话回复把入口顶掉，用户看不到任何补救方式。
@@ -283,7 +297,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
   const teamUsage = usage.loaded && usage.schedule?.grantId ? usage.schedule : undefined
   const awaitingBusinessAcceptance = Boolean(grant.grant && teamUsage?.grantId === grant.grant.grantId && teamUsage.state === 'waiting' && teamUsage.nextAction === 'await_business_acceptance')
   const acceptanceSchedule = pendingAcceptance ? { projectId, state: 'waiting' as const, nextAction: 'await_business_acceptance' as const, grantId: pendingAcceptance.grantId, taskId: pendingAcceptance.taskId, reworkOrdinal: pendingAcceptance.reworkOrdinal, reservedCostMicros: 0, committedCostMicros: 0, runReservations: 0, reason: '' } : awaitingBusinessAcceptance ? teamUsage : undefined
-  const deliveredRound = grant.grant?.dispatchMode === 'autonomous' && hasCompletedOwnerDelivery(messages, usage.commands, taskId, plan.snapshot?.planVersion, grant.grant.grantId)
+  const deliveredRound = completedDelivery
     ? messages.findLast(message => message.kind === 'delivery' && message.delivery?.planVersion === plan.snapshot?.planVersion && message.eventId?.startsWith(`owner-delivery:${grant.grant!.grantId}:`)) : undefined
   const pendingDeliveredItems = deliveredRound?.delivery?.items.filter(item => !findLatestDeliveryReview(editor.view?.messages ?? [], taskId, { messageId: deliveredRound.id, stepKey: item.stepKey, artifactHash: item.artifactHash }))
   const pendingDeliveredItem = pendingDeliveredItems?.find(item => item.localTextRevision?.previousMessageId === deliveredRound?.delivery?.localTextRevisionOf && item.localTextRevision)
@@ -323,32 +337,51 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     pendingDiscussionFocus.current = 'open'
     setDiscussionOpen(true)
   }
-  const employeeRunning = usage.commands.some(command => command.grantId === grant.grant?.grantId
-    && command.state === 'running' && command.executionStatus === 'running')
+  const runningCommand = currentCommands.find(command => command.state === 'running' && command.executionStatus === 'running')
+  const queued = currentCommands.some(command => !command.reviewReplaced && command.state === 'queued')
+  const waitingOnSchedule = currentSchedule?.nextAction === 'human_decision' && !waitingForDecision && !executionAttention
+    && !originalGoalBlock && !hasOpenQuestions && !hasPendingChange && escalatedReviews.length === 0
+  const authorizationTarget = authorizationDecision ? 'owner-project-decisions' : settingsId
   const lastRequest = delegation.view?.state === 'attention' ? delegation.view.attentionCheck : undefined
   const truncatedFinalReview = lastRequest?.phase === 'quality_decision' && lastRequest.finishReason === 'length'
-  const currentStatus = editor.loading && !editor.view ? '正在读取项目状态'
-    : editor.error ? '项目状态读取失败，需要重新读取'
-      : pendingAction ? '员工操作等待你的逐次确认'
-        : truncatedFinalReview ? '成果验收中断，原成果已保留'
-        : executionAttention ? executionAttention.title
-          : originalGoalBlock ? '整体交付尚未满足原目标'
-          : latestAttention ? 'Owner 提出需要关注的事项'
-          : blockedReviews.length > 0 ? '成果质量决定被阻断，需要核对'
-          : delegation.view?.state === 'attention' ? '项目管理需要核对'
-          : delegation.view?.state === 'stale' ? '项目授权范围已变化，需重新核对'
-            : editor.view?.manager?.status === 'paused' ? '项目管理已暂停'
-              : dispatchPaused ? '后续自主派工已暂停'
-              : authorizationDecision && editor.view?.manager ? '项目管理授权需要确认'
-              : evidenceBlocker ? '成果验证证据需要核对'
-              : awaitingBusinessAcceptance ? '成果等待人工业务验收'
-              : pendingDeliveredItem ? '成果待你审阅'
-              : waitingForDecision || escalatedReviews.length > 0 || hasOpenQuestions || hasPendingChange ? 'Owner 正在等待你的决定'
-                : ownerProcessing ? 'Owner 正在处理项目工作'
-                  : employeeRunning ? '团队正在处理项目工作'
-                  : grant.grant?.dispatchMode === 'autonomous' && hasCompletedOwnerDelivery(messages, usage.commands, taskId, plan.snapshot?.planVersion, grant.grant.grantId) ? '本轮成果已交付'
-                  : assignmentTrace ? ownerTraceStatus(assignmentTrace)
-                    : !editor.view?.manager ? 'Owner 尚未完成准备' : '等待下一步项目进展'
+  const qualityFailure = currentSchedule?.nextAction === 'await_owner_quality' && latestAttention?.runEvidence
+    && latestAttention.content.startsWith('成果验收没有得到可使用的结论')
+    && latestAttention.createdAt >= (latestTraceByPhase.get('owner_response')?.createdAt ?? 0)
+  const currentStatus: { title?: string; detail?: string; action?: string; target?: string } = [
+    { active: editor.loading && !editor.view, title: '正在读取项目状态' },
+    { active: editor.error, title: '项目状态读取失败，需要重新读取' },
+    { active: pendingAction, title: '员工操作等待你的逐次确认', action: '查看待确认操作' },
+    { active: truncatedFinalReview && !completedDelivery, title: '成果验收中断，原成果已保留',
+      detail: '可核对原请求、费用及续验条件。', action: '查看验收记录', target: settingsId },
+    { active: qualityFailure && !completedDelivery, title: '成果验收中断，原成果已保留', detail: '独立评审记录已保留，可查看本次验收失败的原因。',
+      action: '查看失败原因', target: 'owner-project-risks' },
+    { active: originalGoalBlock, title: '整体交付尚未满足原目标',
+      detail: '原稿和已完成的评审均已保留。', action: '查看哪些要求需要补齐' },
+    { active: executionAttention, title: executionAttention?.title, action: '查看恢复入口', target: currentSchedule?.state === 'expired' ? planDetailsId : undefined },
+    { active: interruptedReviews.length > 0, title: '独立评审中断，原成果已保留', action: '查看恢复入口' },
+    { active: blockedReviews.length > 0, title: '成果质量决定被阻断，需要核对', action: '查看恢复入口', target: 'owner-project-risks' },
+    { active: delegation.view?.state === 'stale' || authorizationDecision && editor.view?.manager, title: '项目管理授权需要确认', action: children ? '查看授权设置' : undefined, target: authorizationTarget },
+    { active: evidenceBlocker, title: '成果验证证据需要核对', action: '查看成果验证', target: 'owner-project-risks' },
+    { active: dispatchPaused, title: '后续自主派工已暂停',
+      detail: runningCommand ? '正在运行的工作会继续。' : '恢复派工后，Owner 会按原授权核对待办。',
+      action: '查看派工控制', target: 'owner-project-progress' },
+    { active: awaitingBusinessAcceptance || pendingDeliveredItem, title: awaitingBusinessAcceptance ? '成果等待人工业务验收' : '成果待你审阅', action: '查看成果和验收' },
+    { active: waitingForDecision || escalatedReviews.length > 0 || hasOpenQuestions || hasPendingChange || waitingOnSchedule,
+      title: 'Owner 正在等待你的决定', action: '查看待决定事项' },
+    { active: editor.view?.manager?.status === 'paused', title: '项目管理已暂停', action: children ? '查看授权设置' : undefined, target: authorizationTarget },
+    { active: runningCommand, title: runningCommand?.role === 'reviewer' ? '独立评审正在检查成果' : '团队正在处理项目工作', detail: runningCommand?.taskTitle,
+      action: '查看工作记录', target: 'owner-project-progress' },
+    { active: resourceSchedule, title: '等待本地资源',
+      detail: resourceSchedule?.reason, action: '查看工作记录', target: 'owner-project-progress' },
+    { active: currentSchedule?.nextAction === 'await_owner_quality', title: '成果等待 Owner 验收',
+      detail: '独立评审已返回，成果仍待 Owner 核对。', action: '查看工作记录', target: 'owner-project-progress' },
+    { active: ownerProcessing, title: 'Owner 正在处理项目工作', detail: assignmentActive && assignmentTrace ? ownerTraceStatus(assignmentTrace) : undefined },
+    { active: completedDelivery, title: '本轮成果已交付' },
+    { active: currentSchedule?.state === 'ready' || currentSchedule?.state === 'running', title: queued ? '工作已进入队列，等待启动' : '等待 Owner 安排下一步',
+      action: '查看工作记录', target: 'owner-project-progress' },
+    { active: latestAttention || delegation.view?.state === 'attention', title: 'Owner 提出需要关注的事项', action: '查看最新说明', target: 'owner-project-risks' },
+    { active: assignmentTrace, title: assignmentTrace ? ownerTraceStatus(assignmentTrace) : undefined },
+  ].find(status => status.active) ?? { title: editor.view?.manager ? '等待下一步项目进展' : 'Owner 尚未完成准备' }
   const focusReplyComposer = (): void => {
     setDiscussionOpen(true)
     requestAnimationFrame(() => {
@@ -430,7 +463,10 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
     {editor.error && <div className="space-y-2"><p role="alert" className="text-sm text-destructive">Owner对话读取失败：{editor.error}</p><button type="button" className="text-xs text-primary underline" disabled={editor.loading} onClick={() => void load(projectId)}>重新读取 Owner 对话</button></div>}
     {!editor.view?.manager && delegation.view?.state === 'none' && !plan.snapshot && <p role="status" className="rounded-xl bg-primary/5 px-4 py-3 text-sm leading-6">Owner尚未开始规划：当前没有已确认的项目总模型费用额度。请在授权设置中确认预算与有效期；确认后，Owner会在额度内自动整理方案并回到这里回应。</p>}
     <div className={cn('grid min-w-0 items-start gap-0', discussionOpen ? 'xl:grid-cols-[minmax(0,1fr)_minmax(20rem,24rem)]' : 'xl:grid-cols-[minmax(0,1fr)_auto]')}><section className="min-w-0 xl:pr-7" aria-label="Owner当前工作台"><div hidden={showProjectDetails} className="space-y-6">
-      <section className="rounded-xl bg-primary/10 px-5 py-4" aria-label="Owner当前状态"><h3 className="text-base font-semibold">{currentStatus}</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">{truncatedFinalReview ? '最后一次验收输出被截断。可在授权设置中查看原请求和费用记录。' : editor.view?.stateProjection ? `上次状态核对：${new Date(editor.view.stateProjection.lastReconciledAt).toLocaleString('zh-CN')}` : '状态以项目当前记录为准。'}</p></section>
+      <section className="rounded-xl bg-primary/10 px-5 py-4" aria-label="Owner当前状态"><div role="status"><h3 className="text-base font-semibold">{currentStatus.title}</h3>
+        {currentStatus.detail && <p className="mt-1 text-sm leading-5 text-muted-foreground">{currentStatus.detail}</p>}</div>
+        {currentStatus.action && <button type="button" className="mt-2 text-sm text-primary underline" onClick={() => revealOwnerHistoryTarget(currentStatus.target ?? 'owner-project-decisions')}>{currentStatus.action}</button>}
+      </section>
       {selectedDelivery && selectedArtifact && <section ref={artifactWorkspaceRef} tabIndex={-1} className="rounded-xl bg-muted/40 p-4" aria-label="成果工作区">
         <div className="mb-3 flex items-center justify-between gap-3"><h3 className="font-semibold">成果工作区</h3><button type="button" className="text-sm text-primary underline" onClick={() => setSelectedDelivery(null)}>关闭成果</button></div>
         <div className="mb-4 rounded-lg bg-background/70 p-3" aria-label="审阅这个成果版本">
@@ -445,13 +481,17 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
       </section>}
       {selectedDelivery && !selectedArtifact && <p role="alert" className="text-sm text-destructive">所选成果版本已无法核对，请重新选择。</p>}
       <div className="space-y-6">
-        <section className="min-w-0 space-y-4 rounded-xl bg-card p-5 shadow-sm ring-1 ring-border/40 sm:p-6" aria-label="需要你决定">
+        <section className="min-w-0 space-y-4 rounded-xl bg-card p-5 shadow-sm ring-1 ring-border/40 sm:p-6" id="owner-project-decisions" tabIndex={-1} aria-label="需要你决定">
           <h4 className="text-base font-semibold">需要你决定</h4>
           {pendingDeliveredItem && pendingDeliveredReference && <OwnerDeliveredDecisionCard subject={subject} item={pendingDeliveredItem} reference={pendingDeliveredReference} acceptanceBlocker={acceptanceBlocker}
             browserRefresh={<OwnerDeliveryBrowserRefresh key={`${pendingDeliveredReference.messageId}:${pendingDeliveredReference.stepKey}`} subject={subject}
               record={validationFor(pendingDeliveredReference)} onChanged={() => load(projectId)} />} onOpen={() => selectDelivery(pendingDeliveredReference)} />}
-          {!editor.loading && editor.view && !pendingAction && !latestWorkspaceProposal && !needsArrangementRetry && !authorizationDecision && !waitingForDecision && !hasOpenQuestions && !hasPendingChange && !acceptanceSchedule && !pendingDeliveredItem && !executionAttention && !originalGoalBlock && escalatedReviews.length === 0 && blockedReviews.length === 0 && interruptedReviews.length === 0
+          {!editor.loading && editor.view && !pendingAction && !latestWorkspaceProposal && !needsArrangementRetry && !authorizationDecision && !waitingForDecision && !hasOpenQuestions && !hasPendingChange && !acceptanceSchedule && !pendingDeliveredItem && !executionAttention && !originalGoalBlock && !waitingOnSchedule && escalatedReviews.length === 0 && blockedReviews.length === 0 && interruptedReviews.length === 0
             && <p className="text-sm text-muted-foreground">暂无待你决定的事项。</p>}
+          {waitingOnSchedule && <div className="rounded-lg bg-amber-500/10 p-3 text-sm">
+            <p>{ownerFacingMessage(currentSchedule.reason || '当前工作需要先核对前置条件。')}</p>
+            <button type="button" className="mt-2 text-primary underline" onClick={focusReplyComposer}>回复 Owner</button>
+          </div>}
           {originalGoalBlock && <div className="rounded-lg bg-amber-500/10 p-3 text-sm"><p>{originalGoalBlock.content}</p><button type="button" className="mt-2 text-primary underline" onClick={focusReplyComposer}>回复 Owner 补齐交付</button></div>}
           {acceptanceSchedule && <OwnerAcceptanceCard projectId={projectId} schedule={acceptanceSchedule} commands={usage.commands} onChanged={() => { void refreshCommandProgress(subject) }} feedbackDisabled={composer.sending || Boolean(composer.pending || composer.deliveryReference || composer.deliveryReviewDecision) || !editor.view?.manager} feedbackCapacity={Math.max(0, 3700 - composer.text.length)} onDiscuss={(delivery, excerpt, intent) => { const context = `交付「${delivery.title}」版本 ${delivery.version}（记录 ${delivery.id}）${excerpt ? `，${intent === 'question' ? '想询问' : '希望修改'}：\n“${excerpt}”` : '：'}\n`; const text = `${composer.text}${composer.text.trim() ? '\n\n' : ''}${context}`; if (text.length > 4000) return; edit({ subject, text }); focusReplyComposer() }} />}
           {acceptanceSchedule && (composer.deliveryReference || composer.deliveryReviewDecision) && <p className="text-xs text-muted-foreground">对话草稿已关联另一成果。请先发送或取消该关联，再对这个交付点选反馈。</p>}
@@ -492,7 +532,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
           <OwnerConversationChanges projectId={projectId} taskId={taskId} />
           <OwnerManagementQuestions projectId={projectId} taskId={taskId} embedded />
         </section>
-        <section className="min-w-0 border-b border-border/50 pb-5" aria-label="项目风险">
+        <section className="min-w-0 border-b border-border/50 pb-5" id="owner-project-risks" tabIndex={-1} aria-label="项目风险">
           <h4 className="text-sm font-semibold">风险与关注事项</h4>
           {evidenceBlocker && evidenceRisk && <div className="mt-3 rounded-xl bg-amber-500/10 p-3 text-sm" role="alert"><p className="font-medium">成果验证证据需要核对</p><p className="mt-1">{evidenceBlocker}</p><button type="button" className="mt-2 text-primary underline" onClick={() => selectDelivery(evidenceRisk.reference)}>查看成果和证据</button></div>}
           {planRisks.length > 0 && <details className="mt-2 text-sm"><summary className="cursor-pointer">方案风险</summary><ul className="mt-2 list-disc space-y-1 pl-5 [overflow-wrap:anywhere]">{planRisks.map((risk, index) => <li key={index}>{risk}</li>)}</ul></details>}
@@ -513,7 +553,7 @@ export function OwnerManagementConversation({ projectId, taskId, children, curre
           {(assignmentTrace || ownerProcessing) && <div className="mt-3 rounded-xl bg-primary/5 px-4 py-3 text-sm" role="status" aria-label="Owner组织进度">
           <div className="flex items-center gap-2">
             {ownerProcessing && <span className="sidebar-breathe-dot sidebar-breathe-running size-2 flex-shrink-0 bg-current text-blue-500" aria-label="Owner正在处理" />}
-            <p>{waitingForDecision ? 'Owner 正在等你处理决策事项。' : latestAttention ? 'Owner 提出需要关注的事项，详情见风险。' : assignmentTrace ? ownerTraceStatus(assignmentTrace) : 'Owner正在处理你的消息。'}</p>
+            <p>{assignmentTrace ? ownerTraceStatus(assignmentTrace) : '正在处理对话消息'}</p>
           </div>
           {assignmentActive && !waitingForUser && <p className="mt-1 text-xs text-muted-foreground">{elapsedLabel(clock - assignmentTrace.createdAt)}；这类安排没有可靠的固定预计时长。{clock - assignmentTrace.createdAt >= ORGANIZATION_STALL_HINT_MS ? '暂时还没有新进展；Owner会继续检查处理状态，你不必重复发送。收到结果或需要你决定的事项时，我会在这里更新。' : ''}</p>}
           </div>}

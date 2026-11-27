@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { findOwnerDeliveredBudgetIssue, findOwnerItemizedBudgetIssue } from './project-owner-budget-deliverable'
+import { findOwnerDeliveredBudgetIssue, findOwnerItemizedBudgetIssue, readOwnerFixedBudget } from './project-owner-budget-deliverable'
 
 const goal = { projectId: 'project', goalVersion: 1, objective: '交付 manual/handbook.md 原件。总预算不超过 240 元。写出逐项预算和合计。', constraints: [], acceptanceCriteria: [] }
 const good = '| 项目 | 小计（元） |\n|---|---|\n| 材料 | 120.30 |\n| 现场用品 | 30.60 |\n| **合计** | **150.90** |'
@@ -44,4 +44,16 @@ test('Given金额完整 When合计错误或超过用户上限 Then不通过最�
 test('Given按清单填写逐项费用 When合计可复算 Then接受无表格的手册预算', () => {
   const list = '## 预算明细\n- 材料：120 元\n- 签到用品：24.5 元\n- 合计：144.50 元'
   expect(findOwnerItemizedBudgetIssue(goal, list)).toBeNull()
+})
+
+test('Given预算明细、人数和上限全部已知 When复算 Then按每人计价并拒绝估算或未列全的价格', () => {
+  const objective = '两人社区活动预算清单。场地80元，物料42元，饮用水每人4元，交通每人15元。写清各项小计及总计，对照240元上限计算余额。'
+  const brief = { ...goal, objective, constraints: [], acceptanceCriteria: [] }
+  expect(readOwnerFixedBudget(brief)).toEqual({ total: 16000, balance: 8000 })
+  expect(readOwnerFixedBudget({ ...brief, objective: objective.replace('两人', '3人').replace('每人4元', '4.10元/人') })).toEqual({ total: 17930, balance: 6070 })
+  expect(readOwnerFixedBudget({ ...brief, objective: objective.replace('物料42元', '物料待定') })).toBeNull()
+  expect(readOwnerFixedBudget({ ...brief, constraints: ['另加 5 元可退押金'] })).toBeNull()
+  const group = '为三人做预算。每人餐费20元、交通50元。对照150元预算上限计算余额。'
+  expect(readOwnerFixedBudget({ ...brief, objective: group })).toEqual({ total: 11000, balance: 4000 })
+  expect(readOwnerFixedBudget({ ...brief, objective: group.replace('每人餐费', '餐费每人每餐') })).toBeNull()
 })

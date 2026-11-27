@@ -1,3 +1,4 @@
+import { isOwnerWaitingForLocalResources, OWNER_LOCAL_RESOURCE_LABELS, prepareOwnerLocalResourceSample, readOwnerLocalResourceWait, recheckOwnerLocalResources, type OwnerLocalResourceWait } from './project-owner-local-resources'
 import { readOwnerQualityAction, readOwnerQualityArtifact } from './project-owner-quality-actions'
 import type { OwnerExecutionCommandRole, OwnerExecutionNextAction, OwnerTechnicalReviewVerdict, ProjectOwnerGoalSubject } from '@gravitas/shared'
 import { dispatchAutonomousOwnerCommandExecution } from './project-owner-execution-dispatcher'
@@ -86,6 +87,9 @@ const defaultDriver: OwnerAutonomousSchedulerDriver = { queue: reserveAndQueueAu
 const inFlight = new Map<string, Promise<OwnerAutonomousScheduleStatus>>()
 const rerunRequested = new Set<string>()
 let lifecycleStarted = false
+function withResourceWait(view: OwnerAutonomousScheduleStatus, reason: OwnerLocalResourceWait): OwnerAutonomousScheduleStatus {
+  return { ...view, state: 'waiting', nextAction: 'await_local_resources', reason: `${OWNER_LOCAL_RESOURCE_LABELS[reason]}，资源恢复后会自动继续。` }
+}
 
 function status(projectId: string, state: OwnerAutonomousScheduleState, reason: string, details: Partial<OwnerAutonomousScheduleStatus> = {}): OwnerAutonomousScheduleStatus {
   return { projectId, state, reservedCostMicros: 0, committedCostMicros: 0, runReservations: 0, reason, ...details }
@@ -278,7 +282,10 @@ function pausedBeforeClaim(commandId: string, projectId: string): boolean {
 export function getOwnerAutonomousScheduleStatus(projectId: string, taskId?: string): OwnerAutonomousScheduleStatus {
   if (typeof projectId !== 'string' || !projectId.trim()) throw new Error('项目ID无效')
   if (taskId !== undefined && store.getTask(taskId)?.projectId !== projectId) throw new Error('Owner任务不属于当前项目')
-  const execution = evaluate(projectId, taskId).status
+  const evaluation = evaluate(projectId, taskId)
+  const localWait = evaluation.action || (isOwnerWaitingForLocalResources(projectId) && (evaluation.status.state === 'no_grant' || evaluation.status.nextAction === 'await_owner_quality'))
+    ? readOwnerLocalResourceWait() : null
+  const execution = localWait ? withResourceWait(evaluation.status, localWait) : evaluation.status
   const { getOpenOwnerManagementQuestion } = require('./project-owner-management-questions') as typeof import('./project-owner-management-questions')
   const question = getOpenOwnerManagementQuestion(projectId, taskId)
   if (question) execution.waitingQuestion = question.taskId ? { taskId: question.taskId } : {}
@@ -340,9 +347,24 @@ export async function runOwnerAutonomousSchedule(projectId: string, driver: Owne
       }
     }
     if (!evaluation.action) return evaluation.status
+    const sample = prepareOwnerLocalResourceSample()
+    if (sample) {
+      await sample
+      evaluation = evaluate(projectId)
+      if (!evaluation.action) return evaluation.status
+    }
+    const localWait = readOwnerLocalResourceWait()
+    if (localWait) {
+      recheckOwnerLocalResources(projectId)
+      return withResourceWait(evaluation.status, localWait)
+    }
     if (evaluation.action.kind === 'dispatch') {
       try {
         const result = await driver.dispatch({ commandId: evaluation.action.commandId, ackFingerprint: evaluation.action.ackFingerprint, acknowledgeExecution: true })
+        if (result.resourceBlocked) {
+          recheckOwnerLocalResources(projectId)
+          return withResourceWait(evaluate(projectId).status, readOwnerLocalResourceWait() ?? 'concurrency')
+        }
         if (!result.started && !result.workspaceBlocked) {
           const execution = store.getAgentExecution(result.executionId)
           if (execution?.status === 'queued' && !pausedBeforeClaim(result.commandId, projectId)) markDispatchUncertain(result.commandId, projectId)
@@ -360,6 +382,10 @@ export async function runOwnerAutonomousSchedule(projectId: string, driver: Owne
     }
     try {
       const result = await driver.dispatch({ commandId: queued.commandId, ackFingerprint: queued.ackFingerprint, acknowledgeExecution: true })
+      if (result.resourceBlocked) {
+        recheckOwnerLocalResources(projectId)
+        return withResourceWait(evaluate(projectId).status, readOwnerLocalResourceWait() ?? 'concurrency')
+      }
       if (!result.started && !result.workspaceBlocked && store.getAgentExecution(result.executionId)?.status === 'queued' && !pausedBeforeClaim(result.commandId, projectId)) markDispatchUncertain(result.commandId, projectId)
     } catch {
       if (!pausedBeforeClaim(queued.commandId, projectId)) markDispatchUncertain(queued.commandId, projectId)

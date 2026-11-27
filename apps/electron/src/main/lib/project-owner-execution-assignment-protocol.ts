@@ -40,7 +40,9 @@ function buildRegistryText(includeBuildCommands: boolean): string {
   const items = listOwnerRuntimeBuildCommands().map(item => `${item.id}（${item.title}）`).join('、')
   return items ? `；原生或命令行项目可用 build:<标识>，可选标识：${items}` : ''
 }
-export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, requireRoleCoverage = true, browserRegistryVariant: OwnerBrowserRegistryVariant = 'current', stepDeliveryInstructions = true, roleSpecificCapabilities = true, greenfieldRootTargets = false, includeBuildCommands = true, requireSwiftPackage = true, requireCompleteGreenfieldScope = true): OwnerExecutionAssignmentRequest {
+export const OWNER_BROWSER_CHECK_COMPLETION_INSTRUCTION = '内置英里换算断言与两位小数的精确目标匹配时，主进程会确保验证范围包含该断言。'
+
+export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, requireRoleCoverage = true, browserRegistryVariant: OwnerBrowserRegistryVariant = 'current', stepDeliveryInstructions = true, roleSpecificCapabilities = true, greenfieldRootTargets = false, includeBuildCommands = true, requireSwiftPackage = true, requireCompleteGreenfieldScope = true, completeRequiredBrowserChecks = browserRegistryVariant === 'current'): OwnerExecutionAssignmentRequest {
   return {
     expectedGoalRevision: context.goalRevision,
     expectedContextFingerprint: context.sourceContextFingerprint,
@@ -64,6 +66,8 @@ export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssi
       ...(['current', 'registry-v6', 'registry-v5'].includes(browserRegistryVariant) && context.executionKinds.includes('development') ? ['科学计算器要求验证运算优先级、角度模式、除零或清空时，使用 browser:html.loads+calculator.scientific。控件约定为 input#expression、select#angle（deg 选项）、button#calculate、button#clear、#result、#error。页面可加载不满足这些行为标准。'] : []),
       ...(['current', 'registry-v6'].includes(browserRegistryVariant) && context.executionKinds.includes('development')
         ? ['按钮式计数器要求验收连续加一、重置或键盘操作时，用 browser:html.loads+counter.mouse-keyboard。页面使用可见的 #count、button#increment、button#reset，三个操作都须按原验收标准执行。'] : []),
+      ...(completeRequiredBrowserChecks && context.executionKinds.includes('development')
+        && requiresOwnerMilesConversionVerification(context.steps, ['index.html'], context.objective) ? [OWNER_BROWSER_CHECK_COMPLETION_INSTRUCTION] : []),
       ...(browserRegistryVariant === 'current' && context.executionKinds.includes('development')
         && requiresOwnerMilesConversionVerification(context.steps, ['index.html'])
         ? [`英里转公里的四项验收要求使用 ${MILES_CONVERSION_VERIFICATION_COMMAND}，控件约定为 input#miles、button#convert-btn、#result、#error。结果显示公里单位。将控件约定写入研发范围理由，页面仅加载不能证明换算行为。`] : []),
@@ -91,8 +95,11 @@ export function resolveOwnerExecutionAssignmentRequest(context: OwnerExecutionAs
             for (const includeBuildCommands of [true, false]) {
               for (const requireSwiftPackage of [true, false]) {
                 for (const requireCompleteGreenfieldScope of context.greenfieldDevelopment ? [true, false] : [false]) {
-                  const request = buildOwnerExecutionAssignmentRequest(context, requireRoleCoverage, registryVariant, stepDeliveryInstructions, roleSpecificCapabilities, greenfieldRootTargets, includeBuildCommands, requireSwiftPackage, requireCompleteGreenfieldScope)
-                  if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) return request
+                  for (const complete of registryVariant === 'current' && context.executionKinds.includes('development')
+                    && requiresOwnerMilesConversionVerification(context.steps, ['index.html'], context.objective) ? [true, false] : [false]) {
+                    const request = buildOwnerExecutionAssignmentRequest(context, requireRoleCoverage, registryVariant, stepDeliveryInstructions, roleSpecificCapabilities, greenfieldRootTargets, includeBuildCommands, requireSwiftPackage, requireCompleteGreenfieldScope, complete)
+                    if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) return request
+                  }
                 }
               }
             }
@@ -104,6 +111,7 @@ export function resolveOwnerExecutionAssignmentRequest(context: OwnerExecutionAs
   throw new Error('Owner冻结安排提示指纹不属于已知格式')
 }
 export interface OwnerExecutionAssignmentProtocolContext {
+  objective?: string
   contextFingerprint: string
   teamContractVersion?: 2 | 3
   readonly workspaces: ReadonlyArray<{ id: string; name: string }>
@@ -123,7 +131,7 @@ function text(value: unknown, name: string, maximum = 1200): string {
   return value
 }
 /** 模型输出只用于提案；只接受冻结计划、项目工作区与员工候选，不接受权限、预算或执行指令。 */
-export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: OwnerExecutionAssignmentProtocolContext, requireSwiftPackage = false, requireCompleteGreenfieldScope = true, options: { enforceVerificationTargets?: boolean; enforceMilesConversion?: boolean } = {}): OwnerExecutionAssignmentProposal {
+export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: OwnerExecutionAssignmentProtocolContext, requireSwiftPackage = false, requireCompleteGreenfieldScope = true, options: { enforceVerificationTargets?: boolean; enforceMilesConversion?: boolean; completeRequiredBrowserChecks?: boolean } = {}): OwnerExecutionAssignmentProposal {
   let value = raw
   if (typeof raw === 'string') {
     try { value = JSON.parse(raw) } catch { throw new Error('Owner人员安排不是有效JSON') }
@@ -156,7 +164,18 @@ export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: Own
     const targetPaths = pathList(scope.targetPaths, '目标路径', 20)
     const allowedPaths = pathList(scope.allowedPaths, '允许范围', 40)
     if (!Array.isArray(scope.verificationCommands) || !scope.verificationCommands.length || scope.verificationCommands.length > 12) throw new Error('Owner研发验证命令无效')
-    const verificationCommands = scope.verificationCommands.map(command => text(command, '验证命令', 500))
+    const milesConversion = requiresOwnerMilesConversionVerification(selectedSteps.filter(step => step !== undefined), targetPaths, options.completeRequiredBrowserChecks ? context.objective : undefined)
+    let verificationCommands = scope.verificationCommands.map(command => {
+      const value = text(command, '验证命令', 500)
+      // 只在冻结标准已指向同一种换算时，恢复该内置断言的已知误拼。
+      return options.completeRequiredBrowserChecks && milesConversion && isBrowserVerificationCommand(value)
+        ? value.replace(/(^browser:|\+)conversion\.miles-kb(?=\+|$)/g, `$1${MILES_CONVERSION_CHECK}`)
+        : value
+    })
+    if (options.completeRequiredBrowserChecks && milesConversion && verificationCommands.length === 1
+      && verificationCommands[0] === 'browser:html.loads') {
+      verificationCommands = [MILES_CONVERSION_VERIFICATION_COMMAND]
+    }
     if (new Set(verificationCommands).size !== verificationCommands.length || verificationCommands.some(command => /[\r\n\0]/.test(command))) throw new Error('Owner研发验证命令重复或格式无效')
     const codeFiles = new Map((context.codeFiles ?? []).map(file => [file.path, file.sha256]))
     if (verificationCommands.includes(MARKDOWN_VERIFICATION_COMMAND) && !targetPaths.some(path => /\.md$/i.test(path))) {
@@ -170,7 +189,7 @@ export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: Own
       && !verificationCommands.some(command => isBrowserVerificationCommand(command) && parseBrowserVerificationCheckIds(command).includes(COUNTER_KEYBOARD_CHECK))) {
       throw new Error(`计数器验收包含键盘、加一与重置，请使用 ${COUNTER_KEYBOARD_VERIFICATION_COMMAND}`)
     }
-    if (options.enforceMilesConversion && requiresOwnerMilesConversionVerification(selectedSteps.filter(step => step !== undefined), targetPaths)
+    if (options.enforceMilesConversion && milesConversion
       && !verificationCommands.some(command => isBrowserVerificationCommand(command) && parseBrowserVerificationCheckIds(command).includes(MILES_CONVERSION_CHECK))) {
       throw new Error(MILES_CONVERSION_VERIFICATION_MISSING)
     }

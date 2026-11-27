@@ -259,23 +259,39 @@ export const OWNER_RUNTIME_ASSERTION_TEMPLATES: readonly OwnerRuntimeAssertionTe
         await pause()
         return result.textContent.trim()
       }
-      angle.value = 'deg'
-      if (angle.value !== 'deg') return { passed: false, detail: '角度选择缺少 deg 选项' }
-      angle.dispatchEvent(new Event('change', { bubbles: true }))
-      const arithmetic = await evaluate('2+3*4')
-      if (!arithmetic || Number(arithmetic) !== 14 || error.textContent.trim()) return { passed: false, detail: '2+3*4 期望 14，实际 ' + arithmetic }
-      const sine = await evaluate('sin(30)')
-      if (!sine || !Number.isFinite(Number(sine)) || Math.abs(Number(sine) - 0.5) > 1e-9 || error.textContent.trim()) return { passed: false, detail: '角度模式 sin(30) 期望 0.5，实际 ' + sine }
+      const enabled = Array.from(angle.options).filter(option => !option.matches(':disabled'))
+      const radians = enabled.find(option =>
+        option.value !== 'deg' && /(?:^|[^a-z])rad(?:ians?)?(?![a-z])|弧度/i.test(option.value + ' ' + option.textContent))
+      if (!enabled.some(option => option.value === 'deg') || !radians) {
+        return { passed: false, detail: '角度选择必须支持可切换的 deg 角度和 rad 弧度选项' }
+      }
+      for (const [mode, label, examples] of [
+        ['deg', '角度', [['2+3*4', 14], ['(2+3)*4-6/2', 17], ['sin(30)', 0.5], ['cos(60)', 0.5], ['sin(90)+cos(0)', 2], ['sin(90)-cos(0)', 0]]],
+        [radians.value, '弧度', [['sin(1.5707963267948966)', 1], ['cos(3.141592653589793)', -1], ['sin(1.5707963267948966)+cos(0)', 2], ['sin(1.5707963267948966)-cos(0)', 0]]],
+      ]) {
+        angle.value = mode
+        if (angle.value !== mode) return { passed: false, detail: '无法选中' + label + '模式' }
+        angle.dispatchEvent(new Event('change', { bubbles: true }))
+        for (const [expression, expected] of examples) {
+          const output = await evaluate(expression)
+          if (!output || !Number.isFinite(Number(output)) || Math.abs(Number(output) - expected) > 1e-9 || error.textContent.trim()) {
+            return { passed: false, detail: label + '模式 ' + expression + ' 期望 ' + expected + '，实际 ' + output }
+          }
+        }
+      }
       const zero = await evaluate('1/0')
       if (zero || !error.textContent.trim() || !usable(error)) return { passed: false, detail: '除零必须显示可见错误并清空计算结果' }
       clear.click()
       await pause()
       if (input.value !== '' || result.textContent.trim() || error.textContent.trim()) return { passed: false, detail: '错误状态点击清空未同时清除表达式、结果与错误' }
-      await evaluate('2+3*4')
+      const restored = await evaluate('2+3*4')
+      if (!restored || Number(restored) !== 14 || error.textContent.trim() || !usable(result)) {
+        return { passed: false, detail: '清除错误后没有恢复有效计算' }
+      }
       clear.click()
       await pause()
       if (input.value !== '' || result.textContent.trim() || error.textContent.trim()) return { passed: false, detail: '成功计算后点击清空未同时清除表达式、结果与错误' }
-      return { passed: true, detail: '实际输入、计算与点击验证通过：优先级 14、角度正弦 0.5、除零错误、成功及出错状态清空' }
+      return { passed: true, detail: '实际浏览器验证通过：四则优先级与括号；角度 deg 的 sin(30)=0.5、cos(60)=0.5；弧度 rad 的 sin(π/2)=1、cos(π)=-1；两种角度单位下的三角函数加减组合；除零报错与成功和错误状态清空' }
     })()`,
   },
   {
@@ -299,20 +315,29 @@ export const OWNER_RUNTIME_ASSERTION_TEMPLATES: readonly OwnerRuntimeAssertionTe
         await new Promise(resolve => setTimeout(resolve, 30))
         return { result: result.textContent.trim(), error: error.textContent.trim() }
       }
-      for (const [value, expected] of [['1', '1.61'], ['0', '0.00'], ['1000', '1609.34']]) {
+      const verifyConversion = async (value, expected) => {
         const actual = await evaluate(value)
         const matches = actual.result.match(/(?:^|[^0-9.-])([0-9]+\\.[0-9]{2})\\s*(?:公里|千米|km)$/i)
         if (!visible(result) || matches?.[1] !== expected || actual.error) {
-          return { passed: false, detail: '输入 ' + value + ' 期望 ' + expected + ' 公里，实际 ' + actual.result }
+          return '输入 ' + value + ' 期望 ' + expected + ' 公里，实际 ' + actual.result
         }
+        return null
       }
-      const empty = await evaluate('')
-      if (empty.result || !visible(error) || !/请输入|为空|不能为空|empty|required/i.test(empty.error)) {
-        return { passed: false, detail: '空输入未清空结果并显示明确提示' }
+      for (const [value, expected] of [['1', '1.61'], ['0', '0.00'], ['1000', '1609.34']]) {
+        const issue = await verifyConversion(value, expected)
+        if (issue) return { passed: false, detail: issue }
       }
-      const negative = await evaluate('-1')
-      if (negative.result || !visible(error) || !/负(?:数|值)|非负|不能小于\\s*0|negative|non-negative/i.test(negative.error)) {
-        return { passed: false, detail: '负数未清空结果并显示明确提示' }
+      for (const [value, label, prompt] of [
+        ['', '空输入', /请输入|请填写|为空|不能为空|empty|required|(?:please\\s+)?(?:enter|provide|input)\\s+(?:a\\s+)?(?:valid\\s+)?(?:value|number|distance|mileage|miles)/i],
+        ['-1', '负数', /负(?:数|值)|非负|不能小于\\s*0|negative|non-negative|at least (?:zero|0)/i],
+      ]) {
+        // 每个无效输入都从一个已有结果开始，避免上个用例清空后掩盖缺陷。
+        const issue = await verifyConversion('1', '1.61')
+        if (issue) return { passed: false, detail: '测试' + label + '前无法建立有效结果：' + issue }
+        const actual = await evaluate(value)
+        if (actual.result) return { passed: false, detail: label + '仍保留结果：' + actual.result }
+        if (!visible(error) || !actual.error) return { passed: false, detail: label + '没有可见的错误提示' }
+        if (!prompt.test(actual.error)) return { passed: false, detail: label + '的提示未能说明原因：' + actual.error }
       }
       return { passed: true, detail: '实测 1 为 1.61 公里，0 为 0.00 公里，1000 为 1609.34 公里，空输入和负数均提示且清空结果' }
     })()`,

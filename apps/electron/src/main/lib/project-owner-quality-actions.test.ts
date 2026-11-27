@@ -35,7 +35,8 @@ const rendererPlan = await import('../../renderer/atoms/project-owner-plan-atoms
 const rendererGoal = await import('../../renderer/atoms/project-owner-goal-atoms')
 const ipcHandlers = new Map<string, (event: unknown, request: unknown) => unknown>()
 registerProjectOwnerExecutionIpcHandlers({ handle: (channel, handler) => { ipcHandlers.set(channel, handler) } })
-interface Scenario { citeValidationId?: boolean; truncatedQualityDecision?: boolean; boundFeedbackFault?: 'once' | 'always' | 'late'; boundedText?: boolean; stagedBrowser?: boolean; hostBoundDecisions?: boolean; budgetGoalOnly?: boolean; rosterScenario?: 'final_gate' | 'auto_rework' | 'timing_rework'; documentRetry?: boolean | 'conflict' | 'provider_stop'; unverifiedReviewerStop?: boolean; counterSupplement?: boolean | 'keyboard'; exactInsertion?: boolean; verificationHandoff?: boolean; developmentRevision?: boolean; acceptWithFindings?: boolean; invalidQualityBinding?: boolean; ordinaryFeedback?: boolean; feedbackOutOfScope?: boolean; answerBlockedQuestion?: boolean; escalate?: boolean; blockedContinuation?: boolean; fencedReview?: boolean; missingReviewQuote?: 'verbatim' | 'paraphrase'; invalidReviewQuote?: boolean; rejectReworkReview?: boolean; queueOnly?: boolean; extraQualityCriteria?: boolean; omitQualityKind?: boolean; invalidQualityQuote?: boolean; indentedQualityQuote?: boolean; rework?: boolean; evidenceGap?: boolean; ownerDefect?: boolean; dependent?: boolean; transitiveText?: boolean; hold?: boolean; maxRework?: number; legacy?: boolean; development?: boolean; nestedCode?: boolean; mixedDelivery?: boolean; separateRoles?: boolean; forkedCode?: boolean; checkInherited?: boolean; browserValidation?: boolean; browserWithoutHtml?: boolean; validationFails?: boolean; durableStartIntent?: boolean; emptyReview?: boolean; localConfigurationError?: string; localConfigurationRuntimeResult?: boolean; localConfigurationNonZeroUsage?: boolean }
+interface Scenario { sourceFactsOnly?: boolean; citeValidationId?: boolean; truncatedQualityDecision?: boolean; boundFeedbackFault?: 'once' | 'always' | 'late'; boundedText?: boolean; stagedBrowser?: boolean; hostBoundDecisions?: boolean | 'numbered'; incompleteQualityCriteria?: boolean; useSharedReview?: boolean; singleTextGoal?: boolean; invalidEvidenceReference?: boolean; budgetGoalOnly?: boolean; rosterScenario?: 'final_gate' | 'auto_rework' | 'timing_rework' | 'deadline_rework'; documentRetry?: boolean | 'conflict' | 'provider_stop'; unverifiedReviewerStop?: boolean; counterSupplement?: boolean | 'keyboard'; exactInsertion?: boolean; verificationHandoff?: boolean; developmentRevision?: boolean; acceptWithFindings?: boolean; invalidQualityBinding?: boolean; ordinaryFeedback?: boolean; feedbackOutOfScope?: boolean; answerBlockedQuestion?: boolean; escalate?: boolean; blockedContinuation?: boolean; fencedReview?: boolean; missingReviewQuote?: 'verbatim' | 'paraphrase'; invalidReviewQuote?: boolean; rejectReworkReview?: boolean; queueOnly?: boolean; extraQualityCriteria?: boolean; omitQualityKind?: boolean; invalidQualityQuote?: boolean; indentedQualityQuote?: boolean; rework?: boolean; evidenceGap?: boolean; ownerDefect?: boolean; dependent?: boolean; transitiveText?: boolean; hold?: boolean; maxRework?: number; legacy?: boolean; development?: boolean; nestedCode?: boolean; mixedDelivery?: boolean; separateRoles?: boolean; forkedCode?: boolean; checkInherited?: boolean; browserValidation?: boolean; browserWithoutHtml?: boolean; validationFails?: boolean; durableStartIntent?: boolean; emptyReview?: boolean; localConfigurationError?: string; localConfigurationRuntimeResult?: boolean; localConfigurationNonZeroUsage?: boolean }
+const sourceFactsCriterion = '只使用以上事实，不写名额或收费'
 const rosterCriterion = '候补示例与人数一致'
 const boundedTextCriterion = '控制在 120 字内'
 const borrowerNotice = '请于周六 16:30 前将器材归还到北门服务台。请逐项核对编号，缺件请联系值班员。'
@@ -94,7 +95,7 @@ beforeAll(async () => {
       if (scenario.stagedBrowser && command.role === 'executor') {
         const task = store.getTask(execution.entityId)!
         const cwd = workspaces.getAgentWorkspaceCwd(workspace, input.sessionId)
-        if (task.title.includes('index.html')) {
+        if (task.title === '创建页面结构与样式') {
           writeFileSync(join(cwd, 'src/index.html'), '<link rel="stylesheet" href="styles.css"><button id="increment">加一</button><script src="counter.js"></script>')
           writeFileSync(join(cwd, 'src/styles.css'), 'button:focus-visible { outline: 2px solid; }')
         } else if (task.title.includes('counter.js')) {
@@ -165,10 +166,18 @@ beforeAll(async () => {
         }
       }
       let content = command.rework_ordinal || !scenario.rework ? '目标范围：面向已访谈的现有用户，建议有据可查。' : '目标范围：面向用户，尚未说明受众依据。'
-      if (scenario.rosterScenario === 'timing_rework') {
+      if (scenario.rosterScenario === 'deadline_rework') {
+        content += '\n## 14:01 后处理规则\n丁 13:58 到场，14:01 完成确认。14:00 名单为甲、丙两人。'
+        content += command.rework_ordinal
+          ? '\n丁未在截止前完成确认，不能正式补位，仅保留候补确认记录。'
+          : '\n确认完成后，丁于完成时点正式补位，名单更新为甲、丙、丁。'
+      } else if (scenario.rosterScenario === 'timing_rework') {
         content += '\n## 迟到与候补情境走查\n2. 14:05：联系候补 1 号，用时 2 分钟确认入场。'
         content += `\n3. ${command.rework_ordinal ? '14:07' : '14:06'}：名单已满（原到场 10 + 迟到者 1 + 候补 1）。`
       } else if (scenario.rosterScenario) content += `\n## 迟到与候补情境走查\n已报名者「甲」14:06 到场。截至 14:05 到场 11 人，缺席 1 人（「${command.rework_ordinal ? '甲' : '乙'}」未到场）。`
+      if (scenario.sourceFactsOnly && command.role === 'executor') {
+        content = command.rework_ordinal ? '读书活动定于12月3日18:30举行。' : '读书活动定于12月3日（星期四）18:30举行。'
+      }
       if (scenario.boundedText && command.role === 'executor') content = command.rework_ordinal === 0 ? noticeWithReport : borrowerNotice
       if (scenario.exactInsertion && command.role === 'executor') content = '# 活动信息\n' + content
       if (scenario.exactInsertion && command.role === 'executor' && input.userMessage.includes('<untrusted-prior-delivery>')) {
@@ -177,6 +186,9 @@ beforeAll(async () => {
         content = command.rework_ordinal === 0
           ? original.replace('建议', '手册') + '\n签到桌 13:45 开放'
           : JSON.stringify({ insertAfter: '# 活动信息' })
+      }
+      if (scenario.singleTextGoal && command.role === 'executor' && input.userMessage.includes('任务：整理最终建议')) {
+        content += '\n名额有限。'
       }
       if (scenario.invalidReviewQuote) content = '目标范围：面向"已访谈"的现有用户，建议有据可查。'
       if (command.role === 'reviewer') {
@@ -217,7 +229,7 @@ beforeAll(async () => {
         } else {
           const artifact = (await import('./project-owner-text-delivery')).assertOwnerReviewerTextDelivery(execution.ownerCommandId)!
           const change = scenario.rework && !scenario.ownerDefect && command.rework_ordinal === 0
-          content = JSON.stringify({ schemaVersion: 2, artifactHash: artifact.contentSha256, verdict: change ? 'changes_requested' : 'approved', summary: change ? '缺少受众依据' : '范围清楚', criteria: [{ criterion: scenario.boundedText ? boundedTextCriterion : scenario.rosterScenario && scenario.rosterScenario !== 'final_gate' ? rosterCriterion : '明确目标范围与受众依据', status: change ? 'not_met' : 'met', evidence: change ? '未说明受众依据' : '有明确范围', quote: change ? null : scenario.boundedText ? borrowerNotice : artifact.content }], findings: change ? [{ severity: 'high', description: '未说明受众依据', requestedChange: '补充依据与适用范围' }] : [], blockerReason: null })
+          content = JSON.stringify({ schemaVersion: 2, artifactHash: artifact.contentSha256, verdict: change ? 'changes_requested' : 'approved', summary: change ? '缺少受众依据' : '范围清楚', criteria: [{ criterion: scenario.boundedText ? boundedTextCriterion : scenario.sourceFactsOnly ? sourceFactsCriterion : scenario.rosterScenario && scenario.rosterScenario !== 'final_gate' ? rosterCriterion : '明确目标范围与受众依据', status: change ? 'not_met' : 'met', evidence: change ? '未说明受众依据' : '有明确范围', quote: change ? null : scenario.boundedText ? borrowerNotice : artifact.content }], findings: change ? [{ severity: 'high', description: '未说明受众依据', requestedChange: '补充依据与适用范围' }] : [], blockerReason: null })
         }
       }
       if (scenario.missingReviewQuote && command.role === 'reviewer') {
@@ -234,7 +246,12 @@ beforeAll(async () => {
         content = JSON.stringify(receipt)
       }
       if (scenario.hostBoundDecisions && command.role === 'reviewer') {
-        const parsed = JSON.parse(content) as { artifactHash?: string }
+        const parsed = JSON.parse(content) as { artifactHash?: string; criteria: unknown[] }
+        if (scenario.hostBoundDecisions === 'numbered') {
+          parsed.criteria = [{ criterionId: 'C1', status: 'met', evidence: '独立核对原件', evidenceId: development ? 'V1' : 'T1' }]
+          if (scenario.incompleteQualityCriteria) parsed.criteria.push({ criterionId: 'C2', status: 'met', evidence: '核对内容依据', evidenceId: 'T1' })
+
+        }
         delete parsed.artifactHash
         content = JSON.stringify(parsed)
         expect(input.userMessage).toContain('主进程已绑定成果版本')
@@ -321,7 +338,7 @@ beforeAll(async () => {
         decision.findings = [{ severity: 'high', description: '缺少签到交接负责人', requestedChange: '明确活动结束时谁接手签到资料' }]
       }
     }
-    if (scenario.rosterScenario && scenario.rosterScenario !== 'final_gate' && delivery?.review) {
+    if ((scenario.sourceFactsOnly || (scenario.rosterScenario && scenario.rosterScenario !== 'final_gate')) && delivery?.review) {
       const review = delivery.review
       decision.verdict = review.verdict === 'approved' ? 'accept' : 'rework'
       decision.reason = review.criteria[0]!.evidence
@@ -340,9 +357,11 @@ beforeAll(async () => {
     const wireResponse = scenario.hostBoundDecisions && response.kind === 'quality_decision'
       ? { schemaVersion: response.schemaVersion, kind: response.kind, message: response.message,
         qualityLimits: delivery!.qualityLimits,
-        decision: { verdict: decision.verdict, reason: decision.reason, criteria: decision.criteria, findings: decision.findings } }
+        decision: { verdict: decision.verdict, reason: decision.reason, criteria: scenario.useSharedReview ? 'reviewer' : scenario.hostBoundDecisions === 'numbered'
+          ? [{ criterionId: 'C1', status: 'met', evidence: '对照原件核对了适用范围', evidenceId: scenario.invalidEvidenceReference ? 'R9' : 'R1' }]
+          : decision.criteria, findings: decision.findings } }
       : scenario.omitQualityKind && delivery?.qualityDecisionVersion === 1 ? withoutKind : response
-    const finish = () => callbacks.onComplete([], { runtimeResult: { type: 'result', subtype: 'success', session_id: execution.sessionId, finish_reason: 'stop', result: JSON.stringify(wireResponse), owner_planning_usage: { inputTokens: 10, outputTokens: 20, cacheReadTokens: null, cacheWriteTokens: null }, usage: { input_tokens: 10, output_tokens: 20 } } })
+    const finish = () => callbacks.onComplete([], { runtimeResult: { type: 'result', subtype: 'success', session_id: execution.sessionId, finish_reason: 'stop', result: JSON.stringify(wireResponse), ...(scenario.incompleteQualityCriteria ? { total_cost_usd: 0.0003 } : {}), owner_planning_usage: { inputTokens: 10, outputTokens: 20, cacheReadTokens: null, cacheWriteTokens: null }, usage: { input_tokens: 10, output_tokens: 20 } } })
     if (scenario.hold && delivery?.qualityDecisionVersion) pending.set(execution.projectId, { finish, executionId: execution.id })
     else finish()
   })
@@ -383,32 +402,39 @@ async function fixture(scenario: Scenario = {}) {
   const employee = (name: string, profile: 'general' | 'controlled' | 'development') => employees.createAgentEmployee({ name, role: '定位研究与检查', description: '', executionProfile: profile, permissionMode: profile === 'controlled' ? 'safe' : 'auto', runtime: 'ai-sdk', channelId: channel.id, modelId: 'deepseek-flash', workspaceIds: [workspace.id] })
   const owner = employee('Owner', 'controlled'), executor = employee('已有调研员', scenario.development ? 'development' : 'general'), reviewer = employee('已有独立检查员', scenario.development ? 'development' : 'general')
   const writer = scenario.separateRoles ? employee('文字员工', 'controlled') : undefined
-  const objective = scenario.boundedText ? '只给借用者写一段可复制的归还通知，控制在 120 字内。' : scenario.stagedBrowser ? '交付根目录下相互引用的三个页面文件并在浏览器检查' : scenario.rosterScenario ? '交付社区活动手册，包含迟到与候补同到的示例并核对人数。'
-    : scenario.budgetGoalOnly ? '形成定位建议，并写出逐项预算和合计。总预算不超过 240 元。' : '形成定位建议'
+  const objective = scenario.sourceFactsOnly ? `12月3日18:30举行读书活动。${sourceFactsCriterion}。` : scenario.boundedText ? '只给借用者写一段可复制的归还通知，控制在 120 字内。' : scenario.stagedBrowser ? '交付根目录下相互引用的三个页面文件并在浏览器检查。第一阶段 HTML 引用本地样式。HTML按相对路径加载两个文件，禁止远程依赖。' : scenario.rosterScenario === 'deadline_rework' ? '交付活动手册。候补丁13:58到场，确认耗时3分钟，14:00前完成才能正式补位。写清14:01后的处理。' : scenario.rosterScenario ? '交付社区活动手册，包含迟到与候补同到的示例并核对人数。'
+    : scenario.budgetGoalOnly ? '形成定位建议，并写出逐项预算和合计。总预算不超过 240 元。'
+    : scenario.singleTextGoal ? '形成定位建议，只交付一份正文。' : '形成定位建议'
   goals.saveProjectOwnerGoalDraft(project.id, 0, { objective, ...(scenario.extraQualityCriteria ? { acceptanceCriteria: ['明确范围'] } : {}) })
   binding.saveOwnerRuntimeBinding(project.id, 0, { ownerName: 'Owner', carrierId: owner.id, workspaceId: workspace.id, changeReason: '测试' })
   const context = plans.getProjectOwnerPlanningContext(project.id), roleKey = context.sources.roles[0]!.key
   const textRoleKey = scenario.separateRoles ? context.sources.roles[1]!.key : roleKey
-  const criterion = scenario.boundedText ? boundedTextCriterion : scenario.documentRetry ? '包含分工' : scenario.development ? '代码输出固定42'
+  const criterion = scenario.sourceFactsOnly ? sourceFactsCriterion : scenario.boundedText ? boundedTextCriterion : scenario.documentRetry ? '包含分工' : scenario.development ? '代码输出固定42'
     : scenario.rosterScenario && scenario.rosterScenario !== 'final_gate' ? rosterCriterion : '明确目标范围与受众依据'
   const steps = scenario.stagedBrowser
-    ? [{ key: 'view', title: '写入 src/index.html 与 src/styles.css', outcome: '页面结构和样式', acceptanceCriteria: ['页面有按钮并引用本地样式'], dependencies: [] as string[], roleKey, deliveryKind: 'development' as const }, { key: 'logic', title: '写入 src/counter.js', outcome: '计数按钮脚本', acceptanceCriteria: ['脚本绑定按钮事件'], dependencies: ['view'], roleKey, deliveryKind: 'development' as const }, { key: 'final', title: '集成与浏览器验证', outcome: '浏览器回执和完整原件', acceptanceCriteria: ['浏览器真实加载三文件'], dependencies: ['logic'], roleKey, deliveryKind: 'development' as const }]
+    ? [{ key: 'view', title: '创建页面结构与样式', outcome: '交付 src/index.html 与 src/styles.css', acceptanceCriteria: ['页面有按钮并引用本地样式', '样式渲染正常', '无任何远程依赖，样式生效', '交付 src/index.html、src/styles.css、src/counter.js', '本阶段源码只允许加载本地样式'], dependencies: [] as string[], roleKey, deliveryKind: 'development' as const }, { key: 'logic', title: '写入 src/counter.js', outcome: '计数按钮脚本', acceptanceCriteria: ['脚本绑定按钮事件', '点击 increment 计数递增、reset 归零', '脚本通过相对路径正确加载无报错'], dependencies: ['view'], roleKey, deliveryKind: 'development' as const }, { key: 'final', title: '集成与浏览器验证', outcome: '浏览器回执和完整原件', acceptanceCriteria: ['浏览器真实加载三文件'], dependencies: ['logic'], roleKey, deliveryKind: 'development' as const }]
     : scenario.forkedCode && scenario.mixedDelivery
     ? [{ key: 'brief', title: '形成建议', outcome: '定位材料', acceptanceCriteria: ['明确目标范围与受众依据'], dependencies: [] as string[], roleKey, deliveryKind: 'text' as const }, { key: 'a', title: '分支甲', outcome: '代码甲', acceptanceCriteria: [criterion], dependencies: ['brief'], roleKey, deliveryKind: 'development' as const }, { key: 'b', title: '分支乙', outcome: '代码乙', acceptanceCriteria: [criterion], dependencies: ['brief'], roleKey, deliveryKind: 'development' as const }, { key: 'merge', title: '合并实现', outcome: '完整代码', acceptanceCriteria: [criterion], dependencies: ['a', 'b'], roleKey, deliveryKind: 'development' as const }]
     : scenario.forkedCode
     ? [{ key: 'a', title: '分支甲', outcome: '代码甲', acceptanceCriteria: [criterion], dependencies: [] as string[], roleKey }, { key: 'b', title: '分支乙', outcome: '代码乙', acceptanceCriteria: [criterion], dependencies: [] as string[], roleKey }, { key: 'merge', title: '合并实现', outcome: '完整代码', acceptanceCriteria: [criterion], dependencies: ['a', 'b'], roleKey }]
     : scenario.mixedDelivery
     ? [{ key: 'brief', title: '形成建议', outcome: '定位材料', acceptanceCriteria: ['明确目标范围与受众依据'], dependencies: [] as string[], roleKey: textRoleKey, deliveryKind: 'text' as const }, { key: 'delivery', title: '修复代码', outcome: '代码实现', acceptanceCriteria: ['代码输出固定42'], dependencies: ['brief'], roleKey, deliveryKind: 'development' as const }, ...(scenario.verificationHandoff ? [{ key: 'report', title: '编写交付验证说明', outcome: '按可信回执整理结果', acceptanceCriteria: ['明确目标范围与受众依据'], dependencies: ['delivery'], roleKey: textRoleKey, deliveryKind: 'text' as const }] : [])]
-    : [{ key: 'brief', title: scenario.development ? '修复代码' : '形成建议', outcome: scenario.development ? '代码实现' : '定位材料', acceptanceCriteria: scenario.counterSupplement === 'keyboard' ? counterKeyboardCriteria : scenario.counterSupplement ? counterCriteria : [criterion], dependencies: [] as string[], roleKey }, ...(scenario.dependent ? [{ key: 'delivery', title: '整理最终建议', outcome: '最终版本', acceptanceCriteria: [criterion], dependencies: ['brief'], roleKey }] : []), ...(scenario.transitiveText ? [{ key: 'final', title: '核对最终手册', outcome: '与原始资料一致的手册', acceptanceCriteria: [criterion], dependencies: ['delivery'], roleKey }] : [])]
+    : [{ key: 'brief', title: scenario.development ? '修复代码' : '形成建议', outcome: scenario.development ? '代码实现' : '定位材料', acceptanceCriteria: scenario.counterSupplement === 'keyboard' ? counterKeyboardCriteria : scenario.counterSupplement ? counterCriteria : [criterion, ...(scenario.incompleteQualityCriteria ? ['结论可以追溯'] : [])], dependencies: [] as string[], roleKey }, ...(scenario.dependent ? [{ key: 'delivery', title: '整理最终建议', outcome: '最终版本', acceptanceCriteria: [criterion], dependencies: ['brief'], roleKey }] : []), ...(scenario.transitiveText ? [{ key: 'final', title: '核对最终手册', outcome: '与原始资料一致的手册', acceptanceCriteria: [criterion], dependencies: ['delivery'], roleKey }] : [])]
   plans.saveProjectOwnerPlanDraft(project.id, 1, 0, { expectedContextFingerprint: context.fingerprint, summary: '计划', assumptions: [], risks: [], steps, ...(scenario.stagedBrowser ? { criteriaTrace: [{
     key: 'three-files', source: 'objective', sourceIndex: 0, sourceText: '交付根目录下相互引用的三个页面文件',
     criticality: 'critical', stepKey: 'view', verification: 'manual_review', assumptions: [],
+  }, {
+    key: 'first-stage-css', source: 'objective', sourceIndex: 0, sourceText: '第一阶段 HTML 引用本地样式',
+    criticality: 'critical', stepKey: 'view', verification: 'manual_review', assumptions: [],
+  }, {
+    key: 'browser-load', source: 'objective', sourceIndex: 0, sourceText: 'HTML按相对路径加载两个文件，禁止远程依赖',
+    criticality: 'critical', stepKey: 'view', verification: 'automated', assumptions: [],
   }] } : {}), changeReason: '建立' }); const confirmedPlan = plans.confirmProjectOwnerPlanDraft(project.id, 1, 1)
   const roleAssignments = [{ roleKey, employeeId: executor.id }, ...(writer ? [{ roleKey: textRoleKey, employeeId: writer.id }] : [])].sort((a, b) => a.roleKey.localeCompare(b.roleKey))
   const subject = { projectId: project.id }, input = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: steps.map(item => item.key), executionKind: scenario.development ? 'development' : 'controlled', ...(!scenario.development ? { textDeliveryVersion: 1 } : { developmentScope: { workspaceId: workspace.id, targetPaths: scenario.stagedBrowser || scenario.counterSupplement === 'keyboard' ? ['src/index.html', 'src/styles.css', 'src/counter.js'] : scenario.documentRetry ? ['src/handbook.md'] : scenario.counterSupplement ? ['src/index.html'] : scenario.nestedCode ? ['src/solution.cjs', 'diary/index.html'] : scenario.browserValidation ? [scenario.developmentRevision ? 'src/solution.js' : 'src/solution.cjs', 'src/index.html'] : ['src/solution.cjs'], allowedPaths: scenario.nestedCode ? ['src', 'diary/index.html'] : ['src'], verificationCommands: scenario.documentRetry === 'provider_stop' ? ['document:markdown'] : scenario.counterSupplement === 'keyboard' ? ['browser:html.loads+counter.mouse-keyboard'] : scenario.stagedBrowser || scenario.documentRetry || scenario.browserValidation || scenario.browserWithoutHtml ? ['browser:html.loads'] : ['node src/verify.cjs'] } }), ...(!scenario.legacy ? { qualityManagementVersion: 1 } : {}), employeeRuntimeVersion: 2, executorEmployeeId: roleAssignments[0]!.employeeId, reviewerEmployeeId: reviewer.id, roleAssignments, workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1_000_000, maxRuns: 8, maxRework: scenario.maxRework ?? 1, expiresAt: Date.now() + 3600000, changeReason: '测试质量委托' }
   const pv = prep.previewOwnerExecutionPreparation(subject, input), saved = prep.saveOwnerExecutionPreparation(subject, input, pv.previewFingerprint)
   const materialInput = { requestId: randomUUID(), expectedMaterializationRevision: 0, expectedPreparationId: saved.id, expectedPreparationRevision: saved.revision, expectedPreparationHash: saved.integrityHash, expectedPolicyRevision: saved.policyRevision }
-  const permissionInput = { ...subject, requestId: randomUUID(), maxRequests: 12, maxCostMicros: 15_000_000, ...(scenario.boundFeedbackFault || scenario.escalate || scenario.blockedContinuation || scenario.rejectReworkReview || scenario.ordinaryFeedback || scenario.invalidQualityBinding || scenario.developmentRevision || scenario.acceptWithFindings || scenario.exactInsertion ? { autonomousExecution: true } : {}), ...(scenario.developmentRevision ? { autonomousWorkspaceEditVersion: 1 as const } : {}), expiresAt: Date.now() + 3600000 }, permissionPreview = delegation.previewOwnerManagementDelegation(permissionInput)
+  const permissionInput = { ...subject, requestId: randomUUID(), maxRequests: 12, maxCostMicros: 15_000_000, ...(scenario.boundFeedbackFault || scenario.escalate || scenario.blockedContinuation || scenario.rejectReworkReview || scenario.ordinaryFeedback || scenario.invalidQualityBinding || scenario.developmentRevision || scenario.acceptWithFindings || scenario.invalidEvidenceReference || scenario.incompleteQualityCriteria || scenario.exactInsertion ? { autonomousExecution: true } : {}), ...(scenario.developmentRevision ? { autonomousWorkspaceEditVersion: 1 as const } : {}), expiresAt: Date.now() + 3600000 }, permissionPreview = delegation.previewOwnerManagementDelegation(permissionInput)
   delegation.confirmOwnerManagementDelegation({ input: permissionInput, previewHash: permissionPreview.previewHash })
   const consumeInitialEvents = async () => {
     const managementStore = await import('./project-owner-management-store')
@@ -1336,6 +1362,14 @@ test('Given 三文件研发分成界面逻辑和集成 When 按依赖执行 Then
     expect(browserCalls).toBe(1)
     const reviews = (await import('./project-owner-technical-review')).listOwnerTechnicalReviewEvidence(projectId)
     expect(reviews.map(review => review.validationEvidence?.[0]?.command)).toEqual(['snapshot:files', 'snapshot:files', 'browser:html.loads'])
+    for (const criterion of ['交付 src/index.html、src/styles.css、src/counter.js', '样式渲染正常', '点击 increment 计数递增、reset 归零', '脚本通过相对路径正确加载无报错', '无任何远程依赖，样式生效', 'HTML按相对路径加载两个文件，禁止远程依赖']) {
+      expect(reviews.map(review => review.criteria.some(item => item.criterion === criterion))).toEqual([false, false, true])
+    }
+    expect(reviews[1]?.criteria.map(item => item.criterion)).toEqual(['脚本绑定按钮事件'])
+    const reviewPrompts = traces.get(projectId)!.filter(item => item.role === 'reviewer').map(item => item.prompt)
+    expect(reviewPrompts.map(prompt => prompt.includes('这是集成前的文件快照阶段'))).toEqual([true, true, false])
+    expect(reviews.map(review => review.criteria.some(item => item.criterion === '第一阶段 HTML 引用本地样式'))).toEqual([true, false, false])
+    expect(reviews.map(review => review.criteria.some(item => item.criterion === '本阶段源码只允许加载本地样式'))).toEqual([true, false, false])
     const items = delivery()!.delivery!.items
     const criterion = '交付根目录下相互引用的三个页面文件'
     expect(items.filter(item => item.acceptanceCriteria.includes(criterion)).map(item => item.stepKey)).toEqual(['final'])
@@ -1978,14 +2012,30 @@ test('Given评审和Owner放行矛盾案例 When整体交付复核原目标 Then
   } finally { await f.stop() }
 }, 30000)
 
-test.each([false, true])('Given评审和Owner不回填内部版本字段（文件=%s） When正常运行 Then由宿主绑定同一产物并交付', async development => {
-  const f = await fixture({ development, hostBoundDecisions: true })
+test('Given原目标只要一份正文 When两个已通过的正文被选为最终成果 Then 暂停发布并保留质量回执', async () => {
+  const f = await fixture({ dependent: true, singleTextGoal: true })
+  try {
+    await until(() => managementConversation.getOwnerManagementConversation(f.project.id).messages
+      .some(message => message.eventId === `owner-delivery-original-goal-blocked:${f.grant.grantId}`), f.project.id)
+    const { messages } = managementConversation.getOwnerManagementConversation(f.project.id)
+    expect(actionRows(f.project.id).map(item => item.state)).toEqual(['accepted', 'accepted'])
+    expect(messages.some(message => message.kind === 'delivery')).toBe(false)
+    expect(messages.some(message => message.kind === 'attention' && message.content.includes('当前准备交付 2 份'))).toBe(true)
+  } finally { await f.stop() }
+}, 30000)
+
+test.each([[false, true], [true, true], [false, 'numbered'], [true, 'numbered']] as const)('Given评审和Owner不回填内部版本字段（文件=%s，格式=%s） When正常运行 Then由宿主绑定同一产物并交付', async (development, hostBoundDecisions) => {
+  const f = await fixture({ development, hostBoundDecisions, singleTextGoal: !development })
   try {
     await until(() => managementConversation.getOwnerManagementConversation(f.project.id).messages
       .some(message => message.kind === 'delivery'), f.project.id)
     const review = store.getProjectDb().prepare('SELECT response_json, original_response_text FROM project_owner_technical_reviews WHERE project_id=?').get(f.project.id) as { response_json: string; original_response_text: string }
     const raw = JSON.parse(review.original_response_text)
     expect(raw).not.toHaveProperty('artifactHash')
+    if (hostBoundDecisions === 'numbered') {
+      expect(raw.criteria).toEqual([{ criterionId: 'C1', status: 'met', evidence: '独立核对原件', evidenceId: development ? 'V1' : 'T1' }])
+      expect(JSON.parse(review.response_json).criteria[0].quote).toContain(development ? '"validationId"' : '目标范围')
+    }
     const action = actionRows(f.project.id)[0]!
     expect(action.state).toBe('accepted')
     expect(JSON.parse(review.response_json).artifactHash).toBe(action.artifactHash)
@@ -1993,7 +2043,39 @@ test.each([false, true])('Given评审和Owner不回填内部版本字段（文�
   } finally { await f.stop() }
 }, 30000)
 
-test.each(['auto_rework', 'timing_rework'] as const)('Given候补示例的原文矛盾（%s） When独立评审误判通过 Then保留原回执并自动返工到交付', async rosterScenario => {
+test('Given Owner的证据编号不存在 When同一成果自主补判一次 Then交付并保留原拒绝且不重复派工', async () => {
+  const f = await fixture({ hostBoundDecisions: 'numbered', invalidEvidenceReference: true, hold: true })
+  try {
+    await until(() => pending.has(f.project.id), f.project.id)
+    const original = pending.get(f.project.id)!
+    scenarios.set(f.project.id, { hostBoundDecisions: 'numbered' })
+    original.finish()
+    await until(() => managementConversation.getOwnerManagementConversation(f.project.id).messages
+      .some(message => message.kind === 'delivery'), f.project.id)
+    const { OWNER_INVALID_EVIDENCE_REFERENCE } = await import('./project-owner-quality-protocol')
+    expect(runs.getOwnerPlanningRunOutcome(original.executionId)?.detail).toBe(OWNER_INVALID_EVIDENCE_REFERENCE)
+    expect(actionRows(f.project.id)[0]).toMatchObject({ state: 'accepted', recoveredFromOwnerExecutionId: original.executionId })
+    expect(traces.get(f.project.id)!.map(trace => trace.role)).toEqual(['executor', 'reviewer', 'owner_quality', 'owner_quality'])
+  } finally { await f.stop() }
+}, 30000)
+
+test('Given Owner只回部分验收项 When在原授权内使用整份评审补判 Then 保留原拒绝且不重派执行或评审', async () => {
+  const f = await fixture({ hostBoundDecisions: 'numbered', incompleteQualityCriteria: true, hold: true })
+  try {
+    await until(() => pending.has(f.project.id), f.project.id)
+    const original = pending.get(f.project.id)!
+    scenarios.set(f.project.id, { hostBoundDecisions: 'numbered', useSharedReview: true })
+    original.finish()
+    await until(() => managementConversation.getOwnerManagementConversation(f.project.id).messages
+      .some(message => message.kind === 'delivery'), f.project.id)
+    const { OWNER_INCOMPLETE_QUALITY_CRITERIA } = await import('./project-owner-quality-protocol')
+    expect(runs.getOwnerPlanningRunOutcome(original.executionId)?.detail).toBe(OWNER_INCOMPLETE_QUALITY_CRITERIA)
+    expect(actionRows(f.project.id)[0]).toMatchObject({ state: 'accepted', recoveredFromOwnerExecutionId: original.executionId })
+    expect(traces.get(f.project.id)!.map(trace => trace.role)).toEqual(['executor', 'reviewer', 'owner_quality', 'owner_quality'])
+  } finally { await f.stop() }
+}, 30000)
+
+test.each(['auto_rework', 'timing_rework', 'deadline_rework'] as const)('Given候补示例的原文矛盾（%s） When独立评审误判通过 Then保留原回执并自动返工到交付', async rosterScenario => {
   const f = await fixture({ rosterScenario })
   try {
     await until(() => managementConversation.getOwnerManagementConversation(f.project.id).messages
@@ -2002,6 +2084,14 @@ test.each(['auto_rework', 'timing_rework'] as const)('Given候补示例的原文
       .all(f.project.id) as Array<{ verdict: string; original_response_text: string | null }>
     expect(reviews.map(review => review.verdict)).toEqual(['changes_requested', 'approved'])
     expect(JSON.parse(reviews[0]!.original_response_text!).verdict).toBe('approved')
+    if (rosterScenario === 'deadline_rework') {
+      const delivery = managementConversation.getOwnerManagementConversation(f.project.id).messages.find(message => message.kind === 'delivery')
+      expect(delivery?.delivery?.items[0]?.content).toContain('不能正式补位')
+      expect(delivery?.delivery?.items[0]?.content).not.toContain('名单更新为甲、丙、丁')
+      const executionPrompts = traces.get(f.project.id)!.filter(item => item.role === 'executor').map(item => item.prompt)
+      expect(executionPrompts).toHaveLength(2)
+      expect(executionPrompts.every(prompt => prompt.includes('即刻开始也最早于 14:01 完成'))).toBe(true)
+    }
     expect(actionRows(f.project.id).map(item => item.state)).toEqual(['rework_authorized', 'accepted'])
     expect(traces.get(f.project.id)!.filter(item => item.role === 'executor').map(item => item.round)).toEqual([0, 1])
   } finally { await f.stop() }
@@ -2931,3 +3021,49 @@ test('Given 质量信封再次抄错 When 自主补判也被拒绝 Then 保留�
     expect(delegation.getOwnerManagementDelegation(f.project.id).usedRequests).toBe(2)
   } finally { f.stop() }
 }, 90000)
+
+test('Given 通知要求只用给定事实 When 独立评审放过未给定星期 Then 自动返工并只交付修正版本', async () => {
+  const f = await fixture({ sourceFactsOnly: true })
+  try {
+    await until(() => managementConversation.getOwnerManagementConversation(f.project.id).messages
+      .some(message => message.kind === 'delivery'), f.project.id)
+    const reviews = store.getProjectDb().prepare('SELECT verdict, original_response_text FROM project_owner_technical_reviews WHERE project_id=? ORDER BY rework_ordinal')
+      .all(f.project.id) as Array<{ verdict: string; original_response_text: string | null }>
+    expect(reviews.map(review => review.verdict)).toEqual(['changes_requested', 'approved'])
+    expect(JSON.parse(reviews[0]!.original_response_text!).verdict).toBe('approved')
+    expect(actionRows(f.project.id).map(item => item.state)).toEqual(['rework_authorized', 'accepted'])
+    const delivery = managementConversation.getOwnerManagementConversation(f.project.id).messages.find(message => message.kind === 'delivery')
+    expect(delivery?.delivery?.items[0]?.content).toBe('读书活动定于12月3日18:30举行。')
+  } finally { await f.stop() }
+}, 30000)
+
+test('Given 两个本地 Owner 名额已占用 When 第三个项目按原授权推进 Then 无费用预留地等待并在释放后自动交付', async () => {
+  const { claimOwnerLocalStart } = await import('./project-owner-local-resources')
+  const id = randomUUID()
+  const releaseFirst = claimOwnerLocalStart(id + '-first')
+  const releaseSecond = claimOwnerLocalStart(id + '-second')
+  expect(releaseFirst).toBeFunction()
+  expect(releaseSecond).toBeFunction()
+  expect(claimOwnerLocalStart(id + '-third')).toBeNull()
+  let f: Awaited<ReturnType<typeof fixture>> | undefined
+  try {
+    f = await fixture()
+    const projectId = f.project.id
+    expect(scheduler.getOwnerAutonomousScheduleStatus(projectId)).toMatchObject({
+      state: 'waiting', nextAction: 'await_local_resources', reservedCostMicros: 0, runReservations: 0,
+    })
+    expect(store.listAgentExecutionsByProject(projectId).filter(item => item.ownerCommandId)).toHaveLength(0)
+    releaseFirst!()
+    const expires = Date.now() + 9000
+    while (Date.now() < expires && !f.tasks().every(task => task.status === 'completed')) {
+      await new Promise(resolve => setTimeout(resolve, 30))
+    }
+    expect(f.tasks().every(task => task.status === 'completed')).toBe(true)
+    await until(() => managementConversation.getOwnerManagementConversation(projectId).messages.some(message => message.kind === 'delivery'), projectId)
+    expect(scheduler.getOwnerAutonomousScheduleStatus(projectId).runReservations).toBe(2)
+  } finally {
+    releaseFirst?.()
+    releaseSecond?.()
+    await f?.stop()
+  }
+}, 20000)

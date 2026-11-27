@@ -1,3 +1,4 @@
+import { prepareOwnerLocalResourceSample, readOwnerLocalResourceWait, recheckOwnerLocalResources } from './project-owner-local-resources'
 import { findOwnerFollowupFuse, hasUnstartedOwnerConversation, preparePendingOwnerConversation } from './project-owner-management-conversation'
 import { decideAttentionCarryover } from './project-owner-attention-carryover-policy'
 import { prepareOwnerManagementAssignment, projectOwnerManagementAssignmentResult, queueOwnerAssignmentProtocolRetry, isRecoverableOwnerAssignmentRejection } from './project-owner-management-assignment'
@@ -509,6 +510,24 @@ function recoverConfirmedPlanRenewalAssignment(projectId: string): void {
   }
 }
 
+// 只找原管理委托已占额、还没建会话和发送证据的排队记录。
+function queuedOwnerManagementExecutions(projectId?: string): { id: string; projectId: string; taskId: string }[] {
+  return store.getProjectDb().prepare(`
+    SELECT e.id, e.project_id AS projectId, e.entity_id AS taskId FROM agent_executions e
+    JOIN project_owner_management_claims c ON c.execution_id=e.id AND c.task_id=e.entity_id
+    JOIN controlled_task_preparations p ON p.execution_id=e.id AND p.task_id=e.entity_id
+      AND p.project_id=e.project_id AND p.owner_management_delegation_id=c.delegation_id
+    WHERE e.status='queued' AND e.entity_type='task' AND e.session_id=''
+      AND e.owner_command_id IS NULL AND e.pilot_command_id IS NULL AND p.provider_admitted_at IS NULL
+      AND NOT EXISTS (SELECT 1 FROM project_owner_planning_admissions a WHERE a.execution_id=e.id)
+      AND NOT EXISTS (SELECT 1 FROM project_owner_planning_stop_requests s WHERE s.execution_id=e.id)
+      AND NOT EXISTS (SELECT 1 FROM project_owner_planning_run_receipts r WHERE r.execution_id=e.id)
+      AND NOT EXISTS (SELECT 1 FROM project_owner_planning_callback_evidence b WHERE b.execution_id=e.id)
+      ${projectId === undefined ? '' : 'AND e.project_id = ?'}
+    ORDER BY e.started_at, e.rowid
+  `).all(...(projectId === undefined ? [] : [projectId])) as { id: string; projectId: string; taskId: string }[]
+}
+
 /** 主进程生命周期，不依赖页面挂载。旧项目无管理身份不会被启动扫描启用。 */
 export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementChanged) => void): () => Promise<void> {
   let stopped = false
@@ -590,6 +609,34 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
       const { prepareHistoricalConflictedReplan } = await import('./project-owner-execution-start-intent')
       prepareHistoricalConflictedReplan(projectId)
       if (stopped || getOwnerManager(projectId)?.status !== 'active') return
+      const queued = queuedOwnerManagementExecutions(projectId)
+      if (queued.length) {
+        const { tryStartExecution, cancelAgentExecution } = await import('./agent-employee-service')
+        for (const { id, taskId } of queued) {
+          if (stopped || getOwnerManager(projectId)?.status !== 'active') return
+          const pendingExecution = store.getAgentExecution(id)
+          if (pendingExecution?.status !== 'queued' || pendingExecution.sessionId) continue
+          // 已占额请求属于该主体正在处理的这一轮；排队后的普通补充按既有对话顺序接续。
+          // 若原安排的成果已交付，停止这个尚未发送的安排，避免重复组织团队。
+          const link = readOwnerPlanningSnapshot(taskId, { allowUnknownPromptForHistory: true })?.link
+          const currentPlan = link?.purpose === 'owner_execution_assignment' ? getProjectOwnerPlanDraft(projectId, link.targetTaskId) : null
+          if (link && currentPlan && hasCompleteOwnerManagementDelivery(projectId, link.targetTaskId, currentPlan)) {
+            cancelAgentExecution(id)
+            continue
+          }
+          // 沿用原执行的受控启动门禁，重新核对委托、来源、预算和并发上限。
+          await tryStartExecution(id)
+          const execution = store.getAgentExecution(id)
+          if (execution?.status === 'running' && execution.sessionId && link) {
+            appendOwnerManagementTrace({
+              eventId: `owner-run:${link.planningTaskId}:running`, projectId,
+              ...(link.targetTaskId ? { taskId: link.targetTaskId } : {}),
+              phase: link.conversationMessageId ? 'owner_response' : 'assignment_run', state: 'started',
+              createdAt: Date.now(), detailCode: 'provider_pending',
+            })
+          }
+        }
+      }
       // 当前对话消息与业务观察是Owner已承担的管理责任；不能被更晚写入的内部安排Run抢先消费。
       const links = store.getProjectDb().prepare("SELECT planning_task_id, payload FROM project_owner_planning_links WHERE project_id = ? ORDER BY CASE WHEN json_extract(payload, '$.conversationMessageId') IS NOT NULL THEN 0 ELSE 1 END, rowid DESC").all(projectId) as { planning_task_id: string; payload: string }[]
       const conversationSubjects = new Set(links.flatMap(link => {
@@ -682,6 +729,12 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
         }
         try {
           const { startDelegatedOwnerPlanningTask } = await import('./controlled-project-task-service')
+          const sample = prepareOwnerLocalResourceSample()
+          if (sample) await sample
+          if (readOwnerLocalResourceWait()) {
+            recheckOwnerLocalResources(projectId)
+            break
+          }
           if (stopped || getOwnerManager(projectId)?.status !== 'active') return
           // 质量对话优先于内部安排；交付可能在安排等待期间形成，启动前必须按当前事实再核验。
           const currentPlan = subject.purpose === 'owner_execution_assignment' ? getProjectOwnerPlanDraft(projectId, subject.targetTaskId) : null
@@ -721,8 +774,6 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
     inFlightTasks.set(projectId, task)
   }
   const unsubscribeChanges = onChanged ? onOwnerManagementChanged(onChanged) : () => {}
-  const unsubscribe = onOwnerManagementWake(run)
-  const unsubscribeSchedule = onOwnerAutonomousScheduleWake(run)
   // 分批让出主进程：多个项目的完整来源校验不能在同一个定时器回调中连续阻塞界面。
   const scheduledProjects = new Set<string>()
   let batchTimer: ReturnType<typeof setTimeout> | undefined
@@ -739,6 +790,23 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
     for (const project of store.listProjects()) scheduledProjects.add(project.id)
     if (!batchTimer && scheduledProjects.size) batchTimer = setTimeout(runNextProject, 0)
   }
+  // 一个项目释放并发位置，也应唤醒其他项目已经占额的队列。周期扫作为兜底。
+  let queueWake: ReturnType<typeof setTimeout> | undefined
+  const wake = (projectId: string): void => {
+    run(projectId)
+    if (stopped || queueWake) return
+    queueWake = setTimeout(() => {
+      queueWake = undefined
+      try {
+        for (const queued of queuedOwnerManagementExecutions()) {
+          if (!inFlight.has(queued.projectId)) scheduledProjects.add(queued.projectId)
+        }
+        if (!batchTimer && scheduledProjects.size) batchTimer = setTimeout(runNextProject, 0)
+      } catch (cause) { console.warn('[Owner管理] 排队唤醒失败，保留记录等待周期核对', cause) }
+    }, 0)
+  }
+  const unsubscribe = onOwnerManagementWake(wake)
+  const unsubscribeSchedule = onOwnerAutonomousScheduleWake(wake)
   requestActiveOwnerManagementRescan = runAllProjects
   const timer = setInterval(runAllProjects, 30_000)
   timer.unref?.()
@@ -747,6 +815,7 @@ export function startOwnerManagementLoop(onChanged?: (change: OwnerManagementCha
   return async () => {
     stopped = true
     if (batchTimer) clearTimeout(batchTimer)
+    if (queueWake) clearTimeout(queueWake)
     scheduledProjects.clear()
     if (requestActiveOwnerManagementRescan === runAllProjects) requestActiveOwnerManagementRescan = null
     clearInterval(timer)

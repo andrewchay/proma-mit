@@ -7,7 +7,8 @@ import { getAgentWorkspacePath } from './config-paths'
 import { hasProjectWorkspaceBinding } from './project-workspace-bindings'
 import { getProject, getProjectDb } from './project-sqlite-store'
 
-const DOCUMENT_RELATIVE_PATH = join('docs', 'owner-planning-log.md')
+export const OWNER_PLANNING_ARCHIVE_PATH = 'docs/owner-planning-log.md'
+const ARCHIVE_HEADER = '# Owner 规划记录\n\n'
 const DOC_ARCHIVE_WARNING = '项目文档归档失败；规划内容仍保存在应用账本中。请检查项目工作区后刷新重试。'
 
 function marker(projectId: string, plan: ProjectOwnerPlanDraft): string {
@@ -100,12 +101,22 @@ function appendAtRoot(rootPath: string, projectTitle: string, projectId: string,
       const stat = fstatSync(descriptor)
       if (!stat.isFile() || stat.nlink > 1) throw new Error('项目规划文档不是普通文件')
       const entry = renderPlanEvent(projectTitle, plan, eventMarker)
-      const content = Buffer.from(`${needsHeader ? '# Owner 规划记录\n\n' : ''}${entry}`, 'utf8')
+      const content = Buffer.from(`${needsHeader ? ARCHIVE_HEADER : ''}${entry}`, 'utf8')
       let offset = 0
       while (offset < content.length) offset += writeSync(descriptor, content, offset, content.length - offset)
     } finally {
       closeSync(descriptor)
     }
+  }
+}
+
+function isInsideGitWorkspace(path: string): boolean {
+  let current = realpathSync(path)
+  for (;;) {
+    if (existsSync(join(current, '.git'))) return true
+    const parent = dirname(current)
+    if (parent === current) return false
+    current = parent
   }
 }
 
@@ -128,7 +139,9 @@ export function archiveProjectOwnerPlanHistory(projectId: string, plans: Project
     if (!hasProjectWorkspaceBinding(projectId, workspaceId)) throw new Error('Owner规划工作区未获项目授权')
     const workspace = getAgentWorkspace(workspaceId)
     if (!workspace) throw new Error('Owner规划工作区不存在')
-    const root = workspace.rootPath ?? getAgentWorkspacePath(workspace.slug)
+    const projectRoot = workspace.rootPath
+    // Git 工作区的运行记录放在应用管理目录，避免归档本身改变用户仓库状态。
+    const root = !projectRoot || isInsideGitWorkspace(projectRoot) ? getAgentWorkspacePath(workspace.slug) : projectRoot
     const scopedPlans = plans.filter((plan) => plan.projectId === projectId)
     appendAtRoot(root, project.title, projectId, scopedPlans)
     return null
@@ -137,8 +150,56 @@ export function archiveProjectOwnerPlanHistory(projectId: string, plans: Project
   }
 }
 
+/** 仅识别可用同一工作区的权威计划历史逐字重建的旧版归档。 */
+export function isUnmodifiedLegacyOwnerPlanningArchive(root: string, workspaceId: string): boolean {
+  try {
+    const workspace = getAgentWorkspace(workspaceId)
+    if (!workspace?.rootPath || realpathSync(workspace.rootPath) !== root) return false
+    const filePath = join(root, OWNER_PLANNING_ARCHIVE_PATH)
+    if (realpathSync(filePath) !== filePath) return false
+    const descriptor = openSync(filePath, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0))
+    let content: string
+    try {
+      const stat = fstatSync(descriptor)
+      if (!stat.isFile() || stat.nlink !== 1 || stat.size > 1_048_576) return false
+      content = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(readFileSync(descriptor))
+    } finally {
+      closeSync(descriptor)
+    }
+    if (!content.startsWith(ARCHIVE_HEADER)) return false
+
+    const { listProjectOwnerPlanHistory } = require('./project-owner-plan-service') as typeof import('./project-owner-plan-service')
+    const { listWorkspaceProjectBindings } = require('./project-workspace-bindings') as typeof import('./project-workspace-bindings')
+    const entries = new Map<string, readonly string[]>()
+    for (const { projectId } of listWorkspaceProjectBindings(workspaceId)) {
+      const project = getProject(projectId)
+      if (!project) continue
+      const subjects = getProjectDb().prepare('SELECT DISTINCT subject_key FROM project_owner_plan_revisions WHERE project_id=?').all(projectId) as { subject_key: string }[]
+      for (const { subject_key: key } of subjects) {
+        if (key !== 'project' && !key.startsWith('task:')) continue
+        for (const plan of listProjectOwnerPlanHistory(projectId, key === 'project' ? undefined : key.slice(5))) {
+          const event = marker(projectId, plan)
+          entries.set(event, [...new Set([project.title, plan.sources.project.title])]
+            .map(title => renderPlanEvent(title, plan, event)))
+        }
+      }
+    }
+    let offset = ARCHIVE_HEADER.length
+    for (const [event] of content.matchAll(/<!-- owner-planning:[a-f0-9]{64} -->/g)) {
+      const entry = entries.get(event)?.find(candidate => content.startsWith(candidate, offset))
+      if (!entry) return false
+      offset += entry.length
+      entries.delete(event)
+    }
+    return offset > ARCHIVE_HEADER.length && offset === content.length
+  } catch {
+    // 内容无法证明由应用原样生成时，沿用正常的 Git 脏文件门禁。
+    return false
+  }
+}
+
 /** 供隔离文件系统测试使用；生产入口必须先经 archiveProjectOwnerPlanHistory 授权解析。 */
 export function appendProjectOwnerPlanArchiveAtRoot(rootPath: string, projectId: string, projectTitle: string, plans: ProjectOwnerPlanDraft[]): void {
-  if (!rootPath || !projectId || !projectTitle || isAbsolute(DOCUMENT_RELATIVE_PATH) || dirname(DOCUMENT_RELATIVE_PATH) !== 'docs') throw new Error('项目规划文档参数无效')
+  if (!rootPath || !projectId || !projectTitle || isAbsolute(OWNER_PLANNING_ARCHIVE_PATH) || dirname(OWNER_PLANNING_ARCHIVE_PATH) !== 'docs') throw new Error('项目规划文档参数无效')
   appendAtRoot(rootPath, projectTitle, projectId, plans)
 }

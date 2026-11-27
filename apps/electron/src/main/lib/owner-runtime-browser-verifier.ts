@@ -12,6 +12,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync, lstatSync, realpathSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
+import { constants as osConstants, setPriority } from 'node:os'
 import { extname, isAbsolute, relative, resolve } from 'node:path'
 import { OWNER_RUNTIME_ASSERTION_TEMPLATES, type OwnerRuntimeAssertionTemplate, selectOwnerRuntimeAssertionTemplates } from './owner-runtime-assertion-templates'
 
@@ -26,6 +27,7 @@ export interface OwnerRuntimeBrowserRunResult {
   checks: OwnerRuntimeBrowserCheckResult[]
   durationMs: number
   timedOut: boolean
+  notStarted?: true
   /** 实际验证的文件（相对工作区） */
   relativePath: string
 }
@@ -150,23 +152,34 @@ export async function runOwnerRuntimeBrowserAssertions(input: {
   /** 已冻结范围中明确列出的脚本及样式，不能扩展到其他本地文件。 */
   resourcePaths?: readonly string[]
   timeoutMs?: number
+  /** 拿到唯一浏览器槽位后重新核对授权和快照。 */
+  beforeStart?: () => string | void
 }): Promise<OwnerRuntimeBrowserRunResult> {
-  const filePath = resolveOwnerRuntimeVerificationTarget(input.workspaceRoot, input.relativePath)
-  const templates = input.templates ? [...input.templates] : selectOwnerRuntimeAssertionTemplates(input.intents)
-  const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const runner = injectedRunner ?? defaultBrowserRunner
-  const root = resolve(input.workspaceRoot), realRoot = realpathSync(root)
-  const resourcePaths = (input.resourcePaths ?? []).map(path => {
-    if (isAbsolute(path) || !['.js', '.mjs', '.css'].includes(extname(path).toLowerCase())) throw new OwnerRuntimeVerificationError('验证资源必须是范围内的脚本或样式')
-    const target = resolve(root, path), inside = relative(root, target)
-    if (!inside || inside.startsWith('..') || isAbsolute(inside) || !existsSync(target)) throw new OwnerRuntimeVerificationError('验证资源不在工作区内或不存在')
-    const stat = lstatSync(target)
-    if (stat.isSymbolicLink() || !stat.isFile()) throw new OwnerRuntimeVerificationError('验证资源必须是普通文件，不能为符号链接')
-    const real = realpathSync(target), realInside = relative(realRoot, real)
-    if (!realInside || realInside.startsWith('..') || isAbsolute(realInside)) throw new OwnerRuntimeVerificationError('验证资源真实路径不在工作区内')
-    return real
+  const run = browserQueue.then((): OwnerRuntimeBrowserRunResult | Promise<OwnerRuntimeBrowserRunResult> => {
+    const templates = input.templates ? [...input.templates] : selectOwnerRuntimeAssertionTemplates(input.intents)
+    const denied = input.beforeStart?.()
+    if (denied) return {
+      checks: templates.map(template => ({ id: template.id, title: template.title, status: 'skipped', detail: denied.slice(0, 500) })),
+      relativePath: input.relativePath, durationMs: 0, timedOut: false, notStarted: true,
+    }
+    const filePath = resolveOwnerRuntimeVerificationTarget(input.workspaceRoot, input.relativePath)
+    const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS
+    const root = resolve(input.workspaceRoot), realRoot = realpathSync(root)
+    const resourcePaths = (input.resourcePaths ?? []).map(path => {
+      if (isAbsolute(path) || !['.js', '.mjs', '.css'].includes(extname(path).toLowerCase())) throw new OwnerRuntimeVerificationError('验证资源必须是范围内的脚本或样式')
+      const target = resolve(root, path), inside = relative(root, target)
+      if (!inside || inside.startsWith('..') || isAbsolute(inside) || !existsSync(target)) throw new OwnerRuntimeVerificationError('验证资源不在工作区内或不存在')
+      const stat = lstatSync(target)
+      if (stat.isSymbolicLink() || !stat.isFile()) throw new OwnerRuntimeVerificationError('验证资源必须是普通文件，不能为符号链接')
+      const real = realpathSync(target), realInside = relative(realRoot, real)
+      if (!realInside || realInside.startsWith('..') || isAbsolute(realInside)) throw new OwnerRuntimeVerificationError('验证资源真实路径不在工作区内')
+      return real
+    })
+    return runner({ filePath, resourcePaths, templates, timeoutMs })
   })
-  const result = await runner({ filePath, resourcePaths, templates, timeoutMs })
+  browserQueue = run.then(() => undefined, () => undefined)
+  const result = await run
   return { ...result, relativePath: input.relativePath }
 }
 
@@ -175,12 +188,41 @@ export function ownerRuntimeAssertionCount(): number {
   return OWNER_RUNTIME_ASSERTION_TEMPLATES.length
 }
 
+let browserQueue = Promise.resolve()
+
+export function createOwnerBrowserResourceLimit() {
+  let previous: { pid: number; creationTime: number; seconds: number; sampledAt: number } | undefined
+  let busySamples = 0
+  let memorySamples = 0
+  return (metric: Electron.ProcessMetric | undefined, sampledAt: number): string | null => {
+    if (!metric) { previous = undefined; busySamples = memorySamples = 0; return null }
+    if (previous && (metric.pid !== previous.pid || metric.creationTime !== previous.creationTime)) {
+      previous = undefined
+      busySamples = memorySamples = 0
+    }
+    memorySamples = metric.memory.workingSetSize > 512 * 1024 ? memorySamples + 1 : 0
+    const seconds = metric.cpu.cumulativeCPUUsage
+    if (seconds !== undefined) {
+      const elapsed = previous ? (sampledAt - previous.sampledAt) / 1000 : 0
+      const used = previous ? seconds - previous.seconds : 0
+      busySamples = elapsed > 0 && used / elapsed >= 0.90 ? busySamples + 1 : 0
+      previous = { pid: metric.pid, creationTime: metric.creationTime, seconds, sampledAt }
+    } else {
+      busySamples = 0
+      previous = undefined
+    }
+    if (memorySamples >= 2) return '验证浏览器连续超过 512 MiB 内存预算'
+    if (busySamples >= 4) return '验证浏览器持续占用约一个逻辑核，超过本地 CPU 预算'
+    return null
+  }
+}
+
 /**
  * 默认执行器：隐藏窗口 + 独立 partition + 阻断非 file 请求。
  * 单独抽出以便测试注入假实现，真实执行路径需要 Electron 运行时。
  */
 const defaultBrowserRunner: OwnerRuntimeBrowserRunner = async ({ filePath, resourcePaths = [], templates, timeoutMs }) => {
-  const { BrowserWindow, session } = await import('electron')
+  const { app, BrowserWindow, session, webContents } = await import('electron')
   const partition = createVerificationPartition()
   const partitionSession = session.fromPartition(partition)
   // 只允许本次 HTML、明确声明的脚本/样式、data: 与 about:。放宽到任意 file: 会让页面跳到本机其他文件，
@@ -209,6 +251,31 @@ const defaultBrowserRunner: OwnerRuntimeBrowserRunner = async ({ filePath, resou
     },
   })
   const startedAt = Date.now()
+  const interrupt = new AbortController()
+  const resourceLimit = createOwnerBrowserResourceLimit()
+  let prioritizedProcess: string | undefined
+  const sampleResources = setInterval(() => {
+    if (window.isDestroyed() || interrupt.signal.aborted) return
+    const contents = window.webContents
+    const pid = contents.getOSProcessId()
+    if (pid <= 0 || webContents.getAllWebContents().some(other => other.id !== contents.id && other.getOSProcessId() === pid)) return
+    const metric = app.getAppMetrics().find(item => item.pid === pid)
+    if (metric) {
+      const processKey = `${pid}:${metric.creationTime}`
+      if (prioritizedProcess !== processKey) {
+        prioritizedProcess = processKey
+        try { setPriority(pid, osConstants.priority.PRIORITY_BELOW_NORMAL) }
+        catch { /* 平台不允许调整时仍保留资源监测与约束。 */ }
+      }
+    }
+    const limit = resourceLimit(metric, performance.now())
+    if (!limit) return
+    interrupt.abort(new OwnerRuntimeVerificationError(limit + '，已停止本次验证，原成果已保留'))
+    // 只销毁本次独占的渲染进程，异常页面卡死也能释放资源。
+    try { contents.forcefullyCrashRenderer() }
+    catch { /* 渲染进程可能刚自行退出；中断回执已保留。 */ }
+  }, 1000)
+  sampleResources.unref()
   const onConsole = (_event: unknown, level: number, message: string) => {
     if (level >= 3) pageErrors.push(message.slice(0, 200))
   }
@@ -229,11 +296,17 @@ const defaultBrowserRunner: OwnerRuntimeBrowserRunner = async ({ filePath, resou
   const deadline = startedAt + timeoutMs
   /** 受控等待：超过剩余预算即放弃并终止页面加载，避免异常页面让验证长期不返回。 */
   const withinDeadline = async <T>(work: () => Promise<T>, label: string): Promise<T> => {
+    interrupt.signal.throwIfAborted()
     const remaining = deadline - Date.now()
     if (remaining <= 0) throw new Error(`${label} 超时`)
     let timer: ReturnType<typeof setTimeout> | undefined
+    let onInterrupt: (() => void) | undefined
     try {
       return await Promise.race([
+        new Promise<never>((_resolve, reject) => {
+          onInterrupt = () => reject(interrupt.signal.reason)
+          interrupt.signal.addEventListener('abort', onInterrupt, { once: true })
+        }),
         work(),
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(() => {
@@ -245,6 +318,7 @@ const defaultBrowserRunner: OwnerRuntimeBrowserRunner = async ({ filePath, resou
       ])
     } finally {
       if (timer) clearTimeout(timer)
+      if (onInterrupt) interrupt.signal.removeEventListener('abort', onInterrupt)
     }
   }
   try {
@@ -302,7 +376,7 @@ const defaultBrowserRunner: OwnerRuntimeBrowserRunner = async ({ filePath, resou
         const isTimeout = message.includes('超时') || message.includes('timeout')
         if (isTimeout) timedOut = true
         checks.push({ id: template.id, title: template.title, status: 'failed', detail: `断言执行失败：${message}`.slice(0, 500) })
-        if (timedOut) break
+        if (timedOut || interrupt.signal.aborted) break
       }
     }
   } catch (error) {
@@ -316,8 +390,10 @@ const defaultBrowserRunner: OwnerRuntimeBrowserRunner = async ({ filePath, resou
       checks.push({ id: template.id, title: template.title, status: 'failed', detail: `页面未能完成加载：${message}`.slice(0, 500) })
     }
   } finally {
+    clearInterval(sampleResources)
     window.webContents.off('console-message', onConsole as never)
     if (!window.isDestroyed()) window.destroy()
   }
-  return { checks, durationMs: Date.now() - startedAt, timedOut, relativePath: filePath }
+  // 预算中断是未完成的验证，沿用现有 timeout 证据分类，避免误当行为断言失败。
+  return { checks, durationMs: Date.now() - startedAt, timedOut: timedOut || interrupt.signal.aborted, relativePath: filePath }
 }

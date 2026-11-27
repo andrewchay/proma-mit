@@ -1,3 +1,4 @@
+import type { ProjectOwnerGoalBrief } from '@gravitas/shared'
 import { createHash } from 'node:crypto'
 import type { DevelopmentSnapshotFile } from '@gravitas/shared'
 
@@ -11,6 +12,28 @@ export function ownerTextDeliveryCharacterLimit(criteria: readonly string[]): nu
     return Number.isSafeInteger(limit) && limit > 0 ? [limit] : []
   }))
   return limits.length ? Math.min(...limits) : null
+}
+
+export const OWNER_TEXT_HANDOFF_HEADER = 'Owner文本上游成果交接 v2。'
+export const OWNER_SINGLE_TEXT_RESPONSE_INSTRUCTION = '交付时返回 JSON 对象 {"body":"给读者的完整正文","selfCheck":null}。如需留下内部自检，把它写在 selfCheck 字段。body 只给读者使用，不包含自检、进度状态、字数说明或交付摘要。正文计数由系统完成。'
+
+/** 原回包留在执行会话和 messageId；评审及交付绑定独立正文。 */
+export function readOwnerSingleTextBody(raw: string): string {
+  const response = raw.trim()
+  const json = /^```(?:json)?[ \t]*\r?\n([\s\S]+)\r?\n```$/i.exec(response)?.[1] ?? response
+  try {
+    const value: unknown = JSON.parse(json)
+    if (value && typeof value === 'object' && !Array.isArray(value) && 'body' in value
+      && typeof value.body === 'string' && value.body.trim()
+      && Object.keys(value).every(key => key === 'body' || key === 'selfCheck')
+      && (!('selfCheck' in value) || value.selfCheck === null || typeof value.selfCheck === 'string')) return value.body
+  } catch { /* 旧员工或模型可能仍直接输出正文。 */ }
+
+  // 只拆分独立末段，以及正文末尾明确的机器计数标签。
+  const sections = raw.trimEnd().split(/(\r?\n[ \t]*\r?\n+)/)
+  const selfCheck = /^[ \t]*(?:(?:[🟢🟡🔴]\s*)?返工完成\s*[:：][^\r\n]*\d+\s*字[^\r\n]*|(?:自核|自检|字数核对)\s*[:：][^\r\n]*(?:共|全文|含说明)\s*\d+\s*字[^\r\n]*|[（(]字数\s*[:：]\s*\d+\s*字[^）)\r\n]*[）)][ \t]*)$/u
+  while (sections.length > 2 && selfCheck.test(sections.at(-1)!)) sections.splice(-2)
+  return sections.join('').replace(/[（(]全文(?:含标点)?共\s*\d+\s*字[）)]$/, '')
 }
 
 /** 文本按正文哈希，代码按冻结文件集合哈希；传输JSON不是源码版本的哈希域。 */
@@ -199,4 +222,15 @@ export function applyOwnerLocalTextEdit(original: string, edit: OwnerLocalTextEd
   rows.splice(from, 2)
   rows.splice(rows.indexOf(title) + 2, 0, line, '')
   return rows.join(newline)
+}
+
+/** 原目标明确封闭工作清单时，不把独立签字确认当作通用模板字段。 */
+export function findOwnerClosedWorklistConflict(goal: ProjectOwnerGoalBrief, content: string): string | null {
+  const source = [goal.objective, ...goal.constraints, ...goal.acceptanceCriteria].join('\n')
+  if (!/(?:只有|仅有|只做|只包含|仅包含)[一二三四五六七八九十0-9]+项(?:工作|任务|事项)/.test(source)
+    || /(?:签字|签名|签署)/.test(source) && !/(?:禁止|不得|不要|不需|无需|不要求).{0,12}(?:签字|签名|签署)/.test(source)) return null
+  const signature = /^(?:\s*[-*#]+\s*)?(?:\*\*)?(?:[\p{L}]{0,12})?(?:签字|签名|签署)(?:确认)?(?:\*\*)?\s*[：:]?\s*(?:[_＿]{2,})?\s*$/mu
+  return signature.test(content)
+    ? '封闭的工作清单之外新增了单独的签字确认。请去掉这个额外动作，并保留用户列出的原有工作。'
+    : null
 }

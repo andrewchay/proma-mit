@@ -6,7 +6,7 @@ import type { OwnerExecutionRevalidationSource, OwnerTextDelivery } from '@gravi
 import { getProjectsDir } from './config-paths'
 import { ownerExecutionHash } from './project-owner-execution-hash'
 import { ownerTaskHasTextDelivery, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
-import { applyOwnerTextInsertionProposal, ownerTextDeliveryCharacterLimit, OWNER_TEXT_INSERTION_RESPONSE_INSTRUCTION } from './project-owner-delivery-content'
+import { applyOwnerTextInsertionProposal, ownerTextDeliveryCharacterLimit, OWNER_SINGLE_TEXT_RESPONSE_INSTRUCTION, OWNER_TEXT_HANDOFF_HEADER, OWNER_TEXT_INSERTION_RESPONSE_INSTRUCTION, readOwnerSingleTextBody } from './project-owner-delivery-content'
 import { getOwnerTaskMaterializationRecord } from './project-owner-task-materialization'
 import * as store from './project-sqlite-store'
 
@@ -90,7 +90,8 @@ export function captureOwnerTextDelivery(commandId: string, executionId: string,
     ? (require('./project-owner-execution-command') as typeof import('./project-owner-execution-command')).readOwnerExactTextInsertion(frozen)
     : null
   const inserted = rule && applyOwnerTextInsertionProposal(message.content, rule)
-  const content = inserted?.content ?? message.content
+  const content = inserted?.content ?? (execution.prompt.startsWith(`${OWNER_TEXT_HANDOFF_HEADER}\n\n${OWNER_SINGLE_TEXT_RESPONSE_INSTRUCTION}\n\n`)
+    ? readOwnerSingleTextBody(message.content) : message.content)
   const insertionProposalSha256 = inserted ? sha(message.content) : undefined
   const byteLength = Buffer.byteLength(content, 'utf8')
   if (byteLength > OWNER_TEXT_DELIVERY_MAX_BYTES) throw new Error('完整文本成果超出64KiB审阅上限，已拒绝截断后评审')

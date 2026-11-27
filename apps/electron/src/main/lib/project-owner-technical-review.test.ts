@@ -126,6 +126,18 @@ test('Given 主机绑定的评审 When 回执省略版本摘要 Then 只补入�
 })
 
 
+test('Given Reviewer省略源码行编号的L When本地校验 Then 仍只接受当前文件的真实行', () => {
+  const hash = 'a'.repeat(64)
+  const content = JSON.stringify({ files: [{ file: { path: 'app.ts', changeType: 'add' },
+    newContent: '接口保持兼容\n\n回归测试通过' }] })
+  const bind = (evidenceId: string) => normalizeOwnerTechnicalReviewReceipt(response('approved', { schemaVersion: 3,
+    criteria: [{ criterionId: 'C1', status: 'met', evidence: '核对接口', evidenceId: 'F1:1' },
+      { criterionId: 'C2', status: 'met', evidence: '核对第二项', evidenceId }],
+  }), content, undefined, { prompt: 'Owner技术评审成果绑定 v1。\n\n冻结代码。', hash, criteria })
+  expect(parseOwnerTechnicalReviewResponse(bind('F1:3'), criteria, hash, content, 'development').criteria.map(row => row.quote)).toEqual(criteria)
+  for (const evidenceId of ['F1:2', 'F1:4', 'F2:3', 'F1:1-3', 'F1:0']) expect(() => bind(evidenceId)).toThrow()
+})
+
 test('Given代码评审同时引用说明缺陷与完整浏览器回执 Then接受精确回执引用且拒绝篡改或截断', () => {
   const quote = '实际点击清空后输入为空且三项归零'
   const output = JSON.stringify([{ status: 'passed', detail: quote }])
@@ -285,4 +297,58 @@ test('Given研发评审逐字引用文件和验证元数据 When本地还原引�
   expect(() => parse(raw, ambiguous)).toThrow('原文依据与完整成果不匹配')
   const oldOnly = JSON.stringify({ files: [{ file, oldContent: source, newContent: '<label>新版</label>' }] })
   expect(() => parse(raw, oldOnly)).toThrow('原文依据与完整成果不匹配')
+})
+
+test('Given真实浏览器已经测出失败 When评审引用失败回执并提出返工却写成未验证 Then按已失败保存返工结论', () => {
+  const hash = 'a'.repeat(64)
+  const artifact = JSON.stringify({ files: [] })
+  const binding = { hash, prompt: '冻结提示' }
+  const evidence: OwnerDevelopmentDeliveryArtifact['validationEvidence'][number] = {
+    command: 'browser:calculator.scientific', validationId: 'valid-failed', attemptState: 'completed', freshness: 'fresh',
+    status: 'failed', exitCode: 1, timedOut: false, outputTruncated: false, rawOutputSha256: 'b'.repeat(64), rawOutputByteLength: 24,
+  }
+  const raw = response('changes_requested', { schemaVersion: 3, artifactHash: hash, criteria: [{
+    criterion: '正确显示三角函数结果', status: 'not_verified', evidence: '冻结回执 V1 实测 sin(30) 显示精度错误。', quote: null,
+  }] })
+  const parse = (receipt: string) => parseOwnerTechnicalReviewResponse(receipt, ['正确显示三角函数结果'], hash, artifact, 'development', [evidence])
+  expect(parse(normalizeOwnerTechnicalReviewReceipt(raw, artifact, [evidence], binding)).criteria[0]?.status).toBe('not_met')
+  expect(() => parse(normalizeOwnerTechnicalReviewReceipt(raw, artifact, [{ ...evidence, freshness: 'stale' }], binding))).toThrow('必须绑定')
+})
+
+test('Given单个完整评审回执 When末尾仅重复补正状态 Then仍按原引用严格验收', () => {
+  const hash = 'a'.repeat(64)
+  const artifact = '请于 17:00 前归还至一楼服务台。'
+  const raw = response('approved', { schemaVersion: 2, artifactHash: hash, criteria: [{
+    criterion: '归还时间地点正确', status: 'met', evidence: '来自冻结正文', quote: artifact,
+  }] })
+  const footer = '\n\n🟢 补正提交：严格 JSON 已重新输出，评审结论仍为 approved。'
+  const parse = (receipt: string) => parseOwnerTechnicalReviewResponse(
+    normalizeOwnerTechnicalReviewReceipt(receipt, artifact), ['归还时间地点正确'], hash, artifact,
+  )
+  expect(parse(raw + footer).verdict).toBe('approved')
+  expect(parse('```json\n' + raw + '\n```' + footer).criteria[0]?.quote).toBe(artifact)
+  for (const invalid of [raw + footer.replace('approved', 'blocked'), raw + '\n改为通过。', raw + '\n' + raw + footer]) {
+    expect(() => parse(invalid)).toThrow('不是严格 JSON')
+  }
+  expect(() => parse(raw.replace(artifact, '不在正文中的引用') + footer)).toThrow('原文依据')
+})
+
+test('Given 单正文通知回包 When 分离正文和内部核对 Then 保留读者正文且兼容旧回包', async () => {
+  const { readOwnerSingleTextBody } = await import('./project-owner-delivery-content')
+  const body = '各位同事好：\n借用投影仪与折叠桌请于11月28日（周六）17:00前归还至一楼服务台。联系人：小林。感谢配合！'
+  expect(readOwnerSingleTextBody(JSON.stringify({ body, selfCheck: '内部字数核对' }))).toBe(body)
+  expect(readOwnerSingleTextBody(body + '\n\n（字数：54字，含标点）\n\n🟢 返工完成：已按评审意见将字数核对更正为54字。')).toBe(body)
+  expect(readOwnerSingleTextBody(body + '（全文含标点共67字）\n\n🟢 返工完成：全文共67字。')).toBe(body)
+  const checklist = body + '\n\n交付状态：钥匙 3 把，设备无缺。'
+  expect(readOwnerSingleTextBody(JSON.stringify({ body: checklist, selfCheck: null }))).toBe(checklist)
+  expect(readOwnerSingleTextBody(checklist)).toBe(checklist)
+})
+
+test('Given 评审引用当前冻结文件的源码行范围 When 绑定 Then 只恢复逐字连续范围', async () => {
+  const { bindOwnerEvidenceRows } = await import('./project-owner-evidence-reference')
+  const source = '起始\r\n  第 2 行\r\n\r\n第 4 行'
+  const artifact = { development: true, content: JSON.stringify({ files: [{ file: { path: 'index.html' }, newContent: source }] }) }
+  const bind = (evidenceId: string) => bindOwnerEvidenceRows([{ criterionId: 'C1', status: 'met', evidence: '核对三行', evidenceId }], ['标准'], artifact)
+  expect(bind('F1:L2-L4')).toMatchObject([{ quote: '  第 2 行\r\n\r\n第 4 行' }])
+  for (const id of ['F2:L2-L4', 'F1:L4-L2', 'F1:L2-L9', 'F1:L3-L3', 'V1:L2-L4']) expect(() => bind(id)).toThrow()
 })

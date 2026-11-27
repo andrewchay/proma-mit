@@ -1201,7 +1201,7 @@ export interface DispatchOwnerExecutionCommandRequest {
 }
 export type OwnerExecutionAutonomousScheduleState = 'no_grant' | 'manual' | 'paused' | 'needs_reconcile' | 'expired' | 'archived' | 'stale' | 'ready' | 'running' | 'waiting'
 export type OwnerTechnicalReviewVerdict = 'approved' | 'changes_requested' | 'blocked'
-export type OwnerExecutionNextAction = 'execute' | 'review' | 'rework' | 'await_owner_quality' | 'await_business_acceptance' | 'human_decision' | 'none'
+export type OwnerExecutionNextAction = 'await_local_resources' | 'execute' | 'review' | 'rework' | 'await_owner_quality' | 'await_business_acceptance' | 'human_decision' | 'none'
 export interface OwnerExecutionAutonomousScheduleStatus {
   projectId: string
   state: OwnerExecutionAutonomousScheduleState
@@ -1235,7 +1235,7 @@ export interface ProjectOwnerExecutionCommandApi {
   previewOwnerExecutionCommandAck: (request: PreviewOwnerExecutionCommandAckRequest) => Promise<ProjectOwnerGoalResult<OwnerExecutionCommandAckPreview>>
   queueOwnerExecutionCommand: (request: QueueOwnerExecutionCommandRequest) => Promise<ProjectOwnerGoalResult<{ commandId: string; executionId: string }>>
   listOwnerExecutionCommands: (subject: ProjectOwnerGoalSubject) => Promise<ProjectOwnerGoalResult<OwnerExecutionCommandView[]>>
-  dispatchOwnerExecutionCommand: (request: DispatchOwnerExecutionCommandRequest) => Promise<ProjectOwnerGoalResult<{ commandId: string; executionId: string; started: boolean }>>
+  dispatchOwnerExecutionCommand: (request: DispatchOwnerExecutionCommandRequest) => Promise<ProjectOwnerGoalResult<{ commandId: string; executionId: string; started: boolean; resourceBlocked?: true }>>
   cancelQueuedOwnerExecutionCommand: (request: { commandId: string }) => Promise<ProjectOwnerGoalResult<{ commandId: string }>>
   previewOwnerPreflightReconciliation: (request: OwnerPreflightReconciliationPreviewRequest) => Promise<ProjectOwnerGoalResult<OwnerPreflightReconciliationPreview>>
   confirmOwnerPreflightReconciliation: (request: ConfirmOwnerPreflightReconciliationRequest) => Promise<ProjectOwnerGoalResult<OwnerPreflightReconciliationResult>>

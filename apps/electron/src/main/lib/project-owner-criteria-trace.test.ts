@@ -149,3 +149,23 @@ test('Given 目标来源为空字符串 When 评估覆盖 Then 空白来源不�
   const coverage = assessCriteriaCoverage(sparse, [])
   expect(coverage.uncovered.map((item) => `${item.source}:${item.sourceIndex}`)).toEqual(['objective:0'])
 })
+
+test('Given冻结目标明确要求浏览器实测 When模型给研发追溯写 browser_test Then只归一为计划自动检验', () => {
+  const item = { key: 'browser', source: 'objective', sourceIndex: 0, sourceText: '核对网页行为',
+    criticality: 'critical', stepKey: 'page', verification: 'browser_test', assumptions: [] }
+  const browserGoal = goal({ objective: '用真实浏览器核对网页行为' })
+  const development = { ...step('page'), deliveryKind: 'development' as const }
+  expect(parseCriteriaTrace([item], browserGoal, [development])[0]?.verification).toBe('automated')
+  expect(parseCriteriaTrace([{ ...item, verification: 'browser_e2e' }], browserGoal, [development])[0]?.verification).toBe('automated')
+  expect(() => parseCriteriaTrace([item], goal({ objective: '核对网页行为' }), [development])).toThrow('检验方式无效')
+  expect(() => parseCriteriaTrace([item], browserGoal, [{ ...development, deliveryKind: 'text' }])).toThrow('检验方式无效')
+})
+
+test('Given 原目标只交付一份通知正文 When 模型误标逐份核验 Then 保留原文并采用普通正文核验', () => {
+  const sourceText = '只交付一份通知正文'
+  const objective = `面向借用物资的同事。${sourceText}，由独立评审核对日期和字数，不另附附件。`
+  const [trace] = parseCriteriaTrace([{ ...OBJECTIVE_ITEM, sourceText, stepKey: 'review', verificationScope: 'own_text' }],
+    goal({ objective }), [{ ...steps[1]!, deliveryKind: 'text' }])
+  expect(trace?.sourceText).toBe(sourceText)
+  expect(trace?.verificationScope).toBeUndefined()
+})

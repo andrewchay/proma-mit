@@ -1,3 +1,4 @@
+import { bindOwnerEvidenceRows } from './project-owner-evidence-reference'
 /** Owner质量判断纯协议。判断不等于执行，不读文件或改业务状态。 */
 import type { OwnerQualityDecision, ProjectOwnerPlanningContext } from '@gravitas/shared'
 import { containsOwnerValidationEvidenceQuote, isOwnerValidationEvidenceExpired } from './development-validation-acceptance'
@@ -27,9 +28,11 @@ export function containsOwnerArtifactQuote(content: string, quote: string, devel
 export function isOwnerEvidenceGapRework(decision: OwnerQualityDecision): boolean {
   return decision.verdict === 'rework' && !decision.criteria.some(item => item.status === 'not_met') && decision.criteria.some(item => item.status === 'not_verified')
 }
+export const OWNER_INCOMPLETE_QUALITY_CRITERIA = 'Owner规划响应未覆盖全部验收标准'
+export const OWNER_INVALID_EVIDENCE_REFERENCE = 'Owner规划响应引用了无效的验收证据编号'
 export const OWNER_ACCEPT_WITH_FINDINGS = 'Owner选择通过但同时提交了缺陷，请重新判断是否影响验收标准'
 
-export function parseOwnerQualityDecision(raw: unknown, context: ProjectOwnerPlanningContext, validationTime = Date.now()): OwnerQualityDecision {
+export function parseOwnerQualityDecision(raw: unknown, context: ProjectOwnerPlanningContext, validationTime = Date.now(), sharedReviewerCriteria = false): OwnerQualityDecision {
   const delivery = context.conversation?.deliveryReview, observed = context.conversation?.executionObservation
   const review = delivery?.review, artifact = delivery?.artifact, developmentArtifact = delivery?.developmentArtifact
   const artifactHash = developmentArtifact?.contentHash ?? artifact?.contentSha256
@@ -39,8 +42,41 @@ export function parseOwnerQualityDecision(raw: unknown, context: ProjectOwnerPla
   const bound = delivery.qualityDecisionBindingVersion !== undefined && raw && typeof raw === 'object' && !Array.isArray(raw)
     ? { reviewerCommandId: observed.commandId, artifactHash, ...raw } : raw
   const value = object(bound, ['reviewerCommandId', 'artifactHash', 'verdict', 'reason', 'criteria', 'findings'])
-  if (value.reviewerCommandId !== observed.commandId || value.reviewerCommandId !== review.reviewerCommandId || value.artifactHash !== artifactHash || !['accept', 'rework', 'escalate'].includes(String(value.verdict)) || !Array.isArray(value.criteria) || value.criteria.length < review.criteria.length || value.criteria.length > review.criteria.length + (context.goal.goal.acceptanceCriteria?.length ?? 0) || !Array.isArray(value.findings) || value.findings.length > 32) throw new Error('Owner质量决定与准确评审/成果不匹配')
-  const assessments: OwnerQualityDecision['criteria'] = value.criteria.map(item => {
+  // 采用同一独立评审的整组标准时，仍核对每条证据；返工也须携带 Owner 自己的明确修改意见。
+  if (delivery.qualityDecisionBindingVersion === 2 && review.verdict === 'blocked' && value.verdict === 'blocked') {
+    value.verdict = 'escalate'
+  }
+  const agreesWithReview = value.verdict === 'accept' && review.verdict === 'approved' && review.criteria.every(item => item.status === 'met')
+    || value.verdict === 'rework' && review.verdict === 'changes_requested' && review.criteria.some(item => item.status === 'not_met')
+    || value.verdict === 'escalate' && review.verdict !== 'approved'
+    || value.verdict === 'rework' && Boolean(developmentArtifact) && review.verdict === 'blocked'
+      && review.criteria.some(item => item.status === 'not_verified')
+  if (sharedReviewerCriteria && value.criteria === 'reviewer' && delivery.qualityDecisionBindingVersion === 2
+    && agreesWithReview && review.criteria.length > 0
+    && review.criteria.every(item => item.status !== 'met' || typeof item.quote === 'string' && item.quote.trim())) {
+    value.criteria = review.criteria.map(item => ({
+      criterion: item.criterion, status: item.status, evidence: item.evidence,
+      quote: item.status === 'met' ? { from: 'reviewer' } : item.quote ?? null,
+    }))
+  }
+  if (value.reviewerCommandId !== observed.commandId || value.reviewerCommandId !== review.reviewerCommandId || value.artifactHash !== artifactHash || !['accept', 'rework', 'escalate'].includes(String(value.verdict)) || !Array.isArray(value.criteria) || value.criteria.length > review.criteria.length + (context.goal.goal.acceptanceCriteria?.length ?? 0) || !Array.isArray(value.findings) || value.findings.length > 32) throw new Error('Owner质量决定与准确评审/成果不匹配')
+  if (value.criteria.length < review.criteria.length) {
+    const numbered = delivery.qualityDecisionBindingVersion === 2 && value.criteria.length > 0
+      && value.criteria.every((row: unknown) => row && typeof row === 'object' && Object.hasOwn(row, 'criterionId'))
+    throw new Error(numbered ? OWNER_INCOMPLETE_QUALITY_CRITERIA : 'Owner质量决定与准确评审/成果不匹配')
+  }
+  let rows: readonly unknown[] = value.criteria
+  if (delivery.qualityDecisionBindingVersion === 2) {
+    try {
+      rows = bindOwnerEvidenceRows(rows, review.criteria.map(item => item.criterion), {
+        content: artifactContent, development: Boolean(developmentArtifact),
+        validation: freshValidation ?? developmentArtifact?.validationEvidence,
+      }, review.criteria)
+    } catch (cause) {
+      throw new Error(OWNER_INVALID_EVIDENCE_REFERENCE, { cause })
+    }
+  }
+  const assessments: OwnerQualityDecision['criteria'] = rows.map(item => {
     const criterion = object(item, ['criterion', 'status', 'evidence', 'quote'])
     const independent = review.criteria.find(item => item.criterion === criterion.criterion)
     const independentQuote = independent?.quote
@@ -88,8 +124,10 @@ export function parseOwnerQualityDecision(raw: unknown, context: ProjectOwnerPla
   const criteria = delivery.qualityDecisionBindingVersion === 2 ? required.map(criterion => byCriterion.get(criterion)!) : matched
   const findings: OwnerQualityDecision['findings'] = value.findings.map(item => {
     const finding = object(item, ['severity', 'description', 'requestedChange'])
-    if (!['low', 'medium', 'high'].includes(String(finding.severity))) throw new Error('Owner质量决定缺陷等级无效')
-    return { severity: finding.severity as OwnerQualityDecision['findings'][number]['severity'], description: text(finding.description), requestedChange: text(finding.requestedChange) }
+    const severity = delivery.qualityDecisionBindingVersion === 2 && ['major', 'blocker'].includes(String(finding.severity))
+      ? 'high' : finding.severity
+    if (severity !== 'low' && severity !== 'medium' && severity !== 'high') throw new Error('Owner质量决定缺陷等级无效')
+    return { severity, description: text(finding.description), requestedChange: text(finding.requestedChange) }
   })
   if (value.verdict === 'accept' && (review.verdict !== 'approved' || criteria.some(item => item.status !== 'met')
     || developmentArtifact && (!freshValidation?.length || freshValidation.some(item => item.attemptState !== 'completed' || item.freshness !== 'fresh' || isOwnerValidationEvidenceExpired(item, validationTime) || item.status !== 'passed' || item.exitCode !== 0 || item.timedOut !== false || item.outputTruncated !== false || !item.rawOutputSha256 || !Number.isSafeInteger(item.rawOutputByteLength))))) throw new Error('Owner不能在独立检查未通过或标准未满足时接受成果')

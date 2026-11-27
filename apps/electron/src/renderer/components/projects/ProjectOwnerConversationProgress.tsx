@@ -3,8 +3,7 @@ import { atom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import type { AgentExecutionResult, OwnerExecutionCommandView, OwnerManagementDeliveryReference, OwnerManagementMessage, ProjectOwnerGoalSubject } from '@gravitas/shared'
 import { getOwnerCommandProgress, loadOwnerCommandProgressAtom, ownerCommandProgressAtom } from '../../atoms/owner-command-progress-atoms'
 import { editOwnerMessageAtom, getOwnerManagementEditor, getOwnerMessageComposer, ownerManagementEditorsAtom, ownerMessageComposersAtom } from '../../atoms/project-owner-management-atoms'
-import { getOwnerWaitingMessage, hasCompletedOwnerDelivery } from './project-owner-progress-state'
-import { getOwnerPlanEditor, ownerPlanEditorsAtom } from '../../atoms/project-owner-plan-atoms'
+import { getOwnerWaitingMessage } from './project-owner-progress-state'
 import { OwnerEmployeeMonitor } from './OwnerEmployeeMonitor'
 import { OwnerExecutionTerminalEvidence } from './OwnerExecutionTerminalEvidence'
 import { AgentExecutionStopButton } from './AgentExecutionStopButton'
@@ -32,19 +31,6 @@ function acceptedDeliveryReference(messages: readonly OwnerManagementMessage[], 
   const matches = messages.flatMap(message => message.role === 'assistant' && message.kind === 'delivery' && message.taskId === subject.taskId
     ? (message.delivery?.items.filter(item => item.artifactHash === artifactHash && item.stepKey === stepKey) ?? []).map(() => ({ messageId: message.id, artifactHash, stepKey })) : [])
   return matches.length === 1 ? matches[0]! : null
-}
-
-function progressLabel(state: string | undefined, nextAction: string | undefined): string {
-  if (state === 'needs_reconcile') return '当前工作已暂停，需核对执行状态或费用后继续。'
-  if (state === 'stale') return '项目资料或授权已变化，需重新核对后继续。'
-  if (nextAction === 'await_business_acceptance') return '成果已准备好，等待你审阅。'
-  if (nextAction === 'await_owner_quality') return 'Owner 正在核对成果与质量依据。'
-  if (nextAction === 'human_decision') return 'Owner 已暂停推进，请查看问题与处理建议。'
-  if (nextAction === 'rework' || nextAction === 'review' || nextAction === 'execute') return 'Owner 正在组织团队继续推进。'
-  if (state === 'running' || state === 'ready') return 'Owner 正在组织团队推进目标。'
-  if (state === 'paused') return '当前工作已暂停。'
-  if (state === 'expired' || state === 'archived') return '本次执行已结束。'
-  return 'Owner 正在准备下一步。'
 }
 
 function DeliveryResultCard({ command, deliveryReference, onContinue }: {
@@ -87,8 +73,6 @@ export function ProjectOwnerConversationProgress({ subject }: { subject: Project
   const refresh = useSetAtom(loadOwnerCommandProgressAtom)
   const refreshProgress = useCallback(() => { void refresh(subject) }, [refresh, subject])
   const grant = getOwnerGrantEditor(useAtomValue(ownerGrantEditorsAtom), subject).grant
-  const plan = getOwnerPlanEditor(useAtomValue(ownerPlanEditorsAtom), subject).snapshot
-  const completedDelivery = grant?.dispatchMode === 'autonomous' && hasCompletedOwnerDelivery(conversation?.messages ?? [], progress.commands, subject.taskId, plan?.planVersion, grant.grantId)
   const grantId = grant?.dispatchMode === 'autonomous' ? grant.grantId : undefined
   const controls = useAtomValue(ownerDispatchControlsAtom)
   const dispatchControl = grantId ? getOwnerDispatchEditor(controls, subject.projectId, grantId) : null
@@ -129,7 +113,6 @@ export function ProjectOwnerConversationProgress({ subject }: { subject: Project
     })
     return 'ready'
   }
-  const hasCurrentRun = taskCommands.some(commands => commands.some(command => command.state === 'running' || command.state === 'queued'))
   const completed = taskCommands.map(commands => commands.find(command => command.state === 'settled' && command.executionStatus === 'completed')).filter((command): command is OwnerExecutionCommandView => Boolean(command))
   const employeeCommands = useMemo(() => {
     const commands = progress.commands.filter(command => command.executionId).sort((left, right) => right.updatedAt - left.updatedAt)
@@ -154,7 +137,6 @@ export function ProjectOwnerConversationProgress({ subject }: { subject: Project
     })
   }
   return <section className="mt-4 space-y-3 rounded-2xl bg-muted/30 p-4 shadow-sm" aria-label="Owner项目进度与成果">
-    <p role="status" className="text-sm">{waitingForUser ? 'Owner 正在等你处理一项待确认内容。' : hasAttention ? 'Owner 提出需要关注的事项，请查看最新说明。' : progress.loading && !progress.loaded ? '正在读取最新进展…' : progress.error && !progress.loaded ? '暂时无法读取最新进展。' : dispatchControl?.control?.paused ? '后续自主派工已暂停；已运行的执行继续。' : completedDelivery ? '本轮成果已交付，可在对话中查看和审阅。' : progressLabel(progress.schedule?.state, progress.schedule?.nextAction)}</p>
     {waitingForUser && <div role="alert" className="flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-500/10 p-3 text-sm"><p>请查看 Owner 的最新说明并直接回复；确认前，受影响的新工作不会启动，其他仍在已确认范围内的工作可以继续。</p><button type="button" className="rounded-lg bg-primary px-3 py-2 text-sm text-primary-foreground" onClick={focusReplyComposer}>回复 Owner</button></div>}
     {progress.error && <p role="alert" className="text-xs text-destructive">最新进展读取失败；已保留上次记录，不会据此重新启动工作。</p>}
     {grantId && <section className="rounded-xl bg-muted/40 p-3 text-sm" aria-label="自主派工控制">
@@ -164,7 +146,6 @@ export function ProjectOwnerConversationProgress({ subject }: { subject: Project
       {dispatchControl?.error && <p role="alert" className="mt-2 text-xs text-destructive">{dispatchControl.error} <button type="button" className="underline" disabled={dispatchControl.loading || dispatchControl.busy} onClick={() => void loadDispatch({ projectId: subject.projectId, grantId })}>重新读取</button></p>}
     </section>}
     {conversation?.stateProjection && <p className="text-xs text-muted-foreground" role="status">上次状态核对：{new Date(conversation.stateProjection.lastReconciledAt).toLocaleString('zh-CN')} · {conversation.stateProjection.dirtyDomains.length === 0 ? '没有待处理的状态变化' : `待核对：${conversation.stateProjection.dirtyDomains.map(domain => ({ goal: '目标', plan: '方案', authorization: '授权', execution: '执行', employee_interaction: '员工提问', conversation: '对话' } as Record<string, string>)[domain] ?? domain).join('、')}`}</p>}
-    {hasCurrentRun && <p className="text-sm text-muted-foreground">团队成员正在处理已确认的工作。</p>}
     {employeeCommands.length > 0 && <section className="space-y-2" aria-label="员工会话进度">
       <h5 className="text-sm font-medium">员工工作监控</h5>
       <p className="text-xs text-muted-foreground">可在这里只读查看员工的具体输出与工具记录；讨论、调整和问题反馈统一交给 Owner。</p>
@@ -185,6 +166,5 @@ export function ProjectOwnerConversationProgress({ subject }: { subject: Project
         <OwnerExecutionTerminalEvidence evidence={command.terminalEvidence!} />
       </article>)}
     </section>}
-    {!waitingMessage && !completed.length && !hasCurrentRun && evidenceCommands.length === 0 && progress.loaded && progress.schedule?.state === 'manual' && <p className="text-sm text-muted-foreground">工作尚未开始；Owner 会在必要确认完成后继续。</p>}
   </section>
 }

@@ -31,11 +31,11 @@ export class DevelopmentWorkspaceBlockedError extends Error {
   }
 }
 
-export function createDevelopmentWorktree(repository: string, sessionDirectory: string, executionId: string): DevelopmentWorktree {
+export function createDevelopmentWorktree(repository: string, sessionDirectory: string, executionId: string, workspace?: { id: string; name: string }): DevelopmentWorktree {
   if (!/^[a-zA-Z0-9-]+$/.test(executionId)) throw new Error('无效的研发执行 ID')
   const root = realpathSync(repository)
   if (realpathSync(git(root, 'rev-parse', '--show-toplevel')) !== root) throw new Error('工作区必须指向 Git 仓库根目录')
-  const blocker = inspectDevelopmentWorkspaceBlocker(root, 'workspace', root)
+  const blocker = inspectDevelopmentWorkspaceBlocker(root, workspace?.id ?? 'workspace', workspace?.name ?? root)
   if (blocker.kind === 'dirty_worktree') throw new DevelopmentWorkspaceBlockedError(blocker)
   if (blocker.kind === 'not_git_root') throw new Error(blocker.detail)
   mkdirSync(sessionDirectory, { recursive: true })

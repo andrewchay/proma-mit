@@ -140,7 +140,7 @@ export async function runOwnerCounterKeyboardSupplement(source: {
   }
   const reservation = reserveOwnerDevelopmentValidationAttempt(world.sessionDirectory, attempt)
   const result = reservation.kind === 'reserved'
-    ? await runFrozenDevelopmentValidation(world, command, { timeoutMs: 20_000, validationId })
+    ? await runFrozenDevelopmentValidation(world, command, { timeoutMs: 20_000, validationId, grantId: source.grantId })
     : readDevelopmentValidationEvidence(taskId, executorExecutionId, validationId).result
   completeOwnerDevelopmentValidationAttempt(world.sessionDirectory, attempt)
   return result
@@ -212,7 +212,7 @@ export async function refreshOwnerQualityBrowserEvidence(source: {
   }
   const reservation = reserveOwnerDevelopmentValidationAttempt(world.sessionDirectory, attempt)
   let result: DevelopmentValidationResult
-  if (reservation.kind === 'reserved') result = await runFrozenDevelopmentValidation(world, command, { timeoutMs: 20_000, validationId })
+  if (reservation.kind === 'reserved') result = await runFrozenDevelopmentValidation(world, command, { timeoutMs: 20_000, validationId, grantId: source.grantId })
   else {
     try { result = readDevelopmentValidationEvidence(taskId, executorExecutionId, validationId).result }
     catch { throw new DevelopmentValidationError('上次浏览器补跑的结果无法核对，已保留尝试记录。本次未发送验收请求。') }
@@ -234,7 +234,18 @@ export function runOwnerMarkdownSupplement(taskId: string, executionId: string, 
   })
 }
 
-async function runFrozenDevelopmentValidation(world: ValidationWorld, trimmed: string, options: { timeoutMs?: number; validationId?: string }): Promise<DevelopmentValidationResult> {
+function assertQueuedOwnerValidationGrant(projectId: string, grantId: string): void {
+  const grant = getProjectDb().prepare("SELECT dispatch_mode FROM project_owner_execution_grants WHERE id=? AND project_id=? AND state='active' AND expires_at>?")
+    .get(grantId, projectId, Date.now()) as { dispatch_mode: string } | undefined
+  if (!grant) throw new DevelopmentValidationError('等待浏览器验证期间授权已撤销或过期')
+  if (grant.dispatch_mode === 'autonomous') {
+    const { assertOwnerDispatchManagementCurrent, assertOwnerDispatchNotPaused } = require('./project-owner-dispatch-control') as typeof import('./project-owner-dispatch-control')
+    assertOwnerDispatchManagementCurrent(projectId, grantId)
+    assertOwnerDispatchNotPaused(projectId, grantId)
+  }
+}
+
+async function runFrozenDevelopmentValidation(world: ValidationWorld, trimmed: string, options: { timeoutMs?: number; validationId?: string; grantId?: string }): Promise<DevelopmentValidationResult> {
   if (!developmentWorktreeMatchesSnapshot(world.worktreePath, world.snapshot, world.snapshotScope)) {
     throw new DevelopmentValidationError('工作目录与冻结快照不一致，请先返工或重新交付')
   }
@@ -259,6 +270,14 @@ async function runFrozenDevelopmentValidation(world: ValidationWorld, trimmed: s
         inheritedBrowserTargets,
         command: trimmed,
         timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        beforeStart: () => {
+          try {
+            if (options.grantId) assertQueuedOwnerValidationGrant(world.binding.projectId, options.grantId)
+            if (!validationWorldStillMatches(world)) return '等待浏览器验证期间工作目录或冻结授权范围已变更，未运行验证'
+          } catch (error) {
+            return error instanceof Error ? error.message + '，未运行验证' : '原验证授权不可用，未运行验证'
+          }
+        },
       })
     : undefined
   let commandRun: Awaited<ReturnType<typeof runCommand>> | undefined
@@ -329,7 +348,7 @@ async function runFrozenDevelopmentValidation(world: ValidationWorld, trimmed: s
   const finishedAt = Date.now()
 
   const staleAfter = !validationWorldStillMatches(world)
-  const status: DevelopmentValidationResult['status'] = timedOut ? 'timeout' : staleAfter ? 'stale' : exitCode === 0 ? 'passed' : 'failed'
+  const status: DevelopmentValidationResult['status'] = timedOut ? 'timeout' : staleAfter || browserRun?.notStarted ? 'stale' : exitCode === 0 ? 'passed' : 'failed'
 
   const result: DevelopmentValidationResult = {
     id: options.validationId ?? `val-${randomUUID()}`,
@@ -338,7 +357,7 @@ async function runFrozenDevelopmentValidation(world: ValidationWorld, trimmed: s
     command: trimmed,
     startedAt,
     finishedAt,
-    exitCode,
+    exitCode: timedOut || browserRun?.notStarted ? null : exitCode,
     timedOut,
     status,
     snapshotContentHash: world.snapshot.contentHash,

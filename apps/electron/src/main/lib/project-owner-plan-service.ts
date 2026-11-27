@@ -16,7 +16,7 @@ import { locateOwnerCode } from './project-owner-code-locator'
 import { getProjectOwnerRoleAdviceCatalog } from './project-owner-role-catalog'
 import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt, getRecoveredOwnerPlanSource, isRecoverableOwnerBoundRevisionReceipt, isRecoverableOwnerInitialPlanReceipt, isRetryableOwnerBoundRevisionReceipt, OWNER_BOUND_REVISION_SUPERSEDED, verifyGeneratedOwnerPlan } from './project-owner-planning-run-service'
 import { OwnerPlanningSourceChangedError, readOwnerPlanningSnapshot, resolveOwnerPlanningTask, type OwnerPlanningSnapshot } from './project-owner-planning-source'
-import { parseProjectOwnerPlanningResponse, usesOwnerSourceInspectionRouting, usesSingleTextReviewFolding } from './project-owner-planning-protocol'
+import { parseProjectOwnerPlanningResponse, usesOwnerRosterGrounding, usesOwnerFixedBudgetGrounding, usesOwnerBrowserVerificationRouting, usesOwnerSourceInspectionRouting, usesSingleTextReviewFolding } from './project-owner-planning-protocol'
 import { getProject, getProjectDb, getTask } from './project-sqlite-store'
 import { hasProjectWorkspaceBinding } from './project-workspace-bindings'
 import { listOwnerExecutionCommands } from './project-owner-execution-command'
@@ -532,7 +532,7 @@ export function appendGeneratedOwnerPlan(receiptId: string, mode: 'live' | 'reco
     const current = readCurrent(context)
     checkVersions(context, current, frozen.link.goalRevision, frozen.link.planRevision)
     assertLocalActorEnabled()
-    const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, Date.now(), true, usesOwnerSourceInspectionRouting(frozen.request), usesSingleTextReviewFolding(frozen.request))
+    const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, Date.now(), true, usesOwnerSourceInspectionRouting(frozen.request), usesSingleTextReviewFolding(frozen.request), false, usesOwnerBrowserVerificationRouting(frozen.request), usesOwnerFixedBudgetGrounding(frozen.request), usesOwnerRosterGrounding(frozen.request))
     if (response.kind !== 'plan_proposal' || (mode === 'recover_bound_revision' && !response.proposal.deliveryFeedbackAssessment)) throw new Error('Owner回复缺少对应的方案或版本修订依据')
     const planVersion = (current?.planVersion ?? 0) + 1
     const plan: ProjectOwnerPlanDraft = { schemaVersion: 1, projectId: receipt.projectId, ...(frozen.link.targetTaskId === undefined ? {} : { taskId: frozen.link.targetTaskId }), revision: frozen.link.planRevision + 1, planVersion, goalRevision: frozen.link.goalRevision, goalVersion: frozen.link.goalVersion, state: 'proposed', actor: 'system:owner-planner', origin: 'generated', sourceRun: { receiptId, executionId: receipt.executionId, responseHash: receipt.responseHash }, savedAt: Date.now(), changeReason: '可信规划Run生成新提案；待人工内容确认', contextFingerprint: context.fingerprint, planFingerprint: planFingerprint({ planVersion, goalRevision: frozen.link.goalRevision, contextFingerprint: context.fingerprint, proposal: response.proposal }), sources: context.sources, proposal: response.proposal }

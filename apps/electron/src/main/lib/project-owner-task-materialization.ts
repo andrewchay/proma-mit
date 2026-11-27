@@ -153,12 +153,31 @@ function withTracedCriteria(
   return traced.length ? [...original, ...new Set(traced)] : original
 }
 
+// 需要真正加载页面才可核验的标准，必须跟随最终浏览器回执。
+const browserRuntimeCriterion = /浏览器|渲染|加载|(?:样式|CSS).{0,24}生效|(?:Tab|Enter).{0,24}(?:焦点|触发|通过)|\bbrowser\b|\brender(?:ing|ed)?\b/i
+const interactivePageCriterion = /(?:点击|按下|click|press).{0,40}(?:递增|加一|归零|重置|计数|清空|increment|reset|clear)|(?:控制台|console).{0,20}(?:无报错|无错误|no errors?)/i
+
+function needsBrowserRuntime(criterion: string): boolean {
+  // 控件存在可看源码，输出数值、归零及随输入刷新需要运行回执。
+  if (/(?:本阶段|第一步|前置步骤).{0,20}(?:源码|源文件|静态引用)/.test(criterion)) return false
+  return browserRuntimeCriterion.test(criterion) || interactivePageCriterion.test(criterion)
+    || /(?:#(?:codepoints|words|lines)|码点|词数|行数).{0,40}(?:显示|统计|归零)|输入后.{0,30}(?:统计|更新|刷新)|清空并归零/i.test(criterion)
+}
+
+function requiresFullDevelopmentDelivery(criterion: string, targetPaths: readonly string[]): boolean {
+  if (/完整成果|全部(?:目标)?文件|三文件|(?:三个|3\s*个)(?:页面|目标)?文件/.test(criterion)) return true
+  if (targetPaths.length < 2 || !/交付|提交|提供文件/.test(criterion)) return false
+  const mentioned = new Set(criterion.match(/[a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+/g))
+  return targetPaths.every(path => mentioned.has(path) || mentioned.has(`./${path}`))
+}
+
 /** 只有最终浏览器验收的依赖闭合、早期步骤具体写入文件可确定时才分配分步范围。 */
 function stagedBrowserDevelopment(scope: DevelopmentTaskScope | undefined, steps: readonly ProjectOwnerPlanStep[]) {
   if (!scope?.verificationCommands?.length || !scope.verificationCommands.every(isBrowserVerificationCommand)) return null
   const development = steps.filter(step => step.deliveryKind === 'development')
   if (development.length < 2) return null
-  const integration = development.filter(step => /浏览器|\bbrowser\b/i.test([step.title, ...step.acceptanceCriteria].join('\n')))
+  const integration = development.filter(step => !development.some(other => other.dependencies.includes(step.key))
+    && /浏览器|\bbrowser\b/i.test([step.title, step.outcome, ...step.acceptanceCriteria].join('\n')))
   if (integration.length !== 1) return null
   const final = integration[0]!
   const byKey = new Map(steps.map(step => [step.key, step]))
@@ -175,8 +194,11 @@ function stagedBrowserDevelopment(scope: DevelopmentTaskScope | undefined, steps
   for (const step of development) {
     if (step === final) continue
     if (!upstream.has(step.key)) return null
-    const names = new Set(step.title.match(/[a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+/g) ?? [])
-    const targets = scope.targetPaths.filter(path => names.has(path))
+    const filenames = /[a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+/g
+    const titles = new Set(step.title.match(filenames))
+    const outcomes = new Set(step.outcome.match(filenames))
+    const titleTargets = scope.targetPaths.filter(path => titles.has(path))
+    const targets = titleTargets.length ? titleTargets : scope.targetPaths.filter(path => outcomes.has(path))
     if (!targets.length || targets.some(path => used.has(path))) return null
     for (const path of targets) used.add(path)
     scopes.set(step.key, { ...scope, targetPaths: targets, verificationCommands: [STAGED_FILES_VERIFICATION_COMMAND] })
@@ -265,9 +287,20 @@ function currentPreview(subject: ProjectOwnerGoalSubject, input: OwnerTaskMateri
   const selectedSteps = source.plan.proposal.steps.filter(step => source.selectedStepKeys.includes(step.key))
   if (selectedSteps.length !== source.selectedStepKeys.length) fail('冻结步骤缺失')
   const staged = stagedBrowserDevelopment(source.developmentScope, selectedSteps)
+  const requiresFinalEvidence = (criterion: string) => needsBrowserRuntime(criterion)
+    || requiresFullDevelopmentDelivery(criterion, source.developmentScope?.targetPaths ?? [])
   const trace = source.plan.proposal.criteriaTrace?.map(item => staged?.scopes.has(item.stepKey)
-    ? { ...item, stepKey: staged.finalKey } : item)
-  const projectedCriteria = new Map(selectedSteps.map(step => [step.key, withTracedCriteria(step, trace)]))
+    && requiresFinalEvidence(item.sourceText) ? { ...item, stepKey: staged.finalKey } : item)
+  const finalCriteria = selectedSteps.filter(step => staged?.scopes.has(step.key))
+    .flatMap(step => step.acceptanceCriteria.filter(requiresFinalEvidence))
+  const projectedCriteria = new Map(selectedSteps.map(step => {
+    const criteria = withTracedCriteria(step, trace)
+    if (staged?.scopes.has(step.key)) {
+      const staticCriteria = criteria.filter(criterion => !requiresFinalEvidence(criterion))
+      return [step.key, staticCriteria.length ? staticCriteria : ['本阶段目标文件已生成并通过文件快照核验']]
+    }
+    return [step.key, step.key === staged?.finalKey ? [...new Set([...criteria, ...finalCriteria])] : criteria]
+  }))
   // 混合批次接替：已验收且规格未变的步骤不再进入新批次。
   // 若原样重建，「A 已验收、B 失败」的恢复会给 A 建一个全新的可派发任务并再次计费。
   const retainedSteps = resolveRetainedSteps(subject, selectedSteps.map(step => {

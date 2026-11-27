@@ -26,11 +26,14 @@ export const MILES_CONVERSION_CHECK = 'conversion.miles-km'
 export const MILES_CONVERSION_VERIFICATION_COMMAND = `browser:html.loads+${MILES_CONVERSION_CHECK}`
 
 /** 仅为确切匹配的英里转公里交付要求固定四项行为验证。 */
-export function requiresOwnerMilesConversionVerification(steps: ReadonlyArray<{ acceptanceCriteria?: readonly string[] }>, targets: readonly string[]): boolean {
+export function requiresOwnerMilesConversionVerification(steps: ReadonlyArray<{ acceptanceCriteria?: readonly string[] }>, targets: readonly string[], objective?: string): boolean {
   if (targets.filter(target => /\.html?$/i.test(target)).length !== 1) return false
   const criteria = steps.flatMap(step => step.acceptanceCriteria ?? []).join(' ')
-  return /1\.609344(?!\d)/.test(criteria) && /1\.61(?!\d)/.test(criteria) && /0\.00(?!\d)/.test(criteria)
-    && /空输入|空值|empty input/i.test(criteria) && /负数|negative/i.test(criteria)
+  const numericExamples = /1\.609344(?!\d)/.test(criteria) && /1\.61(?!\d)/.test(criteria) && /0\.00(?!\d)/.test(criteria)
+  const preciseObjective = objective && /1\.609344(?!\d)/.test(objective) && /两位小数|2位小数|two decimal places/i.test(objective)
+    && /#miles\b/.test(objective) && /#convert-btn\b/.test(objective)
+  const requirements = objective ? `${objective} ${criteria}` : criteria
+  return (numericExamples || Boolean(preciseObjective)) && /空输入|空值|空\b|空\s*[、/／，]|empty input/i.test(requirements) && /负数|negative/i.test(requirements)
 }
 
 /** 明确同时要求按钮式计数、重置和键盘时，页面可加载不能作为唯一验证。 */
@@ -74,6 +77,7 @@ export interface BrowserVerificationOutcome {
   checks: OwnerRuntimeBrowserCheckResult[]
   exitCode: number
   timedOut: boolean
+  notStarted?: true
   output: string
   outputTruncated: boolean
   rawOutputSha256: string
@@ -91,6 +95,7 @@ export async function executeBrowserVerificationCommand(input: {
   inheritedBrowserTargets?: readonly string[]
   command: string
   timeoutMs: number
+  beforeStart?: () => string | void
 }): Promise<BrowserVerificationOutcome> {
   const checkIds = parseBrowserVerificationCheckIds(input.command)
   const browserPaths = input.targetPaths.some(path => /\.html?$/i.test(path))
@@ -102,6 +107,7 @@ export async function executeBrowserVerificationCommand(input: {
     .filter(path => ['.js', '.mjs', '.css'].includes(extname(path).toLowerCase()) && existsSync(resolve(input.workspaceRoot, path)))
   const collected: OwnerRuntimeBrowserCheckResult[] = []
   let timedOut = false
+  let notStarted = false
   for (const target of targets) {
     const result = await runOwnerRuntimeBrowserAssertions({
       workspaceRoot: input.workspaceRoot,
@@ -109,18 +115,21 @@ export async function executeBrowserVerificationCommand(input: {
       resourcePaths,
       intents: [],
       timeoutMs: perFileBudget,
+      beforeStart: input.beforeStart,
       templates,
     })
     timedOut = timedOut || result.timedOut
     for (const check of result.checks) {
       collected.push(targets.length > 1 ? { ...check, id: `${target}#${check.id}`, title: `${target}：${check.title}` } : check)
     }
+    if (result.notStarted) { notStarted = true; break }
   }
   const output = JSON.stringify(collected)
   // skipped 不是通过：Owner 明确声明了这条验收，环境不适用就必须如实失败，不能靠跳过凑绿。
   const hasFailure = collected.length === 0 || collected.some(check => check.status !== 'passed')
   return {
     checks: collected,
+    ...(notStarted ? { notStarted: true } : {}),
     exitCode: timedOut ? 1 : hasFailure ? 1 : 0,
     timedOut,
     output,

@@ -22,7 +22,7 @@ const CRITICALITIES = ['critical', 'advisory'] as const
 const VERIFICATIONS = ['automated', 'manual_review', 'user_decision', 'unverified'] as const
 const PER_OUTPUT_WORDING = /各自|每份|\b(?:each|every)\b/i
 const JOINT_OUTPUT_WORDING = /合计|加总|总和|总计|合并|汇总|另一份|其他(?:文本|成果|交付物)|跨(?:文本|成果|交付物)|相互|一致|比对|对比|\b(?:combined|sum|sum total|compared|consistent|match(?:es)?|other deliverables?)\b/i
-const SOLE_TEXT_DELIVERY = /(?:^|[。！？；\n])\s*(?:只|仅)交付(?:通知|短信|邮件|文案|短讯)?正文\s*(?=$|[。！？；\n]|[，,]\s*(?:省去|不含|不附|不要附))/
+const SOLE_TEXT_DELIVERY = /(?:^|[。！？；，,\n])\s*(?:只|仅)(?:需)?(?:交付|提交|输出)(?:一份)?(?:完整|最终)?(?:通知|短信|邮件|文案|短讯)?正文\s*(?=$|[。！？；，,\n])/
 const MULTIPLE_DELIVERIES = /[两二三四五六七八九多2-9]\s*(?:段|份|项|个)[^，。；！？\n]{0,12}(?:正文|文本|文案|通知|材料|成果|交付物)|(?:分别|同时|另需|额外)交付|另附|\b(?:two|multiple|several)\s+(?:texts|documents|deliverables)\b/i
 
 export interface CriteriaCoverage {
@@ -59,6 +59,13 @@ function collectSources(goal: ProjectOwnerGoalBrief): Array<{ source: ProjectOwn
   ]
 }
 
+/** 终验只使用原目标中明确要求单份正文的句子。 */
+export function ownerGoalRequiresSingleTextDelivery(goal: ProjectOwnerGoalBrief): boolean {
+  const sources = collectSources(goal)
+  return sources.some(({ sourceText }) => SOLE_TEXT_DELIVERY.test(sourceText))
+    && sources.every(({ sourceText }) => !PER_OUTPUT_WORDING.test(sourceText) && !MULTIPLE_DELIVERIES.test(sourceText.replace(/(?:不得|不要|不必|无需|不需|不再|不|禁止)\s*(?:另附|额外交付)/g, '')))
+}
+
 export function projectOwnerStepCriterion(item: Pick<ProjectOwnerCriterionTrace, 'sourceText' | 'verificationScope'>): string {
   const text = item.sourceText.trim()
   return item.verificationScope === 'own_text' ? `只核验本步骤自己的交付文本是否满足逐份要求（原文：${text}）` : text
@@ -88,10 +95,10 @@ export function resolveOwnerRevisionCriteriaSources(input: unknown, goal: Projec
 export function parseCriteriaTrace(input: unknown, goal: ProjectOwnerGoalBrief, steps: readonly ProjectOwnerPlanStep[]): ProjectOwnerCriterionTrace[] {
   if (!Array.isArray(input) || input.length < 1 || input.length > MAX_TRACE_ITEMS) throw new Error('目标追溯记录数量无效')
   const sources = collectSources(goal)
+  const browserVerificationRequested = sources.some(item => /浏览器|\bbrowser\b/i.test(item.sourceText))
   const soleTextDelivery = steps.length === 1 && steps[0]?.deliveryKind === 'text'
-    && sources.some(item => SOLE_TEXT_DELIVERY.test(item.sourceText))
-    && sources.every(item => !PER_OUTPUT_WORDING.test(item.sourceText) && !MULTIPLE_DELIVERIES.test(item.sourceText))
-  const stepKeys = new Set(steps.map((step) => step.key))
+    && ownerGoalRequiresSingleTextDelivery(goal)
+  const stepByKey = new Map(steps.map(step => [step.key, step]))
   const seen = new Set<string>()
   const trace: ProjectOwnerCriterionTrace[] = input.map((raw) => {
     const value = record(raw, ['key', 'source', 'sourceIndex', 'sourceText', 'criticality', 'stepKey', 'verification', 'verificationScope', 'assumptions'], '目标追溯项')
@@ -109,8 +116,13 @@ export function parseCriteriaTrace(input: unknown, goal: ProjectOwnerGoalBrief, 
     if (!matched.sourceText.includes(sourceText)) throw new Error(`目标追溯来源原文与目标不符：${key}`)
     if (!CRITICALITIES.includes(value.criticality as typeof CRITICALITIES[number])) throw new Error('目标追溯关键性无效')
     const stepKey = text(value.stepKey, '承接步骤', 200)
-    if (!stepKeys.has(stepKey)) throw new Error(`目标追溯指向的计划步骤不存在：${stepKey}`)
-    if (!VERIFICATIONS.includes(value.verification as typeof VERIFICATIONS[number])) throw new Error('目标追溯检验方式无效')
+    const step = stepByKey.get(stepKey)
+    if (!step) throw new Error(`目标追溯指向的计划步骤不存在：${stepKey}`)
+    // 这里只标记计划中的核验方式，实际浏览器结果仍须由冻结运行回执证明。
+    const browserAlias = value.verification === 'browser_test' || value.verification === 'browser_e2e'
+    const verification = browserAlias && browserVerificationRequested && step.deliveryKind === 'development'
+      ? 'automated' : value.verification
+    if (!VERIFICATIONS.includes(verification as typeof VERIFICATIONS[number])) throw new Error('目标追溯检验方式无效')
     // 用户明确只要一份正文时，逐份元数据多余，保留同一条完整正文验收原文。
     const verificationScope = soleTextDelivery && value.verificationScope === 'own_text' && value.criticality === 'critical'
       ? undefined : value.verificationScope
@@ -127,7 +139,7 @@ export function parseCriteriaTrace(input: unknown, goal: ProjectOwnerGoalBrief, 
       key, source, sourceIndex, sourceText,
       criticality: value.criticality as ProjectOwnerCriterionTrace['criticality'],
       stepKey,
-      verification: value.verification as ProjectOwnerCriterionTrace['verification'],
+      verification: verification as ProjectOwnerCriterionTrace['verification'],
       ...(verificationScope === 'own_text' ? { verificationScope } : {}),
       assumptions: [...assumptions] as string[],
     }

@@ -1,4 +1,4 @@
-import type { ProjectOwnerGoalBrief } from '@gravitas/shared'
+import type { ProjectOwnerGoalBrief, ProjectOwnerPlanProposal } from '@gravitas/shared'
 
 const ITEMIZED_BUDGET = /(?:逐项预算|分项预算|预算明细|itemized budget)/i
 const BUDGET_TOTAL = /(?:合计|总计|总额|\btotal\b)/i
@@ -15,6 +15,49 @@ function amountInCents(value: string): number | undefined {
   if (!/^(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(normalized)) return undefined
   const cents = Math.round(Number(normalized.replaceAll(',', '')) * 100)
   return Number.isSafeInteger(cents) ? cents : undefined
+}
+
+/** 只复算已给齐人数、逐条单价和上限的预算，跳过含估算或额外约束的目标。 */
+export function readOwnerFixedBudget(goal: ProjectOwnerGoalBrief): { total: number; balance: number } | null {
+  const objective = goal.objective
+  const count = /^(?:为|按|共)?([1-9]\d?|[一二两三四五六七八九十])\s*人[^。；\n]{0,40}预算/.exec(objective)?.[1]
+  const words: Readonly<Record<string, number>> = { 一: 1, 二: 2, 两: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10 }
+  const people = count ? (words[count] ?? Number(count)) : 0
+  if (!people || !/(?:计算|核算|写清|列出|对照)[^。\n]{0,38}(?:余额|剩余预算)/.test(objective)
+    || /估算|待定|约为|折扣|税费|另加|额外|可选/.test(objective)
+    || [...goal.constraints, ...goal.acceptanceCriteria].some(text => /元|人数|\d\s*人|费用|折扣|税费/.test(text))) return null
+  const cap = /(?:对照\s*)?([\d,]+(?:\.\d{1,2})?)\s*元\s*(?:预算)?上限/.exec(objective)?.[1] ?? MAX_BUDGET.exec(objective)?.[1]
+  const maximum = cap === undefined ? undefined : amountInCents(cap)
+  if (maximum === undefined) return null
+  const item = /^([^\d，,。：:]+?)\s*([\d,]+(?:\.\d{1,2})?)\s*元(\s*[/／]\s*人)?$/
+  const rows = objective.split(/[。；;\n]/).map(line => line.split(/[，,、]/).map(part => item.exec(part.trim())))
+    .filter(line => line.length >= 2 && line.every(row => row !== null))
+  if (rows.length !== 1) return null
+  const entries = rows[0]!
+  if (entries.length + 1 !== (objective.match(/\d(?:[\d,.]*\d)?\s*元/g)?.length ?? 0)) return null
+  const names = new Set<string>()
+  let total = 0
+  for (const row of entries) {
+    const label = row![1]!.trim()
+    const perPerson = Boolean(row![3]) || /^(?:每人|人均)|(?:每人|人均)$/.test(label)
+    const name = label.replace(/^(?:每人|人均)|(?:每人|人均)$/g, '').trim()
+    const amount = amountInCents(row![2]!)
+    if (!name || /每|人均|按[次餐天批套]|\/|／|或|起步/.test(name) || names.has(name) || amount === undefined) return null
+    names.add(name)
+    total += amount * (perPerson ? people : 1)
+  }
+  return Number.isSafeInteger(total) && total <= maximum ? { total, balance: maximum - total } : null
+}
+
+/** 派工前只修正规划模型写入的合计和余额，用户原文和逐项标准原样保留。 */
+export function applyOwnerFixedBudgetCriteria(plan: ProjectOwnerPlanProposal, budget: { total: number; balance: number }): ProjectOwnerPlanProposal {
+  const correct = (text: string) => text.replace(
+    /(^|[，,、。；;：:\n（(]|(?:及|并|与)\s*)(\s*(?:实际|全部项目|项目|最终)?)(总计|总支出|合计|余额|剩余预算)(\s*(?:为|是|应为|[:：=＝])?\s*)[\d,]+(?:\.\d{1,2})?\s*元/g,
+    (_match, boundary: string, qualifier: string, label: string, separator: string) => `${boundary}${qualifier}${label}${separator}${(/余额|剩余/.test(label) ? budget.balance : budget.total) / 100}元`,
+  )
+  return { ...plan, summary: correct(plan.summary), steps: plan.steps.map(step => ({
+    ...step, outcome: correct(step.outcome), acceptanceCriteria: [...new Set(step.acceptanceCriteria.map(correct))],
+  })) }
 }
 
 export function ownerGoalRequiresItemizedBudget(goal: ProjectOwnerGoalBrief): boolean {

@@ -39,6 +39,11 @@ export function inspectDevelopmentWorkspaceBlocker(repository: string, workspace
   if (top !== root) return { kind: 'not_git_root', workspaceId, workspaceName, repository: root, detail: `工作区不是仓库根目录（仓库根为 ${top}）` }
   // -z 且不 trim：porcelain 的 " M path" 前导空格是状态位，trim 会截断首个路径字符。
   const { trackedFiles, untrackedFiles } = parseStatus(git(root, 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames'))
+  if (untrackedFiles.length) {
+    const { isUnmodifiedLegacyOwnerPlanningArchive, OWNER_PLANNING_ARCHIVE_PATH } = require('./project-owner-planning-doc-service') as typeof import('./project-owner-planning-doc-service')
+    const archiveIndex = untrackedFiles.indexOf(OWNER_PLANNING_ARCHIVE_PATH)
+    if (archiveIndex >= 0 && isUnmodifiedLegacyOwnerPlanningArchive(root, workspaceId)) untrackedFiles.splice(archiveIndex, 1)
+  }
   if (!trackedFiles.length && !untrackedFiles.length) return { kind: 'ready' }
   return {
     kind: 'dirty_worktree', workspaceId, workspaceName, repository: root,

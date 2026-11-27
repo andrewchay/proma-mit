@@ -1,3 +1,5 @@
+import { findOwnerClosedWorklistConflict } from './project-owner-delivery-content'
+import { ownerGoalRequiresSingleTextDelivery } from './project-owner-criteria-trace'
 import { findOwnerDeliveredBudgetIssue, type OwnerDocumentEvidenceItem } from './project-owner-budget-deliverable'
 import { findOwnerDeliveredRosterConflict } from './project-owner-roster-scenario'
 import { readLatestAcceptedArtifact } from './project-owner-accepted-artifact'
@@ -286,7 +288,14 @@ function publishGrantCompletion(projectId: string, grant: OwnerDeliveryGrant): b
   }
   const goal = listProjectOwnerGoalHistory(projectId, subject.taskId).find(item => item.revision === source.goalRevision)
   if (!goal) return false
-  const originalGoalIssue = findOwnerDeliveredBudgetIssue(goal.goal, documentEvidence) ?? findOwnerDeliveredRosterConflict(goal.goal, documentEvidence)
+  const fileSteps = new Set(documentEvidence.filter(item => item.fileSnapshot).map(item => item.stepKey))
+  const textCount = items.filter(item => !fileSteps.has(item.stepKey)).length
+  const singleTextIssue = ownerGoalRequiresSingleTextDelivery(goal.goal) && textCount !== 1
+    ? `原目标只要求一份正文，当前准备交付 ${textCount} 份。请先核对唯一最终版本。` : null
+  const worklistIssue = documentEvidence.filter(item => !item.fileSnapshot)
+    .map(item => findOwnerClosedWorklistConflict(goal.goal, item.content)).find(Boolean)
+  const originalGoalIssue = singleTextIssue ?? findOwnerDeliveredBudgetIssue(goal.goal, documentEvidence)
+    ?? findOwnerDeliveredRosterConflict(goal.goal, documentEvidence) ?? worklistIssue
   if (originalGoalIssue) {
     appendOwnerManagementMessage({ projectId, eventId: `owner-delivery-original-goal-blocked:${grant.id}`, ...(subject.taskId ? { taskId: subject.taskId } : {}),
       role: 'assistant', kind: 'attention', goalRevision: goal.revision,

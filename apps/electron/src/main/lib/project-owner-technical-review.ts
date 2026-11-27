@@ -1,3 +1,7 @@
+import { findOwnerClosedWorklistConflict } from './project-owner-delivery-content'
+import { OWNER_TEXT_HANDOFF_HEADER } from './project-owner-delivery-content'
+import { findOwnerUnstatedWeekday, isOwnerSourceFactsCriterion } from './project-owner-source-facts'
+import { bindOwnerEvidenceRows } from './project-owner-evidence-reference'
 import { findOwnerItemizedBudgetIssue, findOwnerDeliveredBudgetIssue, ownerGoalRequiresItemizedBudget } from './project-owner-budget-deliverable'
 import { findOwnerDeliveredRosterConflict, findOwnerRosterScenarioConflict } from './project-owner-roster-scenario'
 import { listProjectOwnerGoalHistory } from './project-owner-goal-service'
@@ -97,7 +101,7 @@ interface ReviewCommandRow {
 const MAX_RESPONSE_LENGTH = 100_000
 const MAX_CRITERIA = 64
 const MAX_FINDINGS = 32
-export const OWNER_TEXT_HANDOFF_HEADER = 'Owner文本上游成果交接 v2。'
+export { OWNER_TEXT_HANDOFF_HEADER } from './project-owner-delivery-content'
 export const OWNER_REVIEW_BINDING_HEADER = 'Owner技术评审成果绑定 v1。'
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -159,9 +163,21 @@ function resolveOwnerEscapedSourceQuote(content: string, quote: string): string 
   return matches.length === 1 ? decoded : undefined
 }
 
-/** 只去掉包住整个回执的 Markdown 围栏，保留原文及摘要供审计。 */
+/** 只去掉包住完整回执的 Markdown 围栏。 */
 export function unwrapReviewReceipt(raw: string): string {
   return /^\s*```(?:json)?[ \t]*\r?\n([\s\S]*?)\r?\n```\s*$/i.exec(raw)?.[1] ?? raw
+}
+
+function normalizeReviewReceiptEnvelope(raw: string): string {
+  const receipt = unwrapReviewReceipt(raw)
+  // 有界补正后，模型偶尔在完整 JSON 之外复述提交状态。只接受与对象一致的这一种附注。
+  const footer = /\r?\n\s*(?:🟢\s*)?补正提交[：:]\s*严格\s*JSON\s*已重新输出[，,]\s*评审结论(?:仍)?为\s*(approved|changes_requested|blocked)[。.]?\s*$/.exec(receipt)
+  if (!footer) return receipt
+  const candidate = unwrapReviewReceipt(receipt.slice(0, footer.index))
+  try {
+    const value: unknown = JSON.parse(candidate)
+    return isRecord(value) && value.verdict === footer[1] ? candidate : receipt
+  } catch { return receipt }
 }
 
 /** 还原可核对的逐字引用，或将代码评审中未验证项的无效引用置空。原回执由记录服务保留。 */
@@ -218,10 +234,30 @@ function closeOwnerReviewPathQuote(receipt: string, artifactContent: string): st
   } catch { return receipt }
 }
 
+/** 实测失败和缺少实测证据表达的是不同状态。只纠正明确引用同一份失败回执的返工项。 */
+function bindFailedOwnerReviewCriteria(response: Record<string, unknown>, validation: OwnerDevelopmentValidationArtifact[]): unknown {
+  if (response.schemaVersion !== 3 || response.verdict !== 'changes_requested' || response.blockerReason !== null
+    || !Array.isArray(response.findings) || response.findings.length === 0 || !Array.isArray(response.criteria)
+    || response.criteria.some(row => isRecord(row) && row.status === 'not_met')) return response
+  const original = response.criteria
+  const criteria = original.map((row: unknown) => {
+    if (!isRecord(row) || row.status !== 'not_verified' || row.quote !== null || typeof row.evidence !== 'string') return row
+    const references = [...row.evidence.matchAll(/\bV([1-9]\d{0,5})\b/g)]
+    const failed = references.some(([, index]) => {
+      const receipt = validation[Number(index) - 1]
+      return receipt?.attemptState === 'completed' && receipt.freshness === 'fresh' && !isOwnerValidationEvidenceExpired(receipt)
+        && receipt.status === 'failed' && typeof receipt.exitCode === 'number' && receipt.exitCode !== 0 && receipt.timedOut === false
+        && receipt.outputTruncated === false && Boolean(receipt.rawOutputSha256) && Number.isSafeInteger(receipt.rawOutputByteLength)
+    })
+    return failed ? { ...row, status: 'not_met' } : row
+  })
+  return criteria.some((row, index) => row !== original[index]) ? { ...response, criteria } : response
+}
+
 /** 历史回执和实时评审共同使用相同的长度限制及引用核对规则。 */
-export function normalizeOwnerTechnicalReviewReceipt(raw: string, artifactContent: string | undefined, validationEvidence?: OwnerDevelopmentValidationArtifact[], binding?: { prompt: string; hash: string }): string {
+export function normalizeOwnerTechnicalReviewReceipt(raw: string, artifactContent: string | undefined, validationEvidence?: OwnerDevelopmentValidationArtifact[], binding?: { prompt: string; hash: string; criteria?: readonly string[] }): string {
   if (artifactContent === undefined || raw.length > MAX_RESPONSE_LENGTH) return raw
-  let receipt = unwrapReviewReceipt(raw)
+  let receipt = normalizeReviewReceiptEnvelope(raw)
   // 标记位只接受主进程生成的固定开头。目标、资料或成果正文中的同名字符串没有绑定语义。
   if (binding && /^[a-f0-9]{64}$/.test(binding.hash) && (
     binding.prompt.startsWith(OWNER_REVIEW_BINDING_HEADER + '\n\n') ||
@@ -234,9 +270,27 @@ export function normalizeOwnerTechnicalReviewReceipt(raw: string, artifactConten
         try { response = JSON.parse(receipt) } catch { /* 由严格解析器报错。 */ }
       }
     }
+    if (binding.criteria && isRecord(response) && Array.isArray(response.criteria) && (response.schemaVersion === 2 || response.schemaVersion === 3)) {
+      const criteria = bindOwnerEvidenceRows(response.criteria, binding.criteria, {
+        content: artifactContent, development: response.schemaVersion === 3, validation: validationEvidence,
+      })
+      if (criteria !== response.criteria) {
+        response = { ...response, criteria }
+        receipt = JSON.stringify(response)
+      }
+    }
     if (isRecord(response) && (response.schemaVersion === 2 || response.schemaVersion === 3) && !Object.hasOwn(response, 'artifactHash')) {
       receipt = JSON.stringify({ ...response, artifactHash: binding.hash })
     }
+  }
+  if (binding && validationEvidence?.length) {
+    try {
+      const response: unknown = JSON.parse(receipt)
+      if (isRecord(response)) {
+        const normalized = bindFailedOwnerReviewCriteria(response, validationEvidence)
+        if (normalized !== response) receipt = JSON.stringify(normalized)
+      }
+    } catch { /* 由严格解析器报错。 */ }
   }
   return normalizeOwnerTechnicalReviewQuotes(receipt, artifactContent, validationEvidence)
 }
@@ -470,32 +524,42 @@ export function recordOwnerTechnicalReviewEvidence(reviewerCommandId: string, re
       throw new Error('Owner代码Reviewer缺少完整且绑定冻结命令的验证回执')
     }
   }
-  let receiptJson = artifactHash ? normalizeOwnerTechnicalReviewReceipt(rawResponse, artifactContent, validationEvidence,
-    reviewerExecution?.prompt ? { prompt: reviewerExecution.prompt, hash: artifactHash } : undefined) : rawResponse
   const { criteria, goalRevision } = readFrozenCriteriaSource(row)
+  let receiptJson = artifactHash ? normalizeOwnerTechnicalReviewReceipt(rawResponse, artifactContent, validationEvidence,
+    reviewerExecution?.prompt ? { prompt: reviewerExecution.prompt, hash: artifactHash, criteria } : undefined) : rawResponse
   const parseReceipt = (receipt: string) => parseOwnerTechnicalReviewResponse(receipt, criteria, artifactHash, artifactContent, development ? 'development' : 'text', validationEvidence)
   let response = parseReceipt(receiptJson)
   if (response.verdict === 'approved' && artifactContent) {
     const budgetCriterion = criteria.findIndex(text => /(?:预算.*合计|合计.*预算|itemized budget)/i.test(text))
-    const scenarioCriterion = criteria.findIndex(text => /候补|递补/.test(text) && /示例|例子|走查|人数/.test(text))
+    const explicitScenarioCriterion = criteria.findIndex(text => /候补|递补/.test(text) && /示例|例子|走查|人数/.test(text))
+    const scenarioCriterion = explicitScenarioCriterion >= 0 ? explicitScenarioCriterion
+      : criteria.findIndex(text => /候补|补位|递补|到场|签到|示例|核对表|名单|截止/.test(text))
     const goal = listProjectOwnerGoalHistory(row.project_id, row.grant_task_id ?? undefined).find(item => item.revision === goalRevision)?.goal
     const budgetIssue = goal && budgetCriterion >= 0 && ownerGoalRequiresItemizedBudget(goal)
       ? development ? findOwnerDeliveredBudgetIssue(goal, [{ content: artifactContent, fileSnapshot: true }], false) : findOwnerItemizedBudgetIssue(goal, artifactContent)
       : null
-    const scenarioIssue = goal && scenarioCriterion >= 0
+    const scenarioIssue = goal
       ? development ? findOwnerDeliveredRosterConflict(goal, [{ content: artifactContent, fileSnapshot: true }], false) : findOwnerRosterScenarioConflict(goal, artifactContent)
       : null
-    const issue = budgetIssue ?? scenarioIssue
+    const worklistCriterion = criteria.findIndex(text => /(?:仅含|只含|只有|仅有|只包含|仅包含|限定|三项|工作范围)/.test(text))
+    const worklistIssue = goal && !development && worklistCriterion >= 0 ? findOwnerClosedWorklistConflict(goal, artifactContent) : null
+    const factsCriterion = criteria.findIndex(isOwnerSourceFactsCriterion)
+    const factsIssue = goal && !development ? findOwnerUnstatedWeekday(goal, artifactContent) : null
+    const issue = budgetIssue ?? scenarioIssue ?? worklistIssue ?? factsIssue
     if (issue) {
-      const criterionIndex = budgetIssue ? budgetCriterion : scenarioCriterion
-      receiptJson = JSON.stringify({ ...response, verdict: 'changes_requested', summary: issue,
-        criteria: response.criteria.map((item, index) => index === criterionIndex ? {
-          ...item, status: 'not_met', evidence: issue, ...(response.schemaVersion !== 1 ? { quote: null } : {}),
-        } : item),
-        findings: [{ severity: 'high', description: issue, requestedChange: budgetIssue
-          ? '提供可复算的逐项预算和合计。若用户允许估算，标明各项估算依据；缺少无法合理估算的输入时请明确提出。'
-          : '复算签到与候补示例，按确认发生的时点更新名单和可用席位，并让正文和核对表一致。' }],
-      })
+      const criterionIndex = budgetIssue ? budgetCriterion : scenarioIssue ? scenarioCriterion : worklistIssue ? worklistCriterion : factsCriterion
+      if (criterionIndex < 0) {
+        receiptJson = JSON.stringify({ ...response, verdict: 'blocked', summary: issue, blockerReason: issue })
+      } else {
+        receiptJson = JSON.stringify({ ...response, verdict: 'changes_requested', summary: issue,
+          criteria: response.criteria.map((item, index) => index === criterionIndex ? {
+            ...item, status: 'not_met', evidence: issue, ...(response.schemaVersion !== 1 ? { quote: null } : {}),
+          } : item),
+          findings: [{ severity: 'high', description: issue, requestedChange: budgetIssue
+            ? '提供可复算的逐项预算和合计。若用户允许估算，标明各项估算依据；缺少无法合理估算的输入时请明确提出。'
+            : issue }],
+        })
+      }
       response = parseReceipt(receiptJson)
     }
   }

@@ -1,5 +1,6 @@
+import { findOwnerClosedWorklistConflict } from './project-owner-delivery-content'
 import { expect, test } from 'bun:test'
-import { findOwnerDeliveredRosterConflict, findOwnerRosterScenarioConflict } from './project-owner-roster-scenario'
+import { findOwnerDeliveredRosterConflict, findOwnerRosterScenarioConflict, readOwnerRosterDeadlineInstruction } from './project-owner-roster-scenario'
 
 const goal = {
   projectId: 'project', goalVersion: 1, constraints: [], acceptanceCriteria: [],
@@ -55,4 +56,57 @@ test('Given正文已开始确认并预留席位 When人数表在同一动作后�
   expect(findOwnerDeliveredRosterConflict(goal, [artifact(timing.replace('递补窗口开启，开始联系', '窗口开启时、开始联系之前，尚未联系'))])).toBeNull()
   const twoEvents = timing.replace('递补窗口开启，开始联系候补 1 |', '开始联系候补 1，尚未接通 |\n| 14:05 | 10 | 1 | 接通，开始确认 |')
   expect(findOwnerDeliveredRosterConflict(goal, [artifact(twoEvents)])).toBeNull()
+})
+
+test('Given具名报名场景只给候补到场时间 When正文表填写其他人的具体时刻 Then要求使用原始事实', () => {
+  const brief = { ...goal, objective: '14:00开场，13:45签到，报名甲乙丙共三人，乙未到；候补丁13:58到场，确认耗时3分钟。' }
+  const content = ['| 人员 | 身份 | 到场时间 |', '| -- | -- | -- |', '| 甲 | 报名 | 13:45 内 |', '| 丁 | 候补 | 13:58 |'].join('\n')
+  expect(findOwnerRosterScenarioConflict(brief, content)).toContain('原目标未提供「甲」在 13:45')
+  expect(findOwnerRosterScenarioConflict(brief, content.replace('13:45 内', '已到，时间未提供'))).toBeNull()
+})
+
+
+test('Given只做原目标的三项工作 When模板新增签字确认 Then要求删除额外动作', () => {
+  const brief = { ...goal, objective: '只有三项工作：核对钥匙3把、检查两部对讲机、记录场地巡检状态。' }
+  const body = ['接班人：＿＿', '## 钥匙', '## 对讲机', '## 巡检'].join('\n')
+  expect(findOwnerClosedWorklistConflict(brief, body)).toBeNull()
+  const withSignature = body + '\n接班人签字确认：__________'
+  expect(findOwnerClosedWorklistConflict(brief, withSignature)).toContain('额外动作')
+  expect(findOwnerClosedWorklistConflict({ ...brief, objective: brief.objective + '请保留签字位。' }, withSignature)).toBeNull()
+  expect(findOwnerClosedWorklistConflict({ ...brief, objective: brief.objective + '不得新增签字确认。' }, withSignature)).toContain('额外动作')
+})
+
+test('Given正式补位有严格截止 When走查无误却在截止后更新正式名单 Then拒绝正文及文件交付', () => {
+  const brief = { ...goal, objective: '交付 manual/handbook.md。候补丁13:58到场，确认耗时3分钟，14:00前完成才能正式补位。写清14:01后的处理。' }
+  const content = [
+    '确认须在 14:00 开场前完成，方可正式补位。',
+    '14:00 正式名单为甲、丙两人。',
+    '## 五、14:01 后处理规则',
+    '1. 14:00 时未完成候补确认的，确认流程可在开场后继续完成。',
+    '2. 确认完成后，丁于完成时点正式补位，名单更新为甲、丙、丁，人数 3。',
+  ].join('\n')
+  expect(findOwnerRosterScenarioConflict(brief, content)).toContain('14:00 前完成确认')
+  expect(findOwnerDeliveredRosterConflict(brief, [artifact(content)])).toContain('丁于完成时点正式补位')
+  expect(findOwnerRosterScenarioConflict(brief, content.replace(content.split('\n').at(-1)!, '2. 丁在 14:01 确认，只记录结果，不正式补位。'))).toBeNull()
+  expect(findOwnerRosterScenarioConflict(brief, '丁 14:00 完成确认并正式补位。')).toContain('截止时或截止后')
+  expect(findOwnerRosterScenarioConflict(brief, '| 14:01 完成确认 | 丁 | 纳入正式名单 |')).toContain('纳入正式名单')
+  const earlierArrival = { ...brief, objective: brief.objective.replace('13:58', '13:56') }
+  expect(findOwnerRosterScenarioConflict(earlierArrival, '丁 13:59 完成确认并正式补位。')).toBeNull()
+  expect(findOwnerRosterScenarioConflict(earlierArrival, '丁 13:59 完成确认，14:01 登记并纳入正式名单。')).toBeNull()
+  expect(findOwnerRosterScenarioConflict(brief, '丁 13:59 完成确认并正式补位。')).toContain('冲突原文')
+  expect(findOwnerRosterScenarioConflict(brief, '| 候补 1 | 丁 | 已到 | 确认耗时 3 分钟，14:00 前完成，正式补位 |')).toContain('冲突原文')
+  expect(findOwnerRosterScenarioConflict(brief, '丁14:01完成确认，不满足「14:00 前完成才能正式补位」，只记录。')).toBeNull()
+  expect(readOwnerRosterDeadlineInstruction(brief)).toContain('最早于 14:01 完成')
+  expect(readOwnerRosterDeadlineInstruction(earlierArrival)).toBeNull()
+  expect(readOwnerRosterDeadlineInstruction({ ...brief, constraints: ['候补丁13:58到场，确认耗时3分钟。'] })).toContain('最早于 14:01 完成')
+  expect(findOwnerRosterScenarioConflict(brief, '丁未完成确认，戊正式补位。')).toBeNull()
+  expect(findOwnerRosterScenarioConflict(brief, '丁 13:58 到场，但戊于 13:59 完成确认并正式补位。')).toBeNull()
+  expect(findOwnerRosterScenarioConflict(brief, '丁 14:01 完成候补确认，随后允许递补。')).toContain('允许递补')
+  expect(findOwnerRosterScenarioConflict(brief, '## 14:01 后\n### 14:05 后\n### 更新\n确认完成的候补可正式补位。')).toContain('确认完成的候补')
+  expect(findOwnerRosterScenarioConflict(brief, '## 14:01 后处理\n丁不能正式补位。\n## 其他情境\n已按时确认的人可正式补位。')).toBeNull()
+  expect(findOwnerRosterScenarioConflict(brief, '~~~md\n丁 14:01 正式补位。\n~~~')).toBeNull()
+  expect(findOwnerRosterScenarioConflict(goal, '丁 14:01 正式补位。')).toBeNull()
+  expect(findOwnerRosterScenarioConflict({ ...brief,
+    objective: '候补 9:00 前完成确认方可正式补位。', constraints: ['09:00 前完成确认才可以正式补位。'],
+  }, '09:01 确认完成后正式补位。')).toContain('截止时或截止后')
 })

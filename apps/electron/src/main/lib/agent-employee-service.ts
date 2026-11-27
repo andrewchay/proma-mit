@@ -1,3 +1,4 @@
+import { claimOwnerLocalStart, prepareOwnerLocalResourceSample, recheckOwnerLocalResources } from './project-owner-local-resources'
 import { ownerAssignmentFailureReason } from './project-owner-failure-reason'
 import { captureOwnerTextDelivery } from './project-owner-text-delivery'
 import { requestOwnerManagementWake } from './project-owner-management-events'
@@ -851,7 +852,17 @@ export async function tryStartExecution(executionId: string): Promise<boolean> {
     if (runtimeBudgetLimitUsd !== undefined) return false
     return startAgentWorkflow(executionId, employee)
   }
-  return startAgentHeadless(executionId, employee, runtimeBudgetLimitUsd)
+  const ownerPlanning = execution.entityType === 'task' && ownerPlanningPurposeExists(execution.entityId, execution.id)
+  if (!ownerPlanning) return startAgentHeadless(executionId, employee, runtimeBudgetLimitUsd)
+  const sample = prepareOwnerLocalResourceSample()
+  if (sample) await sample
+  const release = claimOwnerLocalStart(executionId)
+  if (!release) {
+    recheckOwnerLocalResources(execution.projectId)
+    return false
+  }
+  try { return await startAgentHeadless(executionId, employee, runtimeBudgetLimitUsd) }
+  finally { release() }
 }
 
 /** Owner专用显式启动桥：不进入普通heartbeat/queued调度；全部来源已由dispatcher复核，claim仍在headless启动路径内重验。 */
@@ -1009,7 +1020,7 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
       const sessionDirectory = getAgentSessionWorkspacePath(workspace.slug, sessionId)
       const previousPath = previous ? resolveDevelopmentWorktree(workspace.rootPath!, sessionDirectory) : undefined
       if (previous && !previousPath) throw new Error('上次研发 worktree 绑定缺失，不能在主仓库或新基线上静默返工')
-      const worktree = previousPath ? { path: previousPath, continuedFromExecutionId: previous!.id } : createDevelopmentWorktree(workspace.rootPath!, sessionDirectory, executionId)
+      const worktree = previousPath ? { path: previousPath, continuedFromExecutionId: previous!.id } : createDevelopmentWorktree(workspace.rootPath!, sessionDirectory, executionId, workspace)
       if (ownerExecution?.role === 'executor') {
         const { source: frozen, taskId } = readOwnerCommandFrozenSource(ownerExecution.commandId)
         const scope = frozen.tasks.find(item => item.taskId === taskId)?.developmentScope
@@ -1028,7 +1039,7 @@ async function startAgentHeadless(executionId: string, employee: AgentEmployee, 
     console.error('[AgentEmployee] 创建会话失败:', error)
     const message = error instanceof Error ? error.message : '创建 Agent 会话失败'
     if (ownerExecution) {
-      // 阻塞项在事务外补工作区身份：createDevelopmentWorktree 只拿到仓库路径，不知道工作区名。
+      // 在事务外用当前工作区身份补全阻塞项，再写入执行记录。
       const workspace = workspaceId ? getAgentWorkspace(workspaceId) : undefined
       const workspaceBlocker = error instanceof DevelopmentWorkspaceBlockedError
         ? { ...error.blocker, workspaceId: workspace?.id ?? error.blocker.workspaceId, workspaceName: workspace?.name ?? '' }
