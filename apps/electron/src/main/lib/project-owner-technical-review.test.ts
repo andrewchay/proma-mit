@@ -344,6 +344,23 @@ test('Given 单正文通知回包 When 分离正文和内部核对 Then 保留�
   expect(readOwnerSingleTextBody(checklist)).toBe(checklist)
 })
 
+test('Given 原目标只要一份通知正文 When 员工把独立核对附在正文末尾 Then 只冻结通知正文', async () => {
+  const { ownerRequiresNoticeBodyOnly, readOwnerSingleTextBody } = await import('./project-owner-delivery-content')
+  const goal = { objective: '只交付一份通知正文。请安排独立核对。', constraints: [], acceptanceCriteria: [] }
+  const body = '读书活动定于12月3日18:30在社区室举行。请回复姓名报名。'
+  const withReview = body + '\n\n——\n核对说明（独立核对，随正文交付）：\n1. 日期符合给定事实。'
+  const onlyBody = ownerRequiresNoticeBodyOnly(goal)
+  expect(onlyBody).toBe(true)
+  expect(readOwnerSingleTextBody(withReview, onlyBody)).toBe(body)
+  expect(readOwnerSingleTextBody(JSON.stringify({ body: withReview, selfCheck: null }), onlyBody)).toBe(body)
+  expect(readOwnerSingleTextBody(withReview)).toBe(withReview)
+  expect(readOwnerSingleTextBody(body + '\n\n——\n请在签到时出示报名确认。', onlyBody)).toContain('出示报名确认')
+  const withFollowup = withReview + '\n\n请回复姓名报名。'
+  expect(readOwnerSingleTextBody(withFollowup, onlyBody)).toBe(withFollowup)
+  expect(ownerRequiresNoticeBodyOnly({ ...goal, objective: goal.objective + '随正文附上核对记录。' })).toBe(false)
+  expect(ownerRequiresNoticeBodyOnly({ ...goal, objective: goal.objective + '通知末尾请加一节核对说明。' })).toBe(false)
+})
+
 test('Given 评审引用当前冻结文件的源码行范围 When 绑定 Then 只恢复逐字连续范围', async () => {
   const { bindOwnerEvidenceRows } = await import('./project-owner-evidence-reference')
   const source = '起始\r\n  第 2 行\r\n\r\n第 4 行'

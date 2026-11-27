@@ -17,7 +17,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import type { OwnerExecutionCommandAckPreview, OwnerExecutionCommandRole, OwnerExecutionCommandView, OwnerExecutionRoleBudgetCap, OwnerTerminalEvidence, ProjectOwnerGoalSubject } from '@gravitas/shared'
 import type { Task } from './project-types'
 import * as store from './project-sqlite-store'
-import { deliveryContentMatchesArtifact, ownerTextDeliveryCharacterLimit, OWNER_SINGLE_TEXT_RESPONSE_INSTRUCTION, OWNER_TEXT_INSERTION_RESPONSE_INSTRUCTION, parseOwnerExactTextInsertion } from './project-owner-delivery-content'
+import { deliveryContentMatchesArtifact, ownerRequiresNoticeBodyOnly, ownerTextDeliveryCharacterLimit, OWNER_NOTICE_BODY_ONLY_INSTRUCTION, OWNER_SINGLE_TEXT_RESPONSE_INSTRUCTION, OWNER_TEXT_INSERTION_RESPONSE_INSTRUCTION, parseOwnerExactTextInsertion } from './project-owner-delivery-content'
 import { getOwnerManagementMessage } from './project-owner-management-store'
 import { assertLocalActorEnabled, getProjectOwnerPlanDraft, getProjectOwnerPlanningContext, listProjectOwnerPlanHistory } from './project-owner-plan-service'
 import { getOwnerExecutionRevalidation, parseOwnerExecutionRevalidationInput } from './project-owner-execution-revalidation'
@@ -440,6 +440,7 @@ function buildOwnerCommandPrompt(task: Task, projectGoal: ProjectOwnerGoalBrief,
   return [
     textDeliveryVersion === 1 ? OWNER_TEXT_HANDOFF_HEADER : '',
     structuredBody ? OWNER_SINGLE_TEXT_RESPONSE_INSTRUCTION : '',
+    structuredBody && ownerRequiresNoticeBodyOnly(projectGoal) ? OWNER_NOTICE_BODY_ONLY_INSTRUCTION : '',
     role === 'reviewer' && (artifact || developmentArtifactRef) ? OWNER_REVIEW_BINDING_HEADER : '',
     !hasKnowledgeSources ? '本次未授权知识库资料。以冻结目标、任务描述和实际交接正文作为输入。首个没有上游交接的步骤直接使用目标中的已知事实产出，不把计划中后续要形成的内部资料当成前置条件。只有交接区已有的正文才是已验收上游成果。' : '',
     `Owner业务任务；角色=${role}；岗位键=${roleKey ?? 'legacy'}；返工轮次=${reworkOrdinal}。`,

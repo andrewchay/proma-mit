@@ -17,8 +17,28 @@ export function ownerTextDeliveryCharacterLimit(criteria: readonly string[]): nu
 export const OWNER_TEXT_HANDOFF_HEADER = 'Owner文本上游成果交接 v2。'
 export const OWNER_SINGLE_TEXT_RESPONSE_INSTRUCTION = '交付时返回 JSON 对象 {"body":"给读者的完整正文","selfCheck":null}。如需留下内部自检，把它写在 selfCheck 字段。body 只给读者使用，不包含自检、进度状态、字数说明或交付摘要。正文计数由系统完成。'
 
+export const OWNER_NOTICE_BODY_ONLY_INSTRUCTION = '原目标只交付通知正文；内部核对只留在 selfCheck 或独立评审回执，不能放进通知正文。'
+
+export function ownerRequiresNoticeBodyOnly(goal: Pick<ProjectOwnerGoalBrief, 'objective' | 'constraints' | 'acceptanceCriteria'>): boolean {
+  const sources = [goal.objective, ...goal.constraints, ...goal.acceptanceCriteria]
+  return sources.some(source => /(?:只|仅)(?:需)?(?:交付|提交|输出)\s*(?:一份)?\s*通知正文(?=$|[。！？；，,\n])/.test(source))
+    && !sources.some(source => /(?:附上|附带|另附|随正文|随通知|正文(?:中|后)(?:包含|提供|附)|(?:通知|正文)(?:末尾|结尾))[^。！？；，,\n]{0,16}(?:核对|核查|自检|评审)/.test(source))
+}
+
+function readOwnerNoticeBody(body: string): string {
+  // 只剥离由分隔线引出的内部核对尾注；原始回包仍可追溯。
+  const heading = /\r?\n[ \t]*\r?\n[ \t]*(?:——+|---+)[ \t]*\r?\n[ \t]*(?:核对说明|核对记录|核对结果|自检记录)[ \t]*[（(](?:独立核对|内部核对|自检)[^）)\r\n]*[）)][ \t]*[:：][ \t]*\r?\n/
+  const match = heading.exec(body)
+  if (!match) return body
+  const notes = body.slice(match.index + match[0].length).trimEnd().split(/\r?\n/)
+  const isReviewNote = /^[ \t]*(?:\d+[.、][ \t]+\S|核对结论[：:][ \t]*\S)/
+  const notice = body.slice(0, match.index)
+  return notice.trim() && notes.every(line => isReviewNote.test(line)) ? notice : body
+}
+
 /** 原回包留在执行会话和 messageId；评审及交付绑定独立正文。 */
-export function readOwnerSingleTextBody(raw: string): string {
+export function readOwnerSingleTextBody(raw: string, noticeBodyOnly = false): string {
+  const bodyForDelivery = noticeBodyOnly ? readOwnerNoticeBody : (body: string) => body
   const response = raw.trim()
   const json = /^```(?:json)?[ \t]*\r?\n([\s\S]+)\r?\n```$/i.exec(response)?.[1] ?? response
   try {
@@ -26,14 +46,14 @@ export function readOwnerSingleTextBody(raw: string): string {
     if (value && typeof value === 'object' && !Array.isArray(value) && 'body' in value
       && typeof value.body === 'string' && value.body.trim()
       && Object.keys(value).every(key => key === 'body' || key === 'selfCheck')
-      && (!('selfCheck' in value) || value.selfCheck === null || typeof value.selfCheck === 'string')) return value.body
+      && (!('selfCheck' in value) || value.selfCheck === null || typeof value.selfCheck === 'string')) return bodyForDelivery(value.body)
   } catch { /* 旧员工或模型可能仍直接输出正文。 */ }
 
   // 只拆分独立末段，以及正文末尾明确的机器计数标签。
   const sections = raw.trimEnd().split(/(\r?\n[ \t]*\r?\n+)/)
   const selfCheck = /^[ \t]*(?:(?:[🟢🟡🔴]\s*)?返工完成\s*[:：][^\r\n]*\d+\s*字[^\r\n]*|(?:自核|自检|字数核对)\s*[:：][^\r\n]*(?:共|全文|含说明)\s*\d+\s*字[^\r\n]*|[（(]字数\s*[:：]\s*\d+\s*字[^）)\r\n]*[）)][ \t]*)$/u
   while (sections.length > 2 && selfCheck.test(sections.at(-1)!)) sections.splice(-2)
-  return sections.join('').replace(/[（(]全文(?:含标点)?共\s*\d+\s*字[）)]$/, '')
+  return bodyForDelivery(sections.join('').replace(/[（(]全文(?:含标点)?共\s*\d+\s*字[）)]$/, ''))
 }
 
 /** 文本按正文哈希，代码按冻结文件集合哈希；传输JSON不是源码版本的哈希域。 */
