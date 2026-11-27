@@ -1,3 +1,4 @@
+import { isOwnerWaitingForLocalResources, OWNER_LOCAL_RESOURCE_LABELS, prepareOwnerLocalResourceSample, readOwnerLocalResourceWait, recheckOwnerLocalResources, type OwnerLocalResourceWait } from './project-owner-local-resources'
 import { readOwnerQualityAction, readOwnerQualityArtifact } from './project-owner-quality-actions'
 import type { OwnerExecutionCommandRole, OwnerExecutionNextAction, OwnerTechnicalReviewVerdict, ProjectOwnerGoalSubject } from '@gravitas/shared'
 import { dispatchAutonomousOwnerCommandExecution } from './project-owner-execution-dispatcher'
@@ -8,6 +9,7 @@ import { readOwnerGrantUsage } from './project-owner-execution-settlement'
 import { getPilotPolicy } from './project-pilot-policy'
 import { onProjectChainChange } from './project-chain-service'
 import { onOwnerAutonomousScheduleWake, requestOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
+import { readUnclaimedOwnerDevelopmentWorkspaceBlock } from './project-owner-execution-stop'
 import { isCompletedStatus } from './task-status-logic'
 import * as store from './project-sqlite-store'
 import { listOwnerTechnicalReviewEvidence } from './project-owner-technical-review'
@@ -29,6 +31,8 @@ export interface OwnerAutonomousScheduleStatus {
   projectId: string
   state: OwnerAutonomousScheduleState
   grantId?: string
+  deliveryPublished?: true
+  waitingQuestion?: { taskId?: string }
   taskId?: string
   role?: OwnerExecutionCommandRole
   reservedCostMicros: number
@@ -83,6 +87,9 @@ const defaultDriver: OwnerAutonomousSchedulerDriver = { queue: reserveAndQueueAu
 const inFlight = new Map<string, Promise<OwnerAutonomousScheduleStatus>>()
 const rerunRequested = new Set<string>()
 let lifecycleStarted = false
+function withResourceWait(view: OwnerAutonomousScheduleStatus, reason: OwnerLocalResourceWait): OwnerAutonomousScheduleStatus {
+  return { ...view, state: 'waiting', nextAction: 'await_local_resources', reason: `${OWNER_LOCAL_RESOURCE_LABELS[reason]}，资源恢复后会自动继续。` }
+}
 
 function status(projectId: string, state: OwnerAutonomousScheduleState, reason: string, details: Partial<OwnerAutonomousScheduleStatus> = {}): OwnerAutonomousScheduleStatus {
   return { projectId, state, reservedCostMicros: 0, committedCostMicros: 0, runReservations: 0, reason, ...details }
@@ -114,13 +121,14 @@ function getRoleCommand(projectId: string, grantId: string, taskId: string, role
 function hasSuccessfulKnownSettlement(command: CommandRow | null): boolean {
   return Boolean(command && command.state === 'settled' && command.actual_cost_micros !== null && command.usage_evidence !== null && command.execution_status === 'completed')
 }
-function roleContinuation(command: CommandRow | null, projectId: string, grantId: string, taskId: string, role: OwnerExecutionCommandRole, reworkOrdinal: number, expectedRevision: number): Evaluation | 'complete' {
+function roleContinuation(command: CommandRow | null, subject: ProjectOwnerGoalSubject, grantId: string, taskId: string, role: OwnerExecutionCommandRole, reworkOrdinal: number, expectedRevision: number): Evaluation | 'complete' {
+  const { projectId } = subject
   const nextAction: OwnerExecutionNextAction = role === 'executor' ? (reworkOrdinal > 0 ? 'rework' : 'execute') : 'review'
   const details = { grantId, taskId, role, reworkOrdinal, nextAction, ...usageDetails(grantId) }
   if (!command) {
     return {
       status: status(projectId, 'ready', `等待自动安排${role === 'executor' ? 'Executor' : 'Reviewer'}（返工轮次 ${reworkOrdinal}）`, details),
-      action: { kind: 'queue', subject: { projectId }, input: { grantId, taskId, role, reworkOrdinal, expectedRevalidationRevision: expectedRevision }, taskId, role },
+      action: { kind: 'queue', subject, input: { grantId, taskId, role, reworkOrdinal, expectedRevalidationRevision: expectedRevision }, taskId, role },
     }
   }
   if (command.state === 'queued' && command.execution_id) {
@@ -131,12 +139,19 @@ function roleContinuation(command: CommandRow | null, projectId: string, grantId
   }
   if (command.state === 'running') return { status: status(projectId, 'running', `Owner ${role} 第 ${reworkOrdinal} 轮正在运行；不会并行启动下一角色`, details) }
   if (hasSuccessfulKnownSettlement(command)) return 'complete'
-  if (command.state === 'needs_reconcile') return { status: status(projectId, 'needs_reconcile', `Owner ${role} 命令费用/停止状态需对账；预算保留，不自动重试`, details) }
+  if (command.state === 'needs_reconcile') {
+    const reason = readUnclaimedOwnerDevelopmentWorkspaceBlock(projectId, command.id)
+      ? '研发工作区有未提交的改动。请清理后在 Owner 对话中重新核对，继续原任务。'
+      : `Owner ${role} 命令费用/停止状态需对账；预算保留，不自动重试`
+    return { status: status(projectId, 'needs_reconcile', reason, details) }
+  }
   if (command.state === 'released' || command.state === 'cancelled') return { status: status(projectId, 'waiting', `Owner ${role} 命令已取消/释放；不自动重试`, details) }
   return { status: status(projectId, 'waiting', `Owner ${role} 未以已知费用和成功终态收敛（command=${command.state}, execution=${command.execution_status ?? 'none'}）；停止自动续派`, details) }
 }
-function evaluate(projectId: string, now = Date.now()): Evaluation {
-  const grant = store.getProjectDb().prepare("SELECT * FROM project_owner_execution_grants WHERE project_id=? ORDER BY issued_at DESC, rowid DESC LIMIT 1").get(projectId) as GrantRow | undefined
+function evaluate(projectId: string, taskId?: string): Evaluation {
+  const now = Date.now()
+  const grant = store.getProjectDb().prepare('SELECT * FROM project_owner_execution_grants WHERE project_id=? AND (? IS NULL OR task_id=?) ORDER BY issued_at DESC, rowid DESC LIMIT 1')
+    .get(projectId, taskId ?? null, taskId ?? null) as GrantRow | undefined
   if (!grant) return { status: status(projectId, 'no_grant', '当前无Owner执行授权') }
   const usage = usageDetails(grant.id), details = { grantId: grant.id, ...usage }
   if (grant.state === 'archived') return { status: status(projectId, 'archived', '授权已过期并归档；unknown占额保留，不派发或释放', details) }
@@ -196,7 +211,7 @@ function evaluate(projectId: string, now = Date.now()): Evaluation {
     let approved = false
     for (let reworkOrdinal = 0; reworkOrdinal <= record.source.budget.maxRework; reworkOrdinal++) {
       const executor = getRoleCommand(projectId, grant.id, task.id, 'executor', reworkOrdinal)
-      const executorProgress = roleContinuation(executor, projectId, grant.id, task.id, 'executor', reworkOrdinal, record.revision)
+      const executorProgress = roleContinuation(executor, subject, grant.id, task.id, 'executor', reworkOrdinal, record.revision)
       if (executorProgress !== 'complete') {
         let progress = executorProgress
         if (reworkOrdinal > 0) {
@@ -210,8 +225,14 @@ function evaluate(projectId: string, now = Date.now()): Evaluation {
         if (budgetExhausted && progress.action?.kind === 'queue') return { status: status(projectId, 'waiting', '授权费用或运行次数已耗尽；返工不派发，未自动增加额度', { ...progress.status, state: 'waiting', reason: '授权费用或运行次数已耗尽；返工不派发，未自动增加额度', nextAction: 'human_decision' }) }
         return progress
       }
+      if (frozenTask.developmentScope && executor) {
+        const { isOwnerCommandFinalizing } = require('./agent-employee-service') as typeof import('./agent-employee-service')
+        if (isOwnerCommandFinalizing(executor.id)) {
+          return { status: status(projectId, 'running', '本轮研发验证仍在保存，结束后会继续核对评审派发条件。', { ...details, taskId: task.id, reworkOrdinal, nextAction: 'review' }) }
+        }
+      }
       const reviewer = getRoleCommand(projectId, grant.id, task.id, 'reviewer', reworkOrdinal)
-      const reviewerProgress = roleContinuation(reviewer, projectId, grant.id, task.id, 'reviewer', reworkOrdinal, record.revision)
+      const reviewerProgress = roleContinuation(reviewer, subject, grant.id, task.id, 'reviewer', reworkOrdinal, record.revision)
       if (reviewerProgress !== 'complete') {
         if (budgetExhausted && reviewerProgress.action?.kind === 'queue') return { status: status(projectId, 'waiting', '授权费用或运行次数已耗尽；Reviewer 不派发，未自动增加额度', { ...reviewerProgress.status, state: 'waiting', reason: '授权费用或运行次数已耗尽；Reviewer 不派发，未自动增加额度', nextAction: 'human_decision' }) }
         return reviewerProgress
@@ -227,7 +248,7 @@ function evaluate(projectId: string, now = Date.now()): Evaluation {
         try { action = readOwnerQualityAction(review.reviewerCommandId) }
         catch (cause) { return { status: status(projectId, 'stale', cause instanceof Error ? cause.message : 'Owner质量决定无效', { ...details, taskId: task.id, nextAction: 'await_owner_quality' }) } }
         if (!action) return { status: status(projectId, 'waiting', '完整成果及独立检查已就绪，等待Owner质量判断；无需用户验收子任务', { ...details, taskId: task.id, role: 'reviewer', reworkOrdinal, nextAction: 'await_owner_quality' }) }
-        if (action.state !== 'rework_authorized') return { status: status(projectId, 'waiting', action.detail, { ...details, taskId: task.id, reworkOrdinal, nextAction: action.state === 'escalated' || action.state === 'blocked' ? 'human_decision' : 'await_owner_quality' }) }
+        if (action.state !== 'rework_authorized') return { status: status(projectId, 'waiting', action.detail, { ...details, taskId: task.id, role: 'reviewer', reworkOrdinal, nextAction: action.state === 'escalated' || action.state === 'blocked' ? 'human_decision' : 'await_owner_quality' }) }
         latestApproved = undefined
         continue
       }
@@ -264,12 +285,30 @@ function pausedBeforeClaim(commandId: string, projectId: string): boolean {
       AND NOT EXISTS (SELECT 1 FROM project_owner_execution_start_attempts a WHERE a.execution_id=e.id)`).get(commandId, projectId) as { grant_id: string } | undefined
   return Boolean(row && readOwnerDispatchControl(projectId, row.grant_id).paused)
 }
-export function getOwnerAutonomousScheduleStatus(projectId: string): OwnerAutonomousScheduleStatus {
+export function getOwnerAutonomousScheduleStatus(projectId: string, taskId?: string): OwnerAutonomousScheduleStatus {
   if (typeof projectId !== 'string' || !projectId.trim()) throw new Error('项目ID无效')
-  const execution = evaluate(projectId).status
-  if (execution.state !== 'no_grant') return execution
+  if (taskId !== undefined && store.getTask(taskId)?.projectId !== projectId) throw new Error('Owner任务不属于当前项目')
+  const evaluation = evaluate(projectId, taskId)
+  const localWait = evaluation.action || (isOwnerWaitingForLocalResources(projectId) && (evaluation.status.state === 'no_grant' || evaluation.status.nextAction === 'await_owner_quality'))
+    ? readOwnerLocalResourceWait() : null
+  const execution = localWait ? withResourceWait(evaluation.status, localWait) : evaluation.status
+  const { getOpenOwnerManagementQuestion } = require('./project-owner-management-questions') as typeof import('./project-owner-management-questions')
+  const question = getOpenOwnerManagementQuestion(projectId, taskId)
+  if (question) execution.waitingQuestion = question.taskId ? { taskId: question.taskId } : {}
+  if (execution.grantId) {
+    const db = store.getProjectDb()
+    const published = db.prepare('SELECT 1 FROM project_owner_management_messages WHERE project_id=? AND event_id GLOB ? LIMIT 1')
+      .get(projectId, `owner-delivery:${execution.grantId}:*`)
+    if (published) return { ...execution, deliveryPublished: true }
+    if (execution.state === 'waiting' && execution.nextAction === 'none') {
+      const blocker = db.prepare('SELECT 1 FROM project_owner_management_messages WHERE project_id=? AND event_id=? LIMIT 1')
+        .get(projectId, `owner-delivery-original-goal-blocked:${execution.grantId}`)
+      if (blocker) return { ...execution, nextAction: 'human_decision', reason: '整体交付缺少原目标验收依据，请打开项目对话查看缺项。' }
+    }
+  }
+  if (question || execution.state !== 'no_grant') return execution
   const { getOwnerManagementDelegation } = require('./project-owner-management-delegation') as typeof import('./project-owner-management-delegation')
-  const management = getOwnerManagementDelegation(projectId)
+  const management = getOwnerManagementDelegation(projectId, taskId)
   if (management.state !== 'attention') return execution
   return status(projectId, 'needs_reconcile', management.initialPlanningRecovery
     ? '上次管理请求费用待核对。可在 Owner 对话确认重新规划，保留原费用预留。'
@@ -296,9 +335,17 @@ export async function runOwnerAutonomousSchedule(projectId: string, driver: Owne
       && evaluation.status.role === 'reviewer' && evaluation.status.grantId && evaluation.status.taskId
       && evaluation.status.reworkOrdinal !== undefined) {
       try {
+        const { grantId, taskId, reworkOrdinal } = evaluation.status
+        const reviewer = getRoleCommand(projectId, grantId, taskId, 'reviewer', reworkOrdinal)
+        const quality = reviewer ? readOwnerQualityAction(reviewer.id) : null
         const { recoverOwnerReviewEvidence } = await import('./project-owner-review-recovery')
-        if (recoverOwnerReviewEvidence(projectId, evaluation.status.grantId, evaluation.status.taskId, evaluation.status.reworkOrdinal)) {
+        const { recoverOwnerCounterKeyboardEvidence } = await import('./project-owner-counter-supplement')
+        if (recoverOwnerReviewEvidence(projectId, grantId, taskId, reworkOrdinal)
+          || (reviewer && (quality?.state === 'escalated' || quality?.state === 'blocked')
+            && await recoverOwnerCounterKeyboardEvidence(projectId, reviewer.id))) {
           evaluation = evaluate(projectId)
+          const { scanOwnerExecutionObservations } = await import('./project-owner-management-execution')
+          scanOwnerExecutionObservations(projectId)
           requestOwnerAutonomousScheduleWake(projectId)
         }
       } catch (error) {
@@ -306,10 +353,25 @@ export async function runOwnerAutonomousSchedule(projectId: string, driver: Owne
       }
     }
     if (!evaluation.action) return evaluation.status
+    const sample = prepareOwnerLocalResourceSample()
+    if (sample) {
+      await sample
+      evaluation = evaluate(projectId)
+      if (!evaluation.action) return evaluation.status
+    }
+    const localWait = readOwnerLocalResourceWait()
+    if (localWait) {
+      recheckOwnerLocalResources(projectId)
+      return withResourceWait(evaluation.status, localWait)
+    }
     if (evaluation.action.kind === 'dispatch') {
       try {
         const result = await driver.dispatch({ commandId: evaluation.action.commandId, ackFingerprint: evaluation.action.ackFingerprint, acknowledgeExecution: true })
-        if (!result.started) {
+        if (result.resourceBlocked) {
+          recheckOwnerLocalResources(projectId)
+          return withResourceWait(evaluate(projectId).status, readOwnerLocalResourceWait() ?? 'concurrency')
+        }
+        if (!result.started && !result.workspaceBlocked) {
           const execution = store.getAgentExecution(result.executionId)
           if (execution?.status === 'queued' && !pausedBeforeClaim(result.commandId, projectId)) markDispatchUncertain(result.commandId, projectId)
         }
@@ -326,7 +388,11 @@ export async function runOwnerAutonomousSchedule(projectId: string, driver: Owne
     }
     try {
       const result = await driver.dispatch({ commandId: queued.commandId, ackFingerprint: queued.ackFingerprint, acknowledgeExecution: true })
-      if (!result.started && store.getAgentExecution(result.executionId)?.status === 'queued' && !pausedBeforeClaim(result.commandId, projectId)) markDispatchUncertain(result.commandId, projectId)
+      if (result.resourceBlocked) {
+        recheckOwnerLocalResources(projectId)
+        return withResourceWait(evaluate(projectId).status, readOwnerLocalResourceWait() ?? 'concurrency')
+      }
+      if (!result.started && !result.workspaceBlocked && store.getAgentExecution(result.executionId)?.status === 'queued' && !pausedBeforeClaim(result.commandId, projectId)) markDispatchUncertain(result.commandId, projectId)
     } catch {
       if (!pausedBeforeClaim(queued.commandId, projectId)) markDispatchUncertain(queued.commandId, projectId)
     }

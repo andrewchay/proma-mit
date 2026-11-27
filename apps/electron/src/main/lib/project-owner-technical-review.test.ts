@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { expect, test } from 'bun:test'
+import type { OwnerDevelopmentDeliveryArtifact } from '@gravitas/shared'
 import { assertOwnerDevelopmentValidationForVerdict, parseOwnerTechnicalReviewResponse, normalizeOwnerTechnicalReviewQuotes, normalizeOwnerTechnicalReviewReceipt } from './project-owner-technical-review'
 
 const criteria = ['接口保持兼容', '回归测试通过']
@@ -29,6 +30,15 @@ function response(verdict: string, overrides: Record<string, unknown> = {}): str
     ...overrides,
   })
 }
+
+test('Given 评审复制了额外的行首缩进 When 核验源文件 Then 保留精确的连续片段并拒绝内部改写', () => {
+  const source = JSON.stringify({ files: [{ newContent: '  <link rel="stylesheet" href="styles.css">' }] })
+  const raw = JSON.stringify({ schemaVersion: 3, criteria: [{ quote: '    <link rel="stylesheet" href="styles.css">' }] })
+  expect(JSON.parse(normalizeOwnerTechnicalReviewQuotes(raw, source)).criteria[0].quote)
+    .toBe('<link rel="stylesheet" href="styles.css">')
+  const different = raw.replace('styles.css', 'layout.css')
+  expect(normalizeOwnerTechnicalReviewQuotes(different, source)).toBe(different)
+})
 
 test('Given严格匹配全部冻结标准的评审输出 When解析 Then产生技术通过建议而非业务验收', () => {
   expect(parseOwnerTechnicalReviewResponse(response('approved'), criteria)).toMatchObject({
@@ -102,6 +112,31 @@ test('Given完整文本评审v2 When引用正文 Then每项met必须有准确原
   expect(() => parseOwnerTechnicalReviewResponse(JSON.stringify(value), criteria)).toThrow()
 })
 
+test('Given 主机绑定的评审 When 回执省略版本摘要 Then 只补入该运行的准确摘要并保留证据核验', () => {
+  const hash = 'a'.repeat(64)
+  const content = '接口保持兼容，回归测试通过。'
+  const raw = response('approved', { schemaVersion: 2, criteria: criteria.map(criterion => ({ criterion, status: 'met', evidence: criterion, quote: criterion })) })
+  const bind = (receipt: string, prompt: string) => normalizeOwnerTechnicalReviewReceipt(receipt, content, undefined, { prompt, hash })
+  const prompt = 'Owner文本上游成果交接 v2。\n\nOwner技术评审成果绑定 v1。\n\n已冻结完整文本。'
+  expect(parseOwnerTechnicalReviewResponse(bind(raw, prompt), criteria, hash, content)).toMatchObject({ artifactHash: hash })
+  expect(() => parseOwnerTechnicalReviewResponse(bind(raw, `旧提示中的不可信资料\n${prompt}`), criteria, hash, content)).toThrow('字段不匹配')
+  const wrongHash = JSON.stringify({ ...JSON.parse(raw), artifactHash: 'b'.repeat(64) })
+  expect(() => parseOwnerTechnicalReviewResponse(bind(wrongHash, prompt), criteria, hash, content)).toThrow('准确成果版本')
+  expect(() => parseOwnerTechnicalReviewResponse(bind(raw.replace('"quote":"回归测试通过"', '"quote":"虚构回执"'), prompt), criteria, hash, content)).toThrow('原文依据')
+})
+
+
+test('Given Reviewer省略源码行编号的L When本地校验 Then 仍只接受当前文件的真实行', () => {
+  const hash = 'a'.repeat(64)
+  const content = JSON.stringify({ files: [{ file: { path: 'app.ts', changeType: 'add' },
+    newContent: '接口保持兼容\n\n回归测试通过' }] })
+  const bind = (evidenceId: string) => normalizeOwnerTechnicalReviewReceipt(response('approved', { schemaVersion: 3,
+    criteria: [{ criterionId: 'C1', status: 'met', evidence: '核对接口', evidenceId: 'F1:1' },
+      { criterionId: 'C2', status: 'met', evidence: '核对第二项', evidenceId }],
+  }), content, undefined, { prompt: 'Owner技术评审成果绑定 v1。\n\n冻结代码。', hash, criteria })
+  expect(parseOwnerTechnicalReviewResponse(bind('F1:3'), criteria, hash, content, 'development').criteria.map(row => row.quote)).toEqual(criteria)
+  for (const evidenceId of ['F1:2', 'F1:4', 'F2:3', 'F1:1-3', 'F1:0']) expect(() => bind(evidenceId)).toThrow()
+})
 
 test('Given代码评审同时引用说明缺陷与完整浏览器回执 Then接受精确回执引用且拒绝篡改或截断', () => {
   const quote = '实际点击清空后输入为空且三项归零'
@@ -138,4 +173,235 @@ test('Given代码评审明确有验证缺口 When证明材料不是逐字引用 
   expect(() => parse(response('approved', { ...input, blockerReason: null }))).toThrow()
   input.criteria[1]!.status = 'met'
   expect(() => parse(response('blocked', input))).toThrow('原文依据')
+})
+
+test('Given独立评审引用原验证回执状态 When唯一成功回执能逐字核对 Then保留通过结论且拒绝不可信引文', () => {
+  const quote = '"attemptState":"completed","freshness":"fresh","status":"passed","exitCode":0'
+  const output = '鼠标：0 → 1 → 2 → 0；Enter：0 → 1 → 2 → 0'
+  const validation = { command: 'browser:html.loads+counter.mouse-keyboard', validationId: `val-${'b'.repeat(64)}`,
+    attemptState: 'completed', freshness: 'fresh', status: 'passed', exitCode: 0, timedOut: false, outputTruncated: false,
+    outputTail: output, rawOutputSha256: createHash('sha256').update(output).digest('hex'), rawOutputByteLength: Buffer.byteLength(output) } as const
+  const artifactHash = 'a'.repeat(64), content = JSON.stringify({ files: [{ newContent: '<button id="increment">加一</button>' }] })
+  const raw = response('approved', { schemaVersion: 3, artifactHash, criteria: [
+    { criterion: criteria[0], status: 'met', evidence: '原文件具备按钮', quote: '<button id="increment">加一</button>' },
+    { criterion: criteria[1], status: 'met', evidence: '实际浏览器回执完整且通过', quote },
+  ] })
+  const normalized = normalizeOwnerTechnicalReviewReceipt(raw, content, [validation])
+  expect(parseOwnerTechnicalReviewResponse(normalized, criteria, artifactHash, content, 'development', [validation])).toMatchObject({
+    verdict: 'approved', criteria: [{ quote: '<button id="increment">加一</button>' }, { quote: validation.command }],
+  })
+  expect(normalizeOwnerTechnicalReviewReceipt(raw, content, [{ ...validation, freshness: 'stale' }])).toBe(raw)
+  expect(normalizeOwnerTechnicalReviewReceipt(raw, content, [{ ...validation, rawOutputSha256: 'a'.repeat(64) }])).toBe(raw)
+  expect(normalizeOwnerTechnicalReviewReceipt(raw, content, [validation, { ...validation, command: 'browser:html.loads' }])).toBe(raw)
+  const snapshot = JSON.stringify({ files: [{ file: { path: 'styles.css' }, newContent: 'body {}' }] })
+  const metadata = response('approved', { schemaVersion: 3, artifactHash, criteria: [
+    { criterion: criteria[0], status: 'met', evidence: '路径已在冻结快照', quote: '"path": "styles.css"' },
+    { criterion: criteria[1], status: 'met', evidence: '核对同一命令的原始回执', quote: `"command": "${validation.command}"` },
+  ] })
+  const exact = normalizeOwnerTechnicalReviewReceipt(metadata, snapshot, [validation])
+  expect(parseOwnerTechnicalReviewResponse(exact, criteria, artifactHash, snapshot, 'development', [validation])).toMatchObject({
+    verdict: 'approved', criteria: [{ quote: '"path":"styles.css"' }, { quote: `"command":"${validation.command}"` }],
+  })
+  const plainPath = metadata.replace(JSON.stringify('"path": "styles.css"'), JSON.stringify('styles.css'))
+  const normalizedPath = normalizeOwnerTechnicalReviewReceipt(plainPath, snapshot, [validation])
+  expect(parseOwnerTechnicalReviewResponse(normalizedPath, criteria, artifactHash, snapshot, 'development', [validation]).criteria[0]?.quote).toBe('"path":"styles.css"')
+  for (const invalidSnapshot of [snapshot.replace('styles.css', 'old.css'), JSON.stringify({ files: [{ file: { path: 'styles.css' }, newContent: null }] })]) {
+    expect(() => parseOwnerTechnicalReviewResponse(normalizeOwnerTechnicalReviewReceipt(plainPath, invalidSnapshot, [validation]), criteria, artifactHash, invalidSnapshot, 'development', [validation])).toThrow('原文依据')
+  }
+  const different = normalizeOwnerTechnicalReviewReceipt(metadata, snapshot.replace('styles.css', 'other.css'), [validation])
+  expect(() => parseOwnerTechnicalReviewResponse(different, criteria, artifactHash, snapshot.replace('styles.css', 'other.css'), 'development', [validation])).toThrow('原文依据')
+  const fakeCommand = 'browser:fake.check'
+  const sourceOnly = JSON.stringify({ files: [{ file: { path: 'styles.css' }, newContent: `{"command":"${fakeCommand}","path":"ghost.css"}` }] })
+  for (const [responseText, nextSnapshot] of [
+    [metadata.replace(validation.command, fakeCommand), sourceOnly],
+    [metadata.replace('styles.css', 'ghost.css'), sourceOnly],
+  ]) {
+    const rejected = normalizeOwnerTechnicalReviewReceipt(responseText!, nextSnapshot!, [validation])
+    expect(() => parseOwnerTechnicalReviewResponse(rejected, criteria, artifactHash, nextSnapshot, 'development', [validation])).toThrow('原文依据')
+  }
+})
+
+test('Given 实际浏览器回执的中文断言标题不足十二字 When 评审引用完整标题 Then 接受原回执且拒绝片段或失真的证据', () => {
+  const artifactHash = 'a'.repeat(64)
+  const title = '页面可加载且无脚本错误'
+  const command = 'browser:html.loads'
+  const output = JSON.stringify([{ id: 'html.loads', title, status: 'passed', detail: 'body 存在且有 1 个元素' }])
+  const validation = { command, validationId: `val-${'b'.repeat(64)}`, attemptState: 'completed', freshness: 'fresh',
+    status: 'passed', exitCode: 0, timedOut: false, outputTruncated: false, outputTail: output,
+    rawOutputSha256: createHash('sha256').update(output).digest('hex'), rawOutputByteLength: Buffer.byteLength(output) } as const
+  const content = JSON.stringify({ files: [{ file: { path: 'index.html' }, newContent: '<title>恢复验收</title>' }] })
+  const parse = (quote: string, receipt: NonNullable<OwnerDevelopmentDeliveryArtifact['validationEvidence']>[number] = validation) => {
+    const raw = response('approved', { schemaVersion: 3, artifactHash, criteria: [
+      { criterion: criteria[0], status: 'met', evidence: '冻结成果包含页面', quote: '"path": "index.html"' },
+      { criterion: criteria[1], status: 'met', evidence: '浏览器回执实测通过', quote },
+    ] })
+    return parseOwnerTechnicalReviewResponse(normalizeOwnerTechnicalReviewReceipt(raw, content, [receipt]), criteria, artifactHash, content, 'development', [receipt])
+  }
+  expect(parse(title)).toMatchObject({ verdict: 'approved', criteria: [{ quote: '"path":"index.html"' }, { quote: title }] })
+  expect(() => parse('页面可加载')).toThrow('原文依据')
+  expect(() => parse(title, { ...validation, rawOutputSha256: 'f'.repeat(64) })).toThrow('原文依据')
+  expect(() => parse(title, { ...validation, command: 'browser:dom.board' })).toThrow('原文依据')
+})
+
+test('Given 已绑定的代码评审只缺末项精确路径引文的外层引号 When 本地核对 Then 保留原内容且拒绝路径或绑定漂移', () => {
+  const artifactHash = 'a'.repeat(64)
+  const command = 'browser:html.loads'
+  const output = '[{"id":"html.loads","title":"页面可加载","status":"passed"}]'
+  const validation = { command, validationId: `val-${'b'.repeat(64)}`, attemptState: 'completed', freshness: 'fresh',
+    status: 'passed', exitCode: 0, timedOut: false, outputTruncated: false, outputTail: output,
+    rawOutputSha256: createHash('sha256').update(output).digest('hex'), rawOutputByteLength: Buffer.byteLength(output) } as const
+  const content = JSON.stringify({ files: [{ file: { path: 'index.html' }, newContent: '<title>培训签到</title>' }] })
+  const raw = response('approved', { schemaVersion: 3, criteria: [
+    { criterion: criteria[0], status: 'met', evidence: '浏览器验证已完成', quote: command },
+    { criterion: criteria[1], status: 'met', evidence: '冻结快照包含交付文件', quote: '"path":"index.html"' },
+  ] })
+  const malformed = raw.replace('"}],"findings":[]', '}],"findings":[]')
+  const binding = { prompt: 'Owner技术评审成果绑定 v1。\n\n冻结快照', hash: artifactHash }
+  const normalized = normalizeOwnerTechnicalReviewReceipt(malformed, content, [validation], binding)
+  expect(parseOwnerTechnicalReviewResponse(normalized, criteria, artifactHash, content, 'development', [validation])).toMatchObject({ verdict: 'approved', artifactHash })
+  const mismatched = malformed.replace('index.html', 'unknown.html')
+  expect(normalizeOwnerTechnicalReviewReceipt(mismatched, content, [validation], binding)).toBe(mismatched)
+  expect(normalizeOwnerTechnicalReviewReceipt(malformed, content, [validation], { ...binding, prompt: '没有经宿主绑定' })).toBe(malformed)
+  expect(normalizeOwnerTechnicalReviewReceipt(malformed, content, [], binding)).toBe(malformed)
+})
+
+test('Given研发评审逐字引用文件和验证元数据 When本地还原引文 Then核对原快照且拒绝篡改', () => {
+  const file = { path: 'index.html', changeType: 'add', oldSha256: null, newSha256: 'd'.repeat(64), newBytes: 43 }
+  const source = '<label for="miles">英里数：</label>'
+  const content = JSON.stringify({ files: [{ file, newContent: source }] })
+  const output = '[{"id":"html.loads","status":"passed"}]'
+  const validation = {
+    command: 'browser:html.loads', validationId: `val-${'b'.repeat(64)}`,
+    attemptState: 'completed', freshness: 'fresh', status: 'passed', exitCode: 0, timedOut: false,
+    outputTruncated: false, outputTail: output, rawOutputSha256: createHash('sha256').update(output).digest('hex'),
+    rawOutputByteLength: Buffer.byteLength(output),
+  } as const
+  const { command, validationId, attemptState, freshness, status, exitCode, timedOut } = validation
+  const receiptQuote = JSON.stringify({ command, validationId, attemptState, freshness, status, exitCode, timedOut }).slice(1, -1)
+  const artifactHash = 'a'.repeat(64)
+  const quotes = [`newSha256":"${file.newSha256}","newBytes":43}`, '"file":{"path":"index.html","changeType":"add","oldSha256":null',
+    source.replaceAll('"', String.fromCharCode(92) + '"'), receiptQuote]
+  const acceptanceCriteria = quotes.map((_, index) => `冻结标准 ${index + 1}`)
+  const raw = response('approved', { schemaVersion: 3, artifactHash,
+    criteria: quotes.map((quote, index) => ({ criterion: acceptanceCriteria[index], status: 'met', evidence: '核对冻结成果', quote })) })
+  const normalize = (input: string, snapshot = content) => normalizeOwnerTechnicalReviewReceipt(input, snapshot, [validation])
+  const parse = (input: string, snapshot = content) => parseOwnerTechnicalReviewResponse(normalize(input, snapshot), acceptanceCriteria, artifactHash, snapshot, 'development', [validation])
+  expect(JSON.parse(normalize(raw)).criteria.map((item: { quote: string }) => item.quote)).toEqual(['"path":"index.html"', '"path":"index.html"', source, command])
+  expect(parse(raw).verdict).toBe('approved')
+  expect(() => parse(raw.replace(file.newSha256, 'e'.repeat(64)))).toThrow('原文依据与完整成果不匹配')
+  const incomplete = JSON.parse(raw)
+  incomplete.criteria[0].quote = '"newSha256":'
+  expect(() => parse(JSON.stringify(incomplete))).toThrow('原文依据与完整成果不匹配')
+  expect(() => parse(raw.replace(validationId, `val-${'c'.repeat(64)}`))).toThrow('原文依据与完整成果不匹配')
+  const ambiguous = JSON.stringify({ files: [{ file, newContent: source }, { file: { ...file, path: 'copy.html' }, newContent: source }] })
+  expect(() => parse(raw, ambiguous)).toThrow('原文依据与完整成果不匹配')
+  const oldOnly = JSON.stringify({ files: [{ file, oldContent: source, newContent: '<label>新版</label>' }] })
+  expect(() => parse(raw, oldOnly)).toThrow('原文依据与完整成果不匹配')
+})
+
+test('Given真实浏览器已经测出失败 When评审引用失败回执并提出返工却写成未验证 Then按已失败保存返工结论', () => {
+  const hash = 'a'.repeat(64)
+  const artifact = JSON.stringify({ files: [] })
+  const binding = { hash, prompt: '冻结提示' }
+  const evidence: OwnerDevelopmentDeliveryArtifact['validationEvidence'][number] = {
+    command: 'browser:calculator.scientific', validationId: 'valid-failed', attemptState: 'completed', freshness: 'fresh',
+    status: 'failed', exitCode: 1, timedOut: false, outputTruncated: false, rawOutputSha256: 'b'.repeat(64), rawOutputByteLength: 24,
+  }
+  const raw = response('changes_requested', { schemaVersion: 3, artifactHash: hash, criteria: [{
+    criterion: '正确显示三角函数结果', status: 'not_verified', evidence: '冻结回执 V1 实测 sin(30) 显示精度错误。', quote: null,
+  }] })
+  const parse = (receipt: string) => parseOwnerTechnicalReviewResponse(receipt, ['正确显示三角函数结果'], hash, artifact, 'development', [evidence])
+  expect(parse(normalizeOwnerTechnicalReviewReceipt(raw, artifact, [evidence], binding)).criteria[0]?.status).toBe('not_met')
+  expect(() => parse(normalizeOwnerTechnicalReviewReceipt(raw, artifact, [{ ...evidence, freshness: 'stale' }], binding))).toThrow('必须绑定')
+})
+
+test('Given单个完整评审回执 When末尾仅重复补正状态 Then仍按原引用严格验收', () => {
+  const hash = 'a'.repeat(64)
+  const artifact = '请于 17:00 前归还至一楼服务台。'
+  const raw = response('approved', { schemaVersion: 2, artifactHash: hash, criteria: [{
+    criterion: '归还时间地点正确', status: 'met', evidence: '来自冻结正文', quote: artifact,
+  }] })
+  const footer = '\n\n🟢 补正提交：严格 JSON 已重新输出，评审结论仍为 approved。'
+  const parse = (receipt: string) => parseOwnerTechnicalReviewResponse(
+    normalizeOwnerTechnicalReviewReceipt(receipt, artifact), ['归还时间地点正确'], hash, artifact,
+  )
+  expect(parse(raw + footer).verdict).toBe('approved')
+  expect(parse('```json\n' + raw + '\n```' + footer).criteria[0]?.quote).toBe(artifact)
+  for (const invalid of [raw + footer.replace('approved', 'blocked'), raw + '\n改为通过。', raw + '\n' + raw + footer]) {
+    expect(() => parse(invalid)).toThrow('不是严格 JSON')
+  }
+  expect(() => parse(raw.replace(artifact, '不在正文中的引用') + footer)).toThrow('原文依据')
+})
+
+test('Given 单正文通知回包 When 分离正文和内部核对 Then 保留读者正文且兼容旧回包', async () => {
+  const { readOwnerSingleTextBody } = await import('./project-owner-delivery-content')
+  const body = '各位同事好：\n借用投影仪与折叠桌请于11月28日（周六）17:00前归还至一楼服务台。联系人：小林。感谢配合！'
+  expect(readOwnerSingleTextBody(JSON.stringify({ body, selfCheck: '内部字数核对' }))).toBe(body)
+  expect(readOwnerSingleTextBody(body + '\n\n（字数：54字，含标点）\n\n🟢 返工完成：已按评审意见将字数核对更正为54字。')).toBe(body)
+  expect(readOwnerSingleTextBody(body + '（全文含标点共67字）\n\n🟢 返工完成：全文共67字。')).toBe(body)
+  const checklist = body + '\n\n交付状态：钥匙 3 把，设备无缺。'
+  expect(readOwnerSingleTextBody(JSON.stringify({ body: checklist, selfCheck: null }))).toBe(checklist)
+  expect(readOwnerSingleTextBody(checklist)).toBe(checklist)
+})
+
+test('Given 原目标只要一份通知正文 When 员工把独立核对附在正文末尾 Then 只冻结通知正文', async () => {
+  const { ownerRequiresNoticeBodyOnly, readOwnerSingleTextBody } = await import('./project-owner-delivery-content')
+  const goal = { objective: '只交付一份通知正文。请安排独立核对。', constraints: [], acceptanceCriteria: [] }
+  const body = '读书活动定于12月3日18:30在社区室举行。请回复姓名报名。'
+  const withReview = body + '\n\n——\n核对说明（独立核对，随正文交付）：\n1. 日期符合给定事实。'
+  const onlyBody = ownerRequiresNoticeBodyOnly(goal)
+  expect(onlyBody).toBe(true)
+  expect(readOwnerSingleTextBody(withReview, { noticeBodyOnly: onlyBody })).toBe(body)
+  expect(readOwnerSingleTextBody(JSON.stringify({ body: withReview, selfCheck: null }), { noticeBodyOnly: onlyBody })).toBe(body)
+  expect(readOwnerSingleTextBody(withReview)).toBe(withReview)
+  expect(readOwnerSingleTextBody(body + '\n\n——\n请在签到时出示报名确认。', { noticeBodyOnly: onlyBody })).toContain('出示报名确认')
+  const withFollowup = withReview + '\n\n请回复姓名报名。'
+  expect(readOwnerSingleTextBody(withFollowup, { noticeBodyOnly: onlyBody })).toBe(withFollowup)
+  expect(ownerRequiresNoticeBodyOnly({ ...goal, objective: goal.objective + '随正文附上核对记录。' })).toBe(false)
+  expect(ownerRequiresNoticeBodyOnly({ ...goal, objective: goal.objective + '通知末尾请加一节核对说明。' })).toBe(false)
+})
+
+test('Given 通知 JSON 字符串有裸换行 When 按新冻结提示读取 Then 保留原正文而不交付 JSON', async () => {
+  const { readOwnerSingleTextBody } = await import('./project-owner-delivery-content')
+  const body = '报名通知\n\n请回复姓名；联系人："小林"。'
+  const raw = JSON.stringify({ body, selfCheck: '内部核对\n姓名与联系人' }).replaceAll('\\n', '\n')
+  expect(readOwnerSingleTextBody(raw, { repairLineBreaks: true })).toBe(body)
+  expect(readOwnerSingleTextBody(raw)).toBe(raw)
+  const unsupported = raw.replace('"selfCheck"', '"extra"')
+  expect(readOwnerSingleTextBody(unsupported, { repairLineBreaks: true })).toBe(unsupported)
+  expect(readOwnerSingleTextBody(body, { repairLineBreaks: true })).toBe(body)
+})
+
+test('Given 评审引用当前冻结文件的源码行范围 When 绑定 Then 只恢复逐字连续范围', async () => {
+  const { bindOwnerEvidenceRows } = await import('./project-owner-evidence-reference')
+  const source = '起始\r\n  第 2 行\r\n\r\n第 4 行'
+  const artifact = { development: true, content: JSON.stringify({ files: [{ file: { path: 'index.html' }, newContent: source }] }) }
+  const bind = (evidenceId: string) => bindOwnerEvidenceRows([{ criterionId: 'C1', status: 'met', evidence: '核对三行', evidenceId }], ['标准'], artifact)
+  expect(bind('F1:L2-L4')).toMatchObject([{ quote: '  第 2 行\r\n\r\n第 4 行' }])
+  for (const id of ['F2:L2-L4', 'F1:L4-L2', 'F1:L2-L9', 'F1:L3-L3', 'V1:L2-L4']) expect(() => bind(id)).toThrow()
+})
+
+test('Given 同版本源码范围很长且另有浏览器回执 When 核验编号 Then 保留逐字证据并拒绝任一无效编号', async () => {
+  const { bindOwnerEvidenceRows, ownerDevelopmentEvidenceHint } = await import('./project-owner-evidence-reference')
+  const content = '浏览器断言通过'
+  const validationId = `val-${'b'.repeat(64)}`
+  const validation = { command: 'browser:html.loads', validationId, attemptState: 'completed', freshness: 'fresh',
+    status: 'passed', exitCode: 0, timedOut: false, outputTruncated: false, outputTail: content,
+    rawOutputSha256: createHash('sha256').update(content).digest('hex'), rawOutputByteLength: Buffer.byteLength(content) } as const
+  const source = '首行\n' + '源码'.repeat(650) + '\n末行'
+  const artifact = { development: true, validation: [validation], content: JSON.stringify({ files: [{ file: { path: 'index.html' }, newContent: source }] }) }
+  const bind = (evidenceId: string) => bindOwnerEvidenceRows([{ criterionId: 'C1', status: 'met', evidence: '核对源码和行为', evidenceId }], ['标准'], artifact)
+  expect(ownerDevelopmentEvidenceHint(artifact.content, [validation])).toContain('F1 共 3 行；可引用的成功运行回执：V1')
+  expect(bind('F1:L1-L3')).toMatchObject([{ quote: source.slice(0, 1000) }])
+  expect(bind('F1:L1-L3, V1')).toMatchObject([{ quote: source.slice(0, 1000) }])
+  for (const id of ['F1:L1-L4, V1', 'F1:L1-L3, V2', 'F1:L1-L3, V1, V1']) expect(() => bind(id)).toThrow()
+})
+
+test('Given 通知两行正文含多个句子 When 提取评审引用提示 Then 不把句子和空行计入可引用编号', async () => {
+  const { ownerTextEvidenceHint, bindOwnerEvidenceRows } = await import('./project-owner-evidence-reference')
+  const content = '各位同事：\r\n大家好！请归还物资。感谢配合！\r\n'
+  expect(ownerTextEvidenceHint(content)).toContain('T1、T2。')
+  expect(ownerTextEvidenceHint(content)).not.toContain('T3')
+  const row = { criterionId: 'C1', status: 'met', evidence: '核对礼貌措辞', evidenceId: 'T3' }
+  expect(() => bindOwnerEvidenceRows([row], ['语气礼貌'], { development: false, content })).toThrow()
 })

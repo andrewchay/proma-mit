@@ -11,6 +11,7 @@ export function revealOwnerHistoryTarget(id: string): void {
   if (!target) return
   const history = target.closest<HTMLDetailsElement>('details[data-owner-earlier-messages]')
   if (history) history.open = true
+  if (target instanceof HTMLDetailsElement) target.open = true
   target.scrollIntoView({ behavior: 'smooth', block: 'center' })
   target.focus({ preventScroll: true })
 }

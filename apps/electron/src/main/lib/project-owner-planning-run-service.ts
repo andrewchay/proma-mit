@@ -1,14 +1,14 @@
 /** 仅可信Runtime回调调用。Run证据不可覆盖；晚到证据不覆盖已有处理结论。无Caller/派工/费用许可。 */
-import { recordOwnerManagementRun, recordOwnerManagementRecoveredAssignment } from './project-owner-management-store'
+import { recordOwnerManagementRun, recordOwnerManagementRecoveredRun } from './project-owner-management-store'
 import { createHash } from 'node:crypto'
 import { assertOwnerPlanningAdmission, type OwnerPlanningAdmission } from './project-owner-planning-provider'
 import type { SDKResultMessage, OwnerExecutionAssignmentProposal, ProjectOwnerPlanProposal } from '@gravitas/shared'
 import { getOwnerRuntimeBinding } from './project-owner-runtime-binding'
-import { readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
-import { parseProjectOwnerPlanningResponse, usesOwnerSourceInspectionRouting } from './project-owner-planning-protocol'
+import { OwnerPlanningSourceChangedError, readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
+import { parseProjectOwnerPlanningResponse, usesOwnerRosterGrounding, usesOwnerFixedBudgetGrounding, usesOwnerBrowserVerificationRouting, usesOwnerSourceInspectionRouting, usesSingleTextReviewFolding, usesOwnerSharedReviewCriteria } from './project-owner-planning-protocol'
 import { isOwnerEvidenceGapRework } from './project-owner-quality-protocol'
 import { appendGeneratedOwnerPlan } from './project-owner-plan-service'
-import { parseOwnerExecutionAssignmentProposal, type OwnerExecutionAssignmentProtocolContext } from './project-owner-execution-assignment-protocol'
+import { OWNER_BROWSER_CHECK_COMPLETION_INSTRUCTION, OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION, parseOwnerExecutionAssignmentProposal } from './project-owner-execution-assignment-protocol'
 import * as store from './project-sqlite-store'
 import { isOwnerPlanningConfigurationError } from './owner-planning-configuration'
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -64,6 +64,47 @@ interface RecoveredOwnerResponse {
   originalOutcomeHash: string
   recoveredOutcome: OwnerPlanningRunOutcome
   recoveredAt: number
+}
+const INITIAL_PLAN_RECOVERY_DETAIL = 'Owner已从原始回执恢复首份方案，保留原请求和费用记录。'
+const BOUND_REVISION_RECOVERY_DETAIL = 'Owner已核对原成果版本和修订标准，从原回执恢复方案，保留原请求和费用。'
+export const OWNER_BOUND_REVISION_SUPERSEDED = '修订的意见、交付版本或授权已更新，旧方案未应用。'
+
+export function getRecoveredOwnerPlanSource(executionId: string): { receipt: OwnerPlanningRunReceipt; kind: 'initial' | 'bound_revision' } | null {
+  if (!store.getProjectDb().prepare('SELECT 1 FROM project_owner_planning_run_recoveries WHERE execution_id=?').get(executionId)) return null
+  const original = readStoredOwnerPlanningRunOutcome(executionId)
+  const receipt = original && getOwnerPlanningRunReceipt(original.receiptId)
+  if (!original || !receipt) return null
+  const restored = getOwnerPlanningRunOutcome(executionId)
+  if (restored?.detail === INITIAL_PLAN_RECOVERY_DETAIL && isRecoverableOwnerInitialPlanReceipt(original, receipt)) return { receipt, kind: 'initial' }
+  if (restored?.detail === BOUND_REVISION_RECOVERY_DETAIL && isRecoverableOwnerBoundRevisionReceipt(original, receipt)) return { receipt, kind: 'bound_revision' }
+  return null
+}
+export function hasCompleteRejectedOwnerPlanReceipt(outcome: OwnerPlanningRunOutcome, receipt: OwnerPlanningRunReceipt): boolean {
+  return outcome.state === 'failed'
+    && outcome.executionId === receipt.executionId && outcome.receiptId === receipt.id && receipt.purpose === 'owner_planning'
+    && receipt.validTerminal && !receipt.stopped && receipt.error === null && receipt.runtimeResult?.subtype === 'success'
+    && receipt.runtimeResult.finish_reason === 'stop' && Boolean(receipt.requestHash)
+    && finite(receipt.usage?.inputTokens) && Number.isSafeInteger(receipt.usage.inputTokens)
+    && finite(receipt.usage?.outputTokens) && Number.isSafeInteger(receipt.usage.outputTokens)
+}
+export function isRecoverableOwnerInitialPlanReceipt(outcome: OwnerPlanningRunOutcome, receipt: OwnerPlanningRunReceipt): boolean {
+  return (['Owner规划响应包含未知字段', '计划步骤 存在未知字段：criteriaTrace', '计划步骤 存在未知字段：acceptanceCriteria [', 'Owner规划响应包含重复计划字段'].includes(outcome.detail)
+    || (outcome.protocolRejected === true && ['逐份文本核验必须引用可独立核验的明确逐份要求', '目标追溯检验方式无效'].includes(outcome.detail)))
+    && hasCompleteRejectedOwnerPlanReceipt(outcome, receipt)
+}
+export function isRecoverableOwnerBoundRevisionReceipt(outcome: OwnerPlanningRunOutcome, receipt: OwnerPlanningRunReceipt): boolean {
+  return outcome.protocolRejected === true
+    && (['逐份文本核验必须由每个文本交付步骤分别承接', 'Owner规划响应包含未知字段'].includes(outcome.detail) || /^目标追溯来源不存在：acceptance\[\d+\]$/.test(outcome.detail))
+    && hasCompleteRejectedOwnerPlanReceipt(outcome, receipt)
+}
+export function isRetryableOwnerBoundRevisionReceipt(outcome: OwnerPlanningRunOutcome, receipt: OwnerPlanningRunReceipt): boolean {
+  return (outcome.detail !== 'Owner规划响应包含未知字段' && isRecoverableOwnerBoundRevisionReceipt(outcome, receipt))
+    || (outcome.protocolRejected === true && outcome.detail === '成果反馈影响评估 必须是 JSON 对象'
+      && hasCompleteRejectedOwnerPlanReceipt(outcome, receipt))
+}
+function isRecoverableOwnerInitialClarification(outcome: OwnerPlanningRunOutcome, receipt: OwnerPlanningRunReceipt): boolean {
+  return outcome.protocolRejected === true && outcome.detail === 'Owner规划澄清建议必须是字符串'
+    && hasCompleteRejectedOwnerPlanReceipt(outcome, receipt)
 }
 function finite(value: unknown): value is number { return typeof value === 'number' && Number.isFinite(value) && value >= 0 }
 function nullableUsage(result?: SDKResultMessage): OwnerPlanningRunReceipt['usage'] {
@@ -140,14 +181,13 @@ function readStoredOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRu
       if (!frozen || frozen.link.purpose !== receipt.purpose) throw new Error('结论来源缺失或用途不匹配')
       if (frozen.link.purpose === 'owner_execution_assignment') {
         if (value.state !== 'proposed' || !frozen.assignmentContext || value.planRevision !== undefined || value.clarification !== undefined || value.reply !== undefined || value.changeProposal !== undefined || value.qualityDecision !== undefined) throw new Error('Owner人员安排Run结论字段无效')
-        const source = frozen.assignmentContext
-        const protocolContext: OwnerExecutionAssignmentProtocolContext = { ...(source.teamContractVersion ? { teamContractVersion: source.teamContractVersion } : {}), contextFingerprint: source.contextFingerprint, workspaces: source.workspaces.map(({ id, name }) => ({ id, name })), executionKinds: source.executionKinds, ownerCarrierId: source.ownerCarrierId, steps: source.steps.map(({ key, dependencies, roleKey, acceptanceCriteria, deliveryKind, sourceReferences }) => ({ key, dependencies, roleKey, acceptanceCriteria, ...(deliveryKind ? { deliveryKind } : {}), ...(sourceReferences ? { sourceReferences } : {}) })), ...(source.codeFiles ? { codeFiles: source.codeFiles } : {}), candidates: source.candidates }
-        const proposal = parseOwnerExecutionAssignmentProposal(receipt.responseText, protocolContext, false, false)
+        const completeRequiredBrowserChecks = frozen.request?.systemPrompt.includes(OWNER_BROWSER_CHECK_COMPLETION_INSTRUCTION) ?? false
+        const proposal = parseOwnerExecutionAssignmentProposal(receipt.responseText, frozen.assignmentContext, false, false, { completeRequiredBrowserChecks })
         if (!value.assignmentProposal || JSON.stringify(proposal) !== JSON.stringify(value.assignmentProposal)) throw new Error('人员安排结论与原始响应不一致')
       } else {
         if (value.assignmentProposal !== undefined) throw new Error('Owner规划Run不能夹带人员安排结论')
         // 历史结论按原回执时间重验；新鲜度属于当时证据，不能在恢复读取时反向使已接受成果失效。
-        const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, receipt.capturedAt, !frozen.request || frozen.request.systemPrompt.includes('每个步骤必须包含deliveryKind'), usesOwnerSourceInspectionRouting(frozen.request))
+        const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, receipt.capturedAt, !frozen.request || frozen.request.systemPrompt.includes('每个步骤必须包含deliveryKind'), usesOwnerSourceInspectionRouting(frozen.request), usesSingleTextReviewFolding(frozen.request), usesOwnerSharedReviewCriteria(frozen.request), usesOwnerBrowserVerificationRouting(frozen.request), usesOwnerFixedBudgetGrounding(frozen.request), usesOwnerRosterGrounding(frozen.request))
         if (value.state === 'replied') {
           if (!['conversation_reply', 'conversation_change', 'quality_decision', 'employee_decision'].includes(response.kind) || !('message' in response) || value.reply !== response.message || value.planRevision !== undefined || value.clarification !== undefined || JSON.stringify(value.changeProposal) !== JSON.stringify(response.kind === 'conversation_change' ? response.change : undefined) || JSON.stringify(value.qualityDecision) !== JSON.stringify(response.kind === 'quality_decision' ? response.decision : undefined) || JSON.stringify(value.employeeDecision) !== JSON.stringify(response.kind === 'employee_decision' ? response.decision : undefined)) throw new Error('对话回应与原始响应不一致')
         } else if (value.employeeDecision !== undefined || value.qualityDecision !== undefined || value.reply !== undefined || value.changeProposal !== undefined || (value.state === 'proposed' ? response.kind !== 'plan_proposal' || !Number.isSafeInteger(value.planRevision) || value.planRevision !== frozen.link.planRevision + 1 || value.clarification !== undefined : response.kind !== 'needs_clarification' || JSON.stringify(response) !== JSON.stringify(value.clarification) || value.planRevision !== undefined)) throw new Error('结论与原始响应不一致')
@@ -172,7 +212,7 @@ export function recoverLegacyOwnerConversationReply(executionId: string): OwnerP
   const frozen = readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true })
   if (!frozen || frozen.link.id !== receipt.linkId || frozen.link.projectId !== receipt.projectId || frozen.link.purpose !== 'owner_planning' || !frozen.link.conversationMessageId) return null
   let response: ReturnType<typeof parseProjectOwnerPlanningResponse>
-  try { response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context) }
+  try { response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, receipt.capturedAt, true, usesOwnerSourceInspectionRouting(frozen.request), usesSingleTextReviewFolding(frozen.request), usesOwnerSharedReviewCriteria(frozen.request), usesOwnerBrowserVerificationRouting(frozen.request), usesOwnerFixedBudgetGrounding(frozen.request), usesOwnerRosterGrounding(frozen.request)) }
   catch { return null }
   if (response.kind !== 'conversation_reply' && response.kind !== 'quality_decision') return null
   if (original.detail === 'Owner返工必须指出具体不满足标准及可执行修改'
@@ -197,7 +237,7 @@ export function recoverLegacyOwnerConversationReply(executionId: string): OwnerP
 /** 只恢复受控安排的空代码范围占位；重验原文，不发送新请求、不改变旧失败或费用。 */
 export function recoverLegacyOwnerAssignmentProposal(executionId: string): OwnerPlanningRunOutcome | null {
   const original = readStoredOwnerPlanningRunOutcome(executionId)
-  if (!original || original.state !== 'failed' || original.detail !== '受控非研发安排不得包含代码范围') return null
+  if (!original || original.state !== 'failed' || original.detail !== OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION) return null
   const receipt = getOwnerPlanningRunReceipt(original.receiptId)
   if (!receipt || receipt.purpose !== 'owner_execution_assignment' || !receipt.validTerminal || receipt.stopped || receipt.error !== null
     || receipt.runtimeResult?.subtype !== 'success' || receipt.runtimeResult.finish_reason !== 'stop'
@@ -218,9 +258,55 @@ export function recoverLegacyOwnerAssignmentProposal(executionId: string): Owner
     store.getProjectDb().prepare(`INSERT OR IGNORE INTO project_owner_planning_run_recoveries
     (execution_id, receipt_id, original_outcome_hash, payload, integrity_hash) VALUES (?, ?, ?, ?, ?)`)
     .run(executionId, receipt.id, recovered.originalOutcomeHash, JSON.stringify({ ...recovered, integrityHash }), integrityHash)
-    recordOwnerManagementRecoveredAssignment(receipt.projectId, executionId, frozen.link.goalRevision, receipt.id, frozen.link.targetTaskId)
+    recordOwnerManagementRecoveredRun(receipt.projectId, executionId, frozen.link.goalRevision, receipt.id, frozen.link.targetTaskId, receipt.purpose)
   })()
   return getOwnerPlanningRunOutcome(executionId)
+}
+
+/** 恢复首轮同一回执的方案或澄清。保留原失败、执行终态与费用，追加可幂等消费的新结果。 */
+export function recoverInitialOwnerPlanningResponse(executionId: string): boolean {
+  const original = readStoredOwnerPlanningRunOutcome(executionId)
+  const receipt = original && getOwnerPlanningRunReceipt(original.receiptId)
+  if (!original || !receipt) return false
+  const clarificationFailure = isRecoverableOwnerInitialClarification(original, receipt)
+  const initialFailure = isRecoverableOwnerInitialPlanReceipt(original, receipt)
+  const revisionFailure = isRecoverableOwnerBoundRevisionReceipt(original, receipt)
+  if (!clarificationFailure && !initialFailure && !revisionFailure) return false
+  const frozen = readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true })
+  if (!frozen || frozen.link.id !== receipt.linkId) return false
+  const initial = frozen.link.planRevision === 0 && !frozen.link.conversationMessageId
+  const recoverClarification = initial && clarificationFailure
+  const recoverRevision = revisionFailure && frozen.link.planRevision >= 1 && Boolean(frozen.link.conversationMessageId)
+    && frozen.context.conversation?.deliveryFeedbackBindingVersion === 1 && Boolean(frozen.context.conversation.deliveryFeedback)
+  if (!recoverClarification && !recoverRevision && !(initial && initialFailure)) return false
+  let response: ReturnType<typeof parseProjectOwnerPlanningResponse>
+  try {
+    response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, receipt.capturedAt, true, usesOwnerSourceInspectionRouting(frozen.request), usesSingleTextReviewFolding(frozen.request), usesOwnerSharedReviewCriteria(frozen.request), usesOwnerBrowserVerificationRouting(frozen.request), usesOwnerFixedBudgetGrounding(frozen.request), usesOwnerRosterGrounding(frozen.request))
+    if (response.kind !== (recoverClarification ? 'needs_clarification' : 'plan_proposal')) return false
+    if (initial && !resolveOwnerPlanningTask(receipt.planningTaskId, true)) return false
+  } catch { return false }
+  const db = store.getProjectDb()
+  let applied = false
+  db.transaction(() => {
+    if (db.prepare('SELECT 1 FROM project_owner_planning_run_recoveries WHERE execution_id=?').get(executionId)) return
+    if (recoverClarification && db.prepare('SELECT 1 FROM project_owner_planning_stop_requests WHERE execution_id=?').get(executionId)) return
+    const recoveredOutcome: OwnerPlanningRunOutcome = response.kind === 'needs_clarification'
+      ? { executionId, receiptId: receipt.id, state: 'needs_clarification', detail: response.reason, clarification: response }
+      : { executionId, receiptId: receipt.id, state: 'proposed',
+        detail: recoverRevision ? BOUND_REVISION_RECOVERY_DETAIL : INITIAL_PLAN_RECOVERY_DETAIL,
+        planRevision: appendGeneratedOwnerPlan(receipt.id, recoverRevision ? 'recover_bound_revision' : 'recover_initial_plan').revision }
+    const recovered: RecoveredOwnerResponse = {
+      schemaVersion: 1, executionId, receiptId: receipt.id, responseHash: receipt.responseHash, originalOutcomeHash: hash(original), recoveredAt: Date.now(),
+      recoveredOutcome,
+    }
+    const integrityHash = hash(recovered)
+    db.prepare(`INSERT INTO project_owner_planning_run_recoveries
+      (execution_id, receipt_id, original_outcome_hash, payload, integrity_hash) VALUES (?, ?, ?, ?, ?)`)
+      .run(executionId, receipt.id, recovered.originalOutcomeHash, JSON.stringify({ ...recovered, integrityHash }), integrityHash)
+    recordOwnerManagementRecoveredRun(receipt.projectId, executionId, frozen.link.goalRevision, receipt.id, frozen.link.targetTaskId, receipt.purpose)
+    applied = true
+  })()
+  return applied
 }
 
 export function getOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRunOutcome | null {
@@ -235,10 +321,29 @@ export function getOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRu
     const frozen = receipt ? readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true }) : null
     if (!receipt || !frozen || recovered.schemaVersion !== 1 || recovered.executionId !== executionId || recovered.receiptId !== row.receipt_id
       || recovered.responseHash !== receipt.responseHash || recovered.originalOutcomeHash !== row.original_outcome_hash || hash(original) !== row.original_outcome_hash
-      || hash(body) !== row.integrity_hash || row.integrity_hash !== integrityHash || !['replied', 'proposed'].includes(recovered.recoveredOutcome.state)
+      || hash(body) !== row.integrity_hash || row.integrity_hash !== integrityHash || !['replied', 'proposed', 'needs_clarification'].includes(recovered.recoveredOutcome.state)
       || recovered.recoveredOutcome.executionId !== executionId || recovered.recoveredOutcome.receiptId !== receipt.id) throw new Error('旧回应恢复记录完整性无效')
+    if (recovered.recoveredOutcome.state === 'needs_clarification') {
+      if (!isRecoverableOwnerInitialClarification(original, receipt) || frozen.link.planRevision !== 0 || frozen.link.conversationMessageId) throw new Error('首轮澄清恢复来源不符')
+      const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, receipt.capturedAt, true, usesOwnerSourceInspectionRouting(frozen.request), usesSingleTextReviewFolding(frozen.request), usesOwnerSharedReviewCriteria(frozen.request), usesOwnerBrowserVerificationRouting(frozen.request), usesOwnerFixedBudgetGrounding(frozen.request), usesOwnerRosterGrounding(frozen.request))
+      const expected: OwnerPlanningRunOutcome = { executionId, receiptId: receipt.id, state: 'needs_clarification', detail: response.kind === 'needs_clarification' ? response.reason : '', clarification: response.kind === 'needs_clarification' ? response : undefined }
+      if (response.kind !== 'needs_clarification' || hash(expected) !== hash(recovered.recoveredOutcome)) throw new Error('首轮澄清恢复记录与原回执不一致')
+      return recovered.recoveredOutcome
+    }
+    if (recovered.recoveredOutcome.state === 'proposed' && receipt.purpose === 'owner_planning') {
+      const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, receipt.capturedAt, true, usesOwnerSourceInspectionRouting(frozen.request), usesSingleTextReviewFolding(frozen.request), usesOwnerSharedReviewCriteria(frozen.request), usesOwnerBrowserVerificationRouting(frozen.request), usesOwnerFixedBudgetGrounding(frozen.request), usesOwnerRosterGrounding(frozen.request))
+      const boundRevision = isRecoverableOwnerBoundRevisionReceipt(original, receipt) && Boolean(frozen.link.conversationMessageId)
+        && frozen.link.planRevision >= 1 && frozen.context.conversation?.deliveryFeedbackBindingVersion === 1
+        && Boolean(frozen.context.conversation.deliveryFeedback)
+      const initial = isRecoverableOwnerInitialPlanReceipt(original, receipt) && frozen.link.planRevision === 0 && !frozen.link.conversationMessageId
+      const expected: OwnerPlanningRunOutcome = { executionId, receiptId: receipt.id, state: 'proposed',
+        detail: boundRevision ? BOUND_REVISION_RECOVERY_DETAIL : INITIAL_PLAN_RECOVERY_DETAIL, planRevision: frozen.link.planRevision + 1 }
+      if ((!initial && !boundRevision) || response.kind !== 'plan_proposal'
+        || (boundRevision && !response.proposal.deliveryFeedbackAssessment) || hash(expected) !== hash(recovered.recoveredOutcome)) throw new Error('方案恢复记录与原回执不一致')
+      return recovered.recoveredOutcome
+    }
     if (recovered.recoveredOutcome.state === 'proposed') {
-      if (original.state !== 'failed' || original.detail !== '受控非研发安排不得包含代码范围'
+      if (original.state !== 'failed' || original.detail !== OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION
         || receipt.purpose !== 'owner_execution_assignment' || !frozen.assignmentContext || !receipt.validTerminal || receipt.stopped || receipt.error !== null
         || receipt.runtimeResult?.subtype !== 'success' || receipt.runtimeResult.finish_reason !== 'stop'
         || !receipt.usage || !finite(receipt.usage.inputTokens) || !Number.isSafeInteger(receipt.usage.inputTokens)
@@ -252,7 +357,7 @@ export function getOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRu
     }
     if (recovered.recoveredOutcome.detail !== 'Owner旧格式回应已从本地原始回执重新校验；未重发请求，费用仍按原预留记录。') throw new Error('旧回应恢复说明不符')
     // 已追加的历史恢复按可信回执时间重验；当前质量动作仍独立检查实时证据有效期。
-    const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, receipt.capturedAt)
+    const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, receipt.capturedAt, true, usesOwnerSourceInspectionRouting(frozen.request), usesSingleTextReviewFolding(frozen.request), usesOwnerSharedReviewCriteria(frozen.request), usesOwnerBrowserVerificationRouting(frozen.request), usesOwnerFixedBudgetGrounding(frozen.request), usesOwnerRosterGrounding(frozen.request))
     if ((response.kind !== 'conversation_reply' && response.kind !== 'quality_decision') || recovered.recoveredOutcome.reply !== response.message || JSON.stringify(recovered.recoveredOutcome.qualityDecision) !== JSON.stringify(response.kind === 'quality_decision' ? response.decision : undefined)) throw new Error('旧回应恢复记录与原文不一致')
     return recovered.recoveredOutcome
   } catch { throw new Error('Owner旧回应恢复记录无效，请保留原始回执核查') }
@@ -263,7 +368,7 @@ export function verifyGeneratedOwnerPlan(sourceRun: { receiptId: string; executi
   if (!receipt || receipt.purpose !== 'owner_planning' || receipt.executionId !== sourceRun.executionId || receipt.responseHash !== sourceRun.responseHash || !receipt.validTerminal || receipt.stopped || receipt.error) throw new Error('Owner生成计划缺少可信Run证据')
   const frozen = readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true })
   if (!frozen || frozen.link.id !== receipt.linkId || frozen.link.goalRevision !== goalRevision || frozen.link.contextFingerprint !== contextFingerprint) throw new Error('Owner生成计划与Run资料不匹配')
-  const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, Date.now(), !frozen.request || frozen.request.systemPrompt.includes('每个步骤必须包含deliveryKind'), usesOwnerSourceInspectionRouting(frozen.request))
+  const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, Date.now(), !frozen.request || frozen.request.systemPrompt.includes('每个步骤必须包含deliveryKind'), usesOwnerSourceInspectionRouting(frozen.request), usesSingleTextReviewFolding(frozen.request), usesOwnerSharedReviewCriteria(frozen.request), usesOwnerBrowserVerificationRouting(frozen.request), usesOwnerFixedBudgetGrounding(frozen.request), usesOwnerRosterGrounding(frozen.request))
   if (response.kind !== 'plan_proposal' || JSON.stringify(response.proposal) !== JSON.stringify(proposal)) throw new Error('Owner计划不是该Run原始提案')
 }
 /** 仅用途检测，不接受此结果作为发送或生成许可；任一持久证据存在即不能降级。 */
@@ -332,14 +437,19 @@ export function recordOwnerPlanningRun(executionId: string, runtimeSource: strin
         if (link.purpose === 'owner_execution_assignment') {
           const source = frozen.assignmentContext
           if (!source) throw new Error('Owner安排冻结资料缺失')
-          const protocolContext: OwnerExecutionAssignmentProtocolContext = { ...(source.teamContractVersion ? { teamContractVersion: source.teamContractVersion } : {}), contextFingerprint: source.contextFingerprint, workspaces: source.workspaces.map(({ id, name }) => ({ id, name })), executionKinds: source.executionKinds, ownerCarrierId: source.ownerCarrierId, steps: source.steps.map(({ key, dependencies, roleKey, deliveryKind, sourceReferences }) => ({ key, dependencies, roleKey, ...(deliveryKind ? { deliveryKind } : {}), ...(sourceReferences ? { sourceReferences } : {}) })), ...(source.codeFiles ? { codeFiles: source.codeFiles } : {}), candidates: source.candidates }
+          const enforceMilesConversion = frozen.request?.systemPrompt.includes('conversion.miles-km（') ?? false
+          const completeRequiredBrowserChecks = frozen.request?.systemPrompt.includes(OWNER_BROWSER_CHECK_COMPLETION_INSTRUCTION) ?? false
           let assignmentProposal: ReturnType<typeof parseOwnerExecutionAssignmentProposal>
-          try { assignmentProposal = parseOwnerExecutionAssignmentProposal(responseText, protocolContext, true, true, { enforceVerificationTargets: true }) }
+          try {
+            assignmentProposal = parseOwnerExecutionAssignmentProposal(responseText, source, true, true, {
+              enforceVerificationTargets: true, enforceMilesConversion, completeRequiredBrowserChecks,
+            })
+          }
           catch (cause) { responseRejected = true; throw cause }
           outcome = { executionId, receiptId: receipt!.id, state: 'proposed', detail: 'Owner已提出执行安排，等待用户审核；不代表准备已保存或获得执行授权', assignmentProposal }
         } else {
           let response: ReturnType<typeof parseProjectOwnerPlanningResponse>
-          try { response = parseProjectOwnerPlanningResponse(responseText, frozen.context, Date.now(), true, usesOwnerSourceInspectionRouting(frozen.request)) }
+          try { response = parseProjectOwnerPlanningResponse(responseText, frozen.context, Date.now(), true, usesOwnerSourceInspectionRouting(frozen.request), usesSingleTextReviewFolding(frozen.request), usesOwnerSharedReviewCriteria(frozen.request), usesOwnerBrowserVerificationRouting(frozen.request), usesOwnerFixedBudgetGrounding(frozen.request), usesOwnerRosterGrounding(frozen.request)) }
           catch (cause) { responseRejected = true; throw cause }
           if (response.kind === 'employee_decision') outcome = { executionId, receiptId: receipt!.id, state: 'replied', detail: 'Owner已形成员工问题决定，待权威回流核验', reply: response.message, employeeDecision: response.decision }
           else if (response.kind === 'quality_decision') outcome = { executionId, receiptId: receipt!.id, state: 'replied', detail: 'Owner已提出质量决定，等待权威服务核验执行', reply: response.message, qualityDecision: response.decision }
@@ -351,7 +461,8 @@ export function recordOwnerPlanningRun(executionId: string, runtimeSource: strin
           }
         }
       } catch (cause) {
-        if (outcome.state !== 'stale') outcome = {
+        if (cause instanceof OwnerPlanningSourceChangedError) outcome = { executionId, receiptId: receipt!.id, state: 'stale', detail: cause.message }
+        else if (outcome.state !== 'stale') outcome = {
           executionId, receiptId: receipt!.id, state: 'failed',
           detail: cause instanceof Error ? cause.message : '响应无效，保留原始证据，不覆盖计划',
           // 只有响应解析失败才标记为可继续：下游据此允许下一条消息，不再依赖错误文案前缀。

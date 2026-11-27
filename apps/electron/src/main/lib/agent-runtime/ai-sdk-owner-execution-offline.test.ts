@@ -1,4 +1,4 @@
-import { afterAll, expect, mock, test } from 'bun:test'
+import { afterAll, expect, mock, spyOn, test } from 'bun:test'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -37,6 +37,8 @@ test('Given Owner员工GLM请求 When真实AI SDK序列化 Then低推理强度�
 
 test('GivenReviewer首答格式错误 When主进程要求补正 Then同一命令最多再请求一次并保留两份输出和合计用量', async () => {
   needsCorrection = true
+  const core = new AISDKRuntimeCore()
+  const stream = spyOn(core, 'runStreamTextWithRetry')
   let calls = 0
   const bodies: Array<{ messages: Array<{ content: string }> }> = []
   const fetchFn = Object.assign(async (_url: unknown, init?: RequestInit) => {
@@ -49,9 +51,10 @@ test('GivenReviewer首答格式错误 When主进程要求补正 Then同一命令
     ].join('\n\n'), { headers: { 'content-type': 'text/event-stream' } })
   }, { preconnect() {} }) as typeof globalThis.fetch
   try {
-    const messages = await new AISDKRuntimeCore().runAgentTurn({ sessionId: 'reviewer', prompt: '只评审同一冻结成果', modelId: 'glm-5.3-flash', provider: 'zhipu', protocol: 'openai-chat', apiKey: 'fake', baseUrl: 'https://offline.invalid/v1', cwd: directory,
+    const messages = await core.runAgentTurn({ sessionId: 'reviewer', prompt: '只评审同一冻结成果', modelId: 'glm-5.3-flash', provider: 'zhipu', protocol: 'openai-chat', apiKey: 'fake', baseUrl: 'https://offline.invalid/v1', cwd: directory,
       runtimeTools: [], activeSession: { controller: new AbortController(), permissionMode: 'safe', planModeEntered: false }, maxTurns: 2, maxRetries: 0, fetchFn })
     expect(calls).toBe(2)
+    expect(stream.mock.calls.map(([input]) => [input.modelSilenceTimeoutMs, input.sdkMaxRetries])).toEqual([[480_000, 0], [480_000, 0]])
     expect(JSON.stringify(bodies[1])).toContain('错误的原始评审')
     expect(JSON.stringify(bodies[1])).toContain('主进程校验反馈')
     expect(JSON.stringify(messages)).toContain('错误的原始评审')
@@ -60,16 +63,21 @@ test('GivenReviewer首答格式错误 When主进程要求补正 Then同一命令
   } finally { needsCorrection = false }
 })
 
-test('GivenReviewer原答复已返回 When补正请求被额度门禁拒绝 Then保留首答且失败终止不重试', async () => {
+test.each([false, true])('GivenReviewer首答已返回 When补正失败（已收到服务商响应=%s） Then只保存补正请求身份并保留首答', async sent => {
   needsCorrection = true
   let calls = 0
   const fetchFn = Object.assign(async () => {
-    if (++calls > 1) throw new Error('真实冒烟已达到请求上限，拒绝补正')
+    if (++calls > 1) {
+      if (!sent) throw new Error('真实冒烟已达到请求上限，拒绝补正')
+      return new Response(JSON.stringify({ error: { message: '服务商响应中断' } }), {
+        status: 503, headers: { 'content-type': 'application/json', 'x-request-id': 'req-correction' },
+      })
+    }
     return new Response([
       'data: ' + JSON.stringify({ id: 'review-first', choices: [{ index: 0, delta: { content: '必须保留的首份原答复' }, finish_reason: null }] }),
       'data: ' + JSON.stringify({ id: 'review-first', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 20, completion_tokens: 10 } }),
       'data: [DONE]', '',
-    ].join('\n\n'), { headers: { 'content-type': 'text/event-stream' } })
+    ].join('\n\n'), { headers: { 'content-type': 'text/event-stream', 'x-request-id': 'req-first-answer' } })
   }, { preconnect() {} }) as typeof globalThis.fetch
   try {
     const messages = await new AISDKRuntimeCore().runAgentTurn({ sessionId: 'reviewer', prompt: '评审同一成果', modelId: 'glm-5.3-flash', provider: 'zhipu', protocol: 'openai-chat', apiKey: 'fake', baseUrl: 'https://offline.invalid/v1', cwd: directory,
@@ -77,6 +85,8 @@ test('GivenReviewer原答复已返回 When补正请求被额度门禁拒绝 Then
     expect(calls).toBe(2)
     expect(JSON.stringify(messages)).toContain('必须保留的首份原答复')
     expect(messages.at(-1)).toMatchObject({ subtype: 'error_during_execution', finish_reason: 'error', usage: { input_tokens: 20, output_tokens: 10 } })
+    if (sent) expect(messages.at(-1)).toHaveProperty('provider_request_id', 'req-correction')
+    else expect(messages.at(-1)).not.toHaveProperty('provider_request_id')
   } finally { needsCorrection = false }
 })
 test('Given Owner员工输出被截断 When仍有过程文字 Then保留用量并返回失败终态', async () => {

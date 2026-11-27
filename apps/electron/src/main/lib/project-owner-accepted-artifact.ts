@@ -8,10 +8,12 @@
  * + 该轮执行命令唯一 + 成果正文哈希与决定一致。任一环缺失即视为未验收，
  * 不用「任务状态是 completed」代替——那是状态，不是验收。
  */
-import type { OwnerExecutionCommandRole } from '@gravitas/shared'
+import type { OwnerExecutionCommandRole, OwnerManagementDeliveryItem } from '@gravitas/shared'
 import type { OwnerQualityArtifact, OwnerQualityAction } from './project-owner-quality-actions'
 import { readOwnerQualityActionByExecution, readOwnerQualityArtifact } from './project-owner-quality-actions'
 import { listOwnerTechnicalReviewEvidence, type OwnerTechnicalReviewEvidence } from './project-owner-technical-review'
+import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
+import { ownerTextDeliveryLengthViolation } from './project-owner-text-delivery'
 import * as store from './project-sqlite-store'
 
 /** 一条可核验的已验收成果；内容与身份都已交叉核对。 */
@@ -27,6 +29,10 @@ export interface AcceptedArtifact {
   artifactHash: string
   reworkOrdinal: number
   content: string
+  acceptanceCriteria: string[]
+  ownerDecision: string
+  reviewerSummary: string
+  localTextRevision?: OwnerManagementDeliveryItem['localTextRevision']
   validationEvidence?: OwnerTechnicalReviewEvidence['validationEvidence']
 }
 
@@ -66,7 +72,17 @@ export function resolveControllingAcceptedArtifact(
 
 /** 读取某任务当前生效的已验收成果；没有决定或最新决定不可复用时返回 null。 */
 export function readLatestAcceptedArtifact(projectId: string, taskId: string): AcceptedArtifact | null {
-  return resolveControllingAcceptedArtifact(listQualityDecisionsNewestFirst(projectId, taskId))
+  const decision = listQualityDecisionsNewestFirst(projectId, taskId)[0]
+  const artifact = decision ? resolveAcceptedArtifact(decision) : null
+  if (!artifact || !decision || artifact.validationEvidence?.length) return artifact
+  const source = store.getProjectDb().prepare(`SELECT g.task_id AS scope_id,l.step_key FROM project_owner_execution_grants g
+    JOIN project_owner_task_step_links l ON l.project_id=g.project_id WHERE g.id=? AND l.id=?`)
+    .get(decision.grantId, artifact.stepLinkId) as { scope_id: string | null; step_key: string } | undefined
+  if (!source) return artifact
+  const { readOwnerLocalTextRevision } = require('./project-owner-local-text-revision') as typeof import('./project-owner-local-text-revision')
+  const revised = readOwnerLocalTextRevision(projectId, source.scope_id, decision.grantId, source.step_key, artifact.artifactHash)
+  return revised ? { ...artifact, artifactHash: revised.artifactHash, content: revised.content, ownerDecision: revised.ownerDecision,
+    reviewerSummary: revised.reviewerSummary, localTextRevision: revised.localTextRevision } : artifact
 }
 
 /**
@@ -87,6 +103,7 @@ export function resolveAcceptedArtifact(action: OwnerQualityAction): AcceptedArt
   if (!artifact || artifact.contentHash !== action.artifactHash
     || artifact.projectId !== action.projectId || artifact.taskId !== action.taskId
     || artifact.reworkOrdinal !== action.reworkOrdinal) return null
+  if (ownerTextDeliveryLengthViolation(readOwnerCommandFrozenSource(action.reviewerCommandId).source, action.taskId, artifact.content)) return null
   const executor = findExecutorCommand(action.projectId, action.grantId, action.taskId, artifact.stepLinkId, artifact.reworkOrdinal)
   if (!executor) return null
   return {
@@ -99,6 +116,9 @@ export function resolveAcceptedArtifact(action: OwnerQualityAction): AcceptedArt
     artifactHash: artifact.contentHash,
     reworkOrdinal: artifact.reworkOrdinal,
     content: artifact.content,
+    acceptanceCriteria: review.criteria.map(item => item.criterion),
+    ownerDecision: action.detail,
+    reviewerSummary: review.summary,
     ...(review.validationEvidence ? { validationEvidence: review.validationEvidence } : {}),
   }
 }

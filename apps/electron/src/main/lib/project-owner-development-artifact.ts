@@ -1,3 +1,4 @@
+import { OWNER_DEVELOPMENT_EVIDENCE_HINT_MARKER, ownerDevelopmentEvidenceHint } from './project-owner-evidence-reference'
 import { lstat, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { DevelopmentSnapshot, DevelopmentTaskScope, ProjectOwnerPlanDraft } from '@gravitas/shared'
@@ -5,9 +6,11 @@ import { getAgentWorkspace } from './agent-workspace-manager'
 import { getAgentSessionMeta } from './agent-session-manager'
 import { getAgentSessionWorkspacePath } from './config-paths'
 import { resolveDevelopmentWorktree } from './agent-development-worktree'
-import { createDevelopmentSnapshotAsync, developmentWorktreeMatchesSnapshotAsync, loadDevelopmentSnapshotAsync, readDevelopmentSnapshotContentsAsync, type DevelopmentSnapshotScope } from './development-snapshot-service'
+import { createDevelopmentSnapshotAsync, developmentWorktreeMatchesSnapshotAsync, loadDevelopmentSnapshot, loadDevelopmentSnapshotAsync, readDevelopmentSnapshotContentsAsync, type DevelopmentSnapshotScope } from './development-snapshot-service'
 import { isProtectedDevelopmentPath, normalizeRepoRelativePath, pathWithinAllowed, validateDevelopmentScope } from './development-task-service'
 import { applyOwnerDevelopmentSnapshot, mergeOwnerDevelopmentSnapshots, type OwnerDevelopmentHandoffInput } from './project-owner-development-handoff'
+import { readFailedDevelopmentHandoff, resolveMixedBatchHandoffTarget } from './project-owner-development-recovery'
+import type { AcceptedArtifact } from './project-owner-accepted-artifact'
 import { ownerTaskDeliveryKind, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { ownerExecutionHash } from './project-owner-execution-hash'
 import { ownerDevelopmentValidationId, readOwnerDevelopmentValidationAttempt } from './development-validation-attempt'
@@ -70,7 +73,10 @@ export function hydrateOwnerDevelopmentReviewerPrompt(prompt: string, reference:
     throw new Error('Owner代码Reviewer提示与冻结快照绑定无效')
   }
   const untrusted = `<untrusted-owner-development-snapshot>${serializedArtifact.replace(/</g, '\\u003c').replace(/>/g, '\\u003e')}</untrusted-owner-development-snapshot>`
-  return prompt.replace(reference, untrusted).replaceAll('OWNER_DEVELOPMENT_SNAPSHOT_HASH', artifact.contentHash)
+  const hint = prompt.includes(OWNER_DEVELOPMENT_EVIDENCE_HINT_MARKER)
+    ? ownerDevelopmentEvidenceHint(artifact.content, artifact.validationEvidence) : ''
+  return prompt.replace(reference, () => hint ? `${hint.trimStart()}\n${untrusted}` : untrusted)
+    .replaceAll('OWNER_DEVELOPMENT_SNAPSHOT_HASH', artifact.contentHash)
 }
 
 export function ownerDevelopmentArtifactFromPrompt(prompt: string): OwnerDevelopmentReviewArtifact | null {
@@ -269,7 +275,10 @@ function readOwnerDevelopmentRevisionSource(source: Pick<ReturnType<typeof readO
   const delivered = JSON.parse(item.content) as { executionId: string; workspaceId: string; baseCommit: string; contentHash: string; files: OwnerDevelopmentHandoffInput['files'] }
   const original = store.getAgentExecution(delivered.executionId)
   const originalCommand = original?.ownerCommandId
-    ? store.getProjectDb().prepare("SELECT grant_id FROM project_owner_execution_commands WHERE id=? AND execution_id=? AND project_id=? AND role='executor' AND state='settled'").get(original.ownerCommandId, original.id, source.projectId) as { grant_id: string } | undefined
+    ? store.getProjectDb().prepare(`SELECT c.grant_id,g.owner_management_delegation_id FROM project_owner_execution_commands c
+      JOIN project_owner_execution_grants g ON g.id=c.grant_id AND g.project_id=c.project_id
+      WHERE c.id=? AND c.execution_id=? AND c.project_id=? AND c.role='executor' AND c.state='settled'`)
+      .get(original.ownerCommandId, original.id, source.projectId) as { grant_id: string; owner_management_delegation_id: string | null } | undefined
     : undefined
   if (!original || !originalCommand || original.status !== 'completed' || !original.sessionId
     || delivered.workspaceId !== workspaceId || !message.delivery
@@ -282,11 +291,11 @@ function readOwnerDevelopmentRevisionSource(source: Pick<ReturnType<typeof readO
       && review.verdict === 'approved' && review.artifactVerified && review.validationEvidenceVerified
       && readOwnerQualityAction(review.reviewerCommandId)?.state === 'accepted')
   if (!accepted) throw new Error('Owner研发修订引用的源码未通过原批次验收')
-  return { item, delivered, original }
+  return { item, delivered, original, delegationId: originalCommand.owner_management_delegation_id }
 }
 
 /** 从用户明确限定路径的反馈和原验收账本读取修订上限。禁止从模型的范围说明提取权限。 */
-export function readOwnerDevelopmentRevisionLimit(plan: ProjectOwnerPlanDraft, workspaceId: string, requireLatestFeedback = false): { path: string; commands: string[]; onlyNarrowing: boolean } | null {
+export function readOwnerDevelopmentRevisionLimit(plan: ProjectOwnerPlanDraft, workspaceId: string, requireLatestFeedback = false): { path: string; commands: string[]; onlyNarrowing: boolean; delegationId: string | null } | null {
   if (!plan.sourceRun || !plan.proposal.deliveryFeedbackAssessment || plan.proposal.steps.length !== 1
     || plan.proposal.steps[0]?.deliveryKind !== 'development') return null
   const { getOwnerPlanningRunReceipt } = require('./project-owner-planning-run-service') as typeof import('./project-owner-planning-run-service')
@@ -295,15 +304,23 @@ export function readOwnerDevelopmentRevisionLimit(plan: ProjectOwnerPlanDraft, w
   const source = receipt && readOwnerPlanningSnapshot(receipt.planningTaskId, { allowUnknownPromptForHistory: true })
   const conversation = source?.context.conversation
   const feedback = conversation?.messages.find(item => item.role === 'user' && item.id === source?.link.conversationMessageId)
-  const paths = feedback?.content.matchAll(/(?:^|[。！？；\n])\s*(?:此次|本次|本轮)?目标路径和允许修改路径(?:只能|仅能|均)是\s*([A-Za-z0-9_./-]+)(?=\s*(?:[。！？；\n]|$))/g)
-  const matches = paths ? [...paths] : []
-  if (!feedback || !matches.length) return null
+  if (!feedback) return null
+  const matches = [...feedback.content.matchAll(/(?:^|[。！？；\n])\s*(?:此次|本次|本轮)?目标路径和允许修改路径(?:只能|仅能|均)是\s*([A-Za-z0-9_./-]+)(?=\s*(?:[。！？；\n]|$))/g)]
+  if (matches.length > 1) throw new Error('Owner修订反馈包含多个明确路径上限')
+  const text = matches[0] ? feedback.content.replace(matches[0][0], '。') : feedback.content
+  const parts = text.split(/[。！？；\n]+/).map(value => value.trim()).filter(Boolean)
+  const editPattern = /^(?:请)?(?:基于[^，]{1,48}，)?只(?:在\s*([A-Za-z0-9_./-]+)\s+[^，]{1,200}|(?:把|修改)\s*([A-Za-z0-9_./-]+)\s*(?:中|里的?|的)[^，]{1,200})$/
+  const edits = parts.flatMap(sentence => {
+    const match = editPattern.exec(sentence)
+    return match ? [{ sentence, path: match[1] ?? match[2]! }] : []
+  })
+  const requestedPath = matches[0]?.[1] ?? (edits.length === 1 ? edits[0]?.path : undefined)
+  if (!requestedPath) return null
   if (requireLatestFeedback) {
     const latest = store.getProjectDb().prepare("SELECT id FROM project_owner_management_messages WHERE project_id=? AND json_extract(payload, '$.taskId') IS ? AND json_extract(payload, '$.role')='user' ORDER BY rowid DESC LIMIT 1").get(plan.projectId, plan.taskId ?? null) as { id: string } | undefined
     if (latest?.id !== feedback.id) throw new Error('文件修订之后已收到新的用户反馈，先完成核对再启动')
   }
-  if (matches.length !== 1) throw new Error('Owner修订反馈包含多个明确路径上限')
-  const path = normalizeRepoRelativePath(matches[0]![1]!)
+  const path = normalizeRepoRelativePath(requestedPath)
   if (isProtectedDevelopmentPath(path)) throw new Error('Owner修订反馈的目标涉及受保护文件')
   const { projectId, taskId, revision: planRevision, planFingerprint } = plan
   const prior = readOwnerDevelopmentRevisionSource({ projectId, taskId, planRevision, planFingerprint }, workspaceId)
@@ -313,25 +330,30 @@ export function readOwnerDevelopmentRevisionLimit(plan: ProjectOwnerPlanDraft, w
   const scope = original.source.tasks.find(item => item.taskId === original.taskId)?.developmentScope
   if (!scope || scope.workspaceId !== workspaceId || !pathWithinAllowed(path, scope.allowedPaths)
     || !scope.verificationCommands?.length) throw new Error('Owner修订指定的路径或验证不在原研发授权范围')
-  const withoutScope = feedback.content.replace(matches[0]![0], '。')
-  const [edit, ...constraints] = withoutScope.split(/[。！？；\n]+/).map(value => value.trim()).filter(Boolean)
-  const editPath = edit?.match(/^(?:请)?(?:基于[^，]{1,48}，)?只在\s*([A-Za-z0-9_./-]+)\s+[^，]{1,200}$/)?.[1]
-  const onlyNarrowing = editPath === path && !/(?:发布|外发|联网|采购|费用|预算|资料|工作区|授权追加|同步|上传|发送|共享|通知|部署|推送|付款|飞书)/.test(withoutScope)
-    && constraints.every(value => /^其余.{1,180}(?:逐字保留|保持不变)(?:，[^。]{1,140}只作为只读资源参加浏览器验收)?$/.test(value)
+  const edit = edits.length === 1 ? edits[0] : undefined
+  const otherFiles = prior.delivered.files.map(entry => entry.file.path).filter(file => file !== path)
+  const onlyNarrowing = edit?.path === path && !otherFiles.some(file => edit.sentence.includes(file))
+    && !/(?:发布|外发|联网|采购|费用|预算|资料|工作区|授权追加|同步|上传|发送|共享|通知|部署|推送|付款|飞书)/.test(parts.join('。'))
+    && parts.filter(value => value !== edit.sentence).every(value =>
+      /^(?:请)?在(?:当前|原)(?:已)?交付版本上(?:做一项修订|修改)$/.test(value)
+      || /^其余.{1,180}(?:逐字保留|保持不变)(?:，[^。]{1,140}只作为只读资源参加浏览器验收)?$/.test(value)
+      || /^保留[^，]{1,100}(?:，[^，]{1,140}(?:逐字节保持|逐字保留|保持不变))?$/.test(value)
+      || /^(?:最终)?交付(?:原目录下)?[^，]{1,80}完整文件，并对[^，]{1,50}重新运行原(?:浏览器)?检查(?:，确认[^，]{1,100})?$/.test(value)
       || scope.verificationCommands?.some(command => value === `继续使用 ${command}` || value === `继续使用 ${command}，按原授权提交完整交付`)
-      || value === '按原授权继续')
-  return { path, commands: scope.verificationCommands, onlyNarrowing }
+      || /^(?:请)?(?:按原授权继续|在现有授权内推进)$/.test(value))
+  return { path, commands: scope.verificationCommands, onlyNarrowing, delegationId: prior.delegationId }
 }
 
 /** 只读继承来自历史交付账本，不能据此扩大员工的路径权限。 */
 export function ownerDevelopmentSnapshotScope(scope: DevelopmentTaskScope, commandId?: string): DevelopmentSnapshotScope {
   if (!commandId) return scope
-  const { source } = readOwnerCommandFrozenSource(commandId)
+  const { source, taskId } = readOwnerCommandFrozenSource(commandId)
   if (source.qualityManagementVersion !== 1) return scope
+  const retained = readOwnerRetainedFiles(source, taskId)
   const revision = readOwnerDevelopmentRevisionSource(source, scope.workspaceId)
-  if (!revision) return scope
+  if (!revision) return retained.size ? { ...scope, inheritedFiles: [...retained.values()] } : scope
   const priorDeliveryFiles = revision.delivered.files.map(entry => entry.file)
-  const inheritedFiles = priorDeliveryFiles.filter(file => !pathWithinAllowed(file.path, scope.allowedPaths))
+  for (const file of priorDeliveryFiles) if (!pathWithinAllowed(file.path, scope.allowedPaths)) retainOwnerFile(retained, file)
   let priorBrowserTargets: readonly string[] | undefined
   if (scope.verificationCommands?.some(command => command.startsWith('browser:'))
     && !scope.targetPaths.some(path => /\.html?$/i.test(path))) {
@@ -342,7 +364,7 @@ export function ownerDevelopmentSnapshotScope(scope: DevelopmentTaskScope, comma
     const html = originalScope.targetPaths.filter(path => /\.html?$/i.test(path))
     priorBrowserTargets = html.length ? html : ownerDevelopmentSnapshotScope(originalScope, originalCommandId).priorBrowserTargets
   }
-  return { ...scope, priorDeliveryHash: revision.item.artifactHash, priorDeliveryFiles, priorBrowserTargets, ...(inheritedFiles.length ? { inheritedFiles } : {}) }
+  return { ...scope, priorDeliveryHash: revision.item.artifactHash, priorDeliveryFiles, priorBrowserTargets, ...(retained.size ? { inheritedFiles: [...retained.values()] } : {}) }
 }
 
 /** 同范围修订在私有工作树重放指定的已验收源码，仓库 HEAD 保持原样。 */
@@ -393,6 +415,72 @@ export async function seedOwnerDevelopmentRework(commandId: string, worktreePath
   return previous.execution_id
 }
 
+type FrozenDevelopmentSource = ReturnType<typeof readOwnerCommandFrozenSource>['source']
+
+function ownerPredecessorIds(source: FrozenDevelopmentSource, taskId: string): Set<string> {
+  const tasks = new Map(source.tasks.map(task => [task.taskId, task]))
+  const retained = new Map(source.retainedSteps?.map(step => [step.taskId, step]))
+  const predecessors = new Set<string>()
+  const visit = (id: string): void => {
+    const task = tasks.get(id)
+    const key = task?.stepKey ?? retained.get(id)?.stepKey
+    if (!key) throw new Error('Owner代码交接依赖不在冻结任务中')
+    const upstreamIds = task?.dependencies.filter(edge => edge.taskId === id).map(edge => edge.dependsOnTaskId) ?? []
+    for (const step of retained.values()) if (step.dependedOnBy.includes(key)) upstreamIds.push(step.taskId)
+    for (const upstreamId of upstreamIds) {
+      if (upstreamId === taskId) throw new Error('Owner代码交接存在循环依赖')
+      if (predecessors.has(upstreamId)) continue
+      predecessors.add(upstreamId)
+      visit(upstreamId)
+    }
+  }
+  visit(taskId)
+  return predecessors
+}
+
+function readRetainedDevelopmentPredecessors(source: FrozenDevelopmentSource, ancestors: Set<string>) {
+  const { readLatestAcceptedArtifact } = require('./project-owner-accepted-artifact') as typeof import('./project-owner-accepted-artifact')
+  const retained = new Map<string, { source: FrozenDevelopmentSource; accepted: AcceptedArtifact }>()
+  for (const step of source.retainedSteps ?? []) {
+    if (!ancestors.has(step.taskId)) continue
+    const accepted = readLatestAcceptedArtifact(source.projectId, step.taskId)
+    const task = store.getTask(step.taskId)
+    if (!accepted || accepted.artifactHash !== step.artifactHash || task?.ownerStepLinkId !== accepted.stepLinkId) throw new Error('Owner保留步骤的已验收成果已变化或不可核验')
+    const original = readOwnerCommandFrozenSource(accepted.executorCommandId)
+    if (original.taskId !== step.taskId || original.source.taskId !== source.taskId || original.source.projectId !== source.projectId
+      || original.source.workspaceId !== source.workspaceId || original.source.tasks.find(item => item.taskId === step.taskId)?.linkId !== accepted.stepLinkId) throw new Error('Owner保留步骤的原授权或工作区不一致')
+    if (ownerTaskDeliveryKind(original.source, step.taskId) === 'development') retained.set(step.taskId, { source: original.source, accepted })
+  }
+  return retained
+}
+
+type RetainedFile = DevelopmentSnapshot['files'][number]
+
+function retainOwnerFile(files: Map<string, RetainedFile>, file: RetainedFile): void {
+  const previous = files.get(file.path)
+  if (previous && (previous.oldSha256 !== file.oldSha256 || previous.newSha256 !== file.newSha256)) throw new Error(`Owner保留步骤的已验收文件版本冲突：${file.path}`)
+  files.set(file.path, file)
+}
+
+/** 接替执行可以读取已验收文件；所有交付和验证都必须保留其原版内容。 */
+function readOwnerRetainedFiles(source: FrozenDevelopmentSource, taskId: string): Map<string, RetainedFile> {
+  const files = new Map<string, RetainedFile>()
+  if (!source.retainedSteps?.length) return files
+  const retained = readRetainedDevelopmentPredecessors(source, ownerPredecessorIds(source, taskId))
+  const included = new Set([...retained].flatMap(([id, previous]) => [...ownerPredecessorIds(previous.source, id)]))
+  for (const [id, previous] of retained) {
+    if (included.has(id)) continue
+    const workspace = getAgentWorkspace(source.workspaceId)
+    const command = store.getProjectDb().prepare('SELECT execution_id FROM project_owner_execution_commands WHERE id=?').get(previous.accepted.executorCommandId) as { execution_id: string } | undefined
+    const execution = command && store.getAgentExecution(command.execution_id)
+    if (!workspace || execution?.ownerCommandId !== previous.accepted.executorCommandId || execution.status !== 'completed' || !execution.sessionId) throw new Error('Owner保留代码缺少已完成的执行或工作区')
+    const snapshot = loadDevelopmentSnapshot(getAgentSessionWorkspacePath(workspace.slug, execution.sessionId), execution.id)
+    if (snapshot.workspaceId !== workspace.id || snapshot.contentHash !== previous.accepted.artifactHash) throw new Error('Owner保留代码快照与原验收版本不一致')
+    for (const file of snapshot.files) retainOwnerFile(files, file)
+  }
+  return files
+}
+
 /** 后继研发步骤继承已验收的上游快照，始终创建独立会话与worktree。 */
 export async function seedOwnerDevelopmentBaseline(commandId: string, worktreePath: string): Promise<string | undefined> {
   const database = store.getProjectDb()
@@ -404,24 +492,13 @@ export async function seedOwnerDevelopmentBaseline(commandId: string, worktreePa
   const task = source.tasks.find(item => item.taskId === command.source_task_id)
   const workspace = getAgentWorkspace(source.workspaceId)
   if (!task?.developmentScope || !workspace?.rootPath) throw new Error('Owner代码交接缺少冻结研发任务或工作区')
-  const ancestors = new Set<string>()
-  const visit = (taskId: string) => {
-    const current = source.tasks.find(item => item.taskId === taskId)
-    if (!current) throw new Error('Owner代码交接依赖不在冻结任务中')
-    for (const edge of current.dependencies.filter(item => item.taskId === taskId)) {
-      if (!ancestors.has(edge.dependsOnTaskId)) { ancestors.add(edge.dependsOnTaskId); visit(edge.dependsOnTaskId) }
-    }
-  }
-  visit(command.source_task_id)
-  const codeAncestors = [...ancestors].filter(id => ownerTaskDeliveryKind(source, id) === 'development')
-  // 只交接依赖链末端快照；它已经包含自身通过验收的代码祖先。
-  const dependsOn = (id: string, predecessor: string, seen = new Set<string>()): boolean => {
-    if (seen.has(id)) return false
-    seen.add(id)
-    const current = source.tasks.find(item => item.taskId === id)
-    return Boolean(current?.dependencies.filter(edge => edge.taskId === id).some(edge => edge.dependsOnTaskId === predecessor || dependsOn(edge.dependsOnTaskId, predecessor, seen)))
-  }
-  const tips = codeAncestors.filter(candidate => !codeAncestors.some(other => candidate !== other && dependsOn(other, candidate)))
+  const ancestors = ownerPredecessorIds(source, command.source_task_id)
+  const retained = readRetainedDevelopmentPredecessors(source, ancestors)
+  const codeAncestors = [...ancestors].filter(id => retained.has(id)
+    || source.tasks.some(task => task.taskId === id) && ownerTaskDeliveryKind(source, id) === 'development')
+  // 是否已包含上游，以该快照当时冻结的依赖为准。新方案的边不能证明旧快照包含文件。
+  const included = new Set(codeAncestors.flatMap(id => [...ownerPredecessorIds(retained.get(id)?.source ?? source, id)]))
+  const tips = codeAncestors.filter(id => !included.has(id))
   if (codeAncestors.length && !tips.length) throw new Error('Owner代码依赖缺少可核验的上游版本')
   const targetDirectory = dirname(worktreePath)
   const targetBinding = JSON.parse(await readFile(join(targetDirectory, 'development-worktree.json'), 'utf8')) as { branch?: string }
@@ -431,23 +508,27 @@ export async function seedOwnerDevelopmentBaseline(commandId: string, worktreePa
   const targetScope = validateDevelopmentScope(task.developmentScope, { getWorkspace: getAgentWorkspace })
   if (!tips.length) {
     const revision = await readOwnerDevelopmentRevision(source, workspace)
-    if (!revision) return undefined
-    applyOwnerDevelopmentSnapshot(worktreePath, targetDirectory, revision.snapshot, revision.files, [...targetScope.allowedPaths, ...revision.snapshot.files.map(file => file.path)])
-    return revision.snapshot.executionId
+    if (revision) {
+      applyOwnerDevelopmentSnapshot(worktreePath, targetDirectory, revision.snapshot, revision.files, [...targetScope.allowedPaths, ...revision.snapshot.files.map(file => file.path)])
+      return revision.snapshot.executionId
+    }
   }
   const handoffs: OwnerDevelopmentHandoffInput[] = []
-  const executionIds: string[] = []
+  const quality = require('./project-owner-quality-actions') as typeof import('./project-owner-quality-actions')
+  const { listOwnerTechnicalReviewEvidence } = require('./project-owner-technical-review') as typeof import('./project-owner-technical-review')
   for (const tip of tips) {
-    const predecessor = source.tasks.find(item => item.taskId === tip)!
-    const rows = database.prepare('SELECT reviewer_command_id FROM project_owner_quality_actions WHERE project_id=? AND grant_id=? AND task_id=? ORDER BY rowid DESC LIMIT 1').all(command.project_id, command.grant_id, predecessor.taskId) as { reviewer_command_id: string }[]
-    const quality = require('./project-owner-quality-actions') as typeof import('./project-owner-quality-actions')
-    const decision = rows[0] ? quality.readOwnerQualityAction(rows[0].reviewer_command_id) : null
-    const artifact = rows[0] ? quality.readOwnerQualityArtifact(rows[0].reviewer_command_id) : null
-    const reviews = (require('./project-owner-technical-review') as typeof import('./project-owner-technical-review')).listOwnerTechnicalReviewEvidence(command.project_id, predecessor.taskId)
-    const review = reviews.find(item => item.reviewerCommandId === decision?.reviewerCommandId)
+    const previous = retained.get(tip)
+    const predecessor = (previous?.source ?? source).tasks.find(item => item.taskId === tip)!
+    const current = previous ? undefined : database.prepare('SELECT reviewer_command_id FROM project_owner_quality_actions WHERE project_id=? AND grant_id=? AND task_id=? ORDER BY rowid DESC LIMIT 1').get(command.project_id, command.grant_id, tip) as { reviewer_command_id: string } | undefined
+    const reviewerCommandId = previous?.accepted.reviewerCommandId ?? current?.reviewer_command_id
+    const decision = reviewerCommandId ? quality.readOwnerQualityAction(reviewerCommandId) : null
+    const artifact = reviewerCommandId ? quality.readOwnerQualityArtifact(reviewerCommandId) : null
+    const review = reviewerCommandId && listOwnerTechnicalReviewEvidence(command.project_id, tip, [reviewerCommandId]).find(item => item.reviewerCommandId === reviewerCommandId)
     if (!decision || decision.state !== 'accepted' || !artifact || artifact.contentHash !== decision.artifactHash || artifact.stepLinkId !== predecessor.linkId
-      || !review || review.verdict !== 'approved' || !review.artifactVerified || !review.validationEvidenceVerified || review.artifactHash !== artifact.contentHash) throw new Error('Owner代码上游缺少准确验收、独立评审或验证证据')
-    const upstream = database.prepare("SELECT id,execution_id,state,actual_cost_micros,usage_evidence,source_hash FROM project_owner_execution_commands WHERE id=? AND project_id=? AND grant_id=? AND source_task_id=? AND source_step_link_id=? AND role='executor' AND rework_ordinal=?").get(review.executorCommandId, command.project_id, command.grant_id, predecessor.taskId, predecessor.linkId, decision.reworkOrdinal) as { id: string; execution_id: string; state: string; actual_cost_micros: number | null; usage_evidence: string | null; source_hash: string } | undefined
+      || !review || review.verdict !== 'approved' || !review.artifactVerified || !review.validationEvidenceVerified || review.artifactHash !== artifact.contentHash
+      || artifact.grantId !== decision.grantId || review.grantId !== decision.grantId
+      || (previous ? previous.accepted.executorCommandId !== review.executorCommandId || previous.accepted.artifactHash !== artifact.contentHash : decision.grantId !== command.grant_id)) throw new Error('Owner代码上游缺少准确验收、独立评审或验证证据')
+    const upstream = database.prepare("SELECT id,execution_id,state,actual_cost_micros,usage_evidence,source_hash FROM project_owner_execution_commands WHERE id=? AND project_id=? AND grant_id=? AND source_task_id=? AND source_step_link_id=? AND role='executor' AND rework_ordinal=?").get(review.executorCommandId, command.project_id, decision.grantId, tip, predecessor.linkId, decision.reworkOrdinal) as { id: string; execution_id: string; state: string; actual_cost_micros: number | null; usage_evidence: string | null; source_hash: string } | undefined
     const execution = upstream && store.getAgentExecution(upstream.execution_id)
     let knownUsage = false
     try { const usage = JSON.parse(upstream?.usage_evidence ?? 'null') as { source?: string } | null; knownUsage = Boolean(usage?.source && usage.source !== 'unknown') } catch { /* 用量无法核对时保留原记录。 */ }
@@ -460,15 +541,42 @@ export async function seedOwnerDevelopmentBaseline(commandId: string, worktreePa
     if (!priorScope || !previousPath || snapshot.workspaceId !== workspace.id || snapshot.contentHash !== artifact.contentHash
       || !await developmentWorktreeMatchesSnapshotAsync(previousPath, snapshot, priorScope)) throw new Error('Owner代码交接快照来源不一致')
     handoffs.push({ snapshot, files: await readDevelopmentSnapshotContentsAsync(previousDirectory, execution.id) })
-    executionIds.push(execution.id)
   }
-  const merged = mergeOwnerDevelopmentSnapshots(handoffs)
   const scope = ownerDevelopmentSnapshotScope(targetScope, commandId)
   const inherited = new Map(scope.inheritedFiles?.map(file => [file.path, file]))
-  for (const file of merged.snapshot.files) {
-    const expected = inherited.get(file.path)
-    if (expected && (expected.oldSha256 !== file.oldSha256 || expected.newSha256 !== file.newSha256)) throw new Error(`Owner上游变更与只读继承文件冲突：${file.path}`)
+  const allowedPaths = [...scope.allowedPaths, ...inherited.keys()]
+  const failed = resolveMixedBatchHandoffTarget({
+    projectId: command.project_id, taskId: command.source_task_id, currentWorkspace: workspace,
+    lookupSessionWorkspaceId: sessionId => getAgentSessionMeta(sessionId)?.workspaceId,
+    lookupWorkspace: getAgentWorkspace, resolveSessionDirectory: getAgentSessionWorkspacePath,
+  })
+  const partial = failed && await readFailedDevelopmentHandoff({
+    ...failed, repository: workspace.rootPath, workspaceId: workspace.id, scope: { ...targetScope, allowedPaths },
+  })
+  if (partial?.handoff) handoffs.push(partial.handoff)
+  if (retained.size) {
+    const latest = readRetainedDevelopmentPredecessors(source, ancestors)
+    if ([...retained].some(([id, previous]) => latest.get(id)?.accepted.ownerExecutionId !== previous.accepted.ownerExecutionId)) throw new Error('Owner保留代码在工作树准备期间发生变化')
   }
-  applyOwnerDevelopmentSnapshot(worktreePath, targetDirectory, merged.snapshot, merged.files, [...scope.allowedPaths, ...inherited.keys()])
-  return executionIds.length === 1 ? executionIds[0] : undefined
+  if (handoffs.length) {
+    const merged = mergeOwnerDevelopmentSnapshots(handoffs)
+    const byPath = new Map(merged.snapshot.files.map(file => [file.path, file]))
+    for (const [path, expected] of inherited) {
+      const file = byPath.get(path)
+      if (file?.oldSha256 !== expected.oldSha256 || file.newSha256 !== expected.newSha256) throw new Error(`Owner上游变更与只读继承文件冲突：${path}`)
+    }
+    applyOwnerDevelopmentSnapshot(worktreePath, targetDirectory, merged.snapshot, merged.files, allowedPaths)
+  }
+  if (failed && (partial?.handoff || partial?.worktreeMissing)) {
+    const snapshot = partial.handoff?.snapshot
+    store.recordProjectActivity({
+      projectId: command.project_id, entityType: 'task', entityId: command.source_task_id, actor: 'system:owner-runtime',
+      action: snapshot ? 'owner_development_handoff' : 'owner_development_handoff_missing',
+      summary: snapshot ? `已接续上次失败工作树的 ${snapshot.files.length} 个文件改动。` : '上次失败的工作树已不存在，本次未接续失败现场。',
+      payload: { commandId, failedExecutionId: failed.failedExecutionId, ...(snapshot
+        ? { contentHash: snapshot.contentHash, files: snapshot.files.map(file => file.path) }
+        : { failedWorktreePath: failed.failedWorktreePath }) },
+    })
+  }
+  return handoffs.length === 1 ? handoffs[0]!.snapshot.executionId : undefined
 }

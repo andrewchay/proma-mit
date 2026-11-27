@@ -26,6 +26,7 @@ export interface RetainedStepProjection {
   acceptanceCriteria: readonly string[]
   roleKey: string
   deliveryKind?: 'text' | 'development'
+  developmentScopeHash?: string
 }
 
 /** 某批次里的一个步骤出现：是否通过验收，决定它取代还是保留旧候选。 */
@@ -99,6 +100,7 @@ export function resolveRetainedStepReuse(
 export function describeSpecificationDrift(previous: RetainedStepProjection, next: RetainedStepProjection): string | null {
   if (previous.roleKey !== next.roleKey) return `岗位由 ${previous.roleKey} 变为 ${next.roleKey}`
   if (previous.deliveryKind !== next.deliveryKind) return '交付类型已变化'
+  if (previous.developmentScopeHash !== next.developmentScopeHash) return '文件范围或验证方式已变化'
   if (previous.title !== next.title) return '标题已变化'
   if (previous.outcome !== next.outcome) return '目标成果已变化'
   const previousCriteria = [...previous.acceptanceCriteria].sort()

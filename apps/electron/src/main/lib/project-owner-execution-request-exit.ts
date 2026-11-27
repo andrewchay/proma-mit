@@ -191,29 +191,19 @@ function verifyOwnerRequestBody(requestId: string, body: string, priceEvidenceId
   const row = store.getProjectDb().prepare('SELECT request_evidence_id FROM project_owner_execution_request_reservations WHERE request_id=?').get(requestId) as { request_evidence_id: string } | undefined
   if (!row || row.request_evidence_id !== evidenceId) throw new Error('Owner请求体与预留指纹不一致，拒绝发送')
 }
-function parseOpenAIUsage(responseBody: string): { promptTokens: number; completionTokens: number } | null {
-  const parseUsage = (value: unknown): { promptTokens: number; completionTokens: number } | null => {
-    if (!value || typeof value !== 'object') return null
-    const usage = (value as { usage?: unknown }).usage
-    if (!usage || typeof usage !== 'object') return null
-    const row = usage as { prompt_tokens?: unknown; completion_tokens?: unknown }
-    return Number.isSafeInteger(row.prompt_tokens) && Number.isSafeInteger(row.completion_tokens)
-      && Number(row.prompt_tokens) >= 0 && Number(row.completion_tokens) >= 0
-      ? { promptTokens: Number(row.prompt_tokens), completionTokens: Number(row.completion_tokens) } : null
-  }
-  try {
-    const json = JSON.parse(responseBody) as unknown
-    const usage = parseUsage(json)
-    if (usage) return usage
-  } catch { /* SSE response; below */ }
-  for (const line of responseBody.split(/\r?\n/)) {
-    if (!line.startsWith('data:')) continue
-    const data = line.slice(5).trim()
-    if (!data || data === '[DONE]') continue
-    try { const usage = parseUsage(JSON.parse(data) as unknown); if (usage) return usage } catch { /* 忽略非JSON SSE帧，最终无usage即unknown */ }
-  }
-  return null
+interface OpenAIRequestUsage { promptTokens: number; completionTokens: number }
+const MAX_ACCOUNTING_RESPONSE_BYTES = 4_000_000
+
+function readOpenAIUsage(value: unknown): OpenAIRequestUsage | null {
+  if (!value || typeof value !== 'object') return null
+  const usage = (value as { usage?: unknown }).usage
+  if (!usage || typeof usage !== 'object') return null
+  const row = usage as { prompt_tokens?: unknown; completion_tokens?: unknown }
+  return Number.isSafeInteger(row.prompt_tokens) && Number.isSafeInteger(row.completion_tokens)
+    && Number(row.prompt_tokens) >= 0 && Number(row.completion_tokens) >= 0
+    ? { promptTokens: Number(row.prompt_tokens), completionTokens: Number(row.completion_tokens) } : null
 }
+
 function settleOwnerRequestUsage(requestId: string, usage: { promptTokens: number; completionTokens: number }): void {
   const database = store.getProjectDb()
   database.transaction(() => {
@@ -238,15 +228,59 @@ function markOwnerRequestUnknown(requestId: string): void {
   store.getProjectDb().prepare("UPDATE project_owner_execution_request_reservations SET state='needs_reconcile' WHERE request_id=? AND state='reserved'").run(requestId)
 }
 
-/** 计费分支独立读完响应体，成功取得 usage 才结算；任何异常或用量缺失都保持对账状态。 */
+/** 已确认最终用量和协议末帧时立即结算；兼容正常关闭响应的旧服务商。 */
 async function settleOwnerFromAccountingBranch(requestId: string, accountingBody: ReadableStream<Uint8Array>): Promise<void> {
+  const reader = accountingBody.getReader()
+  const decoder = new TextDecoder()
+  let pendingFrame = ''
+  let bytes = 0
+  let sawFinishReason = false
+  let terminalUsageFollowsFinish = false
+  let terminalUsage: OpenAIRequestUsage | null = null
+  const separator = /\r?\n\r?\n/g
   try {
-    const body = await new Response(accountingBody).text()
-    if (body.length > 4_000_000) { markOwnerRequestUnknown(requestId); return }
-    const usage = parseOpenAIUsage(body)
-    if (!usage) { markOwnerRequestUnknown(requestId); return }
-    settleOwnerRequestUsage(requestId, usage)
+    while (true) {
+      const { value, done } = await reader.read()
+      if (done) break
+      bytes += value.byteLength
+      if (bytes > MAX_ACCOUNTING_RESPONSE_BYTES) throw new Error('Owner流式用量回执超出读取上限')
+      const scanFrom = Math.max(0, pendingFrame.length - 3)
+      pendingFrame += decoder.decode(value, { stream: true })
+      separator.lastIndex = scanFrom
+      let frameStart = 0
+      for (let end = separator.exec(pendingFrame); end; end = separator.exec(pendingFrame)) {
+        const data = pendingFrame.slice(frameStart, end.index).split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5)).join('\n').trim()
+        frameStart = separator.lastIndex
+        if (data === '[DONE]') {
+          if (terminalUsage) settleOwnerRequestUsage(requestId, terminalUsage)
+          else markOwnerRequestUnknown(requestId)
+          return
+        }
+        if (!data) continue
+        try {
+          const frame = JSON.parse(data) as { choices?: Array<{ finish_reason?: unknown }> } | null
+          const choices = frame?.choices
+          const finished = Array.isArray(choices) && choices.some(choice => typeof choice?.finish_reason === 'string' && choice.finish_reason.length > 0)
+          sawFinishReason ||= finished
+          const usage = readOpenAIUsage(frame)
+          if (usage) {
+            terminalUsage = Array.isArray(choices) && (choices.length === 0 || finished)
+              ? usage : null
+            terminalUsageFollowsFinish = sawFinishReason && terminalUsage !== null
+          }
+        } catch { /* 非 JSON 帧不提供用量。 */ }
+      }
+      pendingFrame = pendingFrame.slice(frameStart)
+    }
+    // 少数服务商直接关闭连接；用量帧仍须有明确的模型结束原因。
+    if (terminalUsageFollowsFinish && terminalUsage) settleOwnerRequestUsage(requestId, terminalUsage)
+    else markOwnerRequestUnknown(requestId)
   } catch { markOwnerRequestUnknown(requestId) }
+  finally {
+    // tee 的另一分支仍由 Runtime 读取，不等待它取消或结束。
+    void reader.cancel().catch(() => {})
+    reader.releaseLock()
+  }
 }
 
 /**
@@ -257,19 +291,14 @@ async function passthroughWithSettlement(commandId: string, requestId: string, r
   if (!response.ok || !response.body) { markOwnerRequestUnknown(requestId); return response }
   const isStream = (response.headers.get('content-type') ?? '').includes('text/event-stream')
   if (!isStream) {
+    const body = await response.text().catch(() => null)
+    if (body === null) { markOwnerRequestUnknown(requestId); return response }
     try {
-      const body = await response.text()
-      if (body.length > 4_000_000) markOwnerRequestUnknown(requestId)
-      else {
-        const usage = parseOpenAIUsage(body)
-        if (usage) settleOwnerRequestUsage(requestId, usage)
-        else markOwnerRequestUnknown(requestId)
-      }
-      return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers })
-    } catch {
-      markOwnerRequestUnknown(requestId)
-      return response
-    }
+      const usage = Buffer.byteLength(body) <= MAX_ACCOUNTING_RESPONSE_BYTES ? readOpenAIUsage(JSON.parse(body)) : null
+      if (usage) settleOwnerRequestUsage(requestId, usage)
+      else markOwnerRequestUnknown(requestId)
+    } catch { markOwnerRequestUnknown(requestId) }
+    return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers })
   }
   const [clientBody, accountingBody] = response.body.tee()
   const clientReader = clientBody.getReader()

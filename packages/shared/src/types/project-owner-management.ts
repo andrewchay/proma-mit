@@ -40,6 +40,7 @@ export interface OwnerManagementMessage {
   delivery?: OwnerManagementDelivery
   deliveryReference?: OwnerManagementDeliveryReference
   deliveryReviewDecision?: 'accepted' | 'changes_requested' | 'deferred'
+  localTextAction?: true
   chainReview?: { requestHash: string; draftId: string; version: number; choice: 'accept' | 'reject' | 'later' }
   content: string
   taskId?: string
@@ -85,6 +86,7 @@ export interface OwnerManagementDelivery {
   schemaVersion: 1
   planVersion: number
   items: OwnerManagementDeliveryItem[]
+  localTextRevisionOf?: string
 }
 export interface OwnerManagementDeliveryItem {
   stepKey: string
@@ -94,6 +96,8 @@ export interface OwnerManagementDeliveryItem {
   content: string
   ownerDecision: string
   reviewerSummary: string
+  /** 用户明确指定的单行插入；原评审归属原版本，新版本仅做本地差异核对。 */
+  localTextRevision?: { requestMessageId: string; previousMessageId: string; baseMessageId: string; baseArtifactHash: string }
 }
 
 /** 从交付和独立评审账本重新核对的历史验证记录，不修改交付快照。 */
@@ -104,6 +108,8 @@ export interface OwnerDeliveryValidationRecord {
   checkedAt: number
   /** 已识别研发交付，但无法重建完整验证来源。 */
   unavailable?: boolean
+  browserRefresh?: { anchorId: string; failedValidationId?: string }
+  browserRefreshBlocked?: string
   validations: Array<{ command: string; status: string; finishedAt?: number; expired: boolean; outputSha256: string; freshness: 'fresh' | 'stale' | 'legacy' | 'unknown'; method?: 'command' | 'browser_assertions'; checks?: import('./development-review').DevelopmentValidationCheck[] }>
 }
 
@@ -141,6 +147,7 @@ export interface OwnerReviewHistory {
   qualityState?: 'accepted' | 'rework_authorized' | 'escalated' | 'blocked'
   counterSupplementReviewerId?: string
   markdownRetryReviewerId?: string
+  interruptedMarkdownReview?: true
   steps: Array<{ label: string; detail: string; at?: number }>
 }
 
@@ -394,6 +401,11 @@ export interface OwnerManagementDelegation extends OwnerManagementDelegationPrev
   issuedAt: number
 }
 export interface OwnerManagementAttentionCheck {
+  /** 来自原请求的冻结上下文，旧记录缺失时保持未知。 */
+  phase?: 'planning' | 'assignment' | 'conversation' | 'quality_decision'
+  /** 只表示该次回执中有本地证据的终止方式，独立于费用核对。 */
+  finishReason?: 'length'
+  retryExecutionId?: string
   executionStatus: 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'stale' | 'missing'
   outcomeState: 'proposed' | 'needs_clarification' | 'replied' | 'stale' | 'failed' | 'unknown' | 'stopped' | 'missing'
   reason: 'missing_execution' | 'missing_outcome' | 'non_continueable_outcome' | 'missing_receipt' | 'missing_usage' | 'invalid_usage' | 'output_limit'

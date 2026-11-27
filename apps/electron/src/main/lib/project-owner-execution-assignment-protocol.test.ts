@@ -247,3 +247,27 @@ test('Given 绿地原生项目 When 验证命令为空 Then 仍拒绝而不是�
     developmentScope: { ...swiftResponse.developmentScope!, verificationCommands: [] },
   }, greenfieldContext)).toThrow('验证命令无效')
 })
+
+test('Given英里换算要求四项行为 When安排网页验证 Then仅有加载回执的旧安排可读且新安排须覆盖四项', () => {
+  const proposal = { ...greenfieldResponse, developmentScope: { ...greenfieldResponse.developmentScope!, verificationCommands: ['browser:html.loads'] } }
+  const frozen = { ...greenfieldContext, steps: greenfieldContext.steps.map(step => ({
+    ...step, acceptanceCriteria: ['系数 1.609344', '1 显示 1.61 公里，0 显示 0.00 公里', '空输入或负数给出提示'],
+  })) }
+  expect(parseOwnerExecutionAssignmentProposal(proposal, frozen)).toEqual(proposal)
+  expect(() => parseOwnerExecutionAssignmentProposal(proposal, frozen, true, true, { enforceMilesConversion: true })).toThrow('英里换算验收包含具体输入')
+  const corrected = { ...proposal, developmentScope: { ...proposal.developmentScope, verificationCommands: ['browser:html.loads+conversion.miles-km'] } }
+  expect(parseOwnerExecutionAssignmentProposal(corrected, frozen, true, true, { enforceMilesConversion: true })).toEqual(corrected)
+})
+
+test('Given冻结网页标准明确英里换算 When模型抄错内置断言或只填页面加载 Then按同一行为补齐真实验证', () => {
+  const context = { ...greenfieldContext, objective: '按 1.609344 换算并显示两位小数，使用 #miles 和 #convert-btn，拒绝空输入或负数。', steps: greenfieldContext.steps.map(step => ({
+    ...step, acceptanceCriteria: ['含 input#miles、button#convert-btn、#result、#error', '浏览器实测 0/1/1000/空/负数：两位小数和公里单位'],
+  })) }
+  for (const command of ['browser:html.loads+conversion.miles-kb', 'browser:html.loads']) {
+    const proposal = { ...greenfieldResponse, developmentScope: { ...greenfieldResponse.developmentScope!, verificationCommands: [command] } }
+    expect(parseOwnerExecutionAssignmentProposal(proposal, context, true, true, { enforceMilesConversion: true,
+      completeRequiredBrowserChecks: true }).developmentScope?.verificationCommands).toEqual(['browser:html.loads+conversion.miles-km'])
+  }
+  const wrong = { ...greenfieldResponse, developmentScope: { ...greenfieldResponse.developmentScope!, verificationCommands: ['browser:html.loads+conversion.miles-kb'] } }
+  expect(() => parseOwnerExecutionAssignmentProposal(wrong, greenfieldContext)).toThrow(/未知/)
+})

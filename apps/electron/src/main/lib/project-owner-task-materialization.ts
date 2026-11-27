@@ -1,9 +1,9 @@
 /** 同库暂停材料化；没有grant、费用、工具或执行授权。 */
 import { randomUUID } from 'node:crypto'
-import type { OwnerTaskMaterializationInput, OwnerTaskMaterializationPreview, OwnerTaskMaterializationRecord, OwnerTaskMaterializationView, OwnerTaskProjection, OwnerTaskStepLink, ProjectOwnerGoalSubject } from '@gravitas/shared'
+import type { DevelopmentTaskScope, OwnerTaskMaterializationInput, OwnerTaskMaterializationPreview, OwnerTaskMaterializationRecord, OwnerTaskMaterializationView, OwnerTaskProjection, OwnerTaskStepLink, ProjectOwnerCriterionTrace, ProjectOwnerGoalSubject, ProjectOwnerPlanStep } from '@gravitas/shared'
 import type { Task } from './project-types'
 import * as store from './project-sqlite-store'
-import { assertLocalActorEnabled } from './project-owner-plan-service'
+import { assertLocalActorEnabled, readOwnerTextRevisionSiblingHashes } from './project-owner-plan-service'
 import { isCompletedStatus } from './task-status-logic'
 import { getOwnerExecutionPreparation, listOwnerExecutionPreparationHistory } from './project-owner-execution-preparation'
 import { assertOwnerExecutionBoundaryIdle } from './project-owner-execution-preparation-evidence'
@@ -11,6 +11,8 @@ import { withPilotPolicySnapshot, getPilotPolicy } from './project-pilot-policy'
 import { buildOwnerExecutionSource, OwnerExecutionPreparationConflictError, ownerExecutionHash, ownerExecutionObject, parseOwnerExecutionSubject } from './project-owner-execution-source'
 import { accumulateRetainedCandidates, resolveRetainedStepReuse } from './project-owner-retained-step-reuse'
 import { readLatestAcceptedArtifact } from './project-owner-accepted-artifact'
+import { isBrowserVerificationCommand, STAGED_FILES_VERIFICATION_COMMAND } from './owner-runtime-verification-command'
+import { projectOwnerStepCriterion } from './project-owner-criteria-trace'
 
 const subjectKey = (subject: ProjectOwnerGoalSubject) => subject.taskId ? `task:${subject.taskId}` : 'project'
 function fail(message: string): never {
@@ -138,22 +140,79 @@ export function getOwnerTaskMaterializationRecord(projectId: string, id: string)
  */
 function withTracedCriteria(
   step: { key: string; acceptanceCriteria: string[] },
-  trace: ReadonlyArray<{ sourceText: string; stepKey: string; criticality: 'critical' | 'advisory' }> | undefined,
+  trace: readonly ProjectOwnerCriterionTrace[] | undefined,
 ): string[] {
   if (!trace?.length) return step.acceptanceCriteria
-  const traced = trace
-    .filter((item) => item.stepKey === step.key && item.criticality === 'critical')
-    .map((item) => item.sourceText.trim())
-    .filter((text) => text && !step.acceptanceCriteria.includes(text))
+  const bound = trace.filter((item) => item.stepKey === step.key && item.criticality === 'critical')
+  const scoped = new Set(bound.filter(item => item.verificationScope === 'own_text').map(item => item.sourceText.trim()))
+  const original = step.acceptanceCriteria.filter(criterion => !scoped.has(criterion.trim()))
+  const traced = bound
+    .map(projectOwnerStepCriterion)
+    .filter((text) => text && !original.includes(text))
   // 去重后保持「步骤原有标准在前、目标硬要求在后」，评审按原顺序逐项判断。
-  return traced.length ? [...step.acceptanceCriteria, ...new Set(traced)] : step.acceptanceCriteria
+  return traced.length ? [...original, ...new Set(traced)] : original
+}
+
+// 需要真正加载页面才可核验的标准，必须跟随最终浏览器回执。
+const browserRuntimeCriterion = /浏览器|渲染|加载|(?:样式|CSS).{0,24}生效|(?:Tab|Enter).{0,24}(?:焦点|触发|通过)|\bbrowser\b|\brender(?:ing|ed)?\b/i
+const interactivePageCriterion = /(?:点击|按下|click|press).{0,40}(?:递增|加一|归零|重置|计数|清空|increment|reset|clear)|(?:控制台|console).{0,20}(?:无报错|无错误|no errors?)/i
+
+function needsBrowserRuntime(criterion: string): boolean {
+  // 控件存在可看源码，输出数值、归零及随输入刷新需要运行回执。
+  if (/(?:本阶段|第一步|前置步骤).{0,20}(?:源码|源文件|静态引用)/.test(criterion)) return false
+  return browserRuntimeCriterion.test(criterion) || interactivePageCriterion.test(criterion)
+    || /(?:#(?:codepoints|words|lines)|码点|词数|行数).{0,40}(?:显示|统计|归零)|输入后.{0,30}(?:统计|更新|刷新)|清空并归零/i.test(criterion)
+}
+
+function requiresFullDevelopmentDelivery(criterion: string, targetPaths: readonly string[]): boolean {
+  if (/完整成果|全部(?:目标)?文件|三文件|(?:三个|3\s*个)(?:页面|目标)?文件/.test(criterion)) return true
+  if (targetPaths.length < 2 || !/交付|提交|提供文件/.test(criterion)) return false
+  const mentioned = new Set(criterion.match(/[a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+/g))
+  return targetPaths.every(path => mentioned.has(path) || mentioned.has(`./${path}`))
+}
+
+/** 只有最终浏览器验收的依赖闭合、早期步骤具体写入文件可确定时才分配分步范围。 */
+function stagedBrowserDevelopment(scope: DevelopmentTaskScope | undefined, steps: readonly ProjectOwnerPlanStep[]) {
+  if (!scope?.verificationCommands?.length || !scope.verificationCommands.every(isBrowserVerificationCommand)) return null
+  const development = steps.filter(step => step.deliveryKind === 'development')
+  if (development.length < 2) return null
+  const integration = development.filter(step => !development.some(other => other.dependencies.includes(step.key))
+    && /浏览器|\bbrowser\b/i.test([step.title, step.outcome, ...step.acceptanceCriteria].join('\n')))
+  if (integration.length !== 1) return null
+  const final = integration[0]!
+  const byKey = new Map(steps.map(step => [step.key, step]))
+  const pending = [...final.dependencies]
+  const upstream = new Set<string>()
+  while (pending.length) {
+    const key = pending.pop()!
+    if (upstream.has(key)) continue
+    upstream.add(key)
+    pending.push(...(byKey.get(key)?.dependencies ?? []))
+  }
+  const scopes = new Map<string, DevelopmentTaskScope>()
+  const used = new Set<string>()
+  for (const step of development) {
+    if (step === final) continue
+    if (!upstream.has(step.key)) return null
+    const filenames = /[a-zA-Z0-9_./-]+\.[a-zA-Z0-9]+/g
+    const titles = new Set(step.title.match(filenames))
+    const outcomes = new Set(step.outcome.match(filenames))
+    const titleTargets = scope.targetPaths.filter(path => titles.has(path))
+    const targets = titleTargets.length ? titleTargets : scope.targetPaths.filter(path => outcomes.has(path))
+    if (!targets.length || targets.some(path => used.has(path))) return null
+    for (const path of targets) used.add(path)
+    scopes.set(step.key, { ...scope, targetPaths: targets, verificationCommands: [STAGED_FILES_VERIFICATION_COMMAND] })
+  }
+  return { finalKey: final.key, scopes }
 }
 
 function resolveRetainedSteps(
   subject: ProjectOwnerGoalSubject,
-  selectedSteps: ReadonlyArray<{ key: string; title: string; outcome: string; acceptanceCriteria: string[]; roleKey: string; deliveryKind?: 'text' | 'development'; dependencies: readonly string[] }>,
+  selectedSteps: ReadonlyArray<ProjectOwnerPlanStep & { developmentScopeHash?: string }>,
   /** 本次材料化所依据的目标版本；旧批次的目标版本不同说明用户明确改了要求。 */
   currentGoalRevision: number,
+  staged: ReturnType<typeof stagedBrowserDevelopment>,
+  feedbackStepKey?: string,
 ): OwnerTaskMaterializationPreview['retainedSteps'] {
   // 只在同一目标版本内谈复用。用户改了目标就代表要不同的东西，
   // 即便新计划的步骤文本与旧的一致，旧成果也不该被当作已满足新目标——
@@ -181,6 +240,7 @@ function resolveRetainedSteps(
       acceptanceCriteria: link.projection.acceptanceCriteria,
       roleKey: link.projection.roleKey,
       ...(link.projection.deliveryKind ? { deliveryKind: link.projection.deliveryKind } : {}),
+      ...(link.projection.developmentScope ? { developmentScopeHash: ownerExecutionHash(link.projection.developmentScope) } : {}),
     }
   }))
   const candidates = accumulateRetainedCandidates(batches)
@@ -190,12 +250,16 @@ function resolveRetainedSteps(
       key: step.key, title: step.title, outcome: step.outcome,
       acceptanceCriteria: step.acceptanceCriteria, roleKey: step.roleKey,
       ...(step.deliveryKind ? { deliveryKind: step.deliveryKind } : {}),
+      ...(step.developmentScopeHash ? { developmentScopeHash: step.developmentScopeHash } : {}),
     })),
     candidates,
   ).reuse
-  if (!reuse.length) return []
+  const reusable = reuse.filter(step => step.stepKey !== feedbackStepKey)
+  const reusedKeys = new Set(reusable.map(step => step.stepKey))
+  // 即使验收文字没改，只要上游文件重做，最终浏览器回执就不能复用。
+  const needsNewIntegration = staged && [...staged.scopes.keys()].some(key => !reusedKeys.has(key))
   const byStepKey = new Map(candidates.map(candidate => [candidate.stepKey, candidate]))
-  return reuse.map(({ stepKey }) => {
+  return reusable.filter(({ stepKey }) => !needsNewIntegration || stepKey !== staged?.finalKey).map(({ stepKey }) => {
     const candidate = byStepKey.get(stepKey)!
     // 记录谁依赖它：这些下游步骤启动时要把该成果作为上游交接带入。
     const dependedOnBy = selectedSteps.filter(step => step.dependencies.includes(stepKey)).map(step => step.key)
@@ -222,9 +286,33 @@ function currentPreview(subject: ProjectOwnerGoalSubject, input: OwnerTaskMateri
   }
   const selectedSteps = source.plan.proposal.steps.filter(step => source.selectedStepKeys.includes(step.key))
   if (selectedSteps.length !== source.selectedStepKeys.length) fail('冻结步骤缺失')
+  const staged = stagedBrowserDevelopment(source.developmentScope, selectedSteps)
+  const requiresFinalEvidence = (criterion: string) => needsBrowserRuntime(criterion)
+    || requiresFullDevelopmentDelivery(criterion, source.developmentScope?.targetPaths ?? [])
+  const trace = source.plan.proposal.criteriaTrace?.map(item => staged?.scopes.has(item.stepKey)
+    && requiresFinalEvidence(item.sourceText) ? { ...item, stepKey: staged.finalKey } : item)
+  const finalCriteria = selectedSteps.filter(step => staged?.scopes.has(step.key))
+    .flatMap(step => step.acceptanceCriteria.filter(requiresFinalEvidence))
+  const projectedCriteria = new Map(selectedSteps.map(step => {
+    const criteria = withTracedCriteria(step, trace)
+    if (staged?.scopes.has(step.key)) {
+      const staticCriteria = criteria.filter(criterion => !requiresFinalEvidence(criterion))
+      return [step.key, staticCriteria.length ? staticCriteria : ['本阶段目标文件已生成并通过文件快照核验']]
+    }
+    return [step.key, step.key === staged?.finalKey ? [...new Set([...criteria, ...finalCriteria])] : criteria]
+  }))
   // 混合批次接替：已验收且规格未变的步骤不再进入新批次。
   // 若原样重建，「A 已验收、B 失败」的恢复会给 A 建一个全新的可派发任务并再次计费。
-  const retainedSteps = resolveRetainedSteps(subject, selectedSteps, source.goalRevision) ?? []
+  const retainedSteps = resolveRetainedSteps(subject, selectedSteps.map(step => {
+    const scope = staged?.scopes.get(step.key) ?? source.developmentScope
+    return { ...step, acceptanceCriteria: projectedCriteria.get(step.key)!,
+      ...(scope && step.deliveryKind !== 'text' ? { developmentScopeHash: ownerExecutionHash(scope) } : {}) }
+  }), source.goalRevision, staged, source.plan.proposal.deliveryFeedbackAssessment?.stepKey) ?? []
+  for (const [stepKey, artifactHash] of readOwnerTextRevisionSiblingHashes(source.plan)) {
+    if (!retainedSteps.some(step => step.stepKey === stepKey && step.artifactHash === artifactHash)) {
+      fail('修订要保留的原文本成果版本已漂移，未重新派工。请在原交付中核对后继续。')
+    }
+  }
   const retainedKeys = new Set(retainedSteps.map(step => step.stepKey))
   const steps = selectedSteps.filter(step => !retainedKeys.has(step.key))
   if (!steps.length) fail('所选步骤的成果均已验收，没有需要重做的步骤；请直接交付或调整方案')
@@ -241,8 +329,9 @@ function currentPreview(subject: ProjectOwnerGoalSubject, input: OwnerTaskMateri
   }
   const projections: OwnerTaskProjection[] = steps.map(step => {
     const stepExecutor = source.roleAssignments?.find((assignment) => assignment.roleKey === step.roleKey)?.employee ?? source.executor
-    const criteria = withTracedCriteria(step, source.plan.proposal.criteriaTrace)
-    return { stepKey: step.key, ...(target ? { targetTaskId: target.id } : {}), title: target?.title ?? step.title, description: target?.description ?? `${step.outcome}\n\n验收标准：\n${criteria.map(item => `- ${item}`).join('\n')}`, roleKey: step.roleKey, ...(step.deliveryKind ? { deliveryKind: step.deliveryKind } : {}), outcome: step.outcome, acceptanceCriteria: criteria, dependencies: step.dependencies.filter(key => !retainedKeys.has(key)), assignee: { userId: `agent-${stepExecutor.id}`, displayName: stepExecutor.name }, workspaceId: source.workspaceId, ...(source.developmentScope && step.deliveryKind !== 'text' ? { developmentScope: source.developmentScope } : {}), ...(target ? { clearAssigneeMemberId: true as const, previous: { status: target.status, assignee: target.assignee, assigneeMemberId: target.assigneeMemberId, workspaceId: target.workspaceId, developmentScope: target.developmentScope } } : {}) }
+    const criteria = projectedCriteria.get(step.key)!
+    const developmentScope = staged?.scopes.get(step.key) ?? source.developmentScope
+    return { stepKey: step.key, ...(target ? { targetTaskId: target.id } : {}), title: target?.title ?? step.title, description: target?.description ?? `${step.outcome}\n\n验收标准：\n${criteria.map(item => `- ${item}`).join('\n')}`, roleKey: step.roleKey, ...(step.deliveryKind ? { deliveryKind: step.deliveryKind } : {}), outcome: step.outcome, acceptanceCriteria: criteria, dependencies: step.dependencies.filter(key => !retainedKeys.has(key)), assignee: { userId: `agent-${stepExecutor.id}`, displayName: stepExecutor.name }, workspaceId: source.workspaceId, ...(developmentScope && step.deliveryKind !== 'text' ? { developmentScope } : {}), ...(target ? { clearAssigneeMemberId: true as const, previous: { status: target.status, assignee: target.assignee, assigneeMemberId: target.assigneeMemberId, workspaceId: target.workspaceId, developmentScope: target.developmentScope } } : {}) }
   })
   const body = { ...subject, input, preparation, projections, ...(target ? { targetTaskHash: ownerExecutionHash(target), targetDependenciesHash: ownerExecutionHash(edgesFor(target.id, subject.projectId)) } : {}), ...(retainedSteps.length ? { retainedSteps } : {}) }
   return { ...body, previewFingerprint: ownerExecutionHash(body) }

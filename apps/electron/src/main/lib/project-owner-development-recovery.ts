@@ -3,10 +3,11 @@ import { execFileSync } from 'node:child_process'
 import { realpathSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { DevelopmentSnapshot, DevelopmentTaskScope } from '@gravitas/shared'
-import { applyOwnerDevelopmentSnapshot } from './project-owner-development-handoff'
+import { applyOwnerDevelopmentSnapshot, type OwnerDevelopmentHandoffInput } from './project-owner-development-handoff'
 import {
   createDevelopmentSnapshotAsync,
   developmentWorktreeMatchesSnapshotAsync,
+  loadDevelopmentSnapshotAsync,
   readDevelopmentSnapshotContentsAsync,
 } from './development-snapshot-service'
 import * as store from './project-sqlite-store'
@@ -103,24 +104,36 @@ export interface SeedFailedDevelopmentWorktreeResult {
 export async function seedFailedDevelopmentWorktree(
   input: SeedFailedDevelopmentWorktreeInput,
 ): Promise<SeedFailedDevelopmentWorktreeResult> {
+  const { handoff, worktreeMissing } = await readFailedDevelopmentHandoff(input)
+  if (handoff) applyOwnerDevelopmentSnapshot(input.targetWorktreePath, input.targetSessionDirectory, handoff.snapshot, handoff.files, input.scope.allowedPaths)
+  return { snapshot: handoff?.snapshot ?? null, worktreeMissing }
+}
+
+/** 冻结失败现场，供恢复时与已验收的上游文件一起核验和应用。 */
+export async function readFailedDevelopmentHandoff(
+  input: Omit<SeedFailedDevelopmentWorktreeInput, 'targetWorktreePath' | 'targetSessionDirectory'>,
+): Promise<{ handoff?: OwnerDevelopmentHandoffInput; worktreeMissing: boolean }> {
   const inventory = inspectFailedDevelopmentWorktree(input.failedWorktreePath, input.repository)
   // 现场已不存在：没有半成品可接续，新工作树保持干净。
   // 注意这里只核实「路径不存在」，不断言旧现场从没有过改动——那需要额外证据。
-  if (inventory.worktreeMissing === true) return { snapshot: null, worktreeMissing: true }
-  if (!inventory.hasChanges || inventory.baseCommit === null) return { snapshot: null, worktreeMissing: false }
-  const snapshot = await createDevelopmentSnapshotAsync({
-    worktreePath: input.failedWorktreePath, sessionDirectory: input.failedSessionDirectory,
-    executionId: input.failedExecutionId, workspaceId: input.workspaceId, scope: input.scope,
-  })
-  if (snapshot.baseCommit !== inventory.baseCommit) throw new Error('失败工作树基线与快照不一致，已停止交接')
+  if (inventory.worktreeMissing === true) return { worktreeMissing: true }
+  if (!inventory.hasChanges || inventory.baseCommit === null) return { worktreeMissing: false }
+  let snapshot: DevelopmentSnapshot
+  try {
+    snapshot = await loadDevelopmentSnapshotAsync(input.failedSessionDirectory, input.failedExecutionId)
+  } catch (error) {
+    if (!isMissingPath(error)) throw error
+    snapshot = await createDevelopmentSnapshotAsync({
+      worktreePath: input.failedWorktreePath, sessionDirectory: input.failedSessionDirectory,
+      executionId: input.failedExecutionId, workspaceId: input.workspaceId, scope: input.scope,
+    })
+  }
+  if (snapshot.executionId !== input.failedExecutionId || snapshot.workspaceId !== input.workspaceId || snapshot.baseCommit !== inventory.baseCommit) throw new Error('失败工作树来源或基线与快照不一致，已停止交接')
   if (!await developmentWorktreeMatchesSnapshotAsync(input.failedWorktreePath, snapshot, input.scope)) {
     throw new Error('失败工作树在冻结后发生变化，已停止交接')
   }
   const files = await readDevelopmentSnapshotContentsAsync(input.failedSessionDirectory, input.failedExecutionId)
-  applyOwnerDevelopmentSnapshot(
-    input.targetWorktreePath, input.targetSessionDirectory, snapshot, files, input.scope.allowedPaths,
-  )
-  return { snapshot, worktreeMissing: false }
+  return { handoff: { snapshot, files }, worktreeMissing: false }
 }
 
 /**

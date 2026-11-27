@@ -2,16 +2,29 @@
 import { constants, closeSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { dirname, join } from 'node:path'
-import type { OwnerTextDelivery } from '@gravitas/shared'
+import type { OwnerExecutionRevalidationSource, OwnerTextDelivery } from '@gravitas/shared'
 import { getProjectsDir } from './config-paths'
 import { ownerExecutionHash } from './project-owner-execution-hash'
 import { ownerTaskHasTextDelivery, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
-import { applyOwnerTextInsertionProposal, OWNER_TEXT_INSERTION_RESPONSE_INSTRUCTION } from './project-owner-delivery-content'
+import { applyOwnerTextInsertionProposal, ownerTextDeliveryCharacterLimit, OWNER_NOTICE_BODY_ONLY_INSTRUCTION, OWNER_SINGLE_TEXT_LINE_BREAK_INSTRUCTION, OWNER_SINGLE_TEXT_RESPONSE_INSTRUCTION, OWNER_TEXT_HANDOFF_HEADER, OWNER_TEXT_INSERTION_RESPONSE_INSTRUCTION, readOwnerSingleTextBody } from './project-owner-delivery-content'
+import { getOwnerTaskMaterializationRecord } from './project-owner-task-materialization'
 import * as store from './project-sqlite-store'
 
 export const OWNER_TEXT_DELIVERY_MAX_BYTES = 64 * 1024
 const MAX_FILE_BYTES = 512 * 1024
 const sha = (value: string): string => createHash('sha256').update(value, 'utf8').digest('hex')
+
+export function ownerTextDeliveryLengthViolation(frozen: OwnerExecutionRevalidationSource, taskId: string, content: string): string | null {
+  if (!ownerTaskHasTextDelivery(frozen, taskId)) return null
+  const task = frozen.tasks.find(item => item.taskId === taskId)!
+  const batch = getOwnerTaskMaterializationRecord(frozen.projectId, frozen.materialization.id)
+  const link = batch.links.find(item => item.id === task.linkId && item.taskId === taskId && item.integrityHash === task.linkIntegrityHash)
+  if (!link) throw new Error('文本成果的冻结验收标准无法核验')
+  const limit = ownerTextDeliveryCharacterLimit(link.projection.acceptanceCriteria)
+  if (limit === null) return null
+  const count = [...content].length
+  return count > limit ? `完整交付正文共 ${count} 个字符，超过本步骤 ${limit} 字上限，需按整份正文重新核对。` : null
+}
 function syncDirectory(path: string): void {
   if (process.platform === 'win32') return
   const fd = openSync(path, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW)
@@ -77,7 +90,13 @@ export function captureOwnerTextDelivery(commandId: string, executionId: string,
     ? (require('./project-owner-execution-command') as typeof import('./project-owner-execution-command')).readOwnerExactTextInsertion(frozen)
     : null
   const inserted = rule && applyOwnerTextInsertionProposal(message.content, rule)
-  const content = inserted?.content ?? message.content
+  const structuredTextHeader = `${OWNER_TEXT_HANDOFF_HEADER}\n\n${OWNER_SINGLE_TEXT_RESPONSE_INSTRUCTION}\n\n`
+  const noticeTextHeader = `${structuredTextHeader}${OWNER_NOTICE_BODY_ONLY_INSTRUCTION}\n\n`
+  const noticeBodyOnly = execution.prompt.startsWith(noticeTextHeader)
+  const baseHeader = noticeBodyOnly ? noticeTextHeader : structuredTextHeader
+  const repairLineBreaks = execution.prompt.startsWith(`${baseHeader}${OWNER_SINGLE_TEXT_LINE_BREAK_INSTRUCTION}\n\n`)
+  const content = inserted?.content ?? (execution.prompt.startsWith(structuredTextHeader)
+    ? readOwnerSingleTextBody(message.content, { noticeBodyOnly, repairLineBreaks }) : message.content)
   const insertionProposalSha256 = inserted ? sha(message.content) : undefined
   const byteLength = Buffer.byteLength(content, 'utf8')
   if (byteLength > OWNER_TEXT_DELIVERY_MAX_BYTES) throw new Error('完整文本成果超出64KiB审阅上限，已拒绝截断后评审')

@@ -719,6 +719,10 @@ window.electronAPI={getSettings:async()=>({}),listChannels:async()=>ok([]),listA
     onOwnerManagementChanged:()=>()=>{},getOwnerManagementDelegation:async()=>ok(delegationView),
     getOwnerPlanDraft:async()=>ok(plan),getOwnerPlanningContext:async()=>ok({goal,sources:plan.sources,fingerprint:'ctx'}),listOwnerPlanHistory:async()=>ok([]),
     getOwnerExecutionGrant:async()=>ok(grant),listOwnerExecutionGrantHistory:async()=>ok([]),
+    previewOwnerExecutionGrantIssue:async()=>{throw Error('只读工作台不签发授权')},
+    confirmOwnerExecutionGrantIssue:async()=>{throw Error('只读工作台不签发授权')},
+    previewOwnerExecutionGrantRevoke:async()=>{throw Error('只读工作台不撤销授权')},
+    confirmOwnerExecutionGrantRevoke:async()=>{throw Error('只读工作台不撤销授权')},
     getOwnerExecutionRevalidation:async()=>ok({status:'current',revalidation:null,blockers:[]}),listOwnerExecutionRevalidationHistory:async()=>ok([]),
     listOwnerExecutionCommands:async()=>ok([failedCommand]),
     getOwnerAutonomousScheduleStatus:async()=>ok({projectId:subject.projectId,grantId:grant.grantId,state:'paused',reservedCostMicros:0,committedCostMicros:2,runReservations:1,reason:'研发执行失败，停止自动续派'}),
@@ -745,9 +749,12 @@ createRoot(document.getElementById('root')).render(<Provider store={store}><Proj
     expect(await page.getByLabel('执行阻塞').count()).toBe(1)
     expect(await page.getByLabel('执行阻塞').innerText()).toContain('实现页面')
     // 3. 点「查看失败证据」后应能看到失败命令的终止证据。
+    const evidence = page.getByLabel('执行终止证据').first()
+    expect(await evidence.isVisible()).toBe(false)
+    await page.setViewportSize({ width: 700, height: 850 })
     await page.getByRole('button', { name: '查看失败证据' }).click()
-    await page.waitForTimeout(500)
-    expect(await page.getByLabel('执行终止证据').count()).toBeGreaterThan(0)
+    await evidence.waitFor({ state: 'visible' })
+    expect(await evidence.isVisible()).toBe(true)
   } finally {
     await browser.close()
     server.stop(true)

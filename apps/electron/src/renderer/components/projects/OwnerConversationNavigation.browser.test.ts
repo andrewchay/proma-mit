@@ -49,3 +49,68 @@ createRoot(document.getElementById('root')).render(<Provider store={store}><Harn
     expect(errors).toEqual([])
   } finally { await browser.close(); server.stop(true) }
 }, 30000)
+
+browserTest('Given 项目列表保持打开 When 任务级问题出现、答复或读取失败 Then 更新对应状态并保留准确任务入口', async () => {
+  const entry = join(directory, 'status.tsx'), output = join(directory, 'status.js')
+  writeFileSync(entry, `
+import React from 'react';import {createRoot} from 'react-dom/client';
+import {ProjectView} from ${JSON.stringify(join(renderer, 'components/projects/ProjectView.tsx'))};
+const projects=[{id:'a',title:'A 进行中的项目',description:''},{id:'b',title:'Z 服务台项目',description:''}];
+const listeners=new Set(),reads=[],subjects=[];
+let releaseInitial,waiting=false,failed=false;
+const taskId='shift-task';
+const ok=value=>({ok:true,value});
+const manager={schemaVersion:1,projectId:'b',ownerId:'owner',conversationId:'c',revision:1,status:'active',createdAt:1,updatedAt:1};
+const questions=[{id:'q',projectId:'b',taskId,conversationId:'c',executionId:'run',receiptId:'receipt',planningTaskId:'planning',goalRevision:1,contextFingerprint:'f'.repeat(64),reason:'时段决定交接安排',state:'open',questions:[{key:'shift',reasonType:'missing_information',question:'选择甲时段还是乙时段？',why:'决定交接范围',options:['甲时段','乙时段']}]}];
+const state=projectId=>({ok:true,value:{projectId,state:projectId==='a'?'running':'no_grant',reason:'',reservedCostMicros:0,committedCostMicros:0,runReservations:0,...(projectId==='b'&&waiting?{waitingQuestion:{taskId:'shift-task'}}:{})}});
+const loadStatus=async({projectId})=>{
+  reads.push(projectId);
+  const snapshot=state(projectId);
+  if(projectId==='b'&&reads.filter(id=>id==='b').length===1) return new Promise(resolve=>{releaseInitial=()=>resolve(snapshot)});
+  return failed&&projectId==='b'?{ok:false,error:{message:'状态服务不可用'}}:snapshot;
+};
+window.electronAPI={getSettings:async()=>({}),listChannels:async()=>[],listAgentWorkspaces:async()=>[],paa:{project:{
+  listProjects:async()=>projects,getProject:async id=>projects.find(project=>project.id===id),getOwnerAutonomousScheduleStatus:loadStatus,
+  onOwnerManagementChanged:callback=>{listeners.add(callback);return()=>listeners.delete(callback)},
+  getOwnerManagement:async ({projectId})=>ok({manager:projectId==='b'?manager:null,messages:[],questions:projectId==='b'?questions:[],changes:[],pendingEvents:0}),
+  getOwnerGoalDraft:async subject=>{subjects.push(subject);return ok(subject.projectId==='b'?{schemaVersion:1,revision:1,state:'draft',actor:'local-user',savedAt:1,goal:{...subject,goalVersion:1,objective:'准备服务台交接',constraints:[],acceptanceCriteria:[]}}:null)},
+  getOwnerPlanDraft:async()=>ok(null), getOwnerRuntimeBinding:async()=>ok(null), getOwnerManagementDelegation:async()=>ok({delegation:null,state:'none',usedRequests:0,reservedCostMicros:0})
+},projectWorkspace:{listByProject:async()=>[]},agentEmployees:{list:async()=>[]}}};
+window.fixture={ready:()=>!!releaseInitial&&listeners.size>0,change:(open,error)=>{waiting=open;failed=error;for(const listener of listeners)listener({projectId:'b'})},release:()=>releaseInitial(),facts:()=>({reads,subjects})};
+createRoot(document.getElementById('root')).render(<ProjectView/>);
+`)
+  await build({ entryPoints: [entry], outfile: output, bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.mp3': 'dataurl', '.png': 'dataurl' }, absWorkingDir: root, alias: { '@': renderer }, nodePaths: [join(root, 'node_modules'), join(root, 'apps/electron/node_modules')], define: { 'process.env.NODE_ENV': '"test"' }, logLevel: 'silent' })
+  const server = Bun.serve({ hostname: '127.0.0.1', port: 0, fetch: () => new Response('<div id="root"></div><script src="/status.js"></script>', { headers: { 'Content-Type': 'text/html' } }), routes: { '/status.js': () => new Response(Bun.file(output)) } })
+  const browser = await chromium.launch({ headless: true })
+  const page = await browser.newPage()
+  type FixtureWindow = Window & { fixture: { ready(): boolean; change(open: boolean, error: boolean): void; release(): void; facts(): { reads: string[]; subjects: Array<{ projectId: string; taskId?: string }> } } }
+  try {
+    page.setDefaultTimeout(5000)
+    await page.goto(`http://127.0.0.1:${server.port}`)
+    await page.waitForFunction(() => (window as unknown as FixtureWindow).fixture.ready())
+    await page.evaluate(() => {
+      const { fixture } = window as unknown as FixtureWindow
+      fixture.change(true, false)
+      fixture.release()
+    })
+    const section = page.getByRole('region', { name: '项目状态' }), rows = section.getByRole('button')
+    const waiting = section.getByRole('button', { name: /Z 服务台项目.*等待你.*在 Owner 对话回答问题/ })
+    await waiting.waitFor()
+    expect(await rows.first().innerText()).toContain('Z 服务台项目')
+    expect(await page.evaluate(() => (window as unknown as FixtureWindow).fixture.facts().reads)).toEqual(['a', 'b', 'b'])
+    await page.evaluate(() => (window as unknown as FixtureWindow).fixture.change(false, false))
+    await section.getByRole('button', { name: /Z 服务台项目.*未开始/ }).waitFor()
+    expect(await rows.first().innerText()).toContain('A 进行中的项目')
+    await page.evaluate(() => (window as unknown as FixtureWindow).fixture.change(false, true))
+    await section.getByText('读取失败：状态服务不可用').waitFor()
+    expect(await page.evaluate(() => (window as unknown as FixtureWindow).fixture.facts().reads)).toEqual(['a', 'b', 'b', 'b', 'b'])
+    await page.evaluate(() => (window as unknown as FixtureWindow).fixture.change(true, false))
+    await waiting.click()
+    await page.getByRole('heading', { name: 'Z 服务台项目', level: 1 }).waitFor()
+    await page.getByRole('radio', { name: '乙时段' }).waitFor()
+    expect(await page.evaluate(() => (window as unknown as FixtureWindow).fixture.facts().subjects))
+      .toContainEqual({ projectId: 'b', taskId: 'shift-task' })
+    await page.getByRole('button', { name: '返回项目 Owner' }).click()
+    await page.getByRole('radio', { name: '乙时段' }).waitFor({ state: 'hidden' })
+  } finally { await browser.close(); server.stop(true) }
+}, 30000)

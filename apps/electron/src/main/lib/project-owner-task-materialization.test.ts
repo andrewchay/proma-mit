@@ -249,7 +249,7 @@ function supersedeFixture() {
 
 // 任务状态是状态，不是验收：只把任务标成 completed 不构成复用依据。
 // 真实验收链路（Owner 质量决定 + 独立评审 + 成果哈希）在 mixed-batch-journey 里覆盖。
-test('Given 目标硬要求由某步骤承接 When 材料化 Then 该要求进入该步骤的验收标准', () => {
+test.each(['单步要求', '逐份文本要求'] as const)('Given 目标含%s When 材料化 Then 验收范围与交付步骤匹配', (scenario) => {
   const project = store.createProject({ title: '硬要求并入', description: '' })
   const workspace = createAgentWorkspace(`owner-trace-${randomUUID()}`)
   bindWorkspaceToProject(project.id, workspace.id)
@@ -257,24 +257,31 @@ test('Given 目标硬要求由某步骤承接 When 材料化 Then 该要求进�
   const employee = employees.createAgentEmployee({ name: '执行者', role: '研究', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId: 'model', workspaceIds: [workspace.id] })
   const reviewer = employees.createAgentEmployee({ name: '技术评审', role: '研究', description: '', executionProfile: 'controlled', permissionMode: 'safe', runtime: 'ai-sdk', channelId: channel.id, modelId: 'model', workspaceIds: [workspace.id] })
   // 目标里写死了「一页」，但步骤标准只写了「范围明确」——这正是漏项的来源。
-  saveProjectOwnerGoalDraft(project.id, 0, { objective: '形成方案', acceptanceCriteria: ['打印后必须为一页'] })
+  const scoped = scenario === '逐份文本要求'
+  const perText = '两份文本各自完整可复制'
+  saveProjectOwnerGoalDraft(project.id, 0, { objective: '形成方案', acceptanceCriteria: [scoped ? perText : '打印后必须为一页'] })
   const context = plans.getProjectOwnerPlanningContext(project.id)
-  const steps = [{ key: 'brief', title: '研究', outcome: '材料', acceptanceCriteria: ['范围明确'], dependencies: [], roleKey: context.sources.roles[0]!.key }]
+  const roleKey = context.sources.roles[0]!.key
+  const steps = [
+    { key: 'brief', title: '研究', outcome: '材料', acceptanceCriteria: scoped ? ['范围明确', perText] : ['范围明确'], dependencies: [], roleKey, ...(scoped ? { deliveryKind: 'text' as const } : {}) },
+    ...(scoped ? [{ key: 'report', title: '交付说明', outcome: '一份说明', acceptanceCriteria: ['说明限制'], dependencies: ['brief'], roleKey, deliveryKind: 'text' as const }] : []),
+  ]
   plans.saveProjectOwnerPlanDraft(project.id, 1, 0, {
     expectedContextFingerprint: context.fingerprint, summary: '形成方案', assumptions: [], risks: [], steps, changeReason: '建立计划',
     criteriaTrace: [
       { key: 'c1', source: 'objective', sourceIndex: 0, sourceText: '形成方案', criticality: 'critical', stepKey: 'brief', verification: 'manual_review', assumptions: [] },
-      { key: 'c2', source: 'acceptance', sourceIndex: 0, sourceText: '打印后必须为一页', criticality: 'critical', stepKey: 'brief', verification: 'manual_review', assumptions: [] },
+      ...steps.map((step, index) => ({ key: `criterion-${index + 2}`, source: 'acceptance', sourceIndex: 0, sourceText: scoped ? perText : '打印后必须为一页', criticality: 'critical', stepKey: step.key, verification: 'manual_review', assumptions: [], ...(scoped ? { verificationScope: 'own_text' } : {}) })),
     ],
   })
   plans.confirmProjectOwnerPlanDraft(project.id, 1, 1)
   const subject = { projectId: project.id }
-  const preparationInput = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: ['brief'], executionKind: 'controlled' as const, executorEmployeeId: employee.id, reviewerEmployeeId: reviewer.id, roleAssignments: [{ roleKey: steps[0]!.roleKey, employeeId: employee.id }], workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1000000, maxRuns: 2, maxRework: 0, expiresAt: Date.now() + 3600000, changeReason: '暂停准备' }
+  const preparationInput = { requestId: randomUUID(), expectedPreparationRevision: 0, expectedPolicyRevision: null, expectedGoalRevision: 1, expectedPlanRevision: 2, selectedStepKeys: steps.map(step => step.key), executionKind: 'controlled' as const, executorEmployeeId: employee.id, reviewerEmployeeId: reviewer.id, roleAssignments: [{ roleKey, employeeId: employee.id }], workspaceId: workspace.id, knowledgeSourceIds: [], maxCostMicros: 1000000, maxRuns: steps.length * 2, maxRework: 0, expiresAt: Date.now() + 3600000, changeReason: '暂停准备' }
   const pv = prep.previewOwnerExecutionPreparation(subject, preparationInput), preparation = prep.saveOwnerExecutionPreparation(subject, preparationInput, pv.previewFingerprint)
   const view = service.previewOwnerTaskMaterialization(subject, { requestId: randomUUID(), expectedMaterializationRevision: 0, expectedPreparationId: preparation.id, expectedPreparationRevision: preparation.revision, expectedPreparationHash: preparation.integrityHash, expectedPolicyRevision: preparation.policyRevision })
-  // 关键硬要求进入验收清单，Reviewer 才会去检查它。
-  expect(view.projections[0]!.acceptanceCriteria).toEqual(['范围明确', '形成方案', '打印后必须为一页'])
-  expect(view.projections[0]!.description).toContain('打印后必须为一页')
+  const projected = scoped ? `只核验本步骤自己的交付文本是否满足逐份要求（原文：${perText}）` : '打印后必须为一页'
+  expect(view.projections[0]!.acceptanceCriteria).toEqual(['范围明确', '形成方案', projected])
+  expect(view.projections[0]!.description).toContain(projected)
+  if (scoped) expect(view.projections[1]).toMatchObject({ dependencies: ['brief'], acceptanceCriteria: ['说明限制', projected] })
 })
 
 test('Given 只把任务标成完成但没有验收证据 When 材料化 Then 不复用该步骤', () => {

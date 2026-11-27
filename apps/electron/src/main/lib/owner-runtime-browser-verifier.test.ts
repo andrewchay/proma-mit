@@ -70,3 +70,63 @@ test('Given冻结范围中的页面及脚本样式 When验证 Then只向浏览�
   await expect(runOwnerRuntimeBrowserAssertions({ workspaceRoot: root, relativePath: 'sub/inner.html', intents: [], resourcePaths: ['link.js'] })).rejects.toThrow()
   await expect(runOwnerRuntimeBrowserAssertions({ workspaceRoot: root, relativePath: 'sub/inner.html', intents: [], resourcePaths: ['notes.txt'] })).rejects.toThrow()
 })
+
+test('Given 两个项目同时申请浏览器验证 When 前一项失败 Then 后一项仅在槽位释放后开始', async () => {
+  const order: string[] = []
+  let finishFirst: () => void = () => {}
+  const firstPending = new Promise<void>(resolve => { finishFirst = resolve })
+  setOwnerRuntimeBrowserRunner(async (input) => {
+    order.push(input.filePath.split('/').at(-1)!)
+    if (order.length === 1) {
+      await firstPending
+      throw new Error('本次验证被中止')
+    }
+    return { checks: [], durationMs: 0, timedOut: false, relativePath: input.filePath }
+  })
+  const first = runOwnerRuntimeBrowserAssertions({ workspaceRoot: root, relativePath: 'game.html', intents: [] })
+    .then(() => null, (error: unknown) => error)
+  const second = runOwnerRuntimeBrowserAssertions({ workspaceRoot: root, relativePath: 'sub/inner.html', intents: [] })
+  await Promise.resolve()
+  expect(order).toEqual(['game.html'])
+  finishFirst()
+  expect(await first).toEqual(new Error('本次验证被中止'))
+  expect((await second).relativePath).toBe('sub/inner.html')
+  expect(order).toEqual(['game.html', 'inner.html'])
+})
+
+test('Given 验证进程资源超限 When 按进程连续采样 Then 识别持续过载且不继承旧进程的采样', async () => {
+  const { createOwnerBrowserResourceLimit } = await import('./owner-runtime-browser-verifier')
+  const limit = createOwnerBrowserResourceLimit()
+  const metric = (seconds: number, memory: number, creationTime = 1): Electron.ProcessMetric => ({
+    pid: 123, type: 'Tab', creationTime,
+    cpu: { cumulativeCPUUsage: seconds, idleWakeupsPerSecond: 0, percentCPUUsage: 0 },
+    memory: { workingSetSize: memory, peakWorkingSetSize: memory },
+  })
+  for (let index = 0; index < 4; index++) expect(limit(metric(index, 200 * 1024), index * 1000)).toBeNull()
+  expect(limit(metric(4, 200 * 1024), 4000)).toContain('CPU')
+  expect(limit(metric(0, 600 * 1024, 2), 5000)).toBeNull()
+  expect(limit(metric(0.1, 600 * 1024, 2), 6000)).toContain('内存')
+})
+
+test('Given 浏览器验证排队期间授权变化 When 获得槽位 Then 开始前重验并跳过未经授权的页面', async () => {
+  let finish: () => void = () => {}
+  const running = new Promise<void>(resolve => { finish = resolve })
+  const seen: string[] = []
+  setOwnerRuntimeBrowserRunner(async input => {
+    seen.push(input.filePath)
+    await running
+    return { checks: [], durationMs: 0, timedOut: false, relativePath: input.filePath }
+  })
+  let authorized = true
+  const first = runOwnerRuntimeBrowserAssertions({ workspaceRoot: root, relativePath: 'game.html', intents: [] })
+  const second = runOwnerRuntimeBrowserAssertions({
+    workspaceRoot: root, relativePath: 'sub/inner.html', intents: [],
+    beforeStart: () => { if (!authorized) throw new Error('授权已撤销') },
+  }).then(() => null, (error: unknown) => error)
+  await Promise.resolve()
+  authorized = false
+  finish()
+  await first
+  expect(await second).toEqual(new Error('授权已撤销'))
+  expect(seen).toHaveLength(1)
+})

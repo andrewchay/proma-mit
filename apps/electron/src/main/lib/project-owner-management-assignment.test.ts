@@ -5,6 +5,7 @@ import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync,
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
+import './testing/mock-owner-host-resources'
 import type { OwnerExecutionPreparationInput, ProjectOwnerExecutionLaunchApi } from '@gravitas/shared'
 import { buildElectronMock } from './testing/electron-mock'
 const directory = mkdtempSync(join(tmpdir(), 'owner-managed-assignment-')), previous = process.env.PROMA_TEST_CONFIG_DIR
@@ -35,7 +36,7 @@ const { retakeOwnerManagementAssignment } = await import('./project-owner-manual
 const calls: Array<{ projectId: string; purpose: string; candidates: string[]; executionKinds?: string[]; employeeModes?: Array<{ id: string; executionProfile: string; ownerControlledCompatible?: boolean }> }> = []
 let rejectNextAssignmentProjectId: string | null = null
 let legacyNullScopeProjectId: string | null = null
-let rejectNextAssignmentKind: 'reviewer' | 'coverage' = 'reviewer'
+let rejectNextAssignmentKind: 'reviewer' | 'unknown_reviewer' | 'coverage' | 'text_scope' = 'reviewer'
 let nextOwnerPlanningResponseGate: { started(): void; wait: Promise<void> } | null = null
 let failBusinessProjectId: string | null = null
 let reviseConversationProjectId: string | null = null
@@ -193,11 +194,16 @@ beforeAll(async () => {
     const selectedIds = [...assignments.map(item => item.employeeId), reviewer.id]
     const workspaceId = context.workspaces.find(workspace => selectedIds.every(id => context.candidates.find(candidate => candidate.id === id)?.workspaceIds.includes(workspace.id)))?.id
     if (!workspaceId) throw new Error('fake安排没有共同的已授权员工工作区')
-    const rejectedReviewer = rejectNextAssignmentProjectId === source.link.projectId ? assignments[0]?.employeeId : undefined
+    const rejectedReviewer = rejectNextAssignmentProjectId === source.link.projectId
+      ? rejectNextAssignmentKind === 'unknown_reviewer' ? randomUUID() : assignments[0]?.employeeId
+      : undefined
     if (rejectedReviewer) rejectNextAssignmentProjectId = null
     const development = context.steps.some(step => step.deliveryKind === 'development') || (legacyUntypedRecoveryProjectId === source.link.projectId && context.steps.length > 1 && context.steps.every(step => !step.deliveryKind))
-    const proposal = { schemaVersion: 1, contextFingerprint: context.contextFingerprint, selectedStepKeys: context.steps.map(step => step.key), scopeReason: '执行已确认的完整方案', workspaceId, workspaceReason: '复用项目已有授权', executionKind: development ? 'development' : 'controlled', executionKindReason: development ? '需要实现页面' : '无需代码修改', assignments: rejectedReviewer && rejectNextAssignmentKind === 'coverage' ? [] : assignments, reviewerEmployeeId: rejectNextAssignmentKind === 'reviewer' ? rejectedReviewer ?? reviewer.id : reviewer.id, reviewerReason: '独立检查成果', ...(development ? { developmentScope: { targetPaths: ['diary/index.html'], allowedPaths: ['diary/index.html'], verificationCommands: ['browser:html.loads'], reason: '交付日记页面' } } : {}) }
+    const proposal = { schemaVersion: 1, contextFingerprint: context.contextFingerprint, selectedStepKeys: context.steps.map(step => step.key), scopeReason: '执行已确认的完整方案', workspaceId, workspaceReason: '复用项目已有授权', executionKind: development ? 'development' : 'controlled', executionKindReason: development ? '需要实现页面' : '无需代码修改', assignments: rejectedReviewer && rejectNextAssignmentKind === 'coverage' ? [] : assignments, reviewerEmployeeId: ['reviewer', 'unknown_reviewer'].includes(rejectNextAssignmentKind) ? rejectedReviewer ?? reviewer.id : reviewer.id, reviewerReason: '独立检查成果', ...(development ? { developmentScope: { targetPaths: ['diary/index.html'], allowedPaths: ['diary/index.html'], verificationCommands: ['browser:html.loads'], reason: '交付日记页面' } } : {}) }
     const isLegacyNullScope = legacyNullScopeProjectId === source.link.projectId
+    if (rejectedReviewer && rejectNextAssignmentKind === 'text_scope') {
+      Object.assign(proposal, { developmentScope: { targetPaths: ['docs/notice.md'], allowedPaths: ['docs/notice.md'], verificationCommands: [], reason: '错误的文本占位范围' } })
+    }
     const rejected = isLegacyNullScope ? spyOn(await import('./project-owner-execution-assignment-protocol'), 'parseOwnerExecutionAssignmentProposal').mockImplementationOnce(() => { throw new Error('受控非研发安排不得包含代码范围') }) : null
     if (isLegacyNullScope) legacyNullScopeProjectId = null
     try {
@@ -599,7 +605,7 @@ test('Given 已有可用团队和管理委托 When 用户确认方案 Then 无�
   } finally { stop() }
 }, 30000)
 
-test.each(['reviewer', 'coverage'] as const)('Given 安排请求完整结束但违反%s协议 When Owner收到失败结果 Then 在原预算内只续跑一次并保留两次运行证据', async (kind) => {
+test.each(['reviewer', 'unknown_reviewer', 'coverage', 'text_scope'] as const)('Given 安排请求完整结束但违反%s协议 When Owner收到失败结果 Then 在原预算内只续跑一次并保留两次运行证据', async (kind) => {
   rejectNextAssignmentKind = kind
   const f = fixture()
   confirm(f)
@@ -1311,6 +1317,53 @@ test('Given 确认事务回滚或旧方案来源失效 When 后台处理 Then �
   expect(listOwnerExecutionAssignmentRuns(task.subject)[0]?.link.targetTaskId).toBe(task.taskId)
   expect(listOwnerExecutionAssignmentRuns({ projectId: task.project.id })).toHaveLength(0)
 }, 20_000)
+
+test('Given 只授权一个任务 When Owner 完成派工验收 Then 相邻任务没有运行记录或交付状态', async () => {
+  const f = fixture('complete', true)
+  const sibling = store.createTask(f.project.id, { title: '同项目另一条待办', description: '' })
+  confirm(f)
+  const authorized = authorize(f, true, 8)
+  const registry = new Map<string, (event: unknown, request: unknown) => unknown>()
+  const { PROJECT_IPC_CHANNELS } = await import('@gravitas/shared')
+  const { registerProjectOwnerExecutionIpcHandlers } = await import('./project-owner-execution-ipc')
+  registerProjectOwnerExecutionIpcHandlers({ handle: (name, handler) => { registry.set(name, handler) } })
+  const readSchedule = (taskId?: string) => registry.get(PROJECT_IPC_CHANNELS.GET_OWNER_AUTONOMOUS_SCHEDULE_STATUS)!(undefined,
+    { projectId: f.project.id, ...(taskId ? { taskId } : {}) })
+  const { runOwnerAutonomousSchedule, getOwnerAutonomousScheduleStatus } = await import('./project-owner-autonomous-scheduler')
+  const { onOwnerAutonomousScheduleWake } = await import('./project-owner-autonomous-scheduler-events')
+  const stopSchedule = onOwnerAutonomousScheduleWake(id => { if (id === f.project.id) void runOwnerAutonomousSchedule(id) })
+  const stop = startOwnerManagementLoop()
+  try {
+    const deliveries = () => getOwnerManagementConversation(f.project.id).messages.filter(message => message.kind === 'delivery')
+    await until(() => deliveries().length > 0, () => ({
+      schedule: getOwnerAutonomousScheduleStatus(f.project.id, f.taskId),
+      messages: getOwnerManagementConversation(f.project.id).messages.map(message => message.content).slice(-6),
+      tasks: store.listTasks(f.project.id).map(task => ({ title: task.title, status: task.status, link: task.ownerStepLinkId })),
+    }))
+    expect(deliveries()).toHaveLength(1)
+    expect(deliveries()[0]).toMatchObject({ taskId: f.taskId, delivery: { items: [{ stepKey: 'brief' }] } })
+    const arranging = getOwnerManagementConversation(f.project.id).messages.filter(message => message.content.includes('推进团队安排'))
+    expect(arranging).not.toHaveLength(0)
+    expect(arranging.every(message => message.taskId === f.taskId)).toBe(true)
+    const db = store.getProjectDb()
+    const grant = db.prepare('SELECT id, task_id, owner_management_delegation_id FROM project_owner_execution_grants WHERE project_id=?').get(f.project.id) as { id: string; task_id: string; owner_management_delegation_id: string }
+    expect(grant).toMatchObject({ task_id: f.taskId, owner_management_delegation_id: authorized.id })
+    const commands = db.prepare('SELECT source_task_id, role, state FROM project_owner_execution_commands WHERE project_id=? ORDER BY rowid').all(f.project.id)
+    expect(commands).toEqual([
+      { source_task_id: f.taskId, role: 'executor', state: 'settled' },
+      { source_task_id: f.taskId, role: 'reviewer', state: 'settled' },
+    ])
+    expect(await readSchedule(f.taskId)).toMatchObject({ ok: true, value: { grantId: grant.id, deliveryPublished: true, runReservations: 2 } })
+    const unrelated = await readSchedule(sibling.id)
+    expect(unrelated).toMatchObject({ ok: true, value: { state: 'no_grant', committedCostMicros: 0, runReservations: 0 } })
+    expect(unrelated).not.toHaveProperty('value.grantId')
+    expect(unrelated).not.toHaveProperty('value.deliveryPublished')
+    expect(await readSchedule()).toMatchObject({ ok: true, value: { grantId: grant.id, deliveryPublished: true } })
+    const execution = store.listAgentExecutionsByEntity('task', f.taskId!).find(item => item.ownerCommandId)!
+    expect(await registry.get(PROJECT_IPC_CHANNELS.RECHECK_OWNER_DEVELOPMENT_WORKSPACE)!(undefined,
+      { projectId: f.project.id, taskId: sibling.id, executionId: execution.id })).toMatchObject({ ok: false, error: { message: '执行不属于当前Owner任务' } })
+  } finally { await stop(); stopSchedule() }
+}, 30000)
 
 
 for (const team of ['general', 'missing-role', 'mixed'] as const) {

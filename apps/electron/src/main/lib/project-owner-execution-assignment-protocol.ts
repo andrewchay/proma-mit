@@ -3,22 +3,24 @@ import { createHash } from 'node:crypto'
 import { supportsOwnerExecutionKind, supportsOwnerMixedTeam } from '@gravitas/shared'
 import type { OwnerExecutionAssignmentCandidate, OwnerExecutionAssignmentContext, OwnerExecutionAssignmentProposal } from '@gravitas/shared'
 import { isProtectedDevelopmentPath, normalizeRepoRelativePath, pathWithinAllowed } from './development-path-policy'
-import { COUNTER_KEYBOARD_CHECK, COUNTER_KEYBOARD_VERIFICATION_COMMAND, isBrowserVerificationCommand, MARKDOWN_VERIFICATION_COMMAND, parseBrowserVerificationCheckIds, requiresOwnerCounterKeyboardVerification } from './owner-runtime-verification-command'
+import { COUNTER_KEYBOARD_CHECK, COUNTER_KEYBOARD_VERIFICATION_COMMAND, isBrowserVerificationCommand, MARKDOWN_VERIFICATION_COMMAND, MILES_CONVERSION_CHECK, MILES_CONVERSION_VERIFICATION_COMMAND, parseBrowserVerificationCheckIds, requiresOwnerCounterKeyboardVerification, requiresOwnerMilesConversionVerification } from './owner-runtime-verification-command'
 import { buildCommandCoversTargets, isBuildVerificationCommand, listOwnerRuntimeBuildCommands, resolveOwnerRuntimeBuildCommand } from './owner-runtime-build-command'
 
+export const MILES_CONVERSION_VERIFICATION_MISSING = `英里换算验收包含具体输入和提示，请使用 ${MILES_CONVERSION_VERIFICATION_COMMAND}`
 export const MARKDOWN_BROWSER_VERIFICATION_MISMATCH = '纯 Markdown 目标无法执行 HTML 验证，请使用 document:markdown'
 
 export interface OwnerExecutionAssignmentRequest { expectedGoalRevision: number; expectedContextFingerprint: string; systemPrompt: string; userPrompt: string }
 /**
  * 断言注册表会进入冻结安排提示，历史请求只能按当时的注册表文本还原。
  * - current：当前注册表全量（随版本演进）；
+ * - registry-v6：增加英里换算验证前的注册表与提示；
  * - registry-v5：增加 Markdown 文件验证说明前的注册表与提示。
  * - registry-v3：增加文本计数器断言前的注册表；
  * - registry-v2：增加日记断言前的 12 项注册表文本；
  * - registry-v1：2026-11 增加三消断言前的 7 项注册表文本；
  * - legacy-6：更早的 6 项简写清单。
  */
-export type OwnerBrowserRegistryVariant = 'current' | 'registry-v5' | 'registry-v4' | 'registry-v3' | 'registry-v2' | 'registry-v1' | 'legacy-6'
+export type OwnerBrowserRegistryVariant = 'current' | 'registry-v6' | 'registry-v5' | 'registry-v4' | 'registry-v3' | 'registry-v2' | 'registry-v1' | 'legacy-6'
 const BROWSER_REGISTRY_V2_TEXT = 'html.loads（页面可加载且无脚本错误）、dom.board（存在 16 格棋盘容器）、dom.initial-tiles（开局至少两个数字块）、behavior.merge（同向按键可合并并计分）、storage.best-score（最高分可持久化）、behavior.game-over（无法移动时显示游戏结束）、dom.restart（重新开始恢复开局与零分）、match3.board（存在 8×8 满盘棋子棋盘）、match3.swap（有效交换使棋盘变化）、match3.invalid-revert（无效交换自动还原且不扣步数）、match3.score（消除后计分且棋盘补满）、match3.restart（重开后棋盘满盘且分数归零）'
 const BROWSER_REGISTRY_V1_TEXT = 'html.loads（页面可加载且无脚本错误）、dom.board（存在 16 格棋盘容器）、dom.initial-tiles（开局至少两个数字块）、behavior.merge（同向按键可合并并计分）、storage.best-score（最高分可持久化）、behavior.game-over（无法移动时显示游戏结束）、dom.restart（重新开始恢复开局与零分）'
 const BROWSER_REGISTRY_LEGACY_6_TEXT = 'html.loads（页面可加载）、dom.board（16格棋盘）、dom.initial-tiles（开局数字块）、behavior.merge（按键合并计分）、storage.best-score（最高分持久化）、dom.restart（重开入口）'
@@ -27,7 +29,9 @@ function browserRegistryText(variant: OwnerBrowserRegistryVariant): string {
   if (variant === 'registry-v1') return BROWSER_REGISTRY_V1_TEXT
   if (variant === 'legacy-6') return BROWSER_REGISTRY_LEGACY_6_TEXT
   const templates = OWNER_RUNTIME_ASSERTION_TEMPLATES.filter(item =>
-    item.id !== 'counter.increment-reset' && (variant === 'current' || item.id !== 'counter.mouse-keyboard') && (variant === 'current' || variant === 'registry-v5' || item.id !== 'calculator.scientific') && (variant !== 'registry-v3' || item.id !== 'text-counter.behavior'))
+    item.id !== 'counter.increment-reset' && (variant === 'current' || item.id !== MILES_CONVERSION_CHECK)
+      && (['current', 'registry-v6'].includes(variant) || item.id !== 'counter.mouse-keyboard')
+      && (['current', 'registry-v6', 'registry-v5'].includes(variant) || item.id !== 'calculator.scientific') && (variant !== 'registry-v3' || item.id !== 'text-counter.behavior'))
   return templates.map(item => `${item.id}（${item.title}）`).join('、')
 }
 /** 原生/命令行项目的固定构建命令清单；空清单表示该变体发布时尚无此能力。 */
@@ -36,7 +40,12 @@ function buildRegistryText(includeBuildCommands: boolean): string {
   const items = listOwnerRuntimeBuildCommands().map(item => `${item.id}（${item.title}）`).join('、')
   return items ? `；原生或命令行项目可用 build:<标识>，可选标识：${items}` : ''
 }
-export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, requireRoleCoverage = true, browserRegistryVariant: OwnerBrowserRegistryVariant = 'current', stepDeliveryInstructions = true, roleSpecificCapabilities = true, greenfieldRootTargets = false, includeBuildCommands = true, requireSwiftPackage = true, requireCompleteGreenfieldScope = true): OwnerExecutionAssignmentRequest {
+export const OWNER_UNKNOWN_REVIEWER_REJECTION = 'Owner人员安排选择了候选之外的独立评审'
+export const OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION = '受控非研发安排不得包含代码范围'
+
+export const OWNER_BROWSER_CHECK_COMPLETION_INSTRUCTION = '内置英里换算断言与两位小数的精确目标匹配时，主进程会确保验证范围包含该断言。'
+
+export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, requireRoleCoverage = true, browserRegistryVariant: OwnerBrowserRegistryVariant = 'current', stepDeliveryInstructions = true, roleSpecificCapabilities = true, greenfieldRootTargets = false, includeBuildCommands = true, requireSwiftPackage = true, requireCompleteGreenfieldScope = true, completeRequiredBrowserChecks = browserRegistryVariant === 'current'): OwnerExecutionAssignmentRequest {
   return {
     expectedGoalRevision: context.goalRevision,
     expectedContextFingerprint: context.sourceContextFingerprint,
@@ -56,15 +65,20 @@ export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssi
       ...(requireCompleteGreenfieldScope && context.greenfieldDevelopment ? ['绿地研发的allowedPaths必须逐项覆盖所有targetPaths，并且不能引入额外路径。要同时交付页面和说明时，两份文件都必须在两个数组中。输出前检查两个数组包含相同的路径集合。'] : []),
       ...(greenfieldRootTargets && context.greenfieldDevelopment ? ['绿地仓库没有可核验的目标目录时，请优先选择仓库根目录下的新文件，例如index.html、app.js和style.css，避免把缺失父目录误当成已有能力。若用户明确要求目录结构，应如实保留要求和不确定性，不得静默改写。'] : []),
       ...(includeBuildCommands && requireSwiftPackage && context.greenfieldDevelopment && context.executionKinds.includes('development') ? ['使用 build:swift 或 build:swift-test 时，目标路径须包含工作区根目录的 Package.swift 和实际 Swift 源文件，并按 Swift Package 布局创建。构建在禁止网络的隔离环境中运行，不能依赖下载外部包。构建成功不代表原生界面或业务行为已验证。'] : []),
-      ...(['current', 'registry-v5', 'registry-v4'].includes(browserRegistryVariant) && context.executionKinds.includes('development') ? ['文本计数器要求验证输入、码点、词数、换行或清空时，使用 browser:html.loads+text-counter.behavior。验收需要 textarea#input、button#clear 以及只展示数字的 #codepoints、#words、#lines。把此控件约定写入本次范围理由；页面仅加载不能验证这些行为。'] : []),
-      ...((browserRegistryVariant === 'current' || browserRegistryVariant === 'registry-v5') && context.executionKinds.includes('development') ? ['科学计算器要求验证运算优先级、角度模式、除零或清空时，使用 browser:html.loads+calculator.scientific。控件约定为 input#expression、select#angle（deg 选项）、button#calculate、button#clear、#result、#error。页面可加载不满足这些行为标准。'] : []),
-      ...(browserRegistryVariant === 'current' && context.executionKinds.includes('development')
+      ...(['current', 'registry-v6', 'registry-v5', 'registry-v4'].includes(browserRegistryVariant) && context.executionKinds.includes('development') ? ['文本计数器要求验证输入、码点、词数、换行或清空时，使用 browser:html.loads+text-counter.behavior。验收需要 textarea#input、button#clear 以及只展示数字的 #codepoints、#words、#lines。把此控件约定写入本次范围理由；页面仅加载不能验证这些行为。'] : []),
+      ...(['current', 'registry-v6', 'registry-v5'].includes(browserRegistryVariant) && context.executionKinds.includes('development') ? ['科学计算器要求验证运算优先级、角度模式、除零或清空时，使用 browser:html.loads+calculator.scientific。控件约定为 input#expression、select#angle（deg 选项）、button#calculate、button#clear、#result、#error。页面可加载不满足这些行为标准。'] : []),
+      ...(['current', 'registry-v6'].includes(browserRegistryVariant) && context.executionKinds.includes('development')
         ? ['按钮式计数器要求验收连续加一、重置或键盘操作时，用 browser:html.loads+counter.mouse-keyboard。页面使用可见的 #count、button#increment、button#reset，三个操作都须按原验收标准执行。'] : []),
-      ...(browserRegistryVariant === 'current' && includeBuildCommands && context.executionKinds.includes('development')
+      ...(completeRequiredBrowserChecks && context.executionKinds.includes('development')
+        && requiresOwnerMilesConversionVerification(context.steps, ['index.html'], context.objective) ? [OWNER_BROWSER_CHECK_COMPLETION_INSTRUCTION] : []),
+      ...(browserRegistryVariant === 'current' && context.executionKinds.includes('development')
+        && requiresOwnerMilesConversionVerification(context.steps, ['index.html'])
+        ? [`英里转公里的四项验收要求使用 ${MILES_CONVERSION_VERIFICATION_COMMAND}，控件约定为 input#miles、button#convert-btn、#result、#error。结果显示公里单位。将控件约定写入研发范围理由，页面仅加载不能证明换算行为。`] : []),
+      ...(['current', 'registry-v6'].includes(browserRegistryVariant) && includeBuildCommands && context.executionKinds.includes('development')
         ? [`文件型 Markdown 成果使用 ${MARKDOWN_VERIFICATION_COMMAND}，它只确认目标文件存在、内容非空且与冻结快照一致。章节、数字和业务逻辑须由独立评审逐项核对。纯 Markdown 目标不得用浏览器加载检查。`] : []),
       ...(context.executionKinds.includes('development')
         ? [includeBuildCommands
-          ? `本次提供development方式：验证命令只接受内置运行验证形式 ${browserRegistryVariant === 'current' ? MARKDOWN_VERIFICATION_COMMAND + '、' : ''}browser:<断言标识>（多个用+连接，可选标识：${browserRegistryText(browserRegistryVariant)}）${buildRegistryText(true)}。禁止提出bun test、npm test、pytest等仓库自带测试或自写验证脚本：Owner员工不执行仓库代码。成果含HTML页面时必须至少声明一条browser断言；成果是原生或命令行程序时用对应的build命令（目标文件扩展名须与命令匹配）。无法用任何内置形式覆盖时，在reason中如实说明验证缺口，但不得留空。`
+          ? `本次提供development方式：验证命令只接受内置运行验证形式 ${['current', 'registry-v6'].includes(browserRegistryVariant) ? MARKDOWN_VERIFICATION_COMMAND + '、' : ''}browser:<断言标识>（多个用+连接，可选标识：${browserRegistryText(browserRegistryVariant)}）${buildRegistryText(true)}。禁止提出bun test、npm test、pytest等仓库自带测试或自写验证脚本：Owner员工不执行仓库代码。成果含HTML页面时必须至少声明一条browser断言；成果是原生或命令行程序时用对应的build命令（目标文件扩展名须与命令匹配）。无法用任何内置形式覆盖时，在reason中如实说明验证缺口，但不得留空。`
           : `本次提供development方式：验证命令只接受内置运行验证形式 browser:<断言标识>，多个用+连接，可选标识：${browserRegistryText(browserRegistryVariant)}。禁止提出bun test、npm test、pytest等仓库自带测试或自写验证脚本：Owner员工不执行仓库代码。成果含HTML页面时必须至少声明一条browser断言；无法用内置断言覆盖时，在reason中如实说明验证缺口。`]
         : ['本次只提供controlled方式：绝不能输出developmentScope，也不得声明browser断言或任何验证命令。执行员工只能交付文本，无法运行或打开成果；请在scopeReason中如实说明这一验证缺口，不要虚构代码范围、路径或运行证据。']),
       '仅输出一个符合此JSON schema的对象：{"schemaVersion":1,"contextFingerprint":"<输入中的指纹>","selectedStepKeys":["<已有步骤键>"],"scopeReason":"<范围理由>","workspaceId":"<项目工作区ID>","workspaceReason":"<工作区理由>","executionKind":"controlled或development","executionKindReason":"<执行方式理由>","assignments":[{"roleKey":"<所选岗位键>","employeeId":"<候选ID>","reason":"<匹配理由>"}],"reviewerEmployeeId":"<候选ID>","reviewerReason":"<评审理由>","developmentScope":{"targetPaths":["<所选计划源码引用路径>"],"allowedPaths":["<冻结代码候选路径>"],"verificationCommands":["<验证建议>"],"reason":"<范围理由>"}}。controlled时省略developmentScope。不要Markdown代码围栏或额外字段。',
@@ -74,7 +88,7 @@ export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssi
 }
 /** 历史安排请求保留原提示，仅按完整hash识别已知格式。 */
 export function resolveOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, promptHash: string): OwnerExecutionAssignmentRequest {
-  const registryVariants: readonly OwnerBrowserRegistryVariant[] = ['current', 'registry-v5', 'registry-v4', 'registry-v3', 'registry-v2', 'registry-v1', 'legacy-6']
+  const registryVariants: readonly OwnerBrowserRegistryVariant[] = ['current', 'registry-v6', 'registry-v5', 'registry-v4', 'registry-v3', 'registry-v2', 'registry-v1', 'legacy-6']
   for (const requireRoleCoverage of [true, false]) {
     for (const registryVariant of registryVariants) {
       for (const stepDeliveryInstructions of [true, false]) {
@@ -84,8 +98,11 @@ export function resolveOwnerExecutionAssignmentRequest(context: OwnerExecutionAs
             for (const includeBuildCommands of [true, false]) {
               for (const requireSwiftPackage of [true, false]) {
                 for (const requireCompleteGreenfieldScope of context.greenfieldDevelopment ? [true, false] : [false]) {
-                  const request = buildOwnerExecutionAssignmentRequest(context, requireRoleCoverage, registryVariant, stepDeliveryInstructions, roleSpecificCapabilities, greenfieldRootTargets, includeBuildCommands, requireSwiftPackage, requireCompleteGreenfieldScope)
-                  if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) return request
+                  for (const complete of registryVariant === 'current' && context.executionKinds.includes('development')
+                    && requiresOwnerMilesConversionVerification(context.steps, ['index.html'], context.objective) ? [true, false] : [false]) {
+                    const request = buildOwnerExecutionAssignmentRequest(context, requireRoleCoverage, registryVariant, stepDeliveryInstructions, roleSpecificCapabilities, greenfieldRootTargets, includeBuildCommands, requireSwiftPackage, requireCompleteGreenfieldScope, complete)
+                    if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) return request
+                  }
                 }
               }
             }
@@ -97,6 +114,7 @@ export function resolveOwnerExecutionAssignmentRequest(context: OwnerExecutionAs
   throw new Error('Owner冻结安排提示指纹不属于已知格式')
 }
 export interface OwnerExecutionAssignmentProtocolContext {
+  objective?: string
   contextFingerprint: string
   teamContractVersion?: 2 | 3
   readonly workspaces: ReadonlyArray<{ id: string; name: string }>
@@ -116,7 +134,7 @@ function text(value: unknown, name: string, maximum = 1200): string {
   return value
 }
 /** 模型输出只用于提案；只接受冻结计划、项目工作区与员工候选，不接受权限、预算或执行指令。 */
-export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: OwnerExecutionAssignmentProtocolContext, requireSwiftPackage = false, requireCompleteGreenfieldScope = true, options: { enforceVerificationTargets?: boolean } = {}): OwnerExecutionAssignmentProposal {
+export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: OwnerExecutionAssignmentProtocolContext, requireSwiftPackage = false, requireCompleteGreenfieldScope = true, options: { enforceVerificationTargets?: boolean; enforceMilesConversion?: boolean; completeRequiredBrowserChecks?: boolean } = {}): OwnerExecutionAssignmentProposal {
   let value = raw
   if (typeof raw === 'string') {
     try { value = JSON.parse(raw) } catch { throw new Error('Owner人员安排不是有效JSON') }
@@ -149,7 +167,18 @@ export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: Own
     const targetPaths = pathList(scope.targetPaths, '目标路径', 20)
     const allowedPaths = pathList(scope.allowedPaths, '允许范围', 40)
     if (!Array.isArray(scope.verificationCommands) || !scope.verificationCommands.length || scope.verificationCommands.length > 12) throw new Error('Owner研发验证命令无效')
-    const verificationCommands = scope.verificationCommands.map(command => text(command, '验证命令', 500))
+    const milesConversion = requiresOwnerMilesConversionVerification(selectedSteps.filter(step => step !== undefined), targetPaths, options.completeRequiredBrowserChecks ? context.objective : undefined)
+    let verificationCommands = scope.verificationCommands.map(command => {
+      const value = text(command, '验证命令', 500)
+      // 只在冻结标准已指向同一种换算时，恢复该内置断言的已知误拼。
+      return options.completeRequiredBrowserChecks && milesConversion && isBrowserVerificationCommand(value)
+        ? value.replace(/(^browser:|\+)conversion\.miles-kb(?=\+|$)/g, `$1${MILES_CONVERSION_CHECK}`)
+        : value
+    })
+    if (options.completeRequiredBrowserChecks && milesConversion && verificationCommands.length === 1
+      && verificationCommands[0] === 'browser:html.loads') {
+      verificationCommands = [MILES_CONVERSION_VERIFICATION_COMMAND]
+    }
     if (new Set(verificationCommands).size !== verificationCommands.length || verificationCommands.some(command => /[\r\n\0]/.test(command))) throw new Error('Owner研发验证命令重复或格式无效')
     const codeFiles = new Map((context.codeFiles ?? []).map(file => [file.path, file.sha256]))
     if (verificationCommands.includes(MARKDOWN_VERIFICATION_COMMAND) && !targetPaths.some(path => /\.md$/i.test(path))) {
@@ -162,6 +191,10 @@ export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: Own
     if (options.enforceVerificationTargets && requiresOwnerCounterKeyboardVerification(selectedSteps.filter(step => step !== undefined), targetPaths)
       && !verificationCommands.some(command => isBrowserVerificationCommand(command) && parseBrowserVerificationCheckIds(command).includes(COUNTER_KEYBOARD_CHECK))) {
       throw new Error(`计数器验收包含键盘、加一与重置，请使用 ${COUNTER_KEYBOARD_VERIFICATION_COMMAND}`)
+    }
+    if (options.enforceMilesConversion && milesConversion
+      && !verificationCommands.some(command => isBrowserVerificationCommand(command) && parseBrowserVerificationCheckIds(command).includes(MILES_CONVERSION_CHECK))) {
+      throw new Error(MILES_CONVERSION_VERIFICATION_MISSING)
     }
     if (codeFiles.size === 0) {
       // 绿地：项目里没有既有代码候选，目标就是本次要新建的文件。
@@ -208,7 +241,7 @@ export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: Own
   } else if (input.developmentScope !== undefined && input.developmentScope !== null) {
     const emptyScope = object(input.developmentScope, ['targetPaths', 'allowedPaths', 'verificationCommands', 'reason'])
     if (!['targetPaths', 'allowedPaths', 'verificationCommands'].every(key => Array.isArray(emptyScope[key]) && emptyScope[key].length === 0)
-      || typeof emptyScope.reason !== 'string' || !emptyScope.reason.trim() || emptyScope.reason.length > 2000) throw new Error('受控非研发安排不得包含代码范围')
+      || typeof emptyScope.reason !== 'string' || !emptyScope.reason.trim() || emptyScope.reason.length > 2000) throw new Error(OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION)
   }
   const roleKeys = [...new Set(selectedSteps.map(step => step!.roleKey))]
   if (!Array.isArray(input.assignments) || input.assignments.length !== roleKeys.length) throw new Error('Owner人员安排必须完整覆盖所选步骤的全部岗位')
@@ -235,7 +268,7 @@ export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: Own
   })
   const reviewerId = text(input.reviewerEmployeeId, '独立评审员工ID', 128)
   const reviewer = candidates.get(reviewerId)
-  if (!reviewer) throw new Error('Owner人员安排选择了候选之外的独立评审')
+  if (!reviewer) throw new Error(OWNER_UNKNOWN_REVIEWER_REJECTION)
   if (reviewer.id === context.ownerCarrierId || reviewer.isOwnerCarrier) throw new Error('Owner载体不得兼任执行或独立评审')
   if (selected.some(employee => employee.id === reviewer.id) || context.teamContractVersion === undefined && !['reviewer', 'delivery-verifier'].includes(reviewer.roleTemplateId ?? '')) throw new Error('Owner安排必须由未承担执行岗位的独立评审员审核')
   if (!(context.teamContractVersion !== undefined && context.teamContractVersion >= 2 ? allKinds.every(kind => supportsOwnerExecutionKind(reviewer, kind)) : reviewer.executionProfile === input.executionKind) || !reviewer.workspaceIds.includes(workspaceId)) throw new Error('Owner独立评审不符合工作区或执行方式')

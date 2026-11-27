@@ -102,6 +102,8 @@ function classify(input: TerminalEvidenceInput, tools: OwnerTerminalEvidence['to
 export function classifyOwnerTerminalEvidence(input: TerminalEvidenceInput): OwnerTerminalEvidence {
   const tools = toolStats(input.messages)
   const result = input.runtimeResult ?? null
+  const correctionError = input.role === 'reviewer' && result?.subtype === 'error_during_execution' && Array.isArray(result.errors)
+    ? result.errors.find(error => typeof error === 'string' && error.startsWith('Reviewer补正未完成：')) : undefined
   return {
     schemaVersion: 1,
     executionId: input.executionId,
@@ -115,7 +117,7 @@ export function classifyOwnerTerminalEvidence(input: TerminalEvidenceInput): Own
       responseId: typeof result.provider_response_id === 'string' ? result.provider_response_id : null,
     } : null,
     reason: classify(input, tools),
-    detail: sanitizeOwnerDiagnostic(input.error.trim() || '未记录失败说明'),
+    detail: sanitizeOwnerDiagnostic(correctionError ?? (input.error.trim() || '未记录失败说明')),
     tools,
     cost: input.cost,
     development: input.development,

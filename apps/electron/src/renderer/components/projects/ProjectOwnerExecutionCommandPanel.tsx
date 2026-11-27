@@ -18,7 +18,7 @@ const FeedbackConversation = lazy(() => import('./ProjectOwnerConversation').the
 const button = 'rounded-md bg-muted px-3 py-2 text-sm disabled:opacity-50'
 const field = 'mt-1 min-w-0 max-w-full rounded-md border bg-background p-2 text-sm'
 const nextActionLabels: Record<OwnerExecutionNextAction, string> = {
-  execute: '安排执行', review: '安排技术评审', rework: '授权范围内有限返工',
+  await_local_resources: '等待本地资源', execute: '安排执行', review: '安排技术评审', rework: '授权范围内有限返工',
   await_owner_quality: 'Owner正在核对成果与独立检查', await_business_acceptance: '等待人工业务验收', human_decision: '等待人工决策/处理', none: '无后续动作',
 }
 export function getOwnerExecutionNextActionLabel(action: OwnerExecutionNextAction): string { return nextActionLabels[action] }
@@ -194,6 +194,11 @@ export function ProjectOwnerExecutionCommandPanel({ subject, grant, revalidation
     try {
       const result = await api().dispatchOwnerExecutionCommand({ commandId: item.commandId, ackFingerprint: item.ackFingerprint, acknowledgeExecution: true })
       if (!result.ok) throw new Error(result.error.message)
+      if (result.value.resourceBlocked) {
+        setError('本机资源繁忙，命令仍在队列中。资源空闲后可再次启动。')
+        await refresh()
+        return
+      }
       setExecutionConfirmation(''); await refresh()
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Owner执行启动失败') }
     finally { setBusy(false) }

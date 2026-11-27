@@ -79,6 +79,20 @@ test('Given敏感信息与绝对路径 When分类 Then诊断说明必须脱敏',
   expect(evidence.detail).toContain('[本地路径]')
 })
 
+test('Given评审补正超时时回传请求编号 When固化终态 Then保留可对账的原因和编号', () => {
+  const evidence = classifyOwnerTerminalEvidence({
+    ...baseInput, role: 'reviewer',
+    error: 'Owner模型未完整结束，过程说明不能作为成果',
+    runtimeResult: { type: 'result', subtype: 'error_during_execution', finish_reason: 'error',
+      provider_request_id: 'req-repair', errors: ['Reviewer补正未完成：AI SDK 模型流空闲超时 (480000ms) at /Users/test/test.md'] },
+    cost: { state: 'unknown', actualCostMicros: null, requestCount: 2 },
+  })
+  expect(evidence.provider?.requestId).toBe('req-repair')
+  expect(evidence.detail).toContain('模型流空闲超时')
+  expect(evidence.detail).not.toContain('/Users/test')
+  expect(evidence.cost).toEqual({ state: 'unknown', actualCostMicros: null, requestCount: 2 })
+})
+
 test('Given裸凭证赋值与非用户目录路径 When分类 Then一并脱敏', () => {
   const evidence = classifyOwnerTerminalEvidence({
     ...baseInput,

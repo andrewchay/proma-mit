@@ -514,7 +514,6 @@ createRoot(document.getElementById('root')).render(<Provider store={store}><Proj
     expect((db.getProjectDb().prepare('SELECT COUNT(*) AS count FROM project_owner_execution_commands').get() as { count: number }).count).toBe(0)
     await page.evaluate('window.fixture.deliver()')
     await page.clock.fastForward(4100)
-    await page.getByText('成果已准备好，等待你审阅。', { exact: true }).waitFor()
     await page.getByText('交付审阅材料（只读）', { exact: true }).click()
     await page.evaluate('window.fixture.setMessage("  我还有一个未发出的问题  ")')
     await page.getByRole('button', { name: '在对话中继续修改', exact: true }).click()

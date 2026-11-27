@@ -4,8 +4,8 @@ export interface OwnerExecutionAttentionInput {
   grantState: string | null | undefined
   scheduleState: string | null | undefined
   nextAction: string | null | undefined
-  commands: ReadonlyArray<Pick<OwnerExecutionCommandView, 'state' | 'executionStatus' | 'taskTitle'> & { grantId?: string; taskId?: string; role?: string; reworkOrdinal?: number; executionId?: string | null; terminalEvidence?: { reason: string } }>
-  currentSchedule?: { grantId?: string; taskId?: string; role?: string; reworkOrdinal?: number } | null
+  commands: ReadonlyArray<Pick<OwnerExecutionCommandView, 'state' | 'executionStatus' | 'taskTitle' | 'workspaceBlocked' | 'reviewReplaced'> & { grantId?: string; taskId?: string; role?: string; reworkOrdinal?: number; executionId?: string | null; terminalEvidence?: { reason: string } }>
+  currentSchedule?: { grantId?: string; taskId?: string; role?: string; reworkOrdinal?: number; reason?: string } | null
   completed: boolean
 }
 
@@ -33,15 +33,43 @@ export function deriveOwnerExecutionAttention(input: OwnerExecutionAttentionInpu
   // 命令级事实比授权/调度级更具体，优先据此给出原因。
   const schedule = input.currentSchedule
   const hasScheduleIdentity = Boolean(schedule?.grantId && schedule.taskId && schedule.role && Number.isInteger(schedule.reworkOrdinal))
-  const commands = hasScheduleIdentity ? input.commands.filter(command =>
-    command.grantId === schedule?.grantId && command.taskId === schedule?.taskId &&
-    command.role === schedule?.role && command.reworkOrdinal === schedule?.reworkOrdinal) : input.commands
+  const commands = input.commands.filter(command =>
+    !command.reviewReplaced && (!schedule?.grantId || command.grantId === schedule.grantId) &&
+    (!hasScheduleIdentity || (
+      command.taskId === schedule?.taskId && command.role === schedule?.role && command.reworkOrdinal === schedule?.reworkOrdinal
+    )))
+  const workspaceBlock = commands.find(command => command.workspaceBlocked && command.executionId)
+  if (workspaceBlock?.executionId) return {
+    blocked: true,
+    title: '研发工作区需要清理',
+    detail: `「${workspaceBlock.taskTitle}」尚未启动。工作区清理后，可以核对并继续原任务。`,
+    actions: ['查看阻塞的文件', '清理工作区后重新核对'],
+    recheckExecutionId: workspaceBlock.executionId,
+  }
   const blocked = commands.find(command =>
     COMMAND_ATTENTION_STATES.has(command.state) || (command.state === 'settled' && command.executionStatus === 'failed'))
+  if (!blocked && schedule?.role === 'reviewer' && input.scheduleState === 'waiting' && input.nextAction === 'human_decision') {
+    return {
+      blocked: true,
+      title: '独立评审需要核对，后续工作已暂停',
+      detail: (schedule.reason ?? '评审结束后仍缺少可用结果。').replace('Reviewer', '独立评审'),
+      actions: ['查看独立评审记录'],
+    }
+  }
   const blockedByGrant = input.grantState === 'paused' || input.grantState === 'needs_reconcile'
   const blockedBySchedule = input.scheduleState === 'needs_reconcile' || input.scheduleState === 'stale' || input.scheduleState === 'expired'
   if (!blocked && !blockedByGrant && !blockedBySchedule) return null
   const reason = blocked?.terminalEvidence?.reason
+  if (blocked?.role === 'reviewer') {
+    const needsReconciliation = blocked.state === 'needs_reconcile' || blocked.state === 'unknown'
+    const actions = blocked.terminalEvidence ? ['在项目进展中展开执行终止证据'] : ['在项目进展中查看独立评审的工作记录']
+    return {
+      blocked: true,
+      title: reason === 'output_limit' ? '独立评审达到输出上限' : '独立评审未能完成',
+      detail: `「${blocked.taskTitle}」的执行成果记录已保留，独立评审尚无可用结论。${needsReconciliation ? '本次评审费用仍需核对，原预留已保留。' : ''}`,
+      actions,
+    }
+  }
   return {
     blocked: true,
     title: reason === 'output_limit' ? '研发执行达到输出上限，需要核对'

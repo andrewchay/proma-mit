@@ -15,7 +15,8 @@ import { getAgentProviderProtocol } from '@gravitas/shared'
 import * as store from './project-sqlite-store'
 import { getChannelById } from './channel-manager'
 import { getAgentWorkspace } from './agent-workspace-manager'
-import { getOwnerCarrierFacts, getOwnerRuntimeBinding, ownerCarrierBindingMatches } from './project-owner-runtime-binding'
+import { getOwnerCarrierFacts, getOwnerRuntimeBinding, ownerCarrierBindingMatches, OWNER_INITIAL_PLAN_RETRY_PREFIX, OWNER_QUALITY_RETRY_PREFIX, ownerInitialPlanRetryRequestId } from './project-owner-runtime-binding'
+import { matchesCurrentBoundRevisionRetry } from './project-owner-plan-service'
 import { assertLocalActorEnabled, confirmProjectOwnerPlanDraft, getProjectOwnerPlanDraft, getProjectOwnerPlanningContext } from './project-owner-plan-service'
 import { getProjectOwnerGoalDraft } from './project-owner-goal-service'
 import { getOwnerManager, recordOwnerManagementDelegationConfirmed } from './project-owner-management-store'
@@ -406,6 +407,8 @@ export function getOwnerManagementDelegation(projectId: string, taskId?: string)
       && receipt?.validTerminal === true
       && receipt.error === null
       && receipt.runtimeResult?.subtype === 'success'
+    const supersededRevision = value?.state === 'stale' && value.detail === runs.OWNER_BOUND_REVISION_SUPERSEDED
+      && receipt?.validTerminal === true && !receipt.stopped && receipt.error === null && claimCostMicros(entry).source !== 'reserved'
     rejectedProtocolReply ||= rejectedReply
     let reason: OwnerManagementAttentionCheck['reason'] | null = null
     if (!execution) reason = 'missing_execution'
@@ -414,10 +417,41 @@ export function getOwnerManagementDelegation(projectId: string, taskId?: string)
     else if (!receipt.usage) reason = 'missing_usage'
     else if (!Number.isSafeInteger(receipt.usage.inputTokens) || !Number.isSafeInteger(receipt.usage.outputTokens)) reason = 'invalid_usage'
     else if (receipt.runtimeResult?.finish_reason === 'length' || Number(receipt.usage.outputTokens) > delegation.maxOutputTokens) reason = 'output_limit'
-    else if (!['proposed', 'needs_clarification', 'replied'].includes(value?.state ?? '') && !rejectedReply) reason = 'non_continueable_outcome'
+    else if (!['proposed', 'needs_clarification', 'replied'].includes(value?.state ?? '') && !rejectedReply && !supersededRevision) reason = 'non_continueable_outcome'
     if (reason) {
       const requestId = receipt?.runtimeResult?.provider_request_id, responseId = receipt?.runtimeResult?.provider_response_id, outcomeDetail = safeOutcomeDetail(value?.detail)
+      // 阻断证据即使缺少历史快照也应可见。只有绑定完整时才显示具体阶段。
+      let phase: OwnerManagementAttentionCheck['phase']
+      let isQualityRetry = false
+      if (receipt?.executionId === entry.executionId && receipt.projectId === projectId) {
+        try {
+          const snapshot = readOwnerPlanningSnapshot(entry.taskId, { allowUnknownPromptForHistory: true })
+          if (snapshot?.link.id === receipt.linkId && snapshot.link.projectId === projectId && snapshot.link.targetTaskId === taskId) {
+            isQualityRetry = snapshot.link.requestId.startsWith(OWNER_QUALITY_RETRY_PREFIX)
+            if (snapshot.link.purpose === 'owner_execution_assignment') phase = 'assignment'
+            else if (snapshot.context.conversation?.deliveryReview?.qualityDecisionVersion === 1) phase = 'quality_decision'
+            else phase = snapshot.link.conversationMessageId ? 'conversation' : 'planning'
+          }
+        } catch { /* 保留原回执，只省略无法验证的阶段。 */ }
+      }
+      let retryExists = false
+      if (phase === 'quality_decision' && !isQualityRetry && receipt?.runtimeResult?.finish_reason === 'length') {
+        const retry = store.getProjectDb().prepare(`SELECT l.planning_task_id,c.execution_id FROM project_owner_planning_links l
+          LEFT JOIN project_owner_management_claims c ON c.task_id=l.planning_task_id AND c.delegation_id=?
+          WHERE l.project_id=? AND l.request_id=?`).get(delegation.id, projectId, `${OWNER_QUALITY_RETRY_PREFIX}${entry.executionId}:${delegation.id}`) as { execution_id: string | null } | undefined
+        retryExists = Boolean(retry)
+        if (retry?.execution_id) {
+          const { readOwnerQualityActionByExecution } = require('./project-owner-quality-actions') as typeof import('./project-owner-quality-actions')
+          const action = readOwnerQualityActionByExecution(retry.execution_id)
+          // 原费用仍计入历史账本。仅在同一已授权续验形成通过或授权内返工决定后解除原阻断。
+          if (action?.projectId === projectId && (action.state === 'accepted' || action.state === 'rework_authorized')) continue
+        }
+      }
       const attentionCheck: OwnerManagementAttentionCheck = {
+        ...(phase ? { phase } : {}),
+        ...(phase === 'quality_decision' && !isQualityRetry && !retryExists && receipt?.runtimeResult?.finish_reason === 'length'
+          && row.revoked_at === null && delegation.expiresAt > Date.now() ? { retryExecutionId: entry.executionId } : {}),
+        ...(receipt?.runtimeResult?.finish_reason === 'length' ? { finishReason: 'length' as const } : {}),
         executionStatus: execution?.status ?? 'missing', outcomeState: value?.state ?? 'missing', reason,
         requestStartedAt: execution?.startedAt ?? null, receiptCapturedAt: receipt?.capturedAt ?? null,
         inputTokens: receipt?.usage?.inputTokens ?? null, outputTokens: receipt?.usage?.outputTokens ?? null,
@@ -622,10 +656,31 @@ export function getOwnerManagementClaim(taskId: string): Claim | null {
   if (value && value.taskId !== taskId) throw new Error('Owner管理占额任务不一致')
   return value
 }
+export function hasAccountedOwnerManagementRun(taskId: string, executionId: string): boolean {
+  const claim = getOwnerManagementClaim(taskId)
+  if (claim?.executionId !== executionId) return false
+  const receipts = store.getProjectDb().prepare('SELECT 1 FROM project_owner_planning_run_receipts WHERE execution_id=? LIMIT 2').all(executionId)
+  return receipts.length === 1 && claimCostMicros(claim).source !== 'reserved'
+}
 /** 只读调度提示；真正占额仍须在排队事务中重新检查。 */
 export function hasActiveOwnerManagementRequest(delegationId: string): boolean {
   return claims(delegationId).some(item => ['queued', 'running'].includes(store.getAgentExecution(item.executionId)?.status ?? ''))
 }
+export function assertOwnerQualityRetryBudget(view: OwnerManagementDelegationView): void {
+  const grant = view.delegation
+  const found = grant && latest(grant.projectId, grant.taskId)
+  if (!grant || !found || found.delegation.id !== grant.id || found.row.revoked_at !== null || grant.expiresAt <= Date.now()
+    || !grant.qualityDecisionEnabled || !grant.executionFollowupEnabled || !grant.fullDeliveryReviewEnabled || !grant.conversationEnabled) {
+    throw new Error('原管理授权已撤销、过期或不包含成果验收')
+  }
+  assertCurrent(grant)
+  if (view.reservedCostMicros + grant.perRequestCeilingMicros > grant.maxCostMicros
+    || (!grant.autonomousExecution && view.usedRequests >= grant.maxRequests)) throw new Error('没有可用于继续验收的预算，原费用预留仍保留')
+  assertOwnerModelBudgetAvailable({ projectBudgetMicros: grant.maxCostMicros,
+    ownerModelMicros: getOwnerModelBudgetUsage(grant.projectId, grant.maxCostMicros).ownerModelMicros,
+    nextReservedMicros: grant.perRequestCeilingMicros })
+}
+
 /** 在受控排队同事务占额，确保失败回滚且双击不创建第二次调用。 */
 export function claimOwnerManagementTask(taskId: string, executionId: string): void {
   const db = store.getProjectDb()
@@ -635,7 +690,17 @@ export function claimOwnerManagementTask(taskId: string, executionId: string): v
   const view = getOwnerManagementDelegation(source.link.projectId, source.link.targetTaskId)
   // 与对话层、调度器共用同一判定：上一条请求只是「结论不可继续」且仍在预算内时，
   // 新消息照常占额发送。旧请求保持原记录、不重试、不补造用量。
-  if ((view.state !== 'active' && decideAttentionCarryover(view) !== 'proceed') || !view.delegation) throw new Error(view.detail || '没有有效管理委托')
+  const qualityRetry = require('./project-owner-quality-retry') as typeof import('./project-owner-quality-retry')
+  const isQualityRetry = source.link.requestId.startsWith(OWNER_QUALITY_RETRY_PREFIX)
+  if (isQualityRetry) {
+    assertOwnerQualityRetryBudget(view)
+    if (!view.delegation || !qualityRetry.canStartOwnerQualityRetry(source.link, view.delegation.id)) throw new Error('续验来源或原授权已变化')
+  }
+  if ((view.state !== 'active' && decideAttentionCarryover(view) !== 'proceed' && !isQualityRetry) || !view.delegation) throw new Error(view.detail || '没有有效管理委托')
+  if (source.link.requestId.startsWith(OWNER_INITIAL_PLAN_RETRY_PREFIX)
+    && (view.state !== 'active' || !view.delegation.autonomousExecution
+      || source.link.requestId !== ownerInitialPlanRetryRequestId(view.delegation.id, source.link.goalRevision))) throw new Error('首份规划纠正的原授权已变化')
+  if (!matchesCurrentBoundRevisionRetry(source.link, view.delegation.id)) throw new Error('交付修订纠正的原意见、交付版本或授权已变化')
   const recoveryRequest = pendingOwnerInitialPlanningRecovery(view.delegation)
   if (recoveryRequest && (source.link.requestId !== recoveryRequest || source.link.purpose !== 'owner_planning'
     || source.link.conversationMessageId || source.link.goalRevision !== view.delegation.goalRevision))
@@ -662,6 +727,9 @@ export function assertOwnerManagementTask(executionId: string): boolean {
   const source = resolveOwnerPlanningTask(execution.entityId)
   const found = source ? latest(source.link.projectId, source.link.targetTaskId) : null
   if (!source || !found || claim.executionId !== executionId || claim.delegationId !== found.delegation.id || found.row.revoked_at !== null || found.delegation.expiresAt <= Date.now()) throw new Error('Owner管理请求的委托已撤销、过期或身份不一致')
+  const qualityRetry = require('./project-owner-quality-retry') as typeof import('./project-owner-quality-retry')
+  if (source.link.requestId.startsWith(OWNER_QUALITY_RETRY_PREFIX) && !qualityRetry.canStartOwnerQualityRetry(source.link, claim.delegationId)) throw new Error('续验来源已变化')
+  if (!matchesCurrentBoundRevisionRetry(source.link, claim.delegationId)) throw new Error('交付修订纠正的原意见、交付版本或授权已变化')
   if (source.binding.carrierId !== execution.agentId || execution.projectId !== source.link.projectId) throw new Error('Owner管理执行主体不一致')
   if (source.context.conversation?.executionObservation && found.delegation.executionFollowupEnabled !== true) throw new Error('管理许可未包含业务结果主动跟进')
   if (source.context.conversation?.deliveryReview && found.delegation.fullDeliveryReviewEnabled !== true) throw new Error('管理许可未包含完整成果读取')

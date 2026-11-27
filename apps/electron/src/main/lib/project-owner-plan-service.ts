@@ -6,7 +6,7 @@ import { readCatalog } from './knowledge-catalog-service'
 import { parseOwnerPlanningKnowledgeSources } from './project-owner-planning-knowledge'
 import { getAgentWorkspace } from './agent-workspace-manager'
 import type {
-  ProjectOwnerDeliveryContext, ProjectOwnerGoalDraft, ProjectOwnerPlanDraft, ProjectOwnerPlanningContext,
+  OwnerPlanningLink, ProjectOwnerDeliveryContext, ProjectOwnerGoalDraft, ProjectOwnerPlanDraft, ProjectOwnerPlanningContext,
   ProjectOwnerPlanSources, ProjectOwnerRoleAdvice,
 } from '@gravitas/shared'
 import { getWorkflowIdentityDirectoryPath } from './config-paths'
@@ -14,9 +14,9 @@ import { getProjectOwnerGoalDraft, listProjectOwnerGoalHistory } from './project
 import { parseProjectOwnerPlanProposal } from './project-owner-planning'
 import { locateOwnerCode } from './project-owner-code-locator'
 import { getProjectOwnerRoleAdviceCatalog } from './project-owner-role-catalog'
-import { getOwnerPlanningRunReceipt, verifyGeneratedOwnerPlan } from './project-owner-planning-run-service'
-import { readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
-import { parseProjectOwnerPlanningResponse, usesOwnerSourceInspectionRouting } from './project-owner-planning-protocol'
+import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt, getRecoveredOwnerPlanSource, isRecoverableOwnerBoundRevisionReceipt, isRecoverableOwnerInitialPlanReceipt, isRetryableOwnerBoundRevisionReceipt, OWNER_BOUND_REVISION_SUPERSEDED, verifyGeneratedOwnerPlan } from './project-owner-planning-run-service'
+import { OwnerPlanningSourceChangedError, readOwnerPlanningSnapshot, resolveOwnerPlanningTask, type OwnerPlanningSnapshot } from './project-owner-planning-source'
+import { parseProjectOwnerPlanningResponse, usesOwnerRosterGrounding, usesOwnerFixedBudgetGrounding, usesOwnerBrowserVerificationRouting, usesOwnerSourceInspectionRouting, usesSingleTextReviewFolding } from './project-owner-planning-protocol'
 import { getProject, getProjectDb, getTask } from './project-sqlite-store'
 import { hasProjectWorkspaceBinding } from './project-workspace-bindings'
 import { listOwnerExecutionCommands } from './project-owner-execution-command'
@@ -386,6 +386,7 @@ function confirmProjectOwnerPlanDraftAs(projectId: string, expectedGoalRevision:
     if (current.state === 'stale') throw new ProjectOwnerPlanConflictError()
     if (current.state === 'confirmed') { recordOwnerManagementPlanConfirmed(current); return current }
     if (actor === 'system:owner-manager' && !((current.origin === 'generated' && current.sourceRun) || (current.origin === 'manual' && current.actor === 'local-user'))) throw new Error('Owner只能接纳有可信来源的待审方案')
+    if (actor === 'system:owner-manager' && !isOwnerRevisionCurrentForAutomation(current)) throw new ProjectOwnerPlanConflictError()
     const confirmed: ProjectOwnerPlanDraft = { ...current, revision: current.revision + 1, state: 'confirmed', actor, savedAt: Date.now() }
     append(confirmed)
     recordOwnerManagementPlanConfirmed(confirmed)
@@ -393,24 +394,146 @@ function confirmProjectOwnerPlanDraftAs(projectId: string, expectedGoalRevision:
   })
 }
 
+function hasCurrentRecoveryAuthorization(projectId: string, executionId: string, frozen: OwnerPlanningSnapshot): boolean {
+  const { targetTaskId, planningTaskId } = frozen.link
+  const { getOwnerManagementClaim, getOwnerManagementDelegation } = require('./project-owner-management-delegation') as typeof import('./project-owner-management-delegation')
+  const authorization = getOwnerManagementDelegation(projectId, targetTaskId)
+  const claim = getOwnerManagementClaim(planningTaskId)
+  return authorization.state === 'active' && authorization.delegation?.autonomousExecution === true
+    && claim?.executionId === executionId && claim.delegationId === authorization.delegation.id
+}
+
+function hasCurrentBoundRevisionInputs(projectId: string, executionId: string, frozen: OwnerPlanningSnapshot): boolean {
+  const { planningTaskId } = frozen.link
+  const { hasAccountedOwnerManagementRun } = require('./project-owner-management-delegation') as typeof import('./project-owner-management-delegation')
+  return hasCurrentRecoveryAuthorization(projectId, executionId, frozen) && hasAccountedOwnerManagementRun(planningTaskId, executionId)
+    && hasLatestBoundRevisionInput(projectId, frozen)
+}
+
+function hasLatestBoundRevisionInput(projectId: string, frozen: OwnerPlanningSnapshot): boolean {
+  const { targetTaskId, conversationMessageId } = frozen.link
+  const feedback = frozen.context.conversation?.deliveryFeedback
+  if (!conversationMessageId || !feedback || frozen.context.conversation?.deliveryFeedbackBindingVersion !== 1) return false
+  const lastUser = getProjectDb().prepare(`SELECT id FROM project_owner_management_messages WHERE project_id=?
+    AND json_extract(payload,'$.taskId') IS ? AND json_extract(payload,'$.role')='user' ORDER BY rowid DESC LIMIT 1`)
+    .get(projectId, targetTaskId ?? null) as { id: string } | undefined
+  const latestDelivery = getProjectDb().prepare(`SELECT id FROM project_owner_management_messages WHERE project_id=?
+    AND json_extract(payload,'$.taskId') IS ? AND json_extract(payload,'$.kind')='delivery' ORDER BY rowid DESC LIMIT 1`)
+    .get(projectId, targetTaskId ?? null) as { id: string } | undefined
+  return lastUser?.id === conversationMessageId && latestDelivery?.id === feedback.messageId
+}
+
+/** 只有明确的协议失败、已记账且仍为当前交付与意见的原请求可以补做一次规划。 */
+export function getCurrentBoundRevisionRetrySource(projectId: string, executionId: string, delegationId: string): OwnerPlanningSnapshot | null {
+  const outcome = getOwnerPlanningRunOutcome(executionId)
+  const receipt = outcome && getOwnerPlanningRunReceipt(outcome.receiptId)
+  if (!outcome || !receipt || receipt.projectId !== projectId || !isRetryableOwnerBoundRevisionReceipt(outcome, receipt)
+    || getProjectDb().prepare('SELECT 1 FROM project_owner_planning_stop_requests WHERE execution_id=?').get(executionId)
+    || getProjectDb().prepare("SELECT status FROM agent_executions WHERE id=? AND status='failed'").get(executionId) === undefined) return null
+  const frozen = readOwnerPlanningSnapshot(receipt.planningTaskId)
+  const { OWNER_BOUND_REVISION_RETRY_PREFIX } = require('./project-owner-runtime-binding') as typeof import('./project-owner-runtime-binding')
+  if (!frozen || frozen.link.id !== receipt.linkId || frozen.link.planRevision < 1
+    || frozen.link.requestId.startsWith(OWNER_BOUND_REVISION_RETRY_PREFIX) || !hasLatestBoundRevisionInput(projectId, frozen)) return null
+  const { getOwnerManagementClaim, hasAccountedOwnerManagementRun } = require('./project-owner-management-delegation') as typeof import('./project-owner-management-delegation')
+  return getOwnerManagementClaim(receipt.planningTaskId)?.delegationId === delegationId
+    && hasAccountedOwnerManagementRun(receipt.planningTaskId, executionId) ? frozen : null
+}
+
+export function matchesCurrentBoundRevisionRetry(link: OwnerPlanningLink, delegationId: string): boolean {
+  const { OWNER_BOUND_REVISION_RETRY_PREFIX } = require('./project-owner-runtime-binding') as typeof import('./project-owner-runtime-binding')
+  if (!link.requestId.startsWith(OWNER_BOUND_REVISION_RETRY_PREFIX)) return true
+  const original = getCurrentBoundRevisionRetrySource(link.projectId, link.requestId.slice(OWNER_BOUND_REVISION_RETRY_PREFIX.length), delegationId)?.link
+  return Boolean(original?.conversationMessageId && original.conversationMessageId === link.conversationMessageId
+    && original.targetTaskId === link.targetTaskId && original.planRevision === link.planRevision
+    && original.goalRevision === link.goalRevision && original.bindingRevision === link.bindingRevision && original.contextFingerprint === link.contextFingerprint)
+}
+
+/** 从原修订回执取得未改动文本的交付身份，不能用同一步骤尚未交付的新版本替代。 */
+export function readOwnerTextRevisionSiblingHashes(plan: ProjectOwnerPlanDraft): ReadonlyMap<string, string> {
+  const hashes = new Map<string, string>()
+  const assessment = plan.proposal.deliveryFeedbackAssessment
+  if (!assessment?.stepKey || !plan.sourceRun) return hashes
+  const receipt = getOwnerPlanningRunReceipt(plan.sourceRun.receiptId)
+  const conversation = receipt && readOwnerPlanningSnapshot(receipt.planningTaskId)?.context.conversation
+  const original = conversation?.currentPlan?.proposal
+  const catalog = conversation?.deliveredArtifacts
+  if (!original?.criteriaTrace?.some(item => item.stepKey === assessment.stepKey && item.verificationScope === 'own_text')
+    || catalog?.messageId !== assessment.messageId) return hashes
+  for (const step of original.steps) {
+    if (step.key === assessment.stepKey || step.deliveryKind !== 'text'
+      || !plan.proposal.steps.some(item => item.key === step.key && JSON.stringify(item) === JSON.stringify(step))) continue
+    const item = catalog.items.find(item => item.stepKey === step.key && item.title === step.title)
+    if (!item) throw new Error('修订需要沿用的原文本成果已缺失')
+    hashes.set(step.key, item.artifactHash)
+  }
+  return hashes
+}
+
+/** 恢复与自动确认分属两次提交，消费恢复结果时仍须核对当前的意见、版本与原授权。 */
+export function isOwnerRevisionCurrentForAutomation(plan: ProjectOwnerPlanDraft): boolean {
+  const autoConfirmed = plan.state === 'confirmed' && plan.actor === 'system:owner-manager'
+  if (!plan.sourceRun || (plan.state !== 'proposed' && !autoConfirmed)) return true
+  const executionId = plan.sourceRun.executionId
+  if (plan.proposal.deliveryFeedbackAssessment) {
+    const latestReceipt = getOwnerPlanningRunReceipt(plan.sourceRun.receiptId)
+    const latest = latestReceipt && readOwnerPlanningSnapshot(latestReceipt.planningTaskId)
+    if (latest && !matchesCurrentOwnerRevisionRetryRun(latest, executionId)) return false
+  }
+  const recovery = getRecoveredOwnerPlanSource(executionId)
+  if (!recovery) return true
+  const { receipt, kind } = recovery
+  // 首份方案的确认已经记录在原授权下；后续重新授权可继续这个已确认版本。
+  if (kind === 'initial' && autoConfirmed) return true
+  const frozen = readOwnerPlanningSnapshot(receipt.planningTaskId)
+  return !!frozen && receipt.projectId === plan.projectId && frozen.link.targetTaskId === plan.taskId
+    && frozen.link.planRevision + (autoConfirmed ? 2 : 1) === plan.revision
+    && (kind === 'bound_revision' ? hasCurrentBoundRevisionInputs(plan.projectId, executionId, frozen)
+      : hasCurrentRecoveryAuthorization(plan.projectId, executionId, frozen))
+}
+
+function matchesCurrentOwnerRevisionRetryRun(frozen: OwnerPlanningSnapshot, executionId: string): boolean {
+  const { OWNER_BOUND_REVISION_RETRY_PREFIX } = require('./project-owner-runtime-binding') as typeof import('./project-owner-runtime-binding')
+  if (!frozen.link.requestId.startsWith(OWNER_BOUND_REVISION_RETRY_PREFIX)) return true
+  const { getOwnerManagementClaim } = require('./project-owner-management-delegation') as typeof import('./project-owner-management-delegation')
+  const claim = getOwnerManagementClaim(frozen.link.planningTaskId)
+  return claim?.executionId === executionId && hasCurrentRecoveryAuthorization(frozen.link.projectId, executionId, frozen)
+    && matchesCurrentBoundRevisionRetry(frozen.link, claim.delegationId)
+}
+
 /** 内部可信Run入口，不注册IPC；原文解析+历史反查+双CAS，不接受客户端proposal/actor/origin。 */
-export function appendGeneratedOwnerPlan(receiptId: string): ProjectOwnerPlanDraft {
+export function appendGeneratedOwnerPlan(receiptId: string, mode: 'live' | 'recover_initial_plan' | 'recover_bound_revision' = 'live'): ProjectOwnerPlanDraft {
   return planTransaction(() => {
     const receipt = getOwnerPlanningRunReceipt(receiptId)
     if (!receipt?.validTerminal || receipt.stopped || receipt.error) throw new Error('Owner没有可生成提案的可信终态')
     const execution = getProjectDb().prepare('SELECT status FROM agent_executions WHERE id = ?').get(receipt.executionId) as { status: string } | undefined
-    if (execution?.status !== 'running') throw new Error('Owner生成提案仅允许当前运行中的可信Run')
+    if (mode === 'live' && execution?.status !== 'running') throw new Error('Owner生成提案仅允许当前运行中的可信Run')
+    if (mode !== 'live' && execution?.status !== 'failed') throw new Error('Owner方案恢复仅允许已结束的失败Run')
     if (getProjectDb().prepare('SELECT execution_id FROM project_owner_planning_stop_requests WHERE execution_id = ?').get(receipt.executionId)) throw new Error('Owner已经请求停止，不允许从旧回执生成提案')
     const frozen = readOwnerPlanningSnapshot(receipt.planningTaskId)
     if (!frozen) throw new Error('Owner规划来源缺失')
-    const currentSource = resolveOwnerPlanningTask(receipt.planningTaskId)
+    if (mode === 'live' && !matchesCurrentOwnerRevisionRetryRun(frozen, receipt.executionId)) throw new OwnerPlanningSourceChangedError(OWNER_BOUND_REVISION_SUPERSEDED)
+    if (mode !== 'live') {
+      const previous = getOwnerPlanningRunOutcome(receipt.executionId)
+      const { conversationMessageId, planRevision } = frozen.link
+      const conversation = frozen.context.conversation
+      const feedback = conversation?.deliveryFeedback
+      const initial = previous && mode === 'recover_initial_plan' && isRecoverableOwnerInitialPlanReceipt(previous, receipt)
+        && planRevision === 0 && !conversationMessageId
+      const revision = previous && mode === 'recover_bound_revision' && isRecoverableOwnerBoundRevisionReceipt(previous, receipt)
+        && planRevision >= 1 && conversationMessageId && conversation?.deliveryFeedbackBindingVersion === 1 && feedback
+      if (!initial && !revision) throw new Error('Owner方案没有可复用的原回执')
+      if (revision) {
+        if (!hasCurrentBoundRevisionInputs(receipt.projectId, receipt.executionId, frozen)) throw new Error('Owner修订的用户意见、交付版本、费用记录或原授权已变化')
+      } else if (!hasCurrentRecoveryAuthorization(receipt.projectId, receipt.executionId, frozen)) throw new Error('Owner方案的原自主授权已变化')
+    }
+    const currentSource = resolveOwnerPlanningTask(receipt.planningTaskId, mode !== 'live')
     if (!currentSource || receipt.linkId !== frozen.link.id || receipt.executionId !== (getProjectDb().prepare('SELECT execution_id FROM controlled_task_preparations WHERE task_id = ?').get(receipt.planningTaskId) as { execution_id: string | null } | undefined)?.execution_id) throw new Error('Owner Run身份已变化')
     const context = getProjectOwnerPlanningContext(receipt.projectId, frozen.link.targetTaskId)
     const current = readCurrent(context)
     checkVersions(context, current, frozen.link.goalRevision, frozen.link.planRevision)
     assertLocalActorEnabled()
-    const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, Date.now(), true, usesOwnerSourceInspectionRouting(frozen.request))
-    if (response.kind !== 'plan_proposal') throw new Error('Owner澄清不是计划提案')
+    const response = parseProjectOwnerPlanningResponse(receipt.responseText, frozen.context, Date.now(), true, usesOwnerSourceInspectionRouting(frozen.request), usesSingleTextReviewFolding(frozen.request), false, usesOwnerBrowserVerificationRouting(frozen.request), usesOwnerFixedBudgetGrounding(frozen.request), usesOwnerRosterGrounding(frozen.request))
+    if (response.kind !== 'plan_proposal' || (mode === 'recover_bound_revision' && !response.proposal.deliveryFeedbackAssessment)) throw new Error('Owner回复缺少对应的方案或版本修订依据')
     const planVersion = (current?.planVersion ?? 0) + 1
     const plan: ProjectOwnerPlanDraft = { schemaVersion: 1, projectId: receipt.projectId, ...(frozen.link.targetTaskId === undefined ? {} : { taskId: frozen.link.targetTaskId }), revision: frozen.link.planRevision + 1, planVersion, goalRevision: frozen.link.goalRevision, goalVersion: frozen.link.goalVersion, state: 'proposed', actor: 'system:owner-planner', origin: 'generated', sourceRun: { receiptId, executionId: receipt.executionId, responseHash: receipt.responseHash }, savedAt: Date.now(), changeReason: '可信规划Run生成新提案；待人工内容确认', contextFingerprint: context.fingerprint, planFingerprint: planFingerprint({ planVersion, goalRevision: frozen.link.goalRevision, contextFingerprint: context.fingerprint, proposal: response.proposal }), sources: context.sources, proposal: response.proposal }
     verifyGeneratedOwnerPlan(plan.sourceRun!, plan.proposal, plan.goalRevision, plan.contextFingerprint)

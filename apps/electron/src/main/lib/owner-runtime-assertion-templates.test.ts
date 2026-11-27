@@ -55,3 +55,43 @@ describe('内置运行验证断言模板', () => {
     }
   })
 })
+
+test.each(['none', 'rad-cos', 'mixed'] as const)('Given科学计算器（缺陷=%s） When运行内置断言 Then实际检查两种单位的三角函数', async defect => {
+  const template = OWNER_RUNTIME_ASSERTION_TEMPLATES.find(item => item.id === 'calculator.scientific')!
+  const element = () => ({ disabled: false, getClientRects: () => [{}] })
+  const result = { ...element(), textContent: '' }, error = { ...element(), textContent: '' }
+  const input = { ...element(), value: '', readOnly: false, dispatchEvent() {} }
+  const angle = { ...element(), value: 'deg', dispatchEvent() {}, options: [
+    { value: 'deg', textContent: '角度', matches: () => false }, { value: 'rad', textContent: '弧度', matches: () => false },
+  ] }
+  const arithmetic: Record<string, number> = { '2+3*4': 14, '(2+3)*4-6/2': 17 }
+  const calls: string[] = []
+  const calculate = { ...element(), click() {
+    calls.push(angle.value + ':' + input.value)
+    const trig = /^(sin|cos)\(([\d.]+)\)$/.exec(input.value)
+    if (input.value === '1/0') { error.textContent = '不能除以零'; result.textContent = ''; return }
+    error.textContent = ''
+    if (trig) {
+      const angleValue = Number(trig[2]) * (angle.value === 'deg' ? Math.PI / 180 : 1)
+      result.textContent = String(defect === 'rad-cos' && angle.value === 'rad' && trig[1] === 'cos'
+        ? 1 : trig[1] === 'sin' ? Math.sin(angleValue) : Math.cos(angleValue))
+    } else if (/^sin\([\d.]+\)[+-]cos\(0\)$/.test(input.value)) {
+      result.textContent = defect === 'mixed' ? '' : input.value.includes('+') ? '2' : '0'
+      if (defect === 'mixed') error.textContent = '表达式存在多余内容：u+'
+    } else result.textContent = String(arithmetic[input.value])
+  } }
+  const clear = { ...element(), click() { input.value = result.textContent = error.textContent = '' } }
+  const controls = { 'input#expression': input, 'select#angle': angle, 'button#calculate': calculate, 'button#clear': clear }
+  const nodes = { result, error }
+  const document = { querySelector: (key: keyof typeof controls) => controls[key], getElementById: (key: keyof typeof nodes) => nodes[key] }
+  const run = new Function('document', 'getComputedStyle', 'setTimeout', 'Event', 'return ' + template.script)
+  const outcome: { passed: boolean; detail: string } = await run(document, () => ({ visibility: 'visible' }), (callback: () => void) => callback(), Event)
+  expect(calls).toContain('deg:sin(90)+cos(0)')
+  if (defect !== 'mixed') {
+    expect(calls).toContain('rad:sin(1.5707963267948966)')
+    expect(calls).toContain('rad:cos(3.141592653589793)')
+  }
+  if (defect === 'none') expect(calls).toContain('rad:sin(1.5707963267948966)-cos(0)')
+  expect(outcome.passed).toBe(defect === 'none')
+  expect(outcome.detail).toContain({ none: '角度 deg', 'rad-cos': '弧度模式 cos(', mixed: '角度模式 sin(90)+cos(0)' }[defect])
+})

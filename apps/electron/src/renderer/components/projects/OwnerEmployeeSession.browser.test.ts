@@ -44,7 +44,7 @@ root.render(<Provider store={store}><ProjectOwnerConversationProgress subject={s
   try {
     await page.goto(`http://127.0.0.1:${server.port}`)
     await page.evaluate('window.fixture.attention(true)')
-    await page.getByText('Owner 提出需要关注的事项，请查看最新说明。', { exact: true }).waitFor()
+    await page.getByLabel('员工会话进度').getByText('项目调研', { exact: true }).waitFor()
     expect(await page.getByText('Owner 正在等你处理一项待确认内容。', { exact: true }).count()).toBe(0)
     expect(await page.getByRole('button', { name: '回复 Owner', exact: true }).count()).toBe(0)
     await page.evaluate('window.fixture.attention(false)')
