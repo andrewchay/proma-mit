@@ -97,7 +97,7 @@ function readLateCandidate(goal: ProjectOwnerGoalBrief, cutoff: string) {
 export function readOwnerRosterDeadlineInstruction(goal: ProjectOwnerGoalBrief): string | null {
   const cutoff = readFormalAdmissionCutoff(goal)
   const candidate = cutoff ? readLateCandidate(goal, cutoff) : null
-  return candidate ? `按原目标复算：候补「${candidate.person}」${candidate.arrival} 到场，确认需 ${candidate.minutes} 分钟，即刻开始也最早于 ${candidate.time} 完成。原规则要求在 ${cutoff} 前完成确认，因此该候补不能正式补位。请同时核对正文、示例名单、人数和核对表；登记确认结果或旁听均不改变正式名单。` : null
+  return candidate ? `按原目标复算：候补「${candidate.person}」${candidate.arrival} 到场，确认需 ${candidate.minutes} 分钟，即刻开始也最早于 ${candidate.time} 完成。原规则要求在 ${cutoff} 前完成确认，因此该候补不能正式补位。请同时核对正文、示例名单、人数和核对表；登记确认结果或旁听均不改变正式名单；即使后来离席空出座位，除非原目标有明确例外，也不能为该候补另开补位窗口。` : null
 }
 
 const fixedOpening = new RegExp(`(${clockText})\\s*(?:整\\s*)?(?:准时\\s*)?(?:由主持人\\s*)?(?:宣布\\s*)?开场(?!提醒|准备|流程|时间|前|后)`, 'g')
@@ -147,15 +147,28 @@ function findLateFormalAdmission(goal: ProjectOwnerGoalBrief, cutoff: string, ma
   const content = markdown.replace(/^(```|~~~)[^\n]*\n[\s\S]*?^\1[^\n]*$/gm, '')
   const confirmationTime = new RegExp(`(${clockText})\\s*(?:才|已|刚|方)?\\s*(?:完成(?:候补|补位)?确认|确认完成|确认完毕)|(?:确认完成|确认完毕|完成确认)(?:时间)?\\s*[:：于为]\\s*(${clockText})`, 'g')
   const formalAdmission = /正式(?:补位|递补)|(?:补入|纳入|列入)正式名单|转为正式(?:成员|人员)|(?:允许|同意|批准)\s*递补/g
+  const afterDeadline = new RegExp(`(${clockText})\\s*(?:以|之)?后`, 'g')
+  const deferredException = /(?:若|如果|如)[^。；;]{0,48}(?:离席|空位|缺额)[^。；;]{0,36}是否(?:正式)?(?:递补|补位)(?:[^。；;]{0,20}(?:另行|再定|按现场规则))/
+  const hasSourceException = deferredException.test(rosterSource(goal))
   let lateHeadingLevel = 0
   for (const line of content.split('\n')) {
     const heading = /^\s*(#{1,6})\s+(.+)$/.exec(line)
     if (heading) {
       const level = heading[1]!.length
       if (lateHeadingLevel && level <= lateHeadingLevel) lateHeadingLevel = 0
-      const time = new RegExp(`(${clockText})\\s*(?:以|之)?后`).exec(heading[2]!)?.[1]
+      const time = [...heading[2]!.matchAll(afterDeadline)].at(-1)?.[1]
       if (!lateHeadingLevel && time && timeInMinutes(time) >= deadline) lateHeadingLevel = level
       continue
+    }
+    if (candidate && !hasSourceException) {
+      const exception = deferredException.exec(line)
+      if (exception) {
+        const beforeException = line.slice(0, exception.index)
+        const inlineDeadline = [...beforeException.matchAll(afterDeadline)].at(-1)?.[1]
+        if (lateHeadingLevel || (inlineDeadline && timeInMinutes(inlineDeadline) >= deadline)) {
+          return `原目标规定候补必须在 ${cutoff} 前完成确认才能正式补位。请删除原目标未授权的逾期补位例外；后续离席或出现空位也不改变该候补的资格。冲突原文：${exception[0]}`
+        }
+      }
     }
     for (const action of line.matchAll(formalAdmission)) {
       const prefix = line.slice(0, action.index)

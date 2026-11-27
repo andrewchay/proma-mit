@@ -111,6 +111,18 @@ test('Given正式补位有严格截止 When走查无误却在截止后更新正�
   }, '09:01 确认完成后正式补位。')).toContain('截止时或截止后')
 })
 
+test('Given 候补逾期 When 手册另设离席后的递补例外 Then 要求按原截止规则返工', () => {
+  const brief = { ...goal, objective: '候补丁13:58到场，确认耗时3分钟，14:00前完成才能正式补位。写清14:01后的处理。' }
+  const exception = '若后续有正式成员离席产生空位，是否递补按现场候补规则另行执行。'
+  expect(findOwnerRosterScenarioConflict(brief, '**14:01 后处理说明**：丁可旁听；' + exception)).toContain('逾期补位例外')
+  expect(findOwnerRosterScenarioConflict(brief, '## 14:01 后处理\n丁可旁听。' + exception)).toContain('逾期补位例外')
+  expect(findOwnerRosterScenarioConflict(brief, '## 14:01 后处理\n丁可旁听；若后来出现空位，也不允许正式补位。')).toBeNull()
+  expect(findOwnerRosterScenarioConflict(brief, '## 备用座位规则\n' + exception)).toBeNull()
+  expect(findOwnerRosterScenarioConflict(brief, '13:30 后开放签到。14:01 后处理：' + exception)).toContain('逾期补位例外')
+  expect(findOwnerRosterScenarioConflict(brief, '## 14:01 后处理\n若后来出现空位，不得递补或另行处理。')).toBeNull()
+  expect(findOwnerRosterScenarioConflict(brief, '## 14:01 后处理\n若正式成员离席，戊 13:59 已完成确认，可递补，登记另行处理。')).toBeNull()
+})
+
 test('Given 候补手册固定14:00开场 When 把主持人宣布开场放在14:05落座步骤 Then 拒绝偏移且允许另列换桌', () => {
   const brief = { ...goal, objective: '14:00开场，候补丁13:58到场，确认耗时3分钟，14:00前完成才能正式补位。' }
   const bad = '丁不能正式补位。\n14:05 前完成所有换桌落座，主持人宣布开场。'
