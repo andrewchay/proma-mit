@@ -416,17 +416,18 @@ function requestsBrowserVerification(context: ProjectOwnerPlanningContext): bool
   return !context.conversation && /浏览器|\bbrowser\b/i.test(goal) && !separateReport.test(goal)
 }
 
-function requestsSeparateBrowserReceipt(context: ProjectOwnerPlanningContext): boolean {
+function requestsSeparateBrowserReceipt(context: ProjectOwnerPlanningContext, includeTrailingRequest = true): boolean {
   const { objective, constraints, acceptanceCriteria } = context.goal.goal
   return [objective, ...constraints, ...acceptanceCriteria].some(text =>
     /(?:另(?:行|外|附|交)|单独|独立)[^。！？；，\n]{0,24}(?:浏览器|实测|测试|验证|验收)[^。！？；，\n]{0,12}回执/.test(text)
-    || /(?:浏览器|实测|测试|验证|验收)[^。！？；，\n]{0,12}回执[^。！？；，\n]{0,30}(?:分别|单独|另行)(?:交付|提交|提供)/.test(text))
+    || includeTrailingRequest && /(?:浏览器|实测|测试|验证|验收)[^。！？；，\n]{0,12}回执[^。！？；，\n]{0,30}(?:分别|单独|另行)(?:交付|提交|提供)/.test(text))
 }
 
 /** 浏览器实测随代码版本验收。只有用户要求另行交付的报告才单独派工。 */
 function foldBrowserVerification(proposal: ProjectOwnerPlanProposal, context: ProjectOwnerPlanningContext, routing: BrowserVerificationRouting): ProjectOwnerPlanProposal {
   if (!requestsBrowserVerification(context)) return proposal
-  if (routing === 'same-file-receipt' && requestsSeparateBrowserReceipt(context)) return proposal
+  // 0.14.79 的同文件回执提示继续按当时的前置措辞重放；新独立回执提示直接关闭折叠。
+  if (routing === 'same-file-receipt' && requestsSeparateBrowserReceipt(context, false)) return proposal
   const title = /^(?:(?:完成|执行|进行|实际|真实)\s*)?(?:浏览器(?:实测|验证|核验|测试)|browser (?:verification|tests?))/i
   const receipt = /^(?:(?:整理|生成|提交|记录|完成)\s*)?(?:真实|实际)?\s*浏览器.{0,16}(?:核对|回执)/i
   const singleFile = routing === 'single-file' || routing === 'same-file-receipt'

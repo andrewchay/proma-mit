@@ -826,6 +826,20 @@ test('Given 单文件成果的真实浏览器回执以同一文件版本开头 W
   expect(separatePrompt.systemPrompt).toContain('保留独立交付步骤')
   expect(separatePrompt.systemPrompt).not.toContain('无需将实测另拆为派工')
   expect(usesOwnerBrowserVerificationRouting(separatePrompt)).toBe(false)
+  const trailing = { ...c, goal: { ...c.goal, goal: { ...c.goal.goal, objective: c.goal.goal.objective + '请把浏览器实测回执与网页分别提交。' } } }
+  trailing.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: trailing.goal.revision, goal: trailing.goal.goal, sources: trailing.sources })).digest('hex')
+  const trailingResponse = { ...proposal(trailing), proposal: { ...input.proposal } }
+  const trailingPrompt = buildProjectOwnerPlanningRequest(trailing)
+  expect(usesOwnerBrowserVerificationRouting(trailingPrompt)).toBe(false)
+  const oldBrowserInstructions = buildProjectOwnerPlanningRequest(c).systemPrompt.split('\n').filter(line =>
+    /^(?:实际浏览器验证须|绑定同一文件版本的实测回执|当前仅交付一个网页文件|以同一文件版本)/.test(line))
+  const priorPrompt = { ...trailingPrompt, systemPrompt: trailingPrompt.systemPrompt.split('\n').flatMap(line =>
+    line.startsWith('原目标明确要求单独交付实测回执') ? oldBrowserInstructions : [line]).join('\n') }
+  const priorHash = createHash('sha256').update(JSON.stringify(priorPrompt)).digest('hex')
+  const recoveredPrompt = resolveProjectOwnerPlanningRequest(trailing, priorHash)
+  expect(recoveredPrompt).toEqual(priorPrompt)
+  expect(parseProjectOwnerPlanningResponse(trailingResponse, trailing, Date.now(), true, true, false, false,
+    usesOwnerBrowserVerificationRouting(recoveredPrompt))).toMatchObject({ proposal: { steps: [{ key: start.key, deliveryKind: 'development' }] } })
   expect(parseProjectOwnerPlanningResponse({ ...input, binding_note: null }, c)).toMatchObject({ kind: 'plan_proposal' })
   expect(() => parseProjectOwnerPlanningResponse({ ...input, binding_note: '改变项目绑定' }, c)).toThrow('未知字段')
   expect(() => parseProjectOwnerPlanningResponse({ ...input, binding_note: null, projectId: 'other' }, c)).toThrow('不匹配')
