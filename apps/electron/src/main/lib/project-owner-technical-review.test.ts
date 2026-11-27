@@ -368,3 +368,12 @@ test('Given 同版本源码范围很长且另有浏览器回执 When 核验编�
   expect(bind('F1:L1-L3, V1')).toMatchObject([{ quote: source.slice(0, 1000) }])
   for (const id of ['F1:L1-L4, V1', 'F1:L1-L3, V2', 'F1:L1-L3, V1, V1']) expect(() => bind(id)).toThrow()
 })
+
+test('Given 通知两行正文含多个句子 When 提取评审引用提示 Then 不把句子和空行计入可引用编号', async () => {
+  const { ownerTextEvidenceHint, bindOwnerEvidenceRows } = await import('./project-owner-evidence-reference')
+  const content = '各位同事：\r\n大家好！请归还物资。感谢配合！\r\n'
+  expect(ownerTextEvidenceHint(content)).toContain('T1、T2。')
+  expect(ownerTextEvidenceHint(content)).not.toContain('T3')
+  const row = { criterionId: 'C1', status: 'met', evidence: '核对礼貌措辞', evidenceId: 'T3' }
+  expect(() => bindOwnerEvidenceRows([row], ['语气礼貌'], { development: false, content })).toThrow()
+})

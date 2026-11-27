@@ -1,6 +1,6 @@
 /** 同一Reviewer命令内最多补正一次输出；不重跑Executor、不修改原文或放宽校验。 */
 import { parseOwnerTechnicalReviewResponse, assertOwnerDevelopmentValidationForVerdict, normalizeOwnerTechnicalReviewReceipt } from './project-owner-technical-review'
-import { ownerDevelopmentEvidenceHint } from './project-owner-evidence-reference'
+import { ownerDevelopmentEvidenceHint, ownerTextEvidenceHint } from './project-owner-evidence-reference'
 import { ownerDevelopmentArtifactFromPrompt } from './project-owner-development-artifact'
 import { ownerTaskDeliveryKind, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { getOwnerTaskMaterializationRecord } from './project-owner-task-materialization'
@@ -46,6 +46,7 @@ export function ownerReviewerProtocolCorrection(sessionId: string, raw: string):
   } catch (cause) {
     // 只把应用内置校验器的原因交回模型；原始回答仍保留，补正另计请求与费用。
     const reason = cause instanceof Error ? cause.message : '结构化评审校验失败'
-    return `主进程内部校验反馈（不是用户的新要求）：本轮评审没有通过校验：${reason}。请基于同一冻结成果和验证证据重新提交严格JSON。这是一次有界补正，不是已经验收；不要重做代码或更改验收标准。沿用本轮评审提示指定的证据格式。编号格式使用当前冻结成果的evidenceId；逐字引用格式的quote只能复制一段连续原文，禁止省略号拼接。缺少验证证据时用blocked、not_verified与空证据值null，将已有检查结果写入evidence。验证失败时明确给出未满足项和可执行修改建议，不得强行approved。${development ? ownerDevelopmentEvidenceHint(development.content, development.validationEvidence) : ''}`
+    const artifactTextHint = text ? ownerTextEvidenceHint(text.content) : ''
+    return `主进程内部校验反馈（不是用户的新要求）：本轮评审没有通过校验：${reason}。请基于同一冻结成果和验证证据重新提交严格JSON。这是一次有界补正，不是已经验收；不要重做代码或更改验收标准。沿用本轮评审提示指定的证据格式。编号格式使用当前冻结成果的evidenceId；逐字引用格式的quote只能复制一段连续原文，禁止省略号拼接。缺少验证证据时用blocked、not_verified与空证据值null，将已有检查结果写入evidence。验证失败时明确给出未满足项和可执行修改建议，不得强行approved。${development ? ownerDevelopmentEvidenceHint(development.content, development.validationEvidence) : artifactTextHint}`
   }
 }

@@ -1,7 +1,7 @@
 import { readOwnerRosterDeadlineInstruction, readOwnerRosterOpeningInstruction } from './project-owner-roster-scenario'
 import { ownerGoalRequiresSingleTextDelivery } from './project-owner-criteria-trace'
 import { ownerRequiresSourceFactsOnly } from './project-owner-source-facts'
-import { OWNER_DEVELOPMENT_EVIDENCE_HINT_MARKER, OWNER_EVIDENCE_REFERENCE_INSTRUCTION } from './project-owner-evidence-reference'
+import { OWNER_DEVELOPMENT_EVIDENCE_HINT_MARKER, OWNER_EVIDENCE_REFERENCE_INSTRUCTION, ownerTextEvidenceHint } from './project-owner-evidence-reference'
 import { readOwnerQualityAction, readOwnerQualityActionByExecution, readOwnerQualityArtifact } from './project-owner-quality-actions'
 import { MILES_CONVERSION_CHECK, STAGED_FILES_VERIFICATION_COMMAND } from './owner-runtime-verification-command'
 import { readLatestAcceptedArtifact } from './project-owner-accepted-artifact'
@@ -407,6 +407,10 @@ function buildOwnerCommandPrompt(task: Task, projectGoal: ProjectOwnerGoalBrief,
       roleInstruction += '\n主进程已绑定成果版本，JSON 不包含 artifactHash。仅按准确版本的完整正文检查。格式完整、存在文件或作者声称完成都不能证明标准已满足。不得依赖被截断的摘要。核对例子里的时间、人员和状态能否追溯到原目标；目标明确只做列出的工作时，把新增强制动作判为不满足并要求修改。'
       roleInstruction += '\n需要验证流程可执行性时，用一个具体情境逐步核对触发、处理耗时和截止时点，检查数量是否可同时满足。若同一截止既触发下一步又禁止其完成，即使规则集中写在同一段也不能判定达标。'
       roleInstruction += '\n证据编号只需指向一处关键原文，其余依据在该项的 evidence 中说明。上游任务、项目目标和作者的其他回复只能帮助理解，证据编号必须指向当前正文。'
+      roleInstruction += ownerTextEvidenceHint(artifact.content)
+      if (ownerGoalRequiresSingleTextDelivery(projectGoal)) {
+        roleInstruction += '\n原目标要求一份正文。验收标准提出逐项核对或记录核对结果时，由你在这份独立评审回执中填写实查情况。只有原目标明确要求随正文交付核对记录时，才把它当作正文附件；不要要求正文附上内部评审记录。'
+      }
     }
     if (ownerRequiresSourceFactsOnly(projectGoal)) {
       roleInstruction += role === 'executor'

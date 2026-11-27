@@ -26,6 +26,12 @@ function lineAt(content: string, index: number): string | undefined {
   return line?.trim() ? line.slice(0, 1000) : undefined
 }
 
+export function ownerTextEvidenceHint(content: string): string {
+  const lines = content.split(/\r\n|\n|\r/).flatMap((line, index) => line.trim() ? [`T${index + 1}`] : [])
+  if (!lines.length) return ''
+  return ` 正文已核对的非空行编号：${lines.slice(0, 40).join('、')}${lines.length > 40 ? '（仅列前 40 个）' : ''}。只引用真实非空行，不把一行内的句子当作新行。核对全文事实或长度时可引用其中一处实际内容，其余核对结果写入 evidence。`
+}
+
 /** 由冻结原件生成位置提示，避免补正时让模型重新估算行号。 */
 export function ownerDevelopmentEvidenceHint(content: string, validation?: Validation): string {
   let entries: unknown[]
