@@ -6,7 +6,7 @@ import type { OwnerExecutionRevalidationSource, OwnerTextDelivery } from '@gravi
 import { getProjectsDir } from './config-paths'
 import { ownerExecutionHash } from './project-owner-execution-hash'
 import { ownerTaskHasTextDelivery, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
-import { applyOwnerTextInsertionProposal, ownerTextDeliveryCharacterLimit, OWNER_NOTICE_BODY_ONLY_INSTRUCTION, OWNER_SINGLE_TEXT_RESPONSE_INSTRUCTION, OWNER_TEXT_HANDOFF_HEADER, OWNER_TEXT_INSERTION_RESPONSE_INSTRUCTION, readOwnerSingleTextBody } from './project-owner-delivery-content'
+import { applyOwnerTextInsertionProposal, ownerTextDeliveryCharacterLimit, OWNER_NOTICE_BODY_ONLY_INSTRUCTION, OWNER_SINGLE_TEXT_LINE_BREAK_INSTRUCTION, OWNER_SINGLE_TEXT_RESPONSE_INSTRUCTION, OWNER_TEXT_HANDOFF_HEADER, OWNER_TEXT_INSERTION_RESPONSE_INSTRUCTION, readOwnerSingleTextBody } from './project-owner-delivery-content'
 import { getOwnerTaskMaterializationRecord } from './project-owner-task-materialization'
 import * as store from './project-sqlite-store'
 
@@ -91,9 +91,12 @@ export function captureOwnerTextDelivery(commandId: string, executionId: string,
     : null
   const inserted = rule && applyOwnerTextInsertionProposal(message.content, rule)
   const structuredTextHeader = `${OWNER_TEXT_HANDOFF_HEADER}\n\n${OWNER_SINGLE_TEXT_RESPONSE_INSTRUCTION}\n\n`
+  const noticeTextHeader = `${structuredTextHeader}${OWNER_NOTICE_BODY_ONLY_INSTRUCTION}\n\n`
+  const noticeBodyOnly = execution.prompt.startsWith(noticeTextHeader)
+  const baseHeader = noticeBodyOnly ? noticeTextHeader : structuredTextHeader
+  const repairLineBreaks = execution.prompt.startsWith(`${baseHeader}${OWNER_SINGLE_TEXT_LINE_BREAK_INSTRUCTION}\n\n`)
   const content = inserted?.content ?? (execution.prompt.startsWith(structuredTextHeader)
-    ? readOwnerSingleTextBody(message.content, execution.prompt.startsWith(`${structuredTextHeader}${OWNER_NOTICE_BODY_ONLY_INSTRUCTION}\n\n`))
-    : message.content)
+    ? readOwnerSingleTextBody(message.content, { noticeBodyOnly, repairLineBreaks }) : message.content)
   const insertionProposalSha256 = inserted ? sha(message.content) : undefined
   const byteLength = Buffer.byteLength(content, 'utf8')
   if (byteLength > OWNER_TEXT_DELIVERY_MAX_BYTES) throw new Error('完整文本成果超出64KiB审阅上限，已拒绝截断后评审')

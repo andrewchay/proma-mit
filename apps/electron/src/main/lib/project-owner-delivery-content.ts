@@ -17,6 +17,7 @@ export function ownerTextDeliveryCharacterLimit(criteria: readonly string[]): nu
 export const OWNER_TEXT_HANDOFF_HEADER = 'Owner文本上游成果交接 v2。'
 export const OWNER_SINGLE_TEXT_RESPONSE_INSTRUCTION = '交付时返回 JSON 对象 {"body":"给读者的完整正文","selfCheck":null}。如需留下内部自检，把它写在 selfCheck 字段。body 只给读者使用，不包含自检、进度状态、字数说明或交付摘要。正文计数由系统完成。'
 
+export const OWNER_SINGLE_TEXT_LINE_BREAK_INSTRUCTION = '请用合法 JSON 转义 body 或 selfCheck 中的换行和制表符。'
 export const OWNER_NOTICE_BODY_ONLY_INSTRUCTION = '原目标只交付通知正文；内部核对只留在 selfCheck 或独立评审回执，不能放进通知正文。'
 
 export function ownerRequiresNoticeBodyOnly(goal: Pick<ProjectOwnerGoalBrief, 'objective' | 'constraints' | 'acceptanceCriteria'>): boolean {
@@ -37,12 +38,16 @@ function readOwnerNoticeBody(body: string): string {
 }
 
 /** 原回包留在执行会话和 messageId；评审及交付绑定独立正文。 */
-export function readOwnerSingleTextBody(raw: string, noticeBodyOnly = false): string {
+export function readOwnerSingleTextBody(raw: string, { noticeBodyOnly = false, repairLineBreaks = false } = {}): string {
   const bodyForDelivery = noticeBodyOnly ? readOwnerNoticeBody : (body: string) => body
   const response = raw.trim()
   const json = /^```(?:json)?[ \t]*\r?\n([\s\S]+)\r?\n```$/i.exec(response)?.[1] ?? response
   try {
-    const value: unknown = JSON.parse(json)
+    // 仅修复结构回包双引号内的裸换行/制表符；JSON 仍按白名单校验。
+    const input = repairLineBreaks && /^\{\s*"(?:body|selfCheck)"\s*:/.test(json)
+      ? json.replace(/"(?:\\[^\r\n\t]|[^"\\])*"/g, literal => literal.replace(/[\r\n\t]/g, char => JSON.stringify(char).slice(1, -1)))
+      : json
+    const value: unknown = JSON.parse(input)
     if (value && typeof value === 'object' && !Array.isArray(value) && 'body' in value
       && typeof value.body === 'string' && value.body.trim()
       && Object.keys(value).every(key => key === 'body' || key === 'selfCheck')
@@ -252,8 +257,10 @@ export function findOwnerClosedWorklistConflict(goal: ProjectOwnerGoalBrief, con
   const signoffSectionAllowed = /(?:提供|增加|保留|设置|填写)[^。；，,\n]{0,6}签收栏/.test(source)
     && !/(?:禁止|不得|不要|不需|无需|不要求)[^。；，,\n]{0,12}签收栏/.test(source)
   const signature = /^(?:[ \t]*[-*#]+[ \t]*)?(?:\*\*)?(?:[\p{L}]{0,12})?(?:签字|签名|签署)(?:确认)?(?:\*\*)?[ \t]*[：:]?[ \t]*(?:[_＿]{2,})?(?:[ \t　]*(?:签字)?(?:日期|时间)[：:][ \t]*[_＿]{2,})?[ \t]*$/mu
-  const signatureSection = /^ {0,3}#{1,6}[ \t]+(?:签收|签字|签名|签署)(?:栏|确认)[ \t]*$/m
-  return (!signatureAllowed && signature.test(content)) || (!signatureAllowed && !signoffSectionAllowed && signatureSection.test(content))
+  const signatureSection = /^ {0,3}#{1,6}[ \t]+(?:签字|签名|签署)(?:栏|确认)[ \t]*$/m
+  const signoffSection = /^ {0,3}#{1,6}[ \t]+签收(?:栏|确认)[ \t]*$/m
+  return (!signatureAllowed && (signature.test(content) || signatureSection.test(content)))
+    || (!signatureAllowed && !signoffSectionAllowed && signoffSection.test(content))
     ? '封闭的工作清单之外新增了单独的签字确认。请去掉这个额外动作，并保留用户列出的原有工作。'
     : null
 }

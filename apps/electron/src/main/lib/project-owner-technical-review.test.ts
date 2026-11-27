@@ -351,14 +351,25 @@ test('Given 原目标只要一份通知正文 When 员工把独立核对附在�
   const withReview = body + '\n\n——\n核对说明（独立核对，随正文交付）：\n1. 日期符合给定事实。'
   const onlyBody = ownerRequiresNoticeBodyOnly(goal)
   expect(onlyBody).toBe(true)
-  expect(readOwnerSingleTextBody(withReview, onlyBody)).toBe(body)
-  expect(readOwnerSingleTextBody(JSON.stringify({ body: withReview, selfCheck: null }), onlyBody)).toBe(body)
+  expect(readOwnerSingleTextBody(withReview, { noticeBodyOnly: onlyBody })).toBe(body)
+  expect(readOwnerSingleTextBody(JSON.stringify({ body: withReview, selfCheck: null }), { noticeBodyOnly: onlyBody })).toBe(body)
   expect(readOwnerSingleTextBody(withReview)).toBe(withReview)
-  expect(readOwnerSingleTextBody(body + '\n\n——\n请在签到时出示报名确认。', onlyBody)).toContain('出示报名确认')
+  expect(readOwnerSingleTextBody(body + '\n\n——\n请在签到时出示报名确认。', { noticeBodyOnly: onlyBody })).toContain('出示报名确认')
   const withFollowup = withReview + '\n\n请回复姓名报名。'
-  expect(readOwnerSingleTextBody(withFollowup, onlyBody)).toBe(withFollowup)
+  expect(readOwnerSingleTextBody(withFollowup, { noticeBodyOnly: onlyBody })).toBe(withFollowup)
   expect(ownerRequiresNoticeBodyOnly({ ...goal, objective: goal.objective + '随正文附上核对记录。' })).toBe(false)
   expect(ownerRequiresNoticeBodyOnly({ ...goal, objective: goal.objective + '通知末尾请加一节核对说明。' })).toBe(false)
+})
+
+test('Given 通知 JSON 字符串有裸换行 When 按新冻结提示读取 Then 保留原正文而不交付 JSON', async () => {
+  const { readOwnerSingleTextBody } = await import('./project-owner-delivery-content')
+  const body = '报名通知\n\n请回复姓名；联系人："小林"。'
+  const raw = JSON.stringify({ body, selfCheck: '内部核对\n姓名与联系人' }).replaceAll('\\n', '\n')
+  expect(readOwnerSingleTextBody(raw, { repairLineBreaks: true })).toBe(body)
+  expect(readOwnerSingleTextBody(raw)).toBe(raw)
+  const unsupported = raw.replace('"selfCheck"', '"extra"')
+  expect(readOwnerSingleTextBody(unsupported, { repairLineBreaks: true })).toBe(unsupported)
+  expect(readOwnerSingleTextBody(body, { repairLineBreaks: true })).toBe(body)
 })
 
 test('Given 评审引用当前冻结文件的源码行范围 When 绑定 Then 只恢复逐字连续范围', async () => {
