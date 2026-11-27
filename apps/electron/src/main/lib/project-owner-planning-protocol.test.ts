@@ -658,19 +658,37 @@ test('Given目标只交付一份正文 When模型重复拆出独立核对 Then�
   const trace = { key: 'one', source: 'objective', sourceIndex: 0, sourceText: '只交付一份正文', criticality: 'critical', stepKey: review.key, verification: 'manual_review' }
   const response = { ...raw, proposal: { ...raw.proposal, steps: [draft, review], criteriaTrace: [trace] } }
   const current = buildProjectOwnerPlanningRequest(c)
-  expect(usesSingleTextReviewFolding(current)).toBe(true)
+  expect(usesSingleTextReviewFolding(current)).toBe('internal-record')
+  const priorCurrent = { ...current, systemPrompt: current.systemPrompt.split('\n')
+    .filter(line => !line.includes('独立核对产生的内部记录不占交付步骤')).join('\n') }
+  expect(resolveProjectOwnerPlanningRequest(c, createHash('sha256').update(JSON.stringify(priorCurrent)).digest('hex'))).toEqual(priorCurrent)
+  expect(usesSingleTextReviewFolding(priorCurrent)).toBe(true)
+
   const historical = buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false)
   const hash = createHash('sha256').update(JSON.stringify(historical)).digest('hex')
   expect(resolveProjectOwnerPlanningRequest(c, hash)).toEqual(historical)
   expect(parseProjectOwnerPlanningResponse(response, c, Date.now(), true, true)).toMatchObject({ proposal: { steps: [draft, review] } })
   const parsed = parseProjectOwnerPlanningResponse(response, c, Date.now(), true, true, true)
   expect(parsed).toMatchObject({ proposal: { steps: [{ key: draft.key, outcome: review.outcome, acceptanceCriteria: ['范围明确', '不虚构报名规则'] }], criteriaTrace: [{ stepKey: draft.key }] } })
-  const separate = { ...response, proposal: { ...response.proposal, steps: [draft, { ...review, outcome: '逐项核对报告' }] } }
+  c.sources.roles.push({ ...c.sources.roles[0]!, key: 'delivery-verifier', name: '交付核验员' })
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const internalRecord = { ...response, contextFingerprint: c.fingerprint, proposal: { ...response.proposal, steps: [draft,
+    { ...review, roleKey: 'delivery-verifier', title: '独立核对通知正文', outcome: '核对记录，确认正文事实准确、无名额收费、仅一份' }] } }
+  expect(parseProjectOwnerPlanningResponse(internalRecord, c, Date.now(), true, true, true)).toMatchObject({ proposal: { steps: internalRecord.proposal.steps } })
+  expect(parseProjectOwnerPlanningResponse(internalRecord, c, Date.now(), true, true, 'internal-record')).toMatchObject({
+    proposal: { steps: [{ key: draft.key, outcome: '通知正文', acceptanceCriteria: ['范围明确', '不虚构报名规则'] }], criteriaTrace: [{ stepKey: draft.key }] },
+  })
+  const separate = { ...response, contextFingerprint: c.fingerprint, proposal: { ...response.proposal, steps: [draft, { ...review, outcome: '逐项核对报告' }] } }
   expect(parseProjectOwnerPlanningResponse(separate, c, Date.now(), true, true, true)).toMatchObject({ proposal: { steps: [{ key: draft.key }, { key: review.key }] } })
   c.sources.roles.push({ ...c.sources.roles[0]!, key: 'legal', name: '法务专员' })
   c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
   const specialist = { ...response, contextFingerprint: c.fingerprint, proposal: { ...response.proposal, steps: [draft, { ...review, roleKey: 'legal' }] } }
   expect(parseProjectOwnerPlanningResponse(specialist, c, Date.now(), true, true, true)).toMatchObject({ proposal: { steps: [{ key: draft.key }, { key: review.key, roleKey: 'legal' }] } })
+  c.goal.goal.constraints = ['另交一份核对记录。']
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  expect(parseProjectOwnerPlanningResponse({ ...internalRecord, contextFingerprint: c.fingerprint }, c, Date.now(), true, true, 'internal-record'))
+    .toMatchObject({ proposal: { steps: internalRecord.proposal.steps } })
+
 })
 
 test.each([false, true])('Given多文件代码目标（要求单独报告=%s） When模型把浏览器实测拆成文本 Then运行验证绑定代码步骤', async separateReport => {

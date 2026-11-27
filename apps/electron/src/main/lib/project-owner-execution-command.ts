@@ -1,7 +1,7 @@
 import { readOwnerRosterDeadlineInstruction } from './project-owner-roster-scenario'
 import { ownerGoalRequiresSingleTextDelivery } from './project-owner-criteria-trace'
 import { ownerRequiresSourceFactsOnly } from './project-owner-source-facts'
-import { OWNER_EVIDENCE_REFERENCE_INSTRUCTION } from './project-owner-evidence-reference'
+import { OWNER_DEVELOPMENT_EVIDENCE_HINT_MARKER, OWNER_EVIDENCE_REFERENCE_INSTRUCTION } from './project-owner-evidence-reference'
 import { readOwnerQualityAction, readOwnerQualityActionByExecution, readOwnerQualityArtifact } from './project-owner-quality-actions'
 import { MILES_CONVERSION_CHECK, STAGED_FILES_VERIFICATION_COMMAND } from './owner-runtime-verification-command'
 import { readLatestAcceptedArtifact } from './project-owner-accepted-artifact'
@@ -431,7 +431,7 @@ function buildOwnerCommandPrompt(task: Task, projectGoal: ProjectOwnerGoalBrief,
       '{"criterion":"按原顺序逐项复写冻结标准","status":"met|not_met|not_verified","evidence":"..."}',
       `{"criterionId":"C1","status":"met|not_met|not_verified","evidence":"...","evidenceId":"${artifact ? 'T1' : 'F1:L1'}"}`,
     )
-    roleInstruction += `\n${OWNER_EVIDENCE_REFERENCE_INSTRUCTION}${developmentArtifactRef ? ' 可引用同一文件的连续范围，例如 F1:L9-L12。' : ''}`
+    roleInstruction += `\n${OWNER_EVIDENCE_REFERENCE_INSTRUCTION}${developmentArtifactRef ? ` ${OWNER_DEVELOPMENT_EVIDENCE_HINT_MARKER}只在检查具体源码时引用已确认的行号；不要估算范围。` : ''}`
   }
   return [
     textDeliveryVersion === 1 ? OWNER_TEXT_HANDOFF_HEADER : '',

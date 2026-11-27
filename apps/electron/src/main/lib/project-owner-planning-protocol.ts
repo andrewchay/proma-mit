@@ -439,6 +439,15 @@ function foldBrowserVerification(proposal: ProjectOwnerPlanProposal, context: Pr
 
 const SINGLE_TEXT_REVIEW_INSTRUCTION = '当前正式目标只要求一份正文。用一个步骤交付最终正文，将独立核对放入该步骤的验收标准；系统会单独安排评审，不要把评审变成第二份交付。'
 
+const INTERNAL_TEXT_REVIEW_INSTRUCTION = '只交付一份正文时，独立核对产生的内部记录不占交付步骤。用户明确要求另交记录时按要求保留。'
+type SingleTextReviewFolding = boolean | 'internal-record'
+
+function requestsSeparateReviewRecord(context: ProjectOwnerPlanningContext): boolean {
+  const { objective, constraints, acceptanceCriteria } = context.goal.goal
+  return [objective, ...constraints, ...acceptanceCriteria].some(text =>
+    /(?:另(?:行|外|附|交)|并(?:交付|提交|附上|提供)|同时|需(?:要|保留)|要求|提供|交付|提交|附上)(?:[^。！？；，\n]{0,12})(?:核对|评审|审阅)记录/.test(text))
+}
+
 function requestsOneTextArtifact(context: ProjectOwnerPlanningContext): boolean {
   const { objective, constraints, acceptanceCriteria } = context.goal.goal
   return !context.conversation && [objective, ...constraints, ...acceptanceCriteria].some(text =>
@@ -446,22 +455,25 @@ function requestsOneTextArtifact(context: ProjectOwnerPlanningContext): boolean 
 }
 
 /** 仅折叠显式单正文计划里，作为唯一后继的独立核对任务。 */
-function foldSingleTextReview(proposal: ProjectOwnerPlanProposal): ProjectOwnerPlanProposal {
+function foldSingleTextReview(proposal: ProjectOwnerPlanProposal, foldInternalRecord: boolean): ProjectOwnerPlanProposal {
   const [draft, review] = proposal.steps
   if (proposal.steps.length !== 2 || !draft || !review || draft.deliveryKind !== 'text' || review.deliveryKind !== 'text'
     || draft.dependencies.length || review.dependencies.length !== 1 || review.dependencies[0] !== draft.key
     || draft.sourceReferences?.length || review.sourceReferences?.length
     || (review.roleKey !== draft.roleKey && review.roleKey !== 'delivery-verifier')
-    || !/^(?:独立)?(?:核对|评审|审阅)(?:并定稿|并交付)?/.test(review.title)
-    || /报告|记录|表格|附件|核对清单|审查清单/.test(review.outcome)) return proposal
+    || !/^(?:独立)?(?:核对|评审|审阅)(?:并定稿|并交付)?/.test(review.title)) return proposal
+  const verificationNote = foldInternalRecord && review.roleKey === 'delivery-verifier'
+    && /^(?:独立)?(?:核对|评审|审阅)记录[，：,:]\s*(?:确认|核对|检查)正文/.test(review.outcome)
+  if (/报告|表格|附件|核对清单|审查清单/.test(review.outcome) || (!verificationNote && /记录/.test(review.outcome))) return proposal
   const acceptanceCriteria = [...new Set([...draft.acceptanceCriteria, ...review.acceptanceCriteria])]
   if (acceptanceCriteria.length > 30) return proposal
-  return { ...proposal, steps: [{ ...draft, outcome: review.outcome, acceptanceCriteria }],
+  return { ...proposal, steps: [{ ...draft, outcome: verificationNote ? draft.outcome.replace(/草稿|初稿/, '正文') : review.outcome, acceptanceCriteria }],
     ...(proposal.criteriaTrace ? { criteriaTrace: proposal.criteriaTrace.map(item =>
       item.stepKey === review.key ? { ...item, stepKey: draft.key } : item) } : {}) }
 }
 
-export function usesSingleTextReviewFolding(request?: ProjectOwnerPlanningRequest): boolean {
+export function usesSingleTextReviewFolding(request?: ProjectOwnerPlanningRequest): SingleTextReviewFolding {
+  if (request?.systemPrompt.includes(INTERNAL_TEXT_REVIEW_INSTRUCTION)) return 'internal-record'
   return request?.systemPrompt.includes(SINGLE_TEXT_REVIEW_INSTRUCTION) === true
 }
 
@@ -494,7 +506,7 @@ export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningCo
     '事实、假设、风险与建议明确区分。不能将资料存在、模型自述或建议写成已经验证、批准或完成。',
     '信息足够时直接提出结构化计划，不机械追问。只有信息缺口会改变成果、范围或关键取舍时，集中提出1–8个必要问题，说明原因、影响与建议。',
     ...(scopedSourceInspection && requireDeliveryKind ? [OWNER_SOURCE_INSPECTION_INSTRUCTION] : []),
-    ...(foldSingleTextReviewLane && requestsOneTextArtifact(context) ? [SINGLE_TEXT_REVIEW_INSTRUCTION] : []),
+    ...(foldSingleTextReviewLane && requestsOneTextArtifact(context) ? [SINGLE_TEXT_REVIEW_INSTRUCTION, INTERNAL_TEXT_REVIEW_INSTRUCTION] : []),
     ...(independentReviewLane ? ['系统会在每个实现步骤后独立安排Reviewer检查、Owner质量验收及有限返工，这些是后置流程，不要再次列成普通实现任务。尊重目标约定的步骤数量；对明确要求单步的小型实现，只列一个实现交付步骤，不另列独立评审、测试、返工或汇总交付步骤。'] : []),
     '每个澄清问题必须标注reasonType：普通决定性信息不足用missing_information；不同来源的事实冲突用source_conflict。若是source_conflict，不得自行选择优先级或合并；必须包含sourceReferences，逐项提供本次JSON中实际存在的sourceId和原文quote，至少引用两个不同来源。可引用goal.objective、goal.constraints[i]、goal.acceptanceCriteria[i]、project.title/description、task.title/description及本次code.files[i].excerpts[j]。',
     '不要求用户先拆完任务、提供内部ID或文件路径。代码目标也不默认要求用户手填路径；未实际检索不得伪造代码定位。',
@@ -656,63 +668,57 @@ export function resolveProjectOwnerPlanningRequest(context: ProjectOwnerPlanning
     if (cached.value === null) throw new Error('Owner冻结提示指纹不属于已知历史格式')
     return JSON.parse(cached.value) as ProjectOwnerPlanningRequest
   }
-  const current = buildProjectOwnerPlanningRequest(context)
-  if (createHash('sha256').update(JSON.stringify(current)).digest('hex') === promptHash) {
-    cacheHistoricalRequest(key, JSON.stringify(current))
-    return current
+  const matchRequest = (request: ProjectOwnerPlanningRequest): ProjectOwnerPlanningRequest | undefined => {
+    const legacyPrompt = request.systemPrompt.replace(`\n${INTERNAL_TEXT_REVIEW_INSTRUCTION}`, '')
+    for (const candidate of legacyPrompt === request.systemPrompt ? [request] : [request, { ...request, systemPrompt: legacyPrompt }]) {
+      const serialized = JSON.stringify(candidate)
+      if (createHash('sha256').update(serialized).digest('hex') !== promptHash) continue
+      cacheHistoricalRequest(key, serialized)
+      return candidate
+    }
+    return undefined
   }
+  const current = buildProjectOwnerPlanningRequest(context)
+  const currentMatch = matchRequest(current)
+  if (currentMatch) return currentMatch
   if (!context.conversation && readOwnerRosterDeadlineInstruction(context.goal.goal)) {
     const prior = buildProjectOwnerPlanningRequest(context, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false)
-    if (createHash('sha256').update(JSON.stringify(prior)).digest('hex') === promptHash) {
-      cacheHistoricalRequest(key, JSON.stringify(prior))
-      return prior
-    }
+    const matched = matchRequest(prior)
+    if (matched) return matched
   }
   if (!context.conversation && readOwnerFixedBudget(context.goal.goal)) {
     const prior = buildProjectOwnerPlanningRequest(context, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false)
-    if (createHash('sha256').update(JSON.stringify(prior)).digest('hex') === promptHash) {
-      cacheHistoricalRequest(key, JSON.stringify(prior))
-      return prior
-    }
+    const matched = matchRequest(prior)
+    if (matched) return matched
   }
   if (requestsBrowserVerification(context)) {
     for (const routing of [true, 'legacy', false] as const) {
       const prior = buildProjectOwnerPlanningRequest(context, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, routing, routing === true)
-      if (createHash('sha256').update(JSON.stringify(prior)).digest('hex') === promptHash) {
-        cacheHistoricalRequest(key, JSON.stringify(prior))
-        return prior
-      }
+      const matched = matchRequest(prior)
+      if (matched) return matched
     }
   }
   if (context.conversation?.deliveryReview?.qualityDecisionBindingVersion === 2) {
     for (const [boundQualityQuotes, numberedEvidence] of [[true, true], [true, false], [false, false]] as const) {
       const prior = buildProjectOwnerPlanningRequest(context, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, boundQualityQuotes, numberedEvidence, false)
-      if (createHash('sha256').update(JSON.stringify(prior)).digest('hex') === promptHash) {
-        cacheHistoricalRequest(key, JSON.stringify(prior))
-        return prior
-      }
+      const matched = matchRequest(prior)
+      if (matched) return matched
     }
   }
   if (requestsOneTextArtifact(context)) {
     const prior = buildProjectOwnerPlanningRequest(context, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false)
-    if (createHash('sha256').update(JSON.stringify(prior)).digest('hex') === promptHash) {
-      cacheHistoricalRequest(key, JSON.stringify(prior))
-      return prior
-    }
+    const matched = matchRequest(prior)
+    if (matched) return matched
   }
   if (context.conversation?.deliveryFeedbackBindingVersion === 1) {
     const priorBoundFeedback = buildProjectOwnerPlanningRequest(context, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, false)
-    if (createHash('sha256').update(JSON.stringify(priorBoundFeedback)).digest('hex') === promptHash) {
-      cacheHistoricalRequest(key, JSON.stringify(priorBoundFeedback))
-      return priorBoundFeedback
-    }
+    const matched = matchRequest(priorBoundFeedback)
+    if (matched) return matched
   }
   for (const [fileDeliveryGuidance, canonicalPlanExample] of [[true, true], [true, false], [false, false]] as const) {
     const priorCurrent = buildProjectOwnerPlanningRequest(context, 'envelope', true, true, true, true, true, true, true, true, true, true, true, fileDeliveryGuidance, canonicalPlanExample, false)
-    if (createHash('sha256').update(JSON.stringify(priorCurrent)).digest('hex') === promptHash) {
-      cacheHistoricalRequest(key, JSON.stringify(priorCurrent))
-      return priorCurrent
-    }
+    const matched = matchRequest(priorCurrent)
+    if (matched) return matched
   }
   for (const format of ['envelope', 'fragment', 'legacy'] as const) {
     for (const strictOutputHints of [true, false]) {
@@ -728,10 +734,8 @@ export function resolveProjectOwnerPlanningRequest(context: ProjectOwnerPlanning
                     for (const correctStepExamples of [true, false]) {
                       for (const catalogFeedbackExample of context.conversation?.deliveredArtifacts?.version === 2 && !context.conversation.deliveryFeedback ? [true, false] : [false]) {
                         const request = buildProjectOwnerPlanningRequest(context, format, strictOutputHints, qualityEnvelope, scopedObservationPrompt, independentReviewLane, explicitQualityQuotes, scopedFileChangePrompt, requireDeliveryKind, showStructureExample, correctStepExamples, catalogFeedbackExample, false)
-                        if (createHash('sha256').update(JSON.stringify(request)).digest('hex') === promptHash) {
-                          cacheHistoricalRequest(key, JSON.stringify(request))
-                          return request
-                        }
+                        const matched = matchRequest(request)
+                        if (matched) return matched
                       }
                     }
                   }
@@ -778,7 +782,7 @@ export function usesOwnerSharedReviewCriteria(request?: ProjectOwnerPlanningRequ
 }
 
 /** 仅与捕获的快照比较；真实调用/保存仍须向权威服务重新核验当前版本。 */
-export function parseProjectOwnerPlanningResponse(input: unknown, context: ProjectOwnerPlanningContext, validationTime = Date.now(), requireDeliveryKind = true, scopedSourceInspection = false, singleTextReviewFolding = false, sharedReviewerCriteria = false, browserVerificationRouting: BrowserVerificationRouting = false, fixedBudgetGrounding = false, rosterGrounding = false): ProjectOwnerPlanningResponse {
+export function parseProjectOwnerPlanningResponse(input: unknown, context: ProjectOwnerPlanningContext, validationTime = Date.now(), requireDeliveryKind = true, scopedSourceInspection = false, singleTextReviewFolding: SingleTextReviewFolding = false, sharedReviewerCriteria = false, browserVerificationRouting: BrowserVerificationRouting = false, fixedBudgetGrounding = false, rosterGrounding = false): ProjectOwnerPlanningResponse {
   validateContext(context)
   let parsed: unknown = input
   if (typeof input === 'string') {
@@ -991,7 +995,7 @@ export function parseProjectOwnerPlanningResponse(input: unknown, context: Proje
       ...(binding.taskId === undefined ? {} : { taskId: binding.taskId }), goalVersion: binding.goalVersion }, context.goal.goal, context.sources.roles.map((role) => role.key), context.sources.code?.files ?? [], true, context.sources.delivery ?? [], feedback, requireDeliveryKind, hostBoundFeedback)
     const routed = scopedSourceInspection ? routeSourceInspections(validated, context) : validated
     const withBrowserVerification = browserVerificationRouting ? foldBrowserVerification(routed, context, browserVerificationRouting) : routed
-    const plan = singleTextReviewFolding && requestsOneTextArtifact(context) ? foldSingleTextReview(withBrowserVerification) : withBrowserVerification
+    const plan = singleTextReviewFolding && requestsOneTextArtifact(context) ? foldSingleTextReview(withBrowserVerification, singleTextReviewFolding === 'internal-record' && !requestsSeparateReviewRecord(context)) : withBrowserVerification
     const fixedBudget = fixedBudgetGrounding && !context.conversation ? readOwnerFixedBudget(context.goal.goal) : null
     const withBudget = fixedBudget ? applyOwnerFixedBudgetCriteria(plan, fixedBudget) : plan
     return { kind: 'plan_proposal', ...binding, proposal: rosterGrounding && !context.conversation ? groundOwnerRosterPlan(context.goal.goal, withBudget) : withBudget }

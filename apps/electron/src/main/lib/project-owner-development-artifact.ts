@@ -1,3 +1,4 @@
+import { OWNER_DEVELOPMENT_EVIDENCE_HINT_MARKER, ownerDevelopmentEvidenceHint } from './project-owner-evidence-reference'
 import { lstat, readFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import type { DevelopmentSnapshot, DevelopmentTaskScope, ProjectOwnerPlanDraft } from '@gravitas/shared'
@@ -72,7 +73,10 @@ export function hydrateOwnerDevelopmentReviewerPrompt(prompt: string, reference:
     throw new Error('Owner代码Reviewer提示与冻结快照绑定无效')
   }
   const untrusted = `<untrusted-owner-development-snapshot>${serializedArtifact.replace(/</g, '\\u003c').replace(/>/g, '\\u003e')}</untrusted-owner-development-snapshot>`
-  return prompt.replace(reference, untrusted).replaceAll('OWNER_DEVELOPMENT_SNAPSHOT_HASH', artifact.contentHash)
+  const hint = prompt.includes(OWNER_DEVELOPMENT_EVIDENCE_HINT_MARKER)
+    ? ownerDevelopmentEvidenceHint(artifact.content, artifact.validationEvidence) : ''
+  return prompt.replace(reference, () => hint ? `${hint.trimStart()}\n${untrusted}` : untrusted)
+    .replaceAll('OWNER_DEVELOPMENT_SNAPSHOT_HASH', artifact.contentHash)
 }
 
 export function ownerDevelopmentArtifactFromPrompt(prompt: string): OwnerDevelopmentReviewArtifact | null {

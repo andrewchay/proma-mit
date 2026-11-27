@@ -8,6 +8,8 @@ interface EvidenceArtifact {
   validation?: Validation
 }
 
+export const OWNER_DEVELOPMENT_EVIDENCE_HINT_MARKER = '核对文件范围用 F 编号，核对运行行为用对应的 V 编号。'
+
 export const OWNER_EVIDENCE_REFERENCE_INSTRUCTION = '逐项返回 criterionId（C1 起，按冻结标准顺序）、status、evidence（一句独立判断）、evidenceId。正文用 T 加行号，现有文件用 F 加文件序号，源码行用 F 加文件序号再加 :L 和行号，通过的运行回执用 V 加序号。序号从 1 开始。F 使用冻结 files 的原顺序，V 使用冻结 validationEvidence 的原顺序，删除或失败项占序号但不能引用。T 和源码行按解码内容的换行计数，空行占行号但不能引用。缺证据用 null，met 必须给出有效编号。不要在回复中复写标准、路径、源码、回执 JSON 或 quote。'
 
 // 模型有时省略源码行前的 L；文件范围和行号仍由原快照核对。
@@ -22,6 +24,20 @@ function files(content: string): unknown[] {
 function lineAt(content: string, index: number): string | undefined {
   const line = content.split(/\r\n|\n|\r/)[index - 1]
   return line?.trim() ? line.slice(0, 1000) : undefined
+}
+
+/** 由冻结原件生成位置提示，避免补正时让模型重新估算行号。 */
+export function ownerDevelopmentEvidenceHint(content: string, validation?: Validation): string {
+  let entries: unknown[]
+  try { entries = files(content) } catch { return '' }
+  const sources = entries.slice(0, 30).flatMap((entry, index) => {
+    if (!entry || typeof entry !== 'object' || !('newContent' in entry) || typeof entry.newContent !== 'string') return []
+    const source = entry.newContent
+    const lineCount = (source.match(/\r\n|\n|\r/g)?.length ?? 0) + (source && !/[\r\n]$/.test(source) ? 1 : 0)
+    return lineCount ? [`F${index + 1} 共 ${lineCount} 行`] : []
+  })
+  const receipts = validation?.flatMap((receipt, index) => containsOwnerValidationEvidenceQuote([receipt], receipt.command) ? [`V${index + 1}`] : []) ?? []
+  return ` 当前快照：${sources.join('、') || '无可引用源码'}；可引用的成功运行回执：${receipts.join('、') || '无'}。核对整份文件或文件清单时用 F 编号；核对运行行为时用对应的 V 编号。引用源码细节时选实际非空行，行号不得超过上述范围。缺证据用 JSON null，不能用字符串 "null" 或填 met。`
 }
 
 /** 编号仅在当前冻结成果中解释，不查找其他项目、版本、原始文件或外部回执。 */
