@@ -40,6 +40,7 @@ function buildRegistryText(includeBuildCommands: boolean): string {
   const items = listOwnerRuntimeBuildCommands().map(item => `${item.id}（${item.title}）`).join('、')
   return items ? `；原生或命令行项目可用 build:<标识>，可选标识：${items}` : ''
 }
+export const OWNER_UNKNOWN_REVIEWER_REJECTION = 'Owner人员安排选择了候选之外的独立评审'
 export const OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION = '受控非研发安排不得包含代码范围'
 
 export const OWNER_BROWSER_CHECK_COMPLETION_INSTRUCTION = '内置英里换算断言与两位小数的精确目标匹配时，主进程会确保验证范围包含该断言。'
@@ -267,7 +268,7 @@ export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: Own
   })
   const reviewerId = text(input.reviewerEmployeeId, '独立评审员工ID', 128)
   const reviewer = candidates.get(reviewerId)
-  if (!reviewer) throw new Error('Owner人员安排选择了候选之外的独立评审')
+  if (!reviewer) throw new Error(OWNER_UNKNOWN_REVIEWER_REJECTION)
   if (reviewer.id === context.ownerCarrierId || reviewer.isOwnerCarrier) throw new Error('Owner载体不得兼任执行或独立评审')
   if (selected.some(employee => employee.id === reviewer.id) || context.teamContractVersion === undefined && !['reviewer', 'delivery-verifier'].includes(reviewer.roleTemplateId ?? '')) throw new Error('Owner安排必须由未承担执行岗位的独立评审员审核')
   if (!(context.teamContractVersion !== undefined && context.teamContractVersion >= 2 ? allKinds.every(kind => supportsOwnerExecutionKind(reviewer, kind)) : reviewer.executionProfile === input.executionKind) || !reviewer.workspaceIds.includes(workspaceId)) throw new Error('Owner独立评审不符合工作区或执行方式')

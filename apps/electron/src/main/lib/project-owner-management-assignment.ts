@@ -17,12 +17,12 @@ import { getOwnerTeamWorkspaceProposal } from './project-owner-team-workspace-ac
 import { ensureOwnerDefaultTeam } from './project-owner-default-team'
 import { saveOwnerExecutionStartIntent } from './project-owner-execution-start-intent'
 import { hasCompleteOwnerManagementDelivery } from './project-owner-management-delivery'
-import { MARKDOWN_BROWSER_VERIFICATION_MISMATCH, MILES_CONVERSION_VERIFICATION_MISSING, OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION } from './project-owner-execution-assignment-protocol'
+import { MARKDOWN_BROWSER_VERIFICATION_MISMATCH, MILES_CONVERSION_VERIFICATION_MISSING, OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION, OWNER_UNKNOWN_REVIEWER_REJECTION } from './project-owner-execution-assignment-protocol'
 import * as store from './project-sqlite-store'
 
 export function isRecoverableOwnerAssignmentRejection(detail: string): boolean {
-  // 第三种是“结构/字段不合规”：方案本身有效，原预算内重排一次通常即可修复。
-  return ['Owner安排必须由未承担执行岗位的独立评审员审核', 'Owner人员安排必须完整覆盖所选步骤的全部岗位', 'Owner人员安排提案格式无效或夹带未授权字段', 'Owner绿地研发允许范围必须覆盖全部目标文件', OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION, MARKDOWN_BROWSER_VERIFICATION_MISMATCH, MILES_CONVERSION_VERIFICATION_MISSING].includes(detail)
+  // 仅对已知可纠正的模型协议错误在原预算内重排。
+  return ['Owner安排必须由未承担执行岗位的独立评审员审核', 'Owner人员安排必须完整覆盖所选步骤的全部岗位', 'Owner人员安排提案格式无效或夹带未授权字段', 'Owner绿地研发允许范围必须覆盖全部目标文件', OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION, OWNER_UNKNOWN_REVIEWER_REJECTION, MARKDOWN_BROWSER_VERIFICATION_MISMATCH, MILES_CONVERSION_VERIFICATION_MISSING].includes(detail)
 }
 
 export { ownerAssignmentFailureReason } from './project-owner-failure-reason'
