@@ -1,6 +1,4 @@
-import { execFile } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
-import { cpus, freemem, totalmem } from 'node:os'
+import { readOwnerHostAvailableMemory, readOwnerHostCpu, readOwnerHostTotalMemory } from './project-owner-host-resources'
 import { requestOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
 import { getProjectDb } from './project-sqlite-store'
 
@@ -32,37 +30,8 @@ export function createOwnerPressureGate() {
   }
 }
 
-function readCpu() {
-  let idle = 0
-  let total = 0
-  for (const { times } of cpus()) {
-    idle += times.idle
-    total += times.user + times.nice + times.sys + times.idle + times.irq
-  }
-  return { idle, total }
-}
-
-function readAvailableMemory(): Promise<number | undefined> {
-  if (process.platform === 'darwin') {
-    // Darwin 的 freemem 只含完全空闲页，常在无压力时也很低；用系统压力工具的可用比例。
-    return new Promise(resolve => {
-      execFile('/usr/bin/memory_pressure', ['-Q'], { timeout: 1000, maxBuffer: 4096, env: { ...process.env, LC_ALL: 'C' } }, (error, stdout) => {
-        const percent = error ? undefined : /System-wide memory free percentage:\s*(\d+)%/.exec(stdout)?.[1]
-        resolve(percent === undefined ? undefined : totalmem() * Number(percent) / 100)
-      })
-    })
-  }
-  if (process.platform === 'linux') {
-    return readFile('/proc/meminfo', 'utf8').then(content => {
-      const available = /^MemAvailable:\s+(\d+)\s+kB/m.exec(content)?.[1]
-      return available === undefined ? undefined : Number(available) * 1024
-    }, () => undefined)
-  }
-  return Promise.resolve(freemem())
-}
-
 const pressureGate = createOwnerPressureGate()
-let previousCpu = readCpu()
+let previousCpu = readOwnerHostCpu()
 let sampledAt = performance.now()
 let memoryRequestedAt = -Infinity
 let memorySampledAt = -Infinity
@@ -74,21 +43,21 @@ function samplePressure(): OwnerLocalResourceWait | null {
   const now = performance.now()
   if (!memoryProbe && now - memoryRequestedAt >= MEMORY_SAMPLE_MS) {
     memoryRequestedAt = now
-    memoryProbe = readAvailableMemory().then(value => {
+    memoryProbe = readOwnerHostAvailableMemory().then(value => {
       // 单次取样不可用时保留最近有效值，不把探针错误记成项目错误。
       if (value !== undefined) {
         availableMemory = value
         memorySampledAt = performance.now()
       } else if (now - memorySampledAt > 20000) availableMemory = null
-      pressure = pressureGate(undefined, availableMemory, totalmem())
+      pressure = pressureGate(undefined, availableMemory, readOwnerHostTotalMemory())
     }).finally(() => { memoryProbe = undefined })
   }
   if (now - sampledAt >= SAMPLE_MS) {
-    const cpu = readCpu()
+    const cpu = readOwnerHostCpu()
     const total = cpu.total - previousCpu.total
     const busy = total > 0 ? Math.max(0, Math.min(1, 1 - (cpu.idle - previousCpu.idle) / total)) : undefined
     // 隔很久没有 Owner 工作时重建基线，避免把整个空闲期计作即时负载。
-    pressure = pressureGate(now - sampledAt <= 10000 ? busy : undefined, availableMemory, totalmem())
+    pressure = pressureGate(now - sampledAt <= 10000 ? busy : undefined, availableMemory, readOwnerHostTotalMemory())
     previousCpu = cpu
     sampledAt = now
   }

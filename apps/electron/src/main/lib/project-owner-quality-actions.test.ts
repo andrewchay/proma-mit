@@ -13,6 +13,12 @@ import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
 const directory = mkdtempSync(join(tmpdir(), 'owner-quality-')), previous = process.env.PROMA_TEST_CONFIG_DIR
 process.env.PROMA_TEST_CONFIG_DIR = directory
 mock.module('./agent-service', () => ({ isAgentSessionActive: () => false }))
+// 质量流程使用稳定的主机读数，仍通过真实的调度和数据库并发检查。
+mock.module('./project-owner-host-resources', () => ({
+  readOwnerHostCpu: () => ({ idle: 0, total: 0 }),
+  readOwnerHostAvailableMemory: async () => 4 * 1024 ** 3,
+  readOwnerHostTotalMemory: () => 8 * 1024 ** 3,
+}))
 const store = await import('./project-sqlite-store'), employees = await import('./agent-employee-service')
 const workspaces = await import('./agent-workspace-manager'), channels = await import('./channel-manager')
 const goals = await import('./project-owner-goal-service'), plans = await import('./project-owner-plan-service')
