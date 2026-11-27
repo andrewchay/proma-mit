@@ -1,0 +1,7 @@
+[
+  {"order_id": "001", "product_name": "金枕榴莲肉", "actual_amount": 88.0, "distance_km": 2.5, "hour": 20, "weekday": 5, "is_weekend": false, "city": "杭州", "store": "门店A"},
+  {"order_id": "002", "product_name": "海南水仙芒", "actual_amount": 30.0, "distance_km": 1.8, "hour": 21, "weekday": 5, "is_weekend": false, "city": "杭州", "store": "门店A"},
+  {"order_id": "003", "product_name": "牛三网纹蜜瓜", "actual_amount": 30.0, "distance_km": 3.2, "hour": 22, "weekday": 6, "is_weekend": true, "city": "上海", "store": "门店B"},
+  {"order_id": "004", "product_name": "芒果干噎酸奶碗", "actual_amount": 50.0, "distance_km": 2.0, "hour": 23, "weekday": 4, "is_weekend": false, "city": "杭州", "store": "门店A"},
+  {"order_id": "005", "product_name": "红宝石柚子", "actual_amount": 55.0, "distance_km": 4.5, "hour": 19, "weekday": 3, "is_weekend": false, "city": "上海", "store": "门店B"}
+]

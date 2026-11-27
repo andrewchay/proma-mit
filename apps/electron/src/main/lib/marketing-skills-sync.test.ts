@@ -70,25 +70,25 @@ describe('marketing-skills-sync', () => {
     expect(existsSync(getMarketingPluginDir(slug))).toBe(false)
   })
 
-  test('订阅 influencer：分发 22 个 skill + plugin.json', () => {
+  test('订阅 influencer：分发 25 个 skill + plugin.json', () => {
     updateSettings({ marketingCapabilities: ['influencer'] })
     writeEntitlement(['influencer'])
     syncMarketingSkillsForWorkspace(slug)
     const skillsDir = join(getMarketingPluginDir(slug), 'skills')
     expect(existsSync(skillsDir)).toBe(true)
-    expect(readdirSync(skillsDir).length).toBe(22)
+    expect(readdirSync(skillsDir).length).toBe(25)
     expect(readdirSync(skillsDir)).toContain('ma-kol-scraper')
     expect(readdirSync(skillsDir)).toContain('ma-pgy-invite')
     expect(existsSync(join(getMarketingPluginDir(slug), '.claude-plugin', 'plugin.json'))).toBe(true)
   })
 
-  test('切换到 paid-media：换域（22 → 16，influencer 独有被移除）', () => {
+  test('切换到 paid-media：换域（25 → 18，influencer 独有被移除）', () => {
     updateSettings({ marketingCapabilities: ['paid-media'] })
     writeEntitlement(['paid-media'])
     syncMarketingSkillsForWorkspace(slug)
     const skillsDir = join(getMarketingPluginDir(slug), 'skills')
     const after = readdirSync(skillsDir)
-    expect(after.length).toBe(16)
+    expect(after.length).toBe(18)
     expect(after).toContain('ma-campaign-optimizer')
     expect(after).not.toContain('ma-kol-scraper')
   })

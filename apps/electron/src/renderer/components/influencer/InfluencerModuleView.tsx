@@ -7,7 +7,7 @@
  * 订阅门控：未订阅 influencer 能力包时仅显示订阅引导（导航入口同样隐藏）。
  */
 import * as React from 'react'
-import { ArrowLeft, Users, FileCheck2, BarChart3, Target } from 'lucide-react'
+import { ArrowLeft, Users, FileCheck2, BarChart3, Target, Send } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { activeViewAtom } from '@/atoms/active-view'
 import { enabledCapabilitiesAtom, isCapabilityEnabled } from '@/atoms/marketing-atoms'
@@ -17,13 +17,15 @@ import { KOLDataManager } from '@/components/agent/KOLDataManager'
 import { CampaignList } from '@/components/agent/CampaignList'
 import { InfluencerReviewsPanel } from './InfluencerReviewsPanel'
 import { InfluencerTrackingPanel } from './InfluencerTrackingPanel'
+import { InfluencerOutreachPanel } from './InfluencerOutreachPanel'
 import { useAtomValue, useSetAtom } from 'jotai'
 
-type InfluencerSubView = 'talents' | 'campaigns' | 'reviews' | 'tracking'
+type InfluencerSubView = 'talents' | 'campaigns' | 'outreach' | 'reviews' | 'tracking'
 
 const SUB_VIEWS: { id: InfluencerSubView; label: string; icon: React.ReactNode }[] = [
   { id: 'talents', label: '达人库', icon: <Users size={11} /> },
   { id: 'campaigns', label: 'Campaign', icon: <Target size={11} /> },
+  { id: 'outreach', label: '触达', icon: <Send size={11} /> },
   { id: 'reviews', label: '稿件审核', icon: <FileCheck2 size={11} /> },
   { id: 'tracking', label: '内容追踪', icon: <BarChart3 size={11} /> },
 ]
@@ -89,6 +91,7 @@ export function InfluencerModuleView(): React.ReactElement {
         ) : (
           <div className="p-4 space-y-4 text-[13px] text-foreground/70">
             {subView === 'talents' && <KOLDataManager />}
+            {subView === 'outreach' && <InfluencerOutreachPanel />}
             {subView === 'reviews' && <InfluencerReviewsPanel />}
             {subView === 'tracking' && <InfluencerTrackingPanel />}
           </div>

@@ -529,6 +529,61 @@ function openCampaignDb(): Database {
   dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_benchmarks_platform ON content_benchmarks(platform)`)
   dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_benchmarks_tier ON content_benchmarks(price_tier)`)
 
+  // 达人触达记录（建联闭环：谁、何时、哪个渠道、什么话术、跟到哪一步）
+  dbInstance.run(`
+    CREATE TABLE IF NOT EXISTS outreach_records (
+      id TEXT PRIMARY KEY,
+      kol_id TEXT,
+      kol_name TEXT NOT NULL,
+      campaign_id TEXT,
+      channel TEXT NOT NULL,
+      content TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      note TEXT,
+      sent_at INTEGER,
+      replied_at INTEGER,
+      created_at INTEGER DEFAULT (strftime('%s','now') * 1000),
+      updated_at INTEGER DEFAULT (strftime('%s','now') * 1000)
+    )
+  `)
+  dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_outreach_kol ON outreach_records(kol_id)`)
+  dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_outreach_campaign ON outreach_records(campaign_id)`)
+  dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_outreach_status ON outreach_records(status)`)
+  dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_outreach_created ON outreach_records(created_at)`)
+
+  // 微信对话历史（建联跟进需要有「轮次」概念：哪些消息已回、聊到哪一步）
+  //
+  // 与 outreach_records 的分工：
+  // - outreach_records：我「主动发出去」的触达（草稿正文、状态流转）
+  // - wechat_messages：从微信读回来的「对话快照」，用于拼上下文与判断已读
+  dbInstance.run(`
+    CREATE TABLE IF NOT EXISTS wechat_conversations (
+      contact TEXT PRIMARY KEY,
+      last_synced_at INTEGER,
+      last_message_at INTEGER,
+      message_count INTEGER DEFAULT 0,
+      created_at INTEGER DEFAULT (strftime('%s','now') * 1000)
+    )
+  `)
+  dbInstance.run(`
+    CREATE TABLE IF NOT EXISTS wechat_messages (
+      id TEXT PRIMARY KEY,
+      contact TEXT NOT NULL,
+      direction TEXT NOT NULL,
+      content TEXT NOT NULL,
+      content_hash TEXT NOT NULL,
+      msg_order INTEGER NOT NULL DEFAULT 0,
+      replied INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER DEFAULT (strftime('%s','now') * 1000)
+    )
+  `)
+  // content_hash 唯一：同一达人下同一条消息只存一次，重复读取不产生脏数据
+  dbInstance.run(
+    `CREATE UNIQUE INDEX IF NOT EXISTS idx_wechat_msg_dedup ON wechat_messages(contact, content_hash)`
+  )
+  dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_wechat_msg_contact ON wechat_messages(contact, msg_order)`)
+  dbInstance.run(`CREATE INDEX IF NOT EXISTS idx_wechat_msg_replied ON wechat_messages(contact, replied)`)
+
   console.log('[Campaign 服务] 数据库已初始化:', dbPath)
 
   // 初始化数据标准基准

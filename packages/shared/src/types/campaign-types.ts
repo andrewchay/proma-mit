@@ -1019,3 +1019,87 @@ export const AB_TEST_IPC_CHANNELS = {
   UPDATE_RESULT: 'abTest:updateResult',
   ANALYZE: 'abTest:analyze',
 } as const
+
+// =====================================================================
+// 达人触达（建联闭环）
+// =====================================================================
+
+/** 触达渠道 */
+export type OutreachChannel = 'wechat' | 'pgy' | 'email' | 'copy'
+
+/** 触达状态：待发送 / 已发送待回 / 已回复 / 已拒绝 / 已成交 */
+export type OutreachStatus = 'pending' | 'sent' | 'replied' | 'rejected' | 'converted'
+
+/** 一条触达记录 */
+export interface OutreachRecord {
+  id: string
+  kolId: string | null
+  kolName: string
+  campaignId: string | null
+  channel: OutreachChannel
+  content: string
+  status: OutreachStatus
+  note: string | null
+  sentAt: number | null
+  repliedAt: number | null
+  createdAt: number
+  updatedAt: number
+}
+
+export interface CreateOutreachRecordInput {
+  kolId?: string | null
+  kolName: string
+  campaignId?: string | null
+  channel: OutreachChannel
+  content: string
+  status?: OutreachStatus
+  note?: string | null
+}
+
+export interface UpdateOutreachRecordInput {
+  id: string
+  status?: OutreachStatus
+  content?: string
+  note?: string | null
+  sentAt?: number | null
+  repliedAt?: number | null
+}
+
+export interface ListOutreachRecordsInput {
+  kolId?: string
+  campaignId?: string
+  status?: OutreachStatus
+  channel?: OutreachChannel
+  limit?: number
+}
+
+/** 触达 IPC 通道 */
+export const OUTREACH_IPC_CHANNELS = {
+  LIST: 'outreach:list',
+  CREATE: 'outreach:create',
+  UPDATE: 'outreach:update',
+  DELETE: 'outreach:delete',
+  STATS: 'outreach:stats',
+  /** 依赖自检（微信自动化需要 Quartz / Vision / cliclick） */
+  CHECK_DEPS: 'outreach:checkDeps',
+  /** 安装单个依赖 */
+  INSTALL_DEP: 'outreach:installDep',
+  /** 读取微信会话列表（只读） */
+  WECHAT_SESSIONS: 'outreach:wechatSessions',
+  /** 读取某个达人的对话（只读） */
+  WECHAT_MESSAGES: 'outreach:wechatMessages',
+  /** 生成回复草稿（不发送） */
+  GENERATE_DRAFT: 'outreach:generateDraft',
+  /** 读取对话历史（本地库，含已回复标记） */
+  WECHAT_HISTORY: 'outreach:wechatHistory',
+  /** 把一次 OCR 快照同步进历史（去重） */
+  SYNC_CONVERSATION: 'outreach:syncConversation',
+  /** 列出已同步的会话摘要 */
+  WECHAT_CONVERSATIONS: 'outreach:wechatConversations',
+  /** 标记某达人当前未回复消息为已处理 */
+  MARK_REPLIED: 'outreach:markReplied',
+  /** 清空某达人对话历史 */
+  CLEAR_HISTORY: 'outreach:clearHistory',
+  /** 读取品牌侧信息配置状态 */
+  BRAND_CONTEXT: 'outreach:brandContext',
+} as const

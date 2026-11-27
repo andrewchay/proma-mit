@@ -1,0 +1,7 @@
+[
+  {"name": "金枕榴莲肉", "price": 88.0, "sales": 934, "revenue": 82192.0, "fruit_cost": 22.0, "box_cost": 3.0, "人工": 2.0, "total_cost": 45.5, "gross_profit": 42.5, "margin_rate": 0.483},
+  {"name": "海南水仙芒", "price": 30.0, "sales": 1943, "revenue": 58290.0, "fruit_cost": 8.0, "box_cost": 2.5, "人工": 2.0, "total_cost": 15.4, "gross_profit": 14.6, "margin_rate": 0.487},
+  {"name": "牛三网纹蜜瓜", "price": 30.0, "sales": 1788, "revenue": 53640.0, "fruit_cost": 18.0, "box_cost": 2.0, "人工": 2.0, "total_cost": 24.1, "gross_profit": 5.9, "margin_rate": 0.198},
+  {"name": "芒果干噎酸奶碗", "price": 50.0, "sales": 313, "revenue": 15650.0, "fruit_cost": 12.0, "box_cost": 3.0, "人工": 3.0, "total_cost": 22.2, "gross_profit": 27.8, "margin_rate": 0.556},
+  {"name": "红宝石柚子", "price": 55.0, "sales": 648, "revenue": 35640.0, "fruit_cost": 25.0, "box_cost": 3.0, "人工": 2.0, "total_cost": 32.2, "gross_profit": 22.8, "margin_rate": 0.415}
+]

@@ -53,7 +53,11 @@ describe('营销领域能力包 Campaign 模板', () => {
     expect(manifest.workflowTemplates).toEqual(['workflows/marketing-campaign.json'])
     expect(manifest.skills).toContain('ma-brand-dna')
     expect(manifest.skills).toContain('ma-campaign-tester')
-    expect(existsSync(join(import.meta.dir, '../../../../default-skills/ma-brand-dna/SKILL.md'))).toBe(true)
-    expect(existsSync(join(import.meta.dir, '../../../../default-skills/ma-ugc-campaign/SKILL.md'))).toBe(true)
+    // 营销 skill 只走订阅门控路径（marketing-skills/），不得出现在 default-skills/，
+    // 否则未订阅用户也能通过 seedDefaultSkills 拿到，绕过付费门。
+    for (const slug of manifest.skills ?? []) {
+      expect(existsSync(join(import.meta.dir, '../../../../marketing-skills', slug, 'SKILL.md'))).toBe(true)
+      expect(existsSync(join(import.meta.dir, '../../../../default-skills', slug))).toBe(false)
+    }
   })
 })

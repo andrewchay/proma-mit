@@ -83,3 +83,6 @@ cleanup-gravitas.log
 
 # 逆向分析中间产物（REA 解包/提取脚本输出），体积大且可复现
 .tmp/
+
+# 微信自动化运行产物（OCR 截图 / 临时状态），由 ma-wechat-auto 脚本生成
+apps/electron/workspace-files/wechat-auto/

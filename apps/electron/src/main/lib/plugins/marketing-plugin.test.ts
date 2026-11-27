@@ -323,14 +323,16 @@ describe('Marketing 插件 Skills 贡献（surface: agent-skills）', () => {
     expect(collectContributingSkills()).toEqual([])
   })
 
-  test('订阅 influencer 后贡献达人域(11) + shared(11) = 22 个 skill', () => {
+  test('订阅 influencer 后贡献达人域(13) + shared(12) = 25 个 skill', () => {
     updateSettings({ marketingCapabilities: ['influencer'] })
     grantEntitlement(['influencer'])
     const skills = runtime.contributeSkills?.() ?? []
-    expect(skills.length).toBe(22)
+    expect(skills.length).toBe(25)
     const slugs = skills.map((s) => s.slug)
     expect(slugs).toContain('ma-kol-scraper')
     expect(slugs).toContain('ma-pgy-invite')
+    expect(slugs).toContain('ma-kol-outreach')
+    expect(slugs).toContain('ma-wechat-auto')
     expect(slugs).toContain('ma-marketing') // shared 总纲
     expect(slugs).not.toContain('ma-paid-media')
     // 每个 skill 目录真实存在且带域标记
@@ -340,13 +342,14 @@ describe('Marketing 插件 Skills 贡献（surface: agent-skills）', () => {
     }
   })
 
-  test('订阅 paid-media 后贡献投放域(5) + shared(11) = 16 个 skill', () => {
+  test('订阅 paid-media 后贡献投放域(6) + shared(12) = 18 个 skill', () => {
     updateSettings({ marketingCapabilities: ['paid-media'] })
     grantEntitlement(['paid-media'])
     const skills = runtime.contributeSkills?.() ?? []
-    expect(skills.length).toBe(16)
+    expect(skills.length).toBe(18)
     const slugs = skills.map((s) => s.slug)
     expect(slugs).toContain('ma-campaign-optimizer')
+    expect(slugs).toContain('ma-campaign-review')
     expect(slugs).not.toContain('ma-draft-review')
     expect(slugs).not.toContain('ma-kol-scraper')
   })
@@ -354,7 +357,7 @@ describe('Marketing 插件 Skills 贡献（surface: agent-skills）', () => {
   test('collectContributingSkills 与 runtime 贡献一致', () => {
     updateSettings({ marketingCapabilities: ['influencer'] })
     grantEntitlement(['influencer'])
-    expect(collectContributingSkills().length).toBe(22)
+    expect(collectContributingSkills().length).toBe(25)
   })
 })
 

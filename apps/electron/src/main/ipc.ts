@@ -16,7 +16,7 @@ import { tmpdir, networkInterfaces } from 'node:os'
 import { buildHarnessPolicyState } from './lib/agent-runtime/harness-policy'
 import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, isAgentRuntime, isRetiredAgentRuntime, isPromaPermissionMode, DYNAMIC_ISLAND_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, HARNESS_POLICY_IPC_CHANNELS, type HarnessPolicyState, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, KNOWLEDGE_IPC_CHANNELS, ANALYSIS_IPC_CHANNELS, ACADEMIC_IPC_CHANNELS, TELEMETRY_IPC_CHANNELS, type DynamicIslandNotifyInput } from '@gravitas/shared'
 import { TERMINAL_IPC_CHANNELS, TYPESAFE_JUDGMENT_IPC_CHANNELS, COMPANION_IPC_CHANNELS, VERIFIER_IPC_CHANNELS } from '@gravitas/shared'
-import { CAMPAIGN_IPC_CHANNELS, CONTENT_AUDIT_IPC_CHANNELS, CONTENT_TRACKING_IPC_CHANNELS, PHASE_REPORT_IPC_CHANNELS, AB_TEST_IPC_CHANNELS, KOL_DATA_IPC_CHANNELS, VIDEO_ASSET_IPC_CHANNELS } from '@gravitas/shared'
+import { CAMPAIGN_IPC_CHANNELS, CONTENT_AUDIT_IPC_CHANNELS, CONTENT_TRACKING_IPC_CHANNELS, PHASE_REPORT_IPC_CHANNELS, AB_TEST_IPC_CHANNELS, KOL_DATA_IPC_CHANNELS, VIDEO_ASSET_IPC_CHANNELS, OUTREACH_IPC_CHANNELS } from '@gravitas/shared'
 import {
   listCampaigns,
   createCampaign,
@@ -80,6 +80,12 @@ import {
   isWorkflowComplete,
   getWorkflowProgress,
 } from './lib/campaign-workflow-service'
+import * as outreachService from './lib/marketing/outreach-service'
+import * as outreachDepsService from './lib/marketing/outreach-deps-service'
+import * as wechatReadonlyService from './lib/marketing/wechat-readonly-service'
+import * as outreachDraftService from './lib/marketing/outreach-draft-service'
+import * as wechatHistoryService from './lib/marketing/wechat-history-service'
+import * as outreachBrandContext from './lib/marketing/outreach-brand-context'
 import type { CreateCampaignInput } from '@gravitas/shared'
 
 import { createTerminal, getTerminalSnapshot, killTerminal, resizeTerminal, writeTerminal } from './lib/terminal-service'
@@ -5513,6 +5519,172 @@ export async function registerIpcHandlers(): Promise<void> {
     async (_, abTestId: string): Promise<{ success: boolean; result?: import('@gravitas/shared').CampaignABTest; error?: string }> => {
       assertAnyMarketingCapability()
       return analyzeABTest(abTestId)
+    }
+  )
+
+  // ===== 达人触达记录 =====
+
+  ipcMain.handle(
+    OUTREACH_IPC_CHANNELS.LIST,
+    async (_, input: import('@gravitas/shared').ListOutreachRecordsInput): Promise<import('@gravitas/shared').OutreachRecord[]> => {
+      assertAnyMarketingCapability()
+      return outreachService.listOutreachRecords(input ?? {})
+    }
+  )
+
+  ipcMain.handle(
+    OUTREACH_IPC_CHANNELS.CREATE,
+    async (_, input: import('@gravitas/shared').CreateOutreachRecordInput): Promise<import('@gravitas/shared').OutreachRecord> => {
+      assertAnyMarketingCapability()
+      return outreachService.createOutreachRecord(input)
+    }
+  )
+
+  ipcMain.handle(
+    OUTREACH_IPC_CHANNELS.UPDATE,
+    async (_, input: import('@gravitas/shared').UpdateOutreachRecordInput): Promise<import('@gravitas/shared').OutreachRecord> => {
+      assertAnyMarketingCapability()
+      return outreachService.updateOutreachRecord(input)
+    }
+  )
+
+  ipcMain.handle(
+    OUTREACH_IPC_CHANNELS.DELETE,
+    async (_, id: string): Promise<{ success: boolean }> => {
+      assertAnyMarketingCapability()
+      return outreachService.deleteOutreachRecord(id)
+    }
+  )
+
+  ipcMain.handle(
+    OUTREACH_IPC_CHANNELS.STATS,
+    async (_, campaignId?: string): Promise<import('../main/lib/marketing/outreach-service').OutreachStats> => {
+      assertAnyMarketingCapability()
+      return outreachService.getOutreachStats(campaignId)
+    }
+  )
+
+  ipcMain.handle(
+    OUTREACH_IPC_CHANNELS.CHECK_DEPS,
+    async (): Promise<import('./lib/marketing/outreach-deps-service').DependencyReport> => {
+      assertAnyMarketingCapability()
+      return outreachDepsService.checkOutreachDependencies()
+    }
+  )
+
+  ipcMain.handle(
+    OUTREACH_IPC_CHANNELS.INSTALL_DEP,
+    async (_, dependencyId: string): Promise<import('./lib/marketing/outreach-deps-service').InstallResult> => {
+      assertAnyMarketingCapability()
+      return outreachDepsService.installOutreachDependency(dependencyId)
+    }
+  )
+
+  // ===== 微信只读 + 草稿（不提供自动发送）=====
+
+  ipcMain.handle(
+    OUTREACH_IPC_CHANNELS.WECHAT_SESSIONS,
+    async (): Promise<import('./lib/marketing/wechat-readonly-service').WechatReadResult> => {
+      assertAnyMarketingCapability()
+      return wechatReadonlyService.listWechatSessions()
+    }
+  )
+
+  ipcMain.handle(
+    OUTREACH_IPC_CHANNELS.WECHAT_MESSAGES,
+    async (_, contact: string, limit?: number): Promise<import('./lib/marketing/wechat-readonly-service').WechatReadResult> => {
+      assertAnyMarketingCapability()
+      return wechatReadonlyService.readWechatMessages(contact, limit ?? 12)
+    }
+  )
+
+  ipcMain.handle(
+    OUTREACH_IPC_CHANNELS.GENERATE_DRAFT,
+    async (
+      _,
+      input: { contact: string; messages?: import('./lib/marketing/wechat-readonly-service').WechatMessage[]; workspaceSlug?: string },
+    ): Promise<import('./lib/marketing/outreach-draft-service').OutreachDraft> => {
+      assertAnyMarketingCapability()
+      // 品牌侧信息由主进程从工作区 ma-kol-outreach 解析，
+      // 渲染层只传 slug，不传具体品牌数据（避免 UI 侧篡改话术口径）
+      const brandContext = input.workspaceSlug
+        ? outreachBrandContext.formatBrandContext(outreachBrandContext.readBrandContext(input.workspaceSlug))
+        : undefined
+
+      // 上下文装配：优先用本地历史（按字符预算取最近一段 + 更早的摘要），
+      // 历史为空时回退到调用方传入的 OCR 结果（首次使用、尚未落库）。
+      // 预算可由设置覆盖（设置 → 达人触达），缺省 100k 字符。
+      // 未配置或非法值（<=0）时传 undefined，让 buildConversationContext 用默认值
+      const { getSettings } = await import('./lib/settings-service')
+      const configured = getSettings().outreachContextCharBudget
+      const charBudget = typeof configured === 'number' && configured > 0 ? configured : undefined
+      const context = wechatHistoryService.buildConversationContext(input.contact, {
+        charBudget,
+      })
+      const messages: import('./lib/marketing/wechat-readonly-service').WechatMessage[] =
+        context.recent.length > 0
+          ? context.recent.map((m) => ({ dir: m.direction, text: m.content, y: m.msgOrder }))
+          : (input.messages ?? [])
+
+      return outreachDraftService.generateOutreachDraft({
+        contact: input.contact,
+        messages,
+        brandContext,
+        earlierSummary: context.summary || undefined,
+      })
+    }
+  )
+
+  ipcMain.handle(
+    OUTREACH_IPC_CHANNELS.WECHAT_HISTORY,
+    async (_, contact: string, limit?: number): Promise<import('./lib/marketing/wechat-history-service').StoredWechatMessage[]> => {
+      assertAnyMarketingCapability()
+      return wechatHistoryService.getConversationHistory(contact, limit ?? 50)
+    }
+  )
+
+  ipcMain.handle(
+    OUTREACH_IPC_CHANNELS.SYNC_CONVERSATION,
+    async (
+      _,
+      contact: string,
+      messages: import('./lib/marketing/wechat-readonly-service').WechatMessage[],
+    ): Promise<{ inserted: number }> => {
+      assertAnyMarketingCapability()
+      return { inserted: wechatHistoryService.syncConversation(contact, messages ?? []) }
+    }
+  )
+
+  ipcMain.handle(
+    OUTREACH_IPC_CHANNELS.WECHAT_CONVERSATIONS,
+    async (): Promise<import('./lib/marketing/wechat-history-service').WechatConversationSummary[]> => {
+      assertAnyMarketingCapability()
+      return wechatHistoryService.listConversations()
+    }
+  )
+
+  ipcMain.handle(
+    OUTREACH_IPC_CHANNELS.MARK_REPLIED,
+    async (_, contact: string): Promise<{ updated: number }> => {
+      assertAnyMarketingCapability()
+      return { updated: wechatHistoryService.markConversationReplied(contact) }
+    }
+  )
+
+  ipcMain.handle(
+    OUTREACH_IPC_CHANNELS.CLEAR_HISTORY,
+    async (_, contact: string): Promise<{ success: boolean }> => {
+      assertAnyMarketingCapability()
+      wechatHistoryService.clearConversation(contact)
+      return { success: true }
+    }
+  )
+
+  ipcMain.handle(
+    OUTREACH_IPC_CHANNELS.BRAND_CONTEXT,
+    async (_, workspaceSlug: string): Promise<import('./lib/marketing/outreach-brand-context').BrandContext> => {
+      assertAnyMarketingCapability()
+      return outreachBrandContext.readBrandContext(workspaceSlug)
     }
   )
 
