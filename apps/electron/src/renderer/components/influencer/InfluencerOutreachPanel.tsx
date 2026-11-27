@@ -37,7 +37,6 @@ import type {
   WechatSession,
   WechatMessage,
 } from '../../../main/lib/marketing/wechat-readonly-service'
-import type { WechatConversationSummary } from '../../../main/lib/marketing/wechat-history-service'
 import type { BrandContext } from '../../../main/lib/marketing/outreach-brand-context'
 import { useAtomValue } from 'jotai'
 import { currentAgentWorkspaceIdAtom, agentWorkspacesAtom } from '@/atoms/agent-atoms'
@@ -90,7 +89,6 @@ export function InfluencerOutreachPanel(): React.ReactElement {
   const [messages, setMessages] = React.useState<WechatMessage[]>([])
   const [loadingMessages, setLoadingMessages] = React.useState(false)
   const [draftMeta, setDraftMeta] = React.useState<{ stage: string; risk: 'low' | 'high'; note: string } | null>(null)
-  const [conversations, setConversations] = React.useState<WechatConversationSummary[]>([])
   const [brandCtx, setBrandCtx] = React.useState<BrandContext | null>(null)
   /** 当前达人本地历史总条数（含已折叠的） */
   const [historyTotal, setHistoryTotal] = React.useState(0)
@@ -195,8 +193,8 @@ export function InfluencerOutreachPanel(): React.ReactElement {
           await window.electronAPI.syncWechatConversation(name, fresh)
         }
         const convs = await window.electronAPI.listWechatConversations()
-        setConversations(convs ?? [])
         setHistoryTotal(convs?.find((c) => c.contact === name)?.messageCount ?? fresh.length)
+        // convs 仅用于取本条达人的条数，无需额外状态
       }
     } catch (err) {
       setSessionsError({ text: err instanceof Error ? err.message : String(err), kind: 'unknown' })
@@ -205,11 +203,11 @@ export function InfluencerOutreachPanel(): React.ReactElement {
     }
   }
 
-  /** 刷新会话摘要（含未回复数） */
-  const refreshConversations = React.useCallback(async () => {
+  /** 刷新当前达人的历史条数（面板顶部展示，失败不阻断主流程） */
+  const refreshHistoryTotal = React.useCallback(async (contact: string) => {
     try {
       const list = await window.electronAPI.listWechatConversations()
-      setConversations(list ?? [])
+      setHistoryTotal(list?.find((c) => c.contact === contact)?.messageCount ?? 0)
     } catch {
       // 摘要失败不阻断主流程
     }
@@ -291,7 +289,7 @@ export function InfluencerOutreachPanel(): React.ReactElement {
       setMessages([])
       setDraft('')
       setDraftMeta(null)
-      await refreshConversations()
+      await refreshHistoryTotal(activeContact)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
@@ -312,7 +310,7 @@ export function InfluencerOutreachPanel(): React.ReactElement {
       })
       // 已回复：把这轮达人消息标记为处理过，下次生成草稿不再当成待回
       await window.electronAPI.markWechatReplied(activeContact)
-      await refreshConversations()
+      await refreshHistoryTotal(activeContact)
       await reload()
       setDraft('')
       setDraftMeta(null)
