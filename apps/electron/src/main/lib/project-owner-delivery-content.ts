@@ -247,10 +247,13 @@ export function applyOwnerLocalTextEdit(original: string, edit: OwnerLocalTextEd
 /** 原目标明确封闭工作清单时，不把独立签字确认当作通用模板字段。 */
 export function findOwnerClosedWorklistConflict(goal: ProjectOwnerGoalBrief, content: string): string | null {
   const source = [goal.objective, ...goal.constraints, ...goal.acceptanceCriteria].join('\n')
-  if (!/(?:只有|仅有|只做|只包含|仅包含)[一二三四五六七八九十0-9]+项(?:工作|任务|事项)/.test(source)
-    || /(?:签字|签名|签署)/.test(source) && !/(?:禁止|不得|不要|不需|无需|不要求).{0,12}(?:签字|签名|签署)/.test(source)) return null
-  const signature = /^(?:\s*[-*#]+\s*)?(?:\*\*)?(?:[\p{L}]{0,12})?(?:签字|签名|签署)(?:确认)?(?:\*\*)?\s*[：:]?\s*(?:[_＿]{2,})?\s*$/mu
-  return signature.test(content)
+  if (!/(?:只有|仅有|只做|只包含|仅包含)[一二三四五六七八九十0-9]+项(?:工作|任务|事项)/.test(source)) return null
+  const signatureAllowed = /(?:签字|签名|签署)/.test(source) && !/(?:禁止|不得|不要|不需|无需|不要求)[^。；，,\n]{0,12}(?:签字|签名|签署)/.test(source)
+  const signoffSectionAllowed = /(?:提供|增加|保留|设置|填写)[^。；，,\n]{0,6}签收栏/.test(source)
+    && !/(?:禁止|不得|不要|不需|无需|不要求)[^。；，,\n]{0,12}签收栏/.test(source)
+  const signature = /^(?:[ \t]*[-*#]+[ \t]*)?(?:\*\*)?(?:[\p{L}]{0,12})?(?:签字|签名|签署)(?:确认)?(?:\*\*)?[ \t]*[：:]?[ \t]*(?:[_＿]{2,})?(?:[ \t　]*(?:签字)?(?:日期|时间)[：:][ \t]*[_＿]{2,})?[ \t]*$/mu
+  const signatureSection = /^ {0,3}#{1,6}[ \t]+(?:签收|签字|签名|签署)(?:栏|确认)[ \t]*$/m
+  return (!signatureAllowed && signature.test(content)) || (!signatureAllowed && !signoffSectionAllowed && signatureSection.test(content))
     ? '封闭的工作清单之外新增了单独的签字确认。请去掉这个额外动作，并保留用户列出的原有工作。'
     : null
 }

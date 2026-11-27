@@ -72,6 +72,13 @@ test('Given只做原目标的三项工作 When模板新增签字确认 Then要�
   expect(findOwnerClosedWorklistConflict(brief, body)).toBeNull()
   const withSignature = body + '\n接班人签字确认：__________'
   expect(findOwnerClosedWorklistConflict(brief, withSignature)).toContain('额外动作')
+  const handoverClosing = body + '\n\n## 签收栏\n- 交班人签字：＿＿＿＿＿＿　时间：＿＿＿＿＿＿'
+  expect(findOwnerClosedWorklistConflict(brief, handoverClosing)).toContain('额外动作')
+  expect(findOwnerClosedWorklistConflict(brief, body + '\n- 接班人签字：____ 时间：____')).toContain('额外动作')
+  const approvedSignoff = { ...brief, objective: brief.objective + '请提供签收栏，但不要求签字。' }
+  expect(findOwnerClosedWorklistConflict(approvedSignoff, body + '\n## 签收栏')).toBeNull()
+  expect(findOwnerClosedWorklistConflict(approvedSignoff, handoverClosing)).toContain('额外动作')
+  expect(findOwnerClosedWorklistConflict({ ...brief, objective: brief.objective + '记录物资签收状态。' }, handoverClosing)).toContain('额外动作')
   expect(findOwnerClosedWorklistConflict({ ...brief, objective: brief.objective + '请保留签字位。' }, withSignature)).toBeNull()
   expect(findOwnerClosedWorklistConflict({ ...brief, objective: brief.objective + '不得新增签字确认。' }, withSignature)).toContain('额外动作')
 })

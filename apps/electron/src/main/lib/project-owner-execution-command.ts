@@ -400,7 +400,8 @@ function buildOwnerCommandPrompt(task: Task, projectGoal: ProjectOwnerGoalBrief,
   if (textDeliveryVersion === 1) {
     const characterLimit = ownerTextDeliveryCharacterLimit(criteria)
     if (role === 'executor') {
-      if (!insertOneLine && !structuredBody) roleInstruction += '\n你的整条最终回复就是交付正文，请直接输出可交给目标读者使用的完整原文。除非验收标准要求，正文不要附上前言、围栏代码块、内部核对记录、说明、执行总结或工具日志。正文最多64KiB（UTF-8），会完整冻结。区分用户给定的示例事实与自行设计的流程；示例未提供的到场时间等字段留空或写未知。原目标明确限于列出的工作时，不增设签字、确认或审批等额外动作。'
+      if (!insertOneLine && !structuredBody) roleInstruction += '\n你的整条最终回复就是交付正文，请直接输出可交给目标读者使用的完整原文。除非验收标准要求，正文不要附上前言、围栏代码块、内部核对记录、说明、执行总结或工具日志。正文最多64KiB（UTF-8），会完整冻结。区分用户给定的示例事实与自行设计的流程；示例未提供的到场时间等字段留空或写未知。'
+      roleInstruction += '\n原目标明确限于列出的工作时，不增设签字、确认或审批等额外动作。'
     } else {
       if (!artifact) throw new Error('完整文本成果缺失，不能用执行摘要替代独立评审')
       roleInstruction = roleInstruction.replace('"schemaVersion":1,', '"schemaVersion":2,')
