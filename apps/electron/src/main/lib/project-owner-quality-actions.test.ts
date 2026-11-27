@@ -1403,6 +1403,7 @@ test('Given 三文件研发分成界面逻辑和集成 When 按依赖执行 Then
     expect(reviews[1]?.criteria.map(item => item.criterion)).toEqual(['脚本绑定按钮事件'])
     const reviewPrompts = traces.get(projectId)!.filter(item => item.role === 'reviewer').map(item => item.prompt)
     expect(reviewPrompts.map(prompt => prompt.includes('这是集成前的文件快照阶段'))).toEqual([true, true, false])
+    expect(reviewPrompts.map(prompt => prompt.includes('上游回执只在上游交接中生效，不计入当前 V 编号'))).toEqual([false, true, true])
     expect(reviews.map(review => review.criteria.some(item => item.criterion === '第一阶段 HTML 引用本地样式'))).toEqual([true, false, false])
     expect(reviews.map(review => review.criteria.some(item => item.criterion === '本阶段源码只允许加载本地样式'))).toEqual([true, false, false])
     const items = delivery()!.delivery!.items

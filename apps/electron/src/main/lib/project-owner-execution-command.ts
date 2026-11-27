@@ -1,7 +1,7 @@
 import { readOwnerRosterDeadlineInstruction, readOwnerRosterOpeningInstruction } from './project-owner-roster-scenario'
 import { ownerGoalRequiresSingleTextDelivery } from './project-owner-criteria-trace'
 import { ownerRequiresSourceFactsOnly } from './project-owner-source-facts'
-import { OWNER_DEVELOPMENT_EVIDENCE_HINT_MARKER, OWNER_EVIDENCE_REFERENCE_INSTRUCTION, ownerTextEvidenceHint } from './project-owner-evidence-reference'
+import { OWNER_DEVELOPMENT_EVIDENCE_HINT_MARKER, OWNER_EVIDENCE_REFERENCE_INSTRUCTION, OWNER_STAGED_DEVELOPMENT_REVIEW_INSTRUCTION, ownerTextEvidenceHint } from './project-owner-evidence-reference'
 import { readOwnerQualityAction, readOwnerQualityActionByExecution, readOwnerQualityArtifact } from './project-owner-quality-actions'
 import { MILES_CONVERSION_CHECK, STAGED_FILES_VERIFICATION_COMMAND } from './owner-runtime-verification-command'
 import { readLatestAcceptedArtifact } from './project-owner-accepted-artifact'
@@ -444,6 +444,9 @@ function buildOwnerCommandPrompt(task: Task, projectGoal: ProjectOwnerGoalBrief,
     structuredBody && ownerRequiresNoticeBodyOnly(projectGoal) ? OWNER_NOTICE_BODY_ONLY_INSTRUCTION : '',
     structuredBody ? OWNER_SINGLE_TEXT_LINE_BREAK_INSTRUCTION : '',
     role === 'reviewer' && (artifact || developmentArtifactRef) ? OWNER_REVIEW_BINDING_HEADER : '',
+    role === 'reviewer' && developmentArtifactRef && upstreamHandoffs.some(item => item.validationEvidence?.some(evidence => evidence.command === STAGED_FILES_VERIFICATION_COMMAND
+      && evidence.attemptState === 'completed' && evidence.status === 'passed' && evidence.freshness === 'fresh'))
+      ? OWNER_STAGED_DEVELOPMENT_REVIEW_INSTRUCTION : '',
     !hasKnowledgeSources ? '本次未授权知识库资料。以冻结目标、任务描述和实际交接正文作为输入。首个没有上游交接的步骤直接使用目标中的已知事实产出，不把计划中后续要形成的内部资料当成前置条件。只有交接区已有的正文才是已验收上游成果。' : '',
     `Owner业务任务；角色=${role}；岗位键=${roleKey ?? 'legacy'}；返工轮次=${reworkOrdinal}。`,
     `任务：${task.title}`,

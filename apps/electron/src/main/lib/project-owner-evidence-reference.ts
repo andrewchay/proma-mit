@@ -9,6 +9,7 @@ interface EvidenceArtifact {
 }
 
 export const OWNER_DEVELOPMENT_EVIDENCE_HINT_MARKER = '核对文件范围用 F 编号，核对运行行为用对应的 V 编号。'
+export const OWNER_STAGED_DEVELOPMENT_REVIEW_INSTRUCTION = '本轮收到主进程已核验的上游阶段成果及文件快照回执。检查先后顺序时，将上游已验收交接的步骤、文件与本轮新增或集成文件逐一对照，用本轮实际存在的相关 F 编号定位文件，并在 evidence 说明阶段顺序如何由已核验交接证明。上游回执只在上游交接中生效，不计入当前 V 编号；阶段先后不要求浏览器另测。缺证据时 evidence 写出具体原因，只有 evidenceId 填 null。'
 
 export const OWNER_EVIDENCE_REFERENCE_INSTRUCTION = '逐项返回 criterionId（C1 起，按冻结标准顺序）、status、evidence（一句独立判断）、evidenceId。正文用 T 加行号，现有文件用 F 加文件序号，源码行用 F 加文件序号再加 :L 和行号，通过的运行回执用 V 加序号。序号从 1 开始。F 使用冻结 files 的原顺序，V 使用冻结 validationEvidence 的原顺序，删除或失败项占序号但不能引用。T 和源码行按解码内容的换行计数，空行占行号但不能引用。缺证据用 null，met 必须给出有效编号。不要在回复中复写标准、路径、源码、回执 JSON 或 quote。'
 
