@@ -826,6 +826,40 @@ test('Given研发快照冻结后误标失联且全部费用已结算 When只读�
   } finally { release(); freeze.mockRestore(); await f.stop() }
 }, 15000)
 
+test('Given 研发执行已结算但验证尚未结束 When 调度再次唤醒 Then 等待同版验证再启动评审', async () => {
+  const validation = await import('./development-validation-service')
+  const original = validation.runOwnerDevelopmentValidations
+  let checking = false, release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const pending = spyOn(validation, 'runOwnerDevelopmentValidations').mockImplementation(async (...args) => {
+    checking = true
+    await gate
+    return original(...args)
+  })
+  let f: Awaited<ReturnType<typeof fixture>> | undefined
+  try {
+    f = await fixture({ development: true })
+    const projectId = f.project.id
+    await until(() => checking, projectId)
+    const db = store.getProjectDb()
+    expect(db.prepare("SELECT c.state,e.status FROM project_owner_execution_commands c JOIN agent_executions e ON e.id=c.execution_id WHERE c.project_id=? AND c.role='executor'").get(projectId)).toMatchObject({ state: 'settled', status: 'completed' })
+    const persistedReviewer = () => db.prepare("SELECT id FROM project_owner_execution_commands WHERE project_id=? AND role='reviewer'").get(projectId)
+    for (let index = 0; index < 3; index++) {
+      const waiting = await scheduler.runOwnerAutonomousSchedule(projectId)
+      expect(waiting).toMatchObject({ state: 'running', nextAction: 'review' })
+      expect(waiting.reason).toContain('研发验证仍在保存')
+      expect(persistedReviewer()).toBeFalsy()
+    }
+    release()
+    await until(() => Boolean(persistedReviewer()), projectId)
+    await until(() => actionRows(projectId).some(row => row.state === 'accepted'), projectId)
+  } finally {
+    release()
+    pending.mockRestore()
+    await f?.stop()
+  }
+}, 20000)
+
 test('Given可信迟到终态与完整结算 When自主调度恢复 Then验证后续派独立评审且不重跑执行员工', async () => {
   const artifacts = await import('./project-owner-development-artifact'), original = artifacts.freezeOwnerDevelopmentArtifact
   let entered = false, release!: () => void

@@ -51,7 +51,13 @@ export function parseOwnerQualityDecision(raw: unknown, context: ProjectOwnerPla
     || value.verdict === 'escalate' && review.verdict !== 'approved'
     || value.verdict === 'rework' && Boolean(developmentArtifact) && review.verdict === 'blocked'
       && review.criteria.some(item => item.status === 'not_verified')
-  if (sharedReviewerCriteria && value.criteria === 'reviewer' && delivery.qualityDecisionBindingVersion === 2
+  // 真实运行失败时，容忍返工回执误把整组标准写成占位词，始终复用冻结评审的逐项结论。
+  const failedRunReworkPlaceholder = value.verdict === 'rework' && review.verdict === 'changes_requested'
+    && (value.criteria === 'list' || value.criteria === 'criteria') && developmentArtifact
+    && freshValidation?.some(item => item.attemptState === 'completed' && item.freshness === 'fresh'
+      && item.status === 'failed' && Number.isSafeInteger(item.exitCode) && item.exitCode !== 0
+      && item.timedOut === false && item.outputTruncated === false && !isOwnerValidationEvidenceExpired(item, validationTime))
+  if (sharedReviewerCriteria && (value.criteria === 'reviewer' || failedRunReworkPlaceholder) && delivery.qualityDecisionBindingVersion === 2
     && agreesWithReview && review.criteria.length > 0
     && review.criteria.every(item => item.status !== 'met' || typeof item.quote === 'string' && item.quote.trim())) {
     value.criteria = review.criteria.map(item => ({

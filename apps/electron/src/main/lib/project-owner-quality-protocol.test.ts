@@ -371,6 +371,28 @@ test('Given独立评审已确认具体缺陷 When Owner明确返工并引用整�
   expect(() => parse(decision)).toThrow()
 })
 
+test('Given 同版浏览器验证失败 When Owner明确返工但错写标准占位词 Then 按冻结评审返工且拒绝通过', async () => {
+  const { parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
+  const c = context(), delivery = c.conversation!.deliveryReview!, review = delivery.review!
+  delivery.qualityDecisionBindingVersion = 2
+  review.verdict = 'changes_requested'
+  Object.assign(review.criteria[0]!, { status: 'not_met', quote: null })
+  const proof = review.validationEvidence![0]!
+  Object.assign(proof, { status: 'failed', exitCode: 1, finishedAt: Date.now() })
+  const findings = [{ severity: 'high', description: '角度模式返回空值', requestedChange: '修复三角运算并重新运行浏览器验证' }]
+  const parse = (raw: unknown, shared = true) => parseOwnerQualityDecision(raw, c, Date.now(), shared)
+  for (const criteria of ['list', 'criteria']) {
+    const rework = { ...acceptDecision(), verdict: 'rework', criteria, findings }
+    expect(parse(rework)).toMatchObject({ verdict: 'rework', criteria: [{ status: 'not_met' }], findings })
+    expect(() => parse({ ...rework, verdict: 'accept', findings: [] })).toThrow()
+    expect(() => parse({ ...rework, findings: [] })).toThrow()
+    expect(() => parse(rework, false)).toThrow()
+    Object.assign(proof, { status: 'passed', exitCode: 0 })
+    expect(() => parse(rework)).toThrow()
+    Object.assign(proof, { status: 'failed', exitCode: 1 })
+  }
+})
+
 test('Given 冻结质量回执携带空备注 When 解析 Then 保留决定并严格核验身份和成果', async () => {
   const { parseProjectOwnerPlanningResponse } = await import('./project-owner-planning-protocol')
   const c = context()

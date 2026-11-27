@@ -225,6 +225,12 @@ function evaluate(projectId: string, taskId?: string): Evaluation {
         if (budgetExhausted && progress.action?.kind === 'queue') return { status: status(projectId, 'waiting', '授权费用或运行次数已耗尽；返工不派发，未自动增加额度', { ...progress.status, state: 'waiting', reason: '授权费用或运行次数已耗尽；返工不派发，未自动增加额度', nextAction: 'human_decision' }) }
         return progress
       }
+      if (frozenTask.developmentScope && executor) {
+        const { isOwnerCommandFinalizing } = require('./agent-employee-service') as typeof import('./agent-employee-service')
+        if (isOwnerCommandFinalizing(executor.id)) {
+          return { status: status(projectId, 'running', '本轮研发验证仍在保存，结束后会继续核对评审派发条件。', { ...details, taskId: task.id, reworkOrdinal, nextAction: 'review' }) }
+        }
+      }
       const reviewer = getRoleCommand(projectId, grant.id, task.id, 'reviewer', reworkOrdinal)
       const reviewerProgress = roleContinuation(reviewer, subject, grant.id, task.id, 'reviewer', reworkOrdinal, record.revision)
       if (reviewerProgress !== 'complete') {
