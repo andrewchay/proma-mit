@@ -390,6 +390,7 @@ const BROWSER_RECEIPT_INSTRUCTION = '绑定同一文件版本的实测回执属�
 
 const SINGLE_FILE_BROWSER_INSTRUCTION = '当前仅交付一个网页文件。由同一研发步骤先实现再在该文件版本上实测；无需将实测另拆为派工，独立评审仍然单独运行。'
 const SAME_FILE_BROWSER_RECEIPT_INSTRUCTION = '以同一文件版本、同版成果开头的浏览器实测回执同样随该研发步骤验收。'
+const SEPARATE_BROWSER_RECEIPT_INSTRUCTION = '原目标明确要求单独交付实测回执，保留独立交付步骤。回执只整理已绑定同一文件版本的真实上游运行证据，不要用文本人员冒充实测。'
 type BrowserVerificationRouting = boolean | 'legacy' | 'single-file' | 'same-file-receipt'
 
 function requestsSingleFileBrowserVerification(context: ProjectOwnerPlanningContext): boolean {
@@ -402,6 +403,7 @@ function requestsSingleFileBrowserVerification(context: ProjectOwnerPlanningCont
 }
 
 export function usesOwnerBrowserVerificationRouting(request?: ProjectOwnerPlanningRequest | null): BrowserVerificationRouting {
+  if (request?.systemPrompt.includes(SEPARATE_BROWSER_RECEIPT_INSTRUCTION)) return false
   if (request?.systemPrompt.includes(SAME_FILE_BROWSER_RECEIPT_INSTRUCTION)) return 'same-file-receipt'
   if (request?.systemPrompt.includes(SINGLE_FILE_BROWSER_INSTRUCTION)) return 'single-file'
   if (request?.systemPrompt.includes(BROWSER_RECEIPT_INSTRUCTION)) return true
@@ -414,14 +416,17 @@ function requestsBrowserVerification(context: ProjectOwnerPlanningContext): bool
   return !context.conversation && /浏览器|\bbrowser\b/i.test(goal) && !separateReport.test(goal)
 }
 
+function requestsSeparateBrowserReceipt(context: ProjectOwnerPlanningContext): boolean {
+  const { objective, constraints, acceptanceCriteria } = context.goal.goal
+  return [objective, ...constraints, ...acceptanceCriteria].some(text =>
+    /(?:另(?:行|外|附|交)|单独|独立)[^。！？；，\n]{0,24}(?:浏览器|实测|测试|验证|验收)[^。！？；，\n]{0,12}回执/.test(text)
+    || /(?:浏览器|实测|测试|验证|验收)[^。！？；，\n]{0,12}回执[^。！？；，\n]{0,30}(?:分别|单独|另行)(?:交付|提交|提供)/.test(text))
+}
+
 /** 浏览器实测随代码版本验收。只有用户要求另行交付的报告才单独派工。 */
 function foldBrowserVerification(proposal: ProjectOwnerPlanProposal, context: ProjectOwnerPlanningContext, routing: BrowserVerificationRouting): ProjectOwnerPlanProposal {
   if (!requestsBrowserVerification(context)) return proposal
-  if (routing === 'same-file-receipt') {
-    const { objective, constraints, acceptanceCriteria } = context.goal.goal
-    if ([objective, ...constraints, ...acceptanceCriteria].some(text =>
-      /(?:另(?:行|外|附|交)|单独|独立)[^。！？；，\n]{0,24}(?:浏览器|实测|测试|验证|验收)[^。！？；，\n]{0,12}回执/.test(text))) return proposal
-  }
+  if (routing === 'same-file-receipt' && requestsSeparateBrowserReceipt(context)) return proposal
   const title = /^(?:(?:完成|执行|进行|实际|真实)\s*)?(?:浏览器(?:实测|验证|核验|测试)|browser (?:verification|tests?))/i
   const receipt = /^(?:(?:整理|生成|提交|记录|完成)\s*)?(?:真实|实际)?\s*浏览器.{0,16}(?:核对|回执)/i
   const singleFile = routing === 'single-file' || routing === 'same-file-receipt'
@@ -585,7 +590,9 @@ export function buildProjectOwnerPlanningRequest(context: ProjectOwnerPlanningCo
     ...(rosterDeadline ? [ROSTER_GROUNDING_INSTRUCTION, rosterDeadline] : []),
     ...(fixedBudget ? [`${FIXED_BUDGET_INSTRUCTION} 合计 ${fixedBudget.total / 100} 元，余额 ${fixedBudget.balance / 100} 元。`] : []),
     ...(browserVerificationRouting && requestsBrowserVerification(context)
-      ? [BROWSER_VERIFICATION_INSTRUCTION, ...(browserVerificationRouting !== 'legacy' ? [BROWSER_RECEIPT_INSTRUCTION] : []), ...((browserVerificationRouting === 'single-file' || browserVerificationRouting === 'same-file-receipt') && requestsSingleFileBrowserVerification(context)
+      ? browserVerificationRouting === 'same-file-receipt' && requestsSeparateBrowserReceipt(context)
+        ? [SEPARATE_BROWSER_RECEIPT_INSTRUCTION]
+        : [BROWSER_VERIFICATION_INSTRUCTION, ...(browserVerificationRouting !== 'legacy' ? [BROWSER_RECEIPT_INSTRUCTION] : []), ...((browserVerificationRouting === 'single-file' || browserVerificationRouting === 'same-file-receipt') && requestsSingleFileBrowserVerification(context)
         ? [SINGLE_FILE_BROWSER_INSTRUCTION, ...(browserVerificationRouting === 'same-file-receipt' ? [SAME_FILE_BROWSER_RECEIPT_INSTRUCTION] : [])] : [])] : []),
     ...(canonicalPlanExample ? [
       '只有一件小型交付物时优先写一个实现步骤，将随附的走查、核对记录和验证要求放入该步骤的验收标准。系统自动安排独立评审，除非用户要求另一件独立产物，不把复核另拆成步骤。',
@@ -692,6 +699,12 @@ export function resolveProjectOwnerPlanningRequest(context: ProjectOwnerPlanning
   const current = buildProjectOwnerPlanningRequest(context)
   const currentMatch = matchRequest(current)
   if (currentMatch) return currentMatch
+  if (requestsBrowserVerification(context) && requestsSeparateBrowserReceipt(context)) {
+    const legacySingle = [BROWSER_VERIFICATION_INSTRUCTION, BROWSER_RECEIPT_INSTRUCTION,
+      ...(requestsSingleFileBrowserVerification(context) ? [SINGLE_FILE_BROWSER_INSTRUCTION, SAME_FILE_BROWSER_RECEIPT_INSTRUCTION] : [])].join('\n')
+    const matched = matchRequest({ ...current, systemPrompt: current.systemPrompt.replace(SEPARATE_BROWSER_RECEIPT_INSTRUCTION, legacySingle) })
+    if (matched) return matched
+  }
   if (!context.conversation && readOwnerRosterDeadlineInstruction(context.goal.goal)) {
     const prior = buildProjectOwnerPlanningRequest(context, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false)
     const matched = matchRequest(prior)
@@ -800,7 +813,7 @@ export function parseProjectOwnerPlanningResponse(input: unknown, context: Proje
     if (input.length > MAX_RESPONSE_CHARACTERS) throw new Error('Owner规划响应超限')
     parsed = parseOwnerResponseJson(input)
   }
-  let response = record(parsed, ['schemaVersion', 'kind', 'type', 'projectId', 'taskId', 'goalVersion', 'contextFingerprint', 'binding', 'proposal', 'reason', 'questions', 'messageId', 'message', 'change', 'decision', 'steps', 'criteriaTrace', 'deliveryFeedbackAssessment', 'note', 'meta', 'qualityLimits', 'needs_clarification', 'messageNote'])
+  let response = record(parsed, ['schemaVersion', 'kind', 'type', 'projectId', 'taskId', 'goalVersion', 'contextFingerprint', 'binding', 'proposal', 'reason', 'questions', 'messageId', 'message', 'change', 'decision', 'steps', 'criteriaTrace', 'deliveryFeedbackAssessment', 'note', 'meta', 'qualityLimits', 'needs_clarification', 'messageNote', 'binding_note'])
   // 兼容模型偶发返回的旧式 type 别名；仅做无损归一化，业务字段仍按下方白名单严格校验。
   if ('type' in response) {
     if (response.type !== 'conversation_reply') throw new Error('Owner规划响应type别名仅支持对话回应')
@@ -811,13 +824,14 @@ export function parseProjectOwnerPlanningResponse(input: unknown, context: Proje
     response = normalized
   }
   if (response.kind === 'plan_proposal') {
-    const { steps, criteriaTrace, deliveryFeedbackAssessment, note, meta, needs_clarification: unusedClarification, ...envelope } = response
+    const { steps, criteriaTrace, deliveryFeedbackAssessment, note, meta, needs_clarification: unusedClarification, binding_note: unusedBindingNote, ...envelope } = response
     const proposal = record(envelope.proposal, ['summary', 'assumptions', 'risks', 'steps', 'deliveryChangeAssessment', 'deliveryFeedbackAssessment', 'criteriaTrace', 'sourceReferences', 'needsReview', 'stepsNote'])
     // 模型的展示备注与建议审阅标记都不参与授权；只接受固定的保守形式，其他字段仍拒绝。
     if (Object.hasOwn(response, 'note') && note !== null && (typeof note !== 'string' || !/^(?:尚未执行任何步骤[，。])?(?:本计划|方案)?待用户确认[。]?$/.test(note.trim()))) throw new Error('Owner规划响应包含未知字段')
     if (Object.hasOwn(response, 'meta') && record(meta, ['reason']).reason !== 'per_user_request_in_scope') throw new Error('Owner规划响应包含未知字段')
     if (Object.hasOwn(proposal, 'needsReview') && proposal.needsReview !== true) throw new Error('Owner规划响应包含未知字段')
     if ((Object.hasOwn(response, 'needs_clarification') && unusedClarification !== null)
+      || (Object.hasOwn(response, 'binding_note') && unusedBindingNote !== null)
       || (Object.hasOwn(proposal, 'stepsNote') && proposal.stepsNote !== null)) throw new Error('Owner规划响应包含未知字段')
     // 顶层空步骤占位不含计划内容，仍保留提案内完整、唯一的步骤。
     const emptyStepsPlaceholder = Array.isArray(steps) && steps.length === 0 && Array.isArray(proposal.steps) && proposal.steps.length > 0

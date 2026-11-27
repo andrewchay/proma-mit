@@ -822,4 +822,11 @@ test('Given 单文件成果的真实浏览器回执以同一文件版本开头 W
   separate.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: separate.goal.revision, goal: separate.goal.goal, sources: separate.sources })).digest('hex')
   const separateResponse = { ...proposal(separate), proposal: { ...input.proposal } }
   expect(parseProjectOwnerPlanningResponse(separateResponse, separate, Date.now(), true, true, false, false, routing)).toMatchObject({ proposal: { steps: [start, review] } })
+  const separatePrompt = buildProjectOwnerPlanningRequest(separate)
+  expect(separatePrompt.systemPrompt).toContain('保留独立交付步骤')
+  expect(separatePrompt.systemPrompt).not.toContain('无需将实测另拆为派工')
+  expect(usesOwnerBrowserVerificationRouting(separatePrompt)).toBe(false)
+  expect(parseProjectOwnerPlanningResponse({ ...input, binding_note: null }, c)).toMatchObject({ kind: 'plan_proposal' })
+  expect(() => parseProjectOwnerPlanningResponse({ ...input, binding_note: '改变项目绑定' }, c)).toThrow('未知字段')
+  expect(() => parseProjectOwnerPlanningResponse({ ...input, binding_note: null, projectId: 'other' }, c)).toThrow('不匹配')
 })
