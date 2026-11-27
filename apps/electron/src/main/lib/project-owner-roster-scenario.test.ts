@@ -110,3 +110,15 @@ test('Given正式补位有严格截止 When走查无误却在截止后更新正�
     objective: '候补 9:00 前完成确认方可正式补位。', constraints: ['09:00 前完成确认才可以正式补位。'],
   }, '09:01 确认完成后正式补位。')).toContain('截止时或截止后')
 })
+
+test('Given 候补手册固定14:00开场 When 把主持人宣布开场放在14:05落座步骤 Then 拒绝偏移且允许另列换桌', () => {
+  const brief = { ...goal, objective: '14:00开场，候补丁13:58到场，确认耗时3分钟，14:00前完成才能正式补位。' }
+  const bad = '丁不能正式补位。\n14:05 前完成所有换桌落座，主持人宣布开场。'
+  expect(findOwnerRosterScenarioConflict(brief, bad)).toContain('原目标要求 14:00 开场')
+  expect(findOwnerRosterScenarioConflict(brief, '丁不能正式补位。\n14:05宣布开场。')).toContain('原目标要求 14:00 开场')
+  expect(findOwnerRosterScenarioConflict(brief, '丁不能正式补位。\n**14:00** 准时开场。14:05 前完成换桌落座。')).toBeNull()
+  expect(findOwnerRosterScenarioConflict(brief, '~~~md\n14:05宣布开场。\n~~~\n14:00开场。')).toBeNull()
+  expect(findOwnerRosterScenarioConflict(brief, '13:55 开场提醒发到群里。14:00 准时开场。')).toBeNull()
+  expect(findOwnerRosterScenarioConflict(brief, '14:00 准时开场。13:55 前完成换桌，随后主持人宣布开场。')).toBeNull()
+
+})

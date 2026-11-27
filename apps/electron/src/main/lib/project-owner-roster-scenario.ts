@@ -100,6 +100,32 @@ export function readOwnerRosterDeadlineInstruction(goal: ProjectOwnerGoalBrief):
   return candidate ? `按原目标复算：候补「${candidate.person}」${candidate.arrival} 到场，确认需 ${candidate.minutes} 分钟，即刻开始也最早于 ${candidate.time} 完成。原规则要求在 ${cutoff} 前完成确认，因此该候补不能正式补位。请同时核对正文、示例名单、人数和核对表；登记确认结果或旁听均不改变正式名单。` : null
 }
 
+const fixedOpening = new RegExp(`(${clockText})\\s*(?:整\\s*)?(?:准时\\s*)?(?:由主持人\\s*)?(?:宣布\\s*)?开场(?!提醒|准备|流程|时间|前|后)`, 'g')
+
+export function readOwnerRosterOpeningInstruction(goal: ProjectOwnerGoalBrief): string | null {
+  const opening = readRosterOpeningTime(goal)
+  return opening ? `原目标要求 ${opening} 开场。候补确认、换桌或落座可以单独安排，但不能把开场时间改写为另一时点，也不能等候补完成后再开场。` : null
+}
+
+function readRosterOpeningTime(goal: ProjectOwnerGoalBrief): string | undefined {
+  if (!readFormalAdmissionCutoff(goal)) return undefined
+  const times = new Map([...rosterSource(goal).matchAll(fixedOpening)].map(match => [timeInMinutes(match[1]!), match[1]!]))
+  return times.size === 1 && !times.has(NaN) ? times.values().next().value : undefined
+}
+
+function findRosterOpeningConflict(goal: ProjectOwnerGoalBrief, markdown: string): string | null {
+  const opening = readRosterOpeningTime(goal)
+  if (!opening) return null
+  const content = markdown.replace(/^(```|~~~)[^\n]*\n[\s\S]*?^\1[^\n]*$/gm, '').replace(/[*_]/g, '')
+  const afterOtherAction = new RegExp(`(${clockText})\\s*前[^0-9。；\\n，,]{0,60}[，,]\\s*(再|随后)?\\s*(?:主持人|由主持人)?\\s*宣布开场`, 'g')
+  const expected = timeInMinutes(opening)
+  const explicit = [...content.matchAll(fixedOpening)]
+  const conflict = explicit.find(match => Number.isFinite(timeInMinutes(match[1]!)) && timeInMinutes(match[1]!) !== expected)
+    ?? [...content.matchAll(afterOtherAction)].find(match => timeInMinutes(match[1]!) > expected
+      && (match[2] || !explicit.some(candidate => timeInMinutes(candidate[1]!) === expected)))
+  return conflict ? `原目标要求 ${opening} 开场。请将开场写为固定时点，换桌、落座和候补登记另列。冲突原文：${conflict[0]}` : null
+}
+
 /** 用户要求走查正式名单时，不把模型推测的人数当作预设验收值。 */
 export function groundOwnerRosterPlan(goal: ProjectOwnerGoalBrief, plan: ProjectOwnerPlanProposal): ProjectOwnerPlanProposal {
   const cutoff = readFormalAdmissionCutoff(goal)
@@ -194,7 +220,7 @@ function findUnsupportedRosterArrival(goal: ProjectOwnerGoalBrief, markdown: str
 export function findOwnerRosterScenarioConflict(goal: ProjectOwnerGoalBrief, markdown: string): string | null {
   const cutoff = readFormalAdmissionCutoff(goal)
   return (cutoff ? findLateFormalAdmission(goal, cutoff, markdown) : null)
-    ?? findUnsupportedRosterArrival(goal, markdown) ?? (requiresRosterScenario(goal) ? findRosterScenarioConflict(markdown) : null)
+    ?? findRosterOpeningConflict(goal, markdown) ?? findUnsupportedRosterArrival(goal, markdown) ?? (requiresRosterScenario(goal) ? findRosterScenarioConflict(markdown) : null)
 }
 
 export function findOwnerDeliveredRosterConflict(goal: ProjectOwnerGoalBrief, items: readonly OwnerDocumentEvidenceItem[], requireOriginal = true): string | null {
