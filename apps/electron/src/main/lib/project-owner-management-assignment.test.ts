@@ -5,6 +5,7 @@ import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync,
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { PROJECT_IPC_CHANNELS } from '@gravitas/shared'
+import './testing/mock-owner-host-resources'
 import type { OwnerExecutionPreparationInput, ProjectOwnerExecutionLaunchApi } from '@gravitas/shared'
 import { buildElectronMock } from './testing/electron-mock'
 const directory = mkdtempSync(join(tmpdir(), 'owner-managed-assignment-')), previous = process.env.PROMA_TEST_CONFIG_DIR

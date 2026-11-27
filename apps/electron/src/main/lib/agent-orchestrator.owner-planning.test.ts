@@ -13,7 +13,7 @@ afterAll(() => { ownerPurposeStore.closeProjectDb(); rmSync(dir, { recursive: tr
 mock.module('electron', () => buildElectronMock())
 let broken = false, dynamic = 0, workspaceContext = 0, history = 0, credential = 'fake'
 const source = { binding: { channelId: 'channel', modelId: 'model', workspaceId: 'ws', runtime: 'ai-sdk' }, request: { systemPrompt: 'authority-system', userPrompt: 'authority-user' } }
-mock.module('./project-owner-planning-source', () => ({ resolveOwnerPlanningTask: () => { throw new Error('Owner orchestrator不应调用task resolver') }, readOwnerPlanningSnapshot: () => { throw new Error('Owner orchestrator不应调用回执resolver') }, resolveOwnerPlanningSession: () => { if (broken) throw new Error('Owner evidence corrupt'); return source } }))
+mock.module('./project-owner-planning-source', () => ({ OwnerPlanningSourceChangedError: class extends Error {}, resolveOwnerPlanningTask: () => { throw new Error('Owner orchestrator不应调用task resolver') }, readOwnerPlanningSnapshot: () => { throw new Error('Owner orchestrator不应调用回执resolver') }, resolveOwnerPlanningSession: () => { if (broken) throw new Error('Owner evidence corrupt'); return source } }))
 const channelModule = await import('./channel-manager')
 mock.module('./channel-manager', () => ({ ...channelModule, getChannelById: () => ({ provider: 'openai', baseUrl: 'https://offline.invalid/v1' }), decryptApiKey: () => credential }))
 const workspaceModule = await import('./agent-workspace-manager')
