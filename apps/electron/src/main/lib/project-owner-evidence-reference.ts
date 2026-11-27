@@ -49,7 +49,8 @@ function resolveOwnerEvidenceId(id: unknown, artifact: EvidenceArtifact, readFil
               .filter(line => line[0]).map(line => line[0])
             if (last <= lines.length) {
               const span = lines.slice(first - 1, last).join('').replace(/(?:\r\n|\r|\n)$/, '')
-              if (span.trim() && span.length <= 1000) quote = span
+              const prefix = span.slice(0, 1000)
+              quote = prefix.trim() ? prefix : span.trimStart().slice(0, 1000) || undefined
             }
           }
         }
@@ -90,7 +91,11 @@ export function bindOwnerEvidenceRows(
       quote = { from: 'reviewer' }
     } else if (evidenceId !== null) {
       if (typeof evidenceId === 'string' && evidenceId.startsWith('V') && status !== 'met') throw new Error('成功回执不能作为未通过项的源码引用')
-      quote = resolveOwnerEvidenceId(evidenceId, artifact, readFiles)
+      // 编号并列时核验两项；正文保留逐字源码，浏览器回执仍由冻结验证与原始评审记录绑定。
+      const pair = artifact.development && status === 'met' && typeof evidenceId === 'string'
+        ? /^(F[^,，]{1,24})[,，] *(V[1-9]\d{0,5})$/.exec(evidenceId) : null
+      if (pair) resolveOwnerEvidenceId(pair[2], artifact, readFiles)
+      quote = resolveOwnerEvidenceId(pair?.[1] ?? evidenceId, artifact, readFiles)
     }
     return { index, criterion, status, evidence, quote }
   })

@@ -40,6 +40,8 @@ function buildRegistryText(includeBuildCommands: boolean): string {
   const items = listOwnerRuntimeBuildCommands().map(item => `${item.id}（${item.title}）`).join('、')
   return items ? `；原生或命令行项目可用 build:<标识>，可选标识：${items}` : ''
 }
+export const OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION = '受控非研发安排不得包含代码范围'
+
 export const OWNER_BROWSER_CHECK_COMPLETION_INSTRUCTION = '内置英里换算断言与两位小数的精确目标匹配时，主进程会确保验证范围包含该断言。'
 
 export function buildOwnerExecutionAssignmentRequest(context: OwnerExecutionAssignmentContext, requireRoleCoverage = true, browserRegistryVariant: OwnerBrowserRegistryVariant = 'current', stepDeliveryInstructions = true, roleSpecificCapabilities = true, greenfieldRootTargets = false, includeBuildCommands = true, requireSwiftPackage = true, requireCompleteGreenfieldScope = true, completeRequiredBrowserChecks = browserRegistryVariant === 'current'): OwnerExecutionAssignmentRequest {
@@ -238,7 +240,7 @@ export function parseOwnerExecutionAssignmentProposal(raw: unknown, context: Own
   } else if (input.developmentScope !== undefined && input.developmentScope !== null) {
     const emptyScope = object(input.developmentScope, ['targetPaths', 'allowedPaths', 'verificationCommands', 'reason'])
     if (!['targetPaths', 'allowedPaths', 'verificationCommands'].every(key => Array.isArray(emptyScope[key]) && emptyScope[key].length === 0)
-      || typeof emptyScope.reason !== 'string' || !emptyScope.reason.trim() || emptyScope.reason.length > 2000) throw new Error('受控非研发安排不得包含代码范围')
+      || typeof emptyScope.reason !== 'string' || !emptyScope.reason.trim() || emptyScope.reason.length > 2000) throw new Error(OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION)
   }
   const roleKeys = [...new Set(selectedSteps.map(step => step!.roleKey))]
   if (!Array.isArray(input.assignments) || input.assignments.length !== roleKeys.length) throw new Error('Owner人员安排必须完整覆盖所选步骤的全部岗位')

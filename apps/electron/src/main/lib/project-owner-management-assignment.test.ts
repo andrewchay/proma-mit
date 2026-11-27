@@ -36,7 +36,7 @@ const { retakeOwnerManagementAssignment } = await import('./project-owner-manual
 const calls: Array<{ projectId: string; purpose: string; candidates: string[]; executionKinds?: string[]; employeeModes?: Array<{ id: string; executionProfile: string; ownerControlledCompatible?: boolean }> }> = []
 let rejectNextAssignmentProjectId: string | null = null
 let legacyNullScopeProjectId: string | null = null
-let rejectNextAssignmentKind: 'reviewer' | 'coverage' = 'reviewer'
+let rejectNextAssignmentKind: 'reviewer' | 'coverage' | 'text_scope' = 'reviewer'
 let nextOwnerPlanningResponseGate: { started(): void; wait: Promise<void> } | null = null
 let failBusinessProjectId: string | null = null
 let reviseConversationProjectId: string | null = null
@@ -199,6 +199,9 @@ beforeAll(async () => {
     const development = context.steps.some(step => step.deliveryKind === 'development') || (legacyUntypedRecoveryProjectId === source.link.projectId && context.steps.length > 1 && context.steps.every(step => !step.deliveryKind))
     const proposal = { schemaVersion: 1, contextFingerprint: context.contextFingerprint, selectedStepKeys: context.steps.map(step => step.key), scopeReason: '执行已确认的完整方案', workspaceId, workspaceReason: '复用项目已有授权', executionKind: development ? 'development' : 'controlled', executionKindReason: development ? '需要实现页面' : '无需代码修改', assignments: rejectedReviewer && rejectNextAssignmentKind === 'coverage' ? [] : assignments, reviewerEmployeeId: rejectNextAssignmentKind === 'reviewer' ? rejectedReviewer ?? reviewer.id : reviewer.id, reviewerReason: '独立检查成果', ...(development ? { developmentScope: { targetPaths: ['diary/index.html'], allowedPaths: ['diary/index.html'], verificationCommands: ['browser:html.loads'], reason: '交付日记页面' } } : {}) }
     const isLegacyNullScope = legacyNullScopeProjectId === source.link.projectId
+    if (rejectedReviewer && rejectNextAssignmentKind === 'text_scope') {
+      Object.assign(proposal, { developmentScope: { targetPaths: ['docs/notice.md'], allowedPaths: ['docs/notice.md'], verificationCommands: [], reason: '错误的文本占位范围' } })
+    }
     const rejected = isLegacyNullScope ? spyOn(await import('./project-owner-execution-assignment-protocol'), 'parseOwnerExecutionAssignmentProposal').mockImplementationOnce(() => { throw new Error('受控非研发安排不得包含代码范围') }) : null
     if (isLegacyNullScope) legacyNullScopeProjectId = null
     try {
@@ -600,7 +603,7 @@ test('Given 已有可用团队和管理委托 When 用户确认方案 Then 无�
   } finally { stop() }
 }, 30000)
 
-test.each(['reviewer', 'coverage'] as const)('Given 安排请求完整结束但违反%s协议 When Owner收到失败结果 Then 在原预算内只续跑一次并保留两次运行证据', async (kind) => {
+test.each(['reviewer', 'coverage', 'text_scope'] as const)('Given 安排请求完整结束但违反%s协议 When Owner收到失败结果 Then 在原预算内只续跑一次并保留两次运行证据', async (kind) => {
   rejectNextAssignmentKind = kind
   const f = fixture()
   confirm(f)

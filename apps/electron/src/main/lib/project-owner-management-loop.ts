@@ -16,7 +16,7 @@ import { OwnerPlanningSourceChangedError, readOwnerPlanningSnapshot, resolveOwne
 import { hasCompleteOwnerManagementDelivery, publishOwnerManagementCompletion } from './project-owner-management-delivery'
 import { onOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
 import { listOwnerExecutionAssignmentRuns } from './project-owner-execution-assignment-service'
-import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt, hasCompleteRejectedOwnerPlanReceipt, isRetryableOwnerBoundRevisionReceipt, recoverInitialOwnerPlanningResponse, recoverLegacyOwnerConversationReply, recoverLegacyOwnerAssignmentProposal } from './project-owner-planning-run-service'
+import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt, hasCompleteRejectedOwnerPlanReceipt, isRetryableOwnerBoundRevisionReceipt, recoverInitialOwnerPlanningResponse, recoverLegacyOwnerConversationReply } from './project-owner-planning-run-service'
 import { ensureOwnerDefaultTeam } from './project-owner-default-team'
 
 let requestActiveOwnerManagementRescan: (() => void) | null = null
@@ -396,9 +396,6 @@ function recoverProtocolRejectedOwnerAssignments(projectId: string): void {
     if (taskId === null) continue
     for (const run of listOwnerExecutionAssignmentRuns({ projectId, ...(taskId ? { taskId } : {}) })) {
       for (const outcome of run.outcomes) {
-        if (outcome.state === 'failed' && outcome.detail === '受控非研发安排不得包含代码范围') {
-          recoverLegacyOwnerAssignmentProposal(outcome.executionId)
-        }
         if (outcome.state === 'failed' && isRecoverableOwnerAssignmentRejection(outcome.detail)) {
           queueOwnerAssignmentProtocolRetry(projectId, taskId, outcome.executionId)
         }

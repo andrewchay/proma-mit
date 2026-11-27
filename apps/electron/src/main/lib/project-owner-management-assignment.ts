@@ -9,7 +9,7 @@ import { OwnerExecutionAssignmentCapabilityError, ownerAssignmentContextMatchesA
 import { listOwnerExecutionAssignmentRuns, prepareOwnerExecutionAssignment } from './project-owner-execution-assignment-service'
 import { getOwnerExecutionPreparation } from './project-owner-execution-preparation'
 import { getOwnerManagementClaim, getOwnerManagementDelegation } from './project-owner-management-delegation'
-import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt } from './project-owner-planning-run-service'
+import { getOwnerPlanningRunOutcome, getOwnerPlanningRunReceipt, recoverLegacyOwnerAssignmentProposal } from './project-owner-planning-run-service'
 import { readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
 import { appendOwnerManagementMessage, appendOwnerManagementTrace, listPendingOwnerManagementEvents, recordOwnerManagementAssignmentProtocolRetry } from './project-owner-management-store'
 import { getPilotPolicy } from './project-pilot-policy'
@@ -17,12 +17,12 @@ import { getOwnerTeamWorkspaceProposal } from './project-owner-team-workspace-ac
 import { ensureOwnerDefaultTeam } from './project-owner-default-team'
 import { saveOwnerExecutionStartIntent } from './project-owner-execution-start-intent'
 import { hasCompleteOwnerManagementDelivery } from './project-owner-management-delivery'
-import { MARKDOWN_BROWSER_VERIFICATION_MISMATCH, MILES_CONVERSION_VERIFICATION_MISSING } from './project-owner-execution-assignment-protocol'
+import { MARKDOWN_BROWSER_VERIFICATION_MISMATCH, MILES_CONVERSION_VERIFICATION_MISSING, OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION } from './project-owner-execution-assignment-protocol'
 import * as store from './project-sqlite-store'
 
 export function isRecoverableOwnerAssignmentRejection(detail: string): boolean {
   // 第三种是“结构/字段不合规”：方案本身有效，原预算内重排一次通常即可修复。
-  return ['Owner安排必须由未承担执行岗位的独立评审员审核', 'Owner人员安排必须完整覆盖所选步骤的全部岗位', 'Owner人员安排提案格式无效或夹带未授权字段', 'Owner绿地研发允许范围必须覆盖全部目标文件', MARKDOWN_BROWSER_VERIFICATION_MISMATCH, MILES_CONVERSION_VERIFICATION_MISSING].includes(detail)
+  return ['Owner安排必须由未承担执行岗位的独立评审员审核', 'Owner人员安排必须完整覆盖所选步骤的全部岗位', 'Owner人员安排提案格式无效或夹带未授权字段', 'Owner绿地研发允许范围必须覆盖全部目标文件', OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION, MARKDOWN_BROWSER_VERIFICATION_MISMATCH, MILES_CONVERSION_VERIFICATION_MISSING].includes(detail)
 }
 
 export { ownerAssignmentFailureReason } from './project-owner-failure-reason'
@@ -37,12 +37,15 @@ export function queueOwnerAssignmentProtocolRetry(projectId: string, taskId: str
     || !receipt.validTerminal || receipt.stopped || receipt.error || receipt.runtimeResult?.subtype !== 'success' || receipt.runtimeResult.finish_reason !== 'stop'
     || !receipt.usage || !Number.isSafeInteger(receipt.usage.inputTokens) || receipt.usage.inputTokens === null || receipt.usage.inputTokens < 0
     || !Number.isSafeInteger(receipt.usage.outputTokens) || receipt.usage.outputTokens === null || receipt.usage.outputTokens < 0) return false
+  if (outcome.detail === OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION && recoverLegacyOwnerAssignmentProposal(executionId)?.state === 'proposed') return true
   const source = readOwnerPlanningSnapshot(receipt.planningTaskId)
+  const claim = getOwnerManagementClaim(receipt.planningTaskId)
   const plan = getProjectOwnerPlanDraft(projectId, taskId)
   const delegation = getOwnerManagementDelegation(projectId, taskId)
   if (!source || source.link.projectId !== projectId || source.link.targetTaskId !== taskId || !source.assignmentContext
     || !plan || plan.state !== 'confirmed' || source.link.planRevision < plan.revision - 1 || source.link.planRevision > plan.revision
-    || delegation.state !== 'active' || !delegation.delegation?.autonomousExecution) return false
+    || delegation.state !== 'active' || !delegation.delegation?.autonomousExecution
+    || claim?.executionId !== executionId || claim.delegationId !== delegation.delegation.id) return false
   const binding = getOwnerRuntimeBinding(projectId)
   const planningContext = getProjectOwnerPlanningContext(projectId, taskId)
   if (!binding) return false

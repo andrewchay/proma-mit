@@ -352,3 +352,18 @@ test('Given 评审引用当前冻结文件的源码行范围 When 绑定 Then �
   expect(bind('F1:L2-L4')).toMatchObject([{ quote: '  第 2 行\r\n\r\n第 4 行' }])
   for (const id of ['F2:L2-L4', 'F1:L4-L2', 'F1:L2-L9', 'F1:L3-L3', 'V1:L2-L4']) expect(() => bind(id)).toThrow()
 })
+
+test('Given 同版本源码范围很长且另有浏览器回执 When 核验编号 Then 保留逐字证据并拒绝任一无效编号', async () => {
+  const { bindOwnerEvidenceRows } = await import('./project-owner-evidence-reference')
+  const content = '浏览器断言通过'
+  const validationId = `val-${'b'.repeat(64)}`
+  const validation = { command: 'browser:html.loads', validationId, attemptState: 'completed', freshness: 'fresh',
+    status: 'passed', exitCode: 0, timedOut: false, outputTruncated: false, outputTail: content,
+    rawOutputSha256: createHash('sha256').update(content).digest('hex'), rawOutputByteLength: Buffer.byteLength(content) } as const
+  const source = '首行\n' + '源码'.repeat(650) + '\n末行'
+  const artifact = { development: true, validation: [validation], content: JSON.stringify({ files: [{ file: { path: 'index.html' }, newContent: source }] }) }
+  const bind = (evidenceId: string) => bindOwnerEvidenceRows([{ criterionId: 'C1', status: 'met', evidence: '核对源码和行为', evidenceId }], ['标准'], artifact)
+  expect(bind('F1:L1-L3')).toMatchObject([{ quote: source.slice(0, 1000) }])
+  expect(bind('F1:L1-L3, V1')).toMatchObject([{ quote: source.slice(0, 1000) }])
+  for (const id of ['F1:L1-L4, V1', 'F1:L1-L3, V2', 'F1:L1-L3, V1, V1']) expect(() => bind(id)).toThrow()
+})

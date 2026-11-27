@@ -8,7 +8,7 @@ import { OwnerPlanningSourceChangedError, readOwnerPlanningSnapshot, resolveOwne
 import { parseProjectOwnerPlanningResponse, usesOwnerRosterGrounding, usesOwnerFixedBudgetGrounding, usesOwnerBrowserVerificationRouting, usesOwnerSourceInspectionRouting, usesSingleTextReviewFolding, usesOwnerSharedReviewCriteria } from './project-owner-planning-protocol'
 import { isOwnerEvidenceGapRework } from './project-owner-quality-protocol'
 import { appendGeneratedOwnerPlan } from './project-owner-plan-service'
-import { OWNER_BROWSER_CHECK_COMPLETION_INSTRUCTION, parseOwnerExecutionAssignmentProposal } from './project-owner-execution-assignment-protocol'
+import { OWNER_BROWSER_CHECK_COMPLETION_INSTRUCTION, OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION, parseOwnerExecutionAssignmentProposal } from './project-owner-execution-assignment-protocol'
 import * as store from './project-sqlite-store'
 import { isOwnerPlanningConfigurationError } from './owner-planning-configuration'
 const hash = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex')
@@ -237,7 +237,7 @@ export function recoverLegacyOwnerConversationReply(executionId: string): OwnerP
 /** 只恢复受控安排的空代码范围占位；重验原文，不发送新请求、不改变旧失败或费用。 */
 export function recoverLegacyOwnerAssignmentProposal(executionId: string): OwnerPlanningRunOutcome | null {
   const original = readStoredOwnerPlanningRunOutcome(executionId)
-  if (!original || original.state !== 'failed' || original.detail !== '受控非研发安排不得包含代码范围') return null
+  if (!original || original.state !== 'failed' || original.detail !== OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION) return null
   const receipt = getOwnerPlanningRunReceipt(original.receiptId)
   if (!receipt || receipt.purpose !== 'owner_execution_assignment' || !receipt.validTerminal || receipt.stopped || receipt.error !== null
     || receipt.runtimeResult?.subtype !== 'success' || receipt.runtimeResult.finish_reason !== 'stop'
@@ -343,7 +343,7 @@ export function getOwnerPlanningRunOutcome(executionId: string): OwnerPlanningRu
       return recovered.recoveredOutcome
     }
     if (recovered.recoveredOutcome.state === 'proposed') {
-      if (original.state !== 'failed' || original.detail !== '受控非研发安排不得包含代码范围'
+      if (original.state !== 'failed' || original.detail !== OWNER_CONTROLLED_DEVELOPMENT_SCOPE_REJECTION
         || receipt.purpose !== 'owner_execution_assignment' || !frozen.assignmentContext || !receipt.validTerminal || receipt.stopped || receipt.error !== null
         || receipt.runtimeResult?.subtype !== 'success' || receipt.runtimeResult.finish_reason !== 'stop'
         || !receipt.usage || !finite(receipt.usage.inputTokens) || !Number.isSafeInteger(receipt.usage.inputTokens)
