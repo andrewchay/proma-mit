@@ -40,7 +40,10 @@ for (const path of files) {
   for (const pattern of patterns) {
     const directory = mkdtempSync(join(tmpdir(), 'gravitas-test-'))
     try {
-      const args = [process.execPath, 'test', './' + path]
+      const args = [process.execPath, 'test']
+      // Electron 测试使用固定系统读数；资源策略、数据库并发及其断言照常运行。
+      if (path.startsWith('apps/electron/')) args.push('--preload', './apps/electron/src/main/lib/testing/mock-owner-host-resources.ts')
+      args.push('./' + path)
       if (pattern) args.push('--test-name-pattern', pattern)
       const child = Bun.spawn(args, {
         env: { ...process.env, PROMA_TEST_CONFIG_DIR: directory },

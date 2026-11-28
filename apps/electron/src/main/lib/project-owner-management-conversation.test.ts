@@ -443,6 +443,23 @@ test('Given对话内仍开放的旧澄清 When随后对话生成新方案 Then�
   } finally { stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
 })
 
+test('Given 单任务有待答复问题 When 查询项目和同项目的任务 Then 只在相关入口显示这个问题', async () => {
+  const f = fixture(true)
+  const sibling = store.createTask(f.project.id, { title: '另一条任务', description: '' })
+  sendOwnerManagementMessage(f.message('先确认这条任务需要的信息'))
+  const grant = f.issue()
+  const stop = startOwnerManagementLoop()
+  try {
+    await until(() => Boolean(active(f)))
+    finish(f, 'clarify')
+    await until(() => getOwnerManagementConversation(f.project.id).questions.some(item => item.state === 'open'))
+    const { getOwnerAutonomousScheduleStatus } = await import('./project-owner-autonomous-scheduler')
+    expect(getOwnerAutonomousScheduleStatus(f.project.id).waitingQuestion).toEqual({ taskId: f.taskId })
+    expect(getOwnerAutonomousScheduleStatus(f.project.id, f.taskId).waitingQuestion).toEqual({ taskId: f.taskId })
+    expect(getOwnerAutonomousScheduleStatus(f.project.id, sibling.id).waitingQuestion).toBeUndefined()
+  } finally { await stop(); delegation.revokeOwnerManagementDelegation(f.project.id, grant.id) }
+})
+
 test('Given 用户消息与员工待决事项同时存在 When 选择下一轮来源 Then 按上一轮类型轮换且不饿死员工', async () => {
   const choose = (await import('./project-owner-management-conversation')).chooseOwnerPendingSource
   // 上一轮是用户对话：先处理员工事项。

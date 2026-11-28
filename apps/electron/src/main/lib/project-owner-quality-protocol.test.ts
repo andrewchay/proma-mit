@@ -244,3 +244,213 @@ test('Given返工决定引用原评审的说明缺陷和成功验证 When输出�
   artifact.validationEvidence[0]!.outputTruncated = true
   expect(() => parseOwnerQualityDecision(decision, c)).toThrow('引用不符')
 })
+
+test('Given签到牌评审已逐字引用JSON文件路径 When Owner独立判断并选择该条评审证据 Then 核实原路径而不重抄转义引号', async () => {
+  const { parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
+  const { buildOwnerObservationPrompt } = await import('./project-owner-observation-prompt')
+  const c = context(), delivery = c.conversation!.deliveryReview!
+  const criterion = '只交付一个自包含的 index.html'
+  const pathQuote = '"path":"index.html"'
+  delivery.developmentArtifact!.content = JSON.stringify({ files: [{ file: { path: 'index.html' }, oldContent: null, newContent: '<title>培训签到</title>' }] })
+  delivery.review!.criteria = [{ criterion, status: 'met', evidence: '唯一交付是自包含签到牌', quote: pathQuote }]
+  const decision = { ...acceptDecision(), criteria: [{ criterion, status: 'met', evidence: '读取快照后确认只有一个页面且资源自包含', quote: { from: 'reviewer' } }] }
+
+  expect(() => parseOwnerQualityDecision(decision, c)).toThrow()
+  delivery.qualityDecisionBindingVersion = 2
+  expect(buildOwnerObservationPrompt(c)).toContain('"evidenceId":"R1"')
+  const { buildProjectOwnerPlanningRequest, resolveProjectOwnerPlanningRequest } = await import('./project-owner-planning-protocol')
+  c.sources.roles = [{ key: 'requirements-analyst', name: '需求分析师', version: '1.0.0', sourceSha256: 'a'.repeat(64), rulesSha256: 'b'.repeat(64) }]
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const current = buildProjectOwnerPlanningRequest(c)
+  expect(current.systemPrompt).toContain('"evidenceId":"R1"')
+  expect(current.systemPrompt).toContain('"criteria":"reviewer"')
+  const numberedV2 = buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false)
+  expect(numberedV2.systemPrompt).toContain('"evidenceId":"R1"')
+  expect(numberedV2.systemPrompt).not.toContain('"criteria":"reviewer"')
+  expect(resolveProjectOwnerPlanningRequest(c, createHash('sha256').update(JSON.stringify(numberedV2)).digest('hex'))).toEqual(numberedV2)
+
+  const previousV2 = buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false)
+  expect(previousV2.systemPrompt).toContain('{"from":"reviewer"}')
+  expect(resolveProjectOwnerPlanningRequest(c, createHash('sha256').update(JSON.stringify(previousV2)).digest('hex'))).toEqual(previousV2)
+  const numbered = { ...decision, criteria: [{ criterionId: 'C1', status: 'met', evidence: '核对了路径和源码', evidenceId: 'R1' }] }
+  expect(parseOwnerQualityDecision(numbered, c).criteria[0]?.quote).toBe(pathQuote)
+  expect(parseOwnerQualityDecision({ ...numbered, criteria: [{ ...numbered.criteria[0], evidenceId: 'F1:L1' }] }, c).criteria[0]?.quote).toBe('<title>培训签到</title>')
+  for (const evidenceId of ['F2', 'F1:L8', 'R2', 'T1', 'V1']) {
+    expect(() => parseOwnerQualityDecision({ ...numbered, criteria: [{ ...numbered.criteria[0], evidenceId }] }, c)).toThrow()
+  }
+  const legacy = structuredClone(c)
+  legacy.conversation!.deliveryReview!.qualityDecisionBindingVersion = 1
+  const historical = buildProjectOwnerPlanningRequest(legacy)
+  expect(historical.systemPrompt).not.toContain('{"from":"reviewer"}')
+  expect(resolveProjectOwnerPlanningRequest(legacy, createHash('sha256').update(JSON.stringify(historical)).digest('hex'))).toEqual(historical)
+  expect(() => parseOwnerQualityDecision(decision, legacy)).toThrow('引用不符')
+  expect(parseOwnerQualityDecision(decision, c).criteria[0]?.quote).toBe(pathQuote)
+  for (const quote of [{ from: 'reviewer', path: 'other.html' }, { from: 'other-reviewer' }, '"path":"other.html"']) {
+    expect(() => parseOwnerQualityDecision({ ...decision, criteria: [{ ...decision.criteria[0], quote }] }, c)).toThrow()
+  }
+  expect(() => parseOwnerQualityDecision({ ...decision, criteria: [{ ...decision.criteria[0], criterion: '另一条标准' }] }, c)).toThrow()
+  expect(() => parseOwnerQualityDecision({ ...decision, findings: [{ severity: 'high', description: '有缺陷', requestedChange: '需修复' }] }, c)).toThrow()
+  delivery.review!.criteria[0]!.quote = '"path":"other.html"'
+  expect(() => parseOwnerQualityDecision(decision, c)).toThrow()
+  expect(() => parseOwnerQualityDecision(numbered, c)).toThrow()
+})
+
+test('Given快照首项已删除且浏览器已补验 When使用证据编号 Then使用原下标和新回执并拒绝过期证据', async () => {
+  const { parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
+  const c = context(), delivery = c.conversation!.deliveryReview!
+  delivery.qualityDecisionBindingVersion = 2
+  delivery.developmentArtifact!.content = JSON.stringify({ files: [
+    { file: { path: 'old.ts', changeType: 'delete' }, oldContent: '旧文件', newContent: null },
+    { file: { path: 'app.ts' }, oldContent: null, newContent: '//说明\r\n\r\nreturn value + 1' },
+  ] })
+  const previous = delivery.developmentArtifact!.validationEvidence[0]!
+  const now = Date.now()
+  const refreshed = { ...previous, validationId: 'refreshed-run', finishedAt: now,
+    rawOutputSha256: createHash('sha256').update(previous.outputTail!).digest('hex') }
+  delivery.validationRefresh = [refreshed]
+  const decision = (evidenceId: string) => ({
+    ...acceptDecision(), criteria: [{ criterionId: 'C1', status: 'met', evidence: '核对快照和验证', evidenceId }],
+  })
+  expect(parseOwnerQualityDecision(decision('F2:L3'), c, now).criteria[0]?.quote).toBe('return value + 1')
+  expect(parseOwnerQualityDecision(decision('F2:3'), c, now).criteria[0]?.quote).toBe('return value + 1')
+  expect(parseOwnerQualityDecision(decision('V1'), c, now).criteria[0]?.quote).toBe('"validationId":"refreshed-run"')
+  for (const evidenceId of ['F1', 'F1:1', 'F2:L2', 'F2:0', 'F2:9', 'F2:2-3', 'V2']) {
+    expect(() => parseOwnerQualityDecision(decision(evidenceId), c, now)).toThrow()
+  }
+  expect(() => parseOwnerQualityDecision(decision('V1'), c, now + 24 * 60 * 60 * 1000)).toThrow()
+})
+
+test('Given Owner明确采用整份独立评审 When 核验 Then 复用有证据的原标准并保留拒绝门槛', async () => {
+  const { OWNER_INCOMPLETE_QUALITY_CRITERIA, parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
+  const c = context(), delivery = c.conversation!.deliveryReview!, review = delivery.review!
+  delivery.qualityDecisionBindingVersion = 2
+  review.criteria.push({ ...review.criteria[0]!, criterion: '保留原源码行为' })
+  const decision = { ...acceptDecision(), criteria: 'reviewer' }
+  const parse = (value: unknown) => parseOwnerQualityDecision(value, c, Date.now(), true)
+  expect(() => parseOwnerQualityDecision(decision, c)).toThrow()
+  expect(parse(decision).criteria).toEqual(review.criteria.map(item => ({ ...item, status: 'met' as const })))
+  expect(() => parse({ ...decision, verdict: 'rework' })).toThrow()
+  expect(() => parse({ ...decision, artifactHash: 'e'.repeat(64) })).toThrow()
+  expect(() => parseOwnerQualityDecision({ ...decision, criteria: [
+    { criterionId: 'C1', status: 'met', evidence: '只核对此项', evidenceId: 'R1' },
+  ] }, c)).toThrow(OWNER_INCOMPLETE_QUALITY_CRITERIA)
+  review.criteria[1]!.quote = '未出现在冻结成果的引文'
+  expect(() => parse(decision)).toThrow('引用不符')
+  review.criteria[1]!.quote = null
+  expect(() => parse(decision)).toThrow()
+})
+
+test('Given新版完整决策将原标准分组重排 When核验 Then按准确名称恢复冻结顺序且拒绝遗漏与重复', async () => {
+  const { parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
+  const c = context(), delivery = c.conversation!.deliveryReview!, review = delivery.review!
+  const revisedCriterion = { ...review.criteria[0]!, criterion: '合计行在标题后且原位置已删除' }
+  review.criteria.unshift(revisedCriterion)
+  const decision = { ...acceptDecision(), criteria: [review.criteria[1]!, revisedCriterion] }
+  delivery.qualityDecisionBindingVersion = 1
+  expect(() => parseOwnerQualityDecision(decision, c)).toThrow('与准确评审/成果不匹配')
+  delivery.qualityDecisionBindingVersion = 2
+  expect(parseOwnerQualityDecision(decision, c).criteria.map(item => item.criterion)).toEqual(review.criteria.map(item => item.criterion))
+  for (const criteria of [[revisedCriterion], [revisedCriterion, revisedCriterion], [revisedCriterion, { ...review.criteria[1]!, criterion: '未知标准' }]]) {
+    expect(() => parseOwnerQualityDecision({ ...decision, criteria }, c)).toThrow()
+  }
+})
+
+test('Given独立评审已确认具体缺陷 When Owner明确返工并引用整份评审 Then保留不满足项并核对修改意见', async () => {
+  const { parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
+  const c = context(), delivery = c.conversation!.deliveryReview!, review = delivery.review!
+  delivery.qualityDecisionBindingVersion = 2
+  review.verdict = 'changes_requested'
+  Object.assign(review.criteria[0]!, { status: 'not_met', quote: null })
+  const findings = [{ severity: 'high', description: '确认时间晚于截止', requestedChange: '从冻结名单移除未按时确认人员' }]
+  const decision = { ...acceptDecision(), verdict: 'rework', criteria: 'reviewer', findings }
+  const parse = (raw: unknown) => parseOwnerQualityDecision(raw, c, Date.now(), true)
+  expect(parse(decision)).toMatchObject({ verdict: 'rework', criteria: [{ status: 'not_met' }], findings })
+  expect(() => parse({ ...decision, findings: [] })).toThrow('具体不满足标准')
+  expect(() => parse({ ...decision, verdict: 'accept' })).toThrow()
+  review.verdict = 'blocked'
+  expect(() => parse(decision)).toThrow()
+})
+
+test('Given 同版浏览器验证失败 When Owner明确返工但错写标准占位词 Then 按冻结评审返工且拒绝通过', async () => {
+  const { parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
+  const c = context(), delivery = c.conversation!.deliveryReview!, review = delivery.review!
+  delivery.qualityDecisionBindingVersion = 2
+  review.verdict = 'changes_requested'
+  Object.assign(review.criteria[0]!, { status: 'not_met', quote: null })
+  const proof = review.validationEvidence![0]!
+  Object.assign(proof, { status: 'failed', exitCode: 1, finishedAt: Date.now() })
+  const findings = [{ severity: 'high', description: '角度模式返回空值', requestedChange: '修复三角运算并重新运行浏览器验证' }]
+  const parse = (raw: unknown, shared = true) => parseOwnerQualityDecision(raw, c, Date.now(), shared)
+  for (const criteria of ['list', 'criteria']) {
+    const rework = { ...acceptDecision(), verdict: 'rework', criteria, findings }
+    expect(parse(rework)).toMatchObject({ verdict: 'rework', criteria: [{ status: 'not_met' }], findings })
+    expect(() => parse({ ...rework, verdict: 'accept', findings: [] })).toThrow()
+    expect(() => parse({ ...rework, findings: [] })).toThrow()
+    expect(() => parse(rework, false)).toThrow()
+    Object.assign(proof, { status: 'passed', exitCode: 0 })
+    expect(() => parse(rework)).toThrow()
+    Object.assign(proof, { status: 'failed', exitCode: 1 })
+  }
+})
+
+test('Given 已核实封闭清单多出签字 When Owner返工但漏填标准 Then 仅恢复原检查结论', async () => {
+  const { parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
+  const c = context(), delivery = c.conversation!.deliveryReview!, review = delivery.review!
+  const content = '一、核对钥匙\n二、检查对讲机\n三、记录巡检\n## 签收栏'
+  delivery.artifact = { schemaVersion: 1, projectId: 'project-1', grantId: 'grant-1', commandId: 'exec-cmd',
+    executionId: 'exec-run', sessionId: 'session', taskId: 'task-1', stepLinkId: 'link-1', sourceHash: 'd'.repeat(64),
+    planRevision: 2, reworkOrdinal: 0, messageId: 'message', content, contentSha256: 'c'.repeat(64),
+    byteLength: Buffer.byteLength(content), capturedAt: 1, integrityHash: 'e'.repeat(64) }
+  delete delivery.developmentArtifact
+  c.goal.goal.objective = '只有三项工作：核对钥匙、检查对讲机、记录巡检。'
+  delivery.qualityDecisionBindingVersion = 2
+  review.verdict = 'changes_requested'
+  Object.assign(review.criteria[0]!, { status: 'not_met', quote: null })
+  const findings = [{ severity: 'high', description: '新增签收栏', requestedChange: '去掉签收栏' }]
+  const decision = { ...acceptDecision(), verdict: 'rework', criteria: [], findings }
+  const parse = (raw: unknown, shared = true) => parseOwnerQualityDecision(raw, c, Date.now(), shared)
+  expect(parse(decision)).toMatchObject({ verdict: 'rework', criteria: [{ status: 'not_met' }], findings })
+  expect(() => parse({ ...decision, verdict: 'accept', findings: [] })).toThrow()
+  expect(() => parse({ ...decision, findings: [] })).toThrow()
+  expect(() => parse(decision, false)).toThrow()
+  c.goal.goal.objective += '请提供签收栏。'
+  expect(() => parse(decision)).toThrow()
+})
+
+test('Given 冻结质量回执携带空备注 When 解析 Then 保留决定并严格核验身份和成果', async () => {
+  const { parseProjectOwnerPlanningResponse } = await import('./project-owner-planning-protocol')
+  const c = context()
+  c.sources.roles = [{ key: 'requirements-analyst', name: '需求分析师', version: '1.0.0', sourceSha256: 'a'.repeat(64), rulesSha256: 'b'.repeat(64) }]
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const delivery = c.conversation!.deliveryReview!
+  delivery.qualityDecisionBindingVersion = 2
+  const review = delivery.review!
+  review.verdict = 'changes_requested'
+  Object.assign(review.criteria[0]!, { status: 'not_met', quote: null })
+  const findings = [{ severity: 'high', description: '空输入未清空换算结果', requestedChange: '清空上次换算结果后显示提示' }]
+  const decision = { verdict: 'rework', reason: '浏览器未通过空输入检查', criteria: 'reviewer', findings }
+  const response = { schemaVersion: 1, kind: 'quality_decision', message: '待系统核验', decision, messageNote: null }
+  const parse = (raw: unknown) => parseProjectOwnerPlanningResponse(raw, c, Date.now(), true, false, false, true)
+  expect(parse(response)).toMatchObject({ kind: 'quality_decision', decision: { verdict: 'rework', findings } })
+  expect(() => parse({ ...response, messageNote: '追加指令' })).toThrow('未知字段')
+  expect(() => parse({ ...response, decision: { ...decision, artifactHash: 'wrong' } })).toThrow()
+  expect(() => parse({ ...response, projectId: 'wrong' })).toThrow()
+})
+
+test('Given 浏览器证据缺失 When Owner采用原评审并写出协议别名 Then 保留真实结论且禁止验收', async () => {
+  const { isOwnerEvidenceGapRework, parseOwnerQualityDecision } = await import('./project-owner-quality-protocol')
+  const c = context(), delivery = c.conversation!.deliveryReview!, review = delivery.review!
+  delivery.qualityDecisionBindingVersion = 2
+  review.verdict = 'blocked'
+  Object.assign(review.criteria[0]!, { status: 'not_verified', quote: null })
+  const original = acceptDecision()
+  const decision = { ...original, criteria: 'reviewer', reason: '还缺浏览器证据' }
+  const findings = [{ severity: 'major', description: '现有回执仅证明文件存在', requestedChange: '基于当前冻结版本运行浏览器验证' }]
+  const parse = (raw: unknown) => parseOwnerQualityDecision(raw, c, Date.now(), true)
+  expect(parse({ ...decision, verdict: 'blocked' })).toMatchObject({ verdict: 'escalate', criteria: [{ status: 'not_verified' }] })
+  const rework = parse({ ...decision, verdict: 'rework', findings })
+  expect(isOwnerEvidenceGapRework(rework)).toBe(true)
+  expect(rework.findings[0]?.severity).toBe('high')
+  expect(() => parse({ ...decision, verdict: 'accept' })).toThrow()
+  expect(() => parse({ ...decision, verdict: 'rework', artifactHash: 'wrong', findings })).toThrow()
+})

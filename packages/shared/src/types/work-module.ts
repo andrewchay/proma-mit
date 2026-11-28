@@ -202,6 +202,8 @@ export const PROJECT_IPC_CHANNELS = {
   LAUNCH_OWNER_PREPARED_EXECUTION: 'project:launch-owner-prepared-execution',
   SAVE_OWNER_EXECUTION_START_INTENT: 'project:save-owner-execution-start-intent',
   RESUME_OWNER_EXECUTION_START_INTENT: 'project:resume-owner-execution-start-intent',
+  REFRESH_OWNER_DELIVERY_BROWSER: 'project:refresh-owner-delivery-browser',
+  RETRY_OWNER_QUALITY_DECISION: 'project:retry-owner-quality-decision',
   RETRY_OWNER_MARKDOWN_REVIEW: 'project:retry-owner-markdown-review',
   SUPPLEMENT_OWNER_COUNTER_REVIEW: 'project:supplement-owner-counter-review',
   RECHECK_OWNER_DEVELOPMENT_WORKSPACE: 'project:recheck-owner-development-workspace',

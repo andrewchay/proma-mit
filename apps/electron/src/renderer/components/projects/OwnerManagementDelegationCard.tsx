@@ -6,7 +6,10 @@ const usd = (micros: number): string => `$${(micros / 1000000).toFixed(2)}`
 const attentionReason: Record<OwnerManagementAttentionCheck['reason'], string> = {
   missing_execution: '找不到对应的执行记录', missing_outcome: '原请求没有保存可验证的处理结论',
   non_continueable_outcome: '原请求结论不是可继续的回应/澄清/提案', missing_receipt: '缺少原请求运行回执',
-  missing_usage: '运行回执没有可验证的模型用量', invalid_usage: '运行回执中的模型用量不完整或格式无效', output_limit: '模型输出达到本次请求上限，未形成完整结果',
+  missing_usage: '运行回执没有可验证的模型用量', invalid_usage: '运行回执中的模型用量不完整或格式无效', output_limit: '本次模型输出达到或超过授权上限',
+}
+const phaseLabel: Record<NonNullable<OwnerManagementAttentionCheck['phase']>, string> = {
+  planning: '制定方案', assignment: '安排团队', conversation: '项目对话', quality_decision: '成果验收',
 }
 const executionLabel: Record<OwnerManagementAttentionCheck['executionStatus'], string> = {
   queued: '排队中', running: '运行中', completed: '已结束', failed: '失败', cancelled: '已取消', stale: '状态过期', missing: '记录缺失',
@@ -21,6 +24,7 @@ export function OwnerManagementDelegationCard({ projectId, taskId }: { projectId
   const view = useMemo(() => atom(get => getOwnerDelegationEditor(get(ownerDelegationEditorsAtom), subject)), [subject])
   const editor = useAtomValue(view), load = useSetAtom(loadOwnerDelegationAtom), edit = useSetAtom(editOwnerDelegationAtom), act = useSetAtom(actOwnerDelegationAtom)
   const [runCheck, setRunCheck] = useState<{ subjectKey: string; status: 'checking' | 'done' } | null>(null)
+  const [retryStatus, setRetryStatus] = useState<{ subjectKey: string; executionId: string; busy: boolean; submitted?: boolean; message?: string; failedValidationId?: string } | null>(null)
   const checkingRun = runCheck?.subjectKey === subjectKey && runCheck.status === 'checking'
   const runCheckDone = runCheck?.subjectKey === subjectKey && runCheck.status === 'done'
   useEffect(() => {
@@ -37,11 +41,16 @@ export function OwnerManagementDelegationCard({ projectId, taskId }: { projectId
   const exhausted = editor.view?.state === 'exhausted'
   const budgetIncreaseEntered = !exhausted || (current && Math.round(Number(editor.budgetUsd) * 1_000_000) > current.maxCostMicros)
   const attention = editor.view?.attentionCheck
+  const retryExecutionId = attention?.retryExecutionId
+  const currentRetry = retryStatus?.subjectKey === subjectKey && retryStatus.executionId === retryExecutionId ? retryStatus : null
+  const retryMessage = currentRetry?.message ?? (retryStatus?.subjectKey === subjectKey && retryStatus.submitted && !retryExecutionId ? retryStatus.message : undefined)
   const recovery = editor.view?.initialPlanningRecovery
   const canOffer = Boolean(recovery) || !current || editor.view?.state === 'revoked' || editor.view?.state === 'expired' || stale || exhausted
   const active = Boolean(current && editor.view?.state === 'active')
-  const title = recovery ? '恢复项目规划' : needsRunReconciliation ? 'Owner 已暂停：需要核对上次请求' : stale ? 'Owner 已暂停：授权范围需要重新确认' : exhausted ? 'Owner 已暂停，等待项目预算决定' : '让 Owner 在对话中持续推进'
-  const description = recovery
+  const title = recovery ? '恢复项目规划' : needsRunReconciliation ? attention?.phase ? `需要核对${phaseLabel[attention.phase]}` : 'Owner 已暂停：需要核对上次请求' : stale ? 'Owner 已暂停：授权范围需要重新确认' : exhausted ? 'Owner 已暂停，等待项目预算决定' : '让 Owner 在对话中持续推进'
+  const description = attention?.phase === 'quality_decision' && attention.finishReason === 'length'
+    ? '成果验收达到输出上限，未能形成完整结论。原成果和独立评审记录仍可查阅。请核对下方的验收请求及费用记录。'
+    : recovery
     ? '上次规划没有生成方案，费用还未确认。可按已保存的项目目标授权重新规划一次，原请求的费用预留仍会计入预算。'
     : needsRunReconciliation
     ? '上一条模型请求尚未核对完成，Owner 已暂停并保留你的新消息。重新确认授权范围不会解除这次暂停，也不会重发请求；请先核对下方的原请求证据。'
@@ -67,7 +76,31 @@ export function OwnerManagementDelegationCard({ projectId, taskId }: { projectId
       <p className="text-xs text-muted-foreground">模型 {current.modelId} · 预算上限 {usd(current.maxCostMicros)} · 已预留 {usd(editor.view?.reservedCostMicros ?? 0)} · 有效至 {new Date(current.expiresAt).toLocaleString()}</p>
       <p className="text-xs text-muted-foreground">预留金额按保守上界计算，不是实际账单；预算用尽或请求/费用状态不明时会暂停核对，不自动重试。</p>
       {stale && <button type="button" className="rounded-lg bg-background px-3 py-2 text-sm shadow-sm" disabled={editor.busy} onClick={() => void act({ subject, action: 'preview' })}>重新核对当前授权</button>}
-      {needsRunReconciliation && <div className="space-y-3 rounded-lg bg-amber-500/10 p-3" role="alert"><p className="text-sm">{recovery ? '核对原请求后，可在下方确认新的规划请求。' : '当前不会处理新消息或重发模型请求。请先核对原请求是否已产生用量；刷新只读取本地最新状态，不会发送请求、释放预留或更改授权。'}</p>{attention && <div className="space-y-1 rounded-md bg-background/70 p-3 text-xs"><p className="font-medium">原请求核对信息</p><p>暂停原因：{attentionReason[attention.reason]}</p><p>本地执行：{executionLabel[attention.executionStatus]} · Owner结论：{outcomeLabel[attention.outcomeState]}</p>{attention.outcomeDetail && <p>处理详情：{attention.outcomeDetail}</p>}<p>请求时间：{attention.requestStartedAt ? new Date(attention.requestStartedAt).toLocaleString() : '未知'}{attention.receiptCapturedAt ? ` · 回执时间：${new Date(attention.receiptCapturedAt).toLocaleString()}` : ''}</p>{attention.modelId && <p>模型：{attention.modelId}</p>}<p>模型用量：{attention.inputTokens !== null && attention.outputTokens !== null ? `输入 ${attention.inputTokens} / 输出 ${attention.outputTokens} tokens` : '未知或未报告'}</p><p>费用证据：{attention.costSource === 'runtime_reported' && attention.costUsd !== null ? `Runtime报告 ${usd(Math.round(attention.costUsd * 1000000))}（不是服务商账单核验）` : attention.costSource === 'unknown' ? '未知，尚无可信成本回执' : '没有成本回执'}</p><p>服务商请求编号：{attention.providerRequestId ?? '本地没有保存服务商请求编号'}{attention.providerResponseId ? ` · 响应编号：${attention.providerResponseId}` : ''}</p><p>这些是应用本地保存的证据，不代表已确认账单。若要核对实际用量，可在服务商账单中按请求编号（如有）、模型与时间查找；{recovery ? '外部账单的核对结果可留作对照。' : '当前界面没有将外部账单核对结果写回并恢复授权的操作。'}</p></div>}<button type="button" className="rounded-lg bg-background px-3 py-2 text-sm shadow-sm" disabled={editor.busy || checkingRun} onClick={() => { setRunCheck({ subjectKey, status: 'checking' }); void load(subject).finally(() => setRunCheck({ subjectKey, status: 'done' })) }}>{checkingRun ? '正在读取本地状态…' : '重新读取上次请求状态'}</button>{checkingRun && <p role="status" aria-live="polite" className="text-xs">正在读取已保存的请求记录；不会联系模型或服务商。</p>}{runCheckDone && !checkingRun && !editor.error && <p role="status" aria-live="polite" className="text-xs">已重新读取本地状态；以上为当前保存的原请求证据，不会查询账单或解除暂停。</p>}</div>}
+      {needsRunReconciliation && <div className="space-y-3 rounded-lg bg-amber-500/10 p-3" role="alert"><p className="text-sm">{recovery ? '核对原请求后，可在下方确认新的规划请求。' : '当前不会处理新消息或重发模型请求。请先核对原请求是否已产生用量；刷新只读取本地最新状态，不会发送请求、释放预留或更改授权。'}</p>{attention && <div className="space-y-1 rounded-md bg-background/70 p-3 text-xs"><p className="font-medium">原请求核对信息</p>{attention.phase && <p>发生阶段：{phaseLabel[attention.phase]}</p>}<p>暂停原因：{attention.finishReason === 'length' ? '模型输出达到本次请求上限，未形成完整结果' : attentionReason[attention.reason]}</p><p>本地执行：{executionLabel[attention.executionStatus]} · Owner结论：{outcomeLabel[attention.outcomeState]}</p>{attention.outcomeDetail && <p>处理详情：{attention.outcomeDetail}</p>}<p>请求时间：{attention.requestStartedAt ? new Date(attention.requestStartedAt).toLocaleString() : '未知'}{attention.receiptCapturedAt ? ` · 回执时间：${new Date(attention.receiptCapturedAt).toLocaleString()}` : ''}</p>{attention.modelId && <p>模型：{attention.modelId}</p>}<p>模型用量：{attention.inputTokens !== null && attention.outputTokens !== null ? `输入 ${attention.inputTokens} / 输出 ${attention.outputTokens} tokens` : '未知或未报告'}</p><p>费用证据：{attention.costSource === 'runtime_reported' && attention.costUsd !== null ? `Runtime报告 ${usd(Math.round(attention.costUsd * 1000000))}（不是服务商账单核验）` : attention.costSource === 'unknown' ? '未知，尚无可信成本回执' : '没有成本回执'}</p><p>服务商请求编号：{attention.providerRequestId ?? '本地没有保存服务商请求编号'}{attention.providerResponseId ? ` · 响应编号：${attention.providerResponseId}` : ''}</p><p>这些是应用本地保存的证据，不代表已确认账单。若要核对实际用量，可在服务商账单中按请求编号（如有）、模型与时间查找；{recovery ? '外部账单的核对结果可留作对照。' : '当前界面没有将外部账单核对结果写回并恢复授权的操作。'}</p></div>}<button type="button" className="rounded-lg bg-background px-3 py-2 text-sm shadow-sm" disabled={editor.busy || checkingRun} onClick={() => { setRunCheck({ subjectKey, status: 'checking' }); void load(subject).finally(() => setRunCheck({ subjectKey, status: 'done' })) }}>{checkingRun ? '正在读取本地状态…' : '重新读取上次请求状态'}</button>{checkingRun && <p role="status" aria-live="polite" className="text-xs">正在读取已保存的请求记录；不会联系模型或服务商。</p>}{runCheckDone && !checkingRun && !editor.error && <p role="status" aria-live="polite" className="text-xs">已重新读取本地状态；以上为当前保存的原请求证据，不会查询账单或解除暂停。</p>}</div>}
+      {retryExecutionId && window.electronAPI.paa.project.retryOwnerQualityDecision && <section className="space-y-2" aria-label="继续成果验收">
+        <p className="text-xs text-muted-foreground">确认后，在现有项目额度内预留最多 {usd(current.perRequestCeilingMicros)}，沿用原成果和独立评审。原浏览器验证过期时，先对同一成果补跑已授权的加载检查，再验收一次。原费用预留继续计入预算。</p>
+        <button type="button" className="rounded-lg bg-background px-3 py-2 shadow-sm" disabled={currentRetry?.busy || currentRetry?.submitted}
+          onClick={() => {
+            const failedValidationId = currentRetry?.failedValidationId
+            const pending = { subjectKey, executionId: retryExecutionId, busy: true, failedValidationId }
+            setRetryStatus(pending)
+            const settle = (result: { message: string; submitted?: boolean; failedValidationId?: string }) => {
+              setRetryStatus(current => current === pending ? { ...pending, ...result, busy: false } : current)
+            }
+            void window.electronAPI.paa.project.retryOwnerQualityDecision({ ...subject, executionId: retryExecutionId, ...(failedValidationId ? { failedValidationId } : {}) })
+              .then(response => {
+                if (!response.ok) settle({ message: response.error.message })
+                else if ('failedValidationId' in response.value) settle({
+                  failedValidationId: response.value.failedValidationId,
+                  message: '浏览器检查已结束且失败。可明确确认重试这项检查一次。',
+                })
+                else settle({ submitted: true, failedValidationId: undefined, message: '已保存续验请求，等待处理。' })
+              })
+              .catch(() => settle({ message: '续验请求保存失败，请重新核对项目状态。' }))
+              .finally(() => void load(subject))
+          }}>{currentRetry?.failedValidationId ? '确认重试浏览器检查' : '确认并继续成果验收'}</button>
+      </section>}
+      {retryMessage && <p role="status">{retryMessage}</p>}
       {(!current.conversationEnabled || !current.qualityDecisionEnabled || !current.fullDeliveryReviewEnabled || !current.executionFollowupEnabled) && <p className="text-xs">当前委托不包含所有持续对话、完整成果检查和主动跟进能力；启用缺少的范围需要重新确认。</p>}
       {editor.view?.state !== 'revoked' && <button type="button" className="text-xs underline" disabled={editor.busy} onClick={() => void act({ subject, action: 'revoke' })}>撤销后续管理授权</button>}
     </div>}

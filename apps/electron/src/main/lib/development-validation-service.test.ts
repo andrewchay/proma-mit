@@ -448,3 +448,23 @@ let package = Package(name: "Example", targets: [.executableTarget(name: "Exampl
     await expect(runOwnerDevelopmentValidations(randomUUID())).rejects.toThrow('准确且已结算的Executor命令')
   })
 })
+
+test('Given 验证浏览器因本地资源超限退出 When 保存并回读 Then 保留未完成的证据且不伪造页面行为失败', async () => {
+  const { setOwnerRuntimeBrowserRunner } = await import('./owner-runtime-browser-verifier')
+  const w = fixture()
+  const task = store.getTask(w.taskId)!
+  const command = 'browser:html.loads'
+  writeFileSync(join(w.worktreePath, 'src', 'index.html'), '<!doctype html><p>验证</p>')
+  store.updateTask(w.taskId, { developmentScope: { ...task.developmentScope!, targetPaths: ['src/index.html'], verificationCommands: [command] } })
+  submitDevelopmentDelivery(w.executionId)
+  setOwnerRuntimeBrowserRunner(async input => ({
+    relativePath: input.filePath, durationMs: 2000, timedOut: true,
+    checks: [{ id: 'html.loads', title: '浏览器加载', status: 'failed', detail: '验证浏览器超过本地内存预算，已中止' }],
+  }))
+  try {
+    const result = await runDevelopmentValidation(w.taskId, command)
+    expect(result).toMatchObject({ status: 'timeout', exitCode: null, timedOut: true })
+    const receipt = readDevelopmentValidationEvidence(w.taskId, w.executionId, result.id).result
+    expect(receipt).toMatchObject({ status: 'timeout', exitCode: null, checks: [{ detail: expect.stringContaining('本地内存预算') }] })
+  } finally { setOwnerRuntimeBrowserRunner(null) }
+})

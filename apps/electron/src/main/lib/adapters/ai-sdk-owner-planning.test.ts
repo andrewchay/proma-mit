@@ -17,12 +17,19 @@ let release: (() => void) | undefined
 let block = false
 const source = { binding: { modelId: 'bound-model', runtime: 'ai-sdk', workspaceId: 'ws', channelId: 'channel' }, request: { systemPrompt: 'authority-system', userPrompt: 'authority-user' }, link: { maxOutputTokens: 8192 }, sessionId: 'owner' }
 mock.module('electron', () => buildElectronMock())
-mock.module('../project-owner-planning-source', () => ({ resolveOwnerPlanningSession: (id: string) => id === 'owner' ? source : null }))
+mock.module('../project-owner-planning-source', () => ({
+  OwnerPlanningSourceChangedError: class extends Error {},
+  resolveOwnerPlanningTask: () => { throw new Error('适配器不应解析 Owner 任务') },
+  readOwnerPlanningSnapshot: () => { throw new Error('适配器不应读取 Owner 快照') },
+  resolveOwnerPlanningSession: (id: string) => id === 'owner' ? source : null,
+}))
 // 本文件只验证Owner管理回合，不加载员工Reviewer的完整业务依赖。
 mock.module('../project-owner-reviewer-protocol-repair', () => ({ isOwnerReviewerProtocolRepairSession: () => false, ownerReviewerProtocolCorrection: () => null }))
 mock.module('../controlled-provider-boundary', () => ({ isControlledProviderSession: () => true, createControlledProviderFetch: () => globalThis.fetch, assertControlledPermissionChange: () => {} }))
-mock.module('../channel-manager', () => ({ getChannelById: () => ({ provider: 'openai', baseUrl: 'https://example.invalid/v1' }), decryptApiKey: () => 'fake' }))
-mock.module('../agent-workspace-manager', () => ({ getAgentWorkspace: () => ({}), getAgentWorkspaceCwd: () => dir, getWorkspaceSkills: () => { enriched++; return [] } }))
+const channelModule = await import('../channel-manager')
+mock.module('../channel-manager', () => ({ ...channelModule, getChannelById: () => ({ provider: 'openai', baseUrl: 'https://example.invalid/v1' }), decryptApiKey: () => 'fake' }))
+const workspaceModule = await import('../agent-workspace-manager')
+mock.module('../agent-workspace-manager', () => ({ ...workspaceModule, getAgentWorkspace: () => ({}), getAgentWorkspaceCwd: () => dir, getWorkspaceSkills: () => { enriched++; return [] } }))
 mock.module('../proxy-settings-service', () => ({ getEffectiveProxyUrl: async () => undefined }))
 mock.module('../proxy-fetch', () => ({ getFetchFn: () => globalThis.fetch }))
 mock.module('../project-pilot-request-exit', () => ({ PILOT_DEFAULT_PRICE_EVIDENCE_ID: 'zai-glm-5.3-flash-2026-09-28', resolvePilotBudgetForSession: () => { pilot++; return undefined }, buildPilotRequestRuntime: () => { pilot++; throw new Error('Pilot forbidden') } }))

@@ -41,9 +41,21 @@ test('Given 等待中且下一动作是人工决策 When 生成项目行 Then �
   expect(summary).toMatchObject({ stage: '等待中', waitingOn: '你', needsUser: true, nextAction: '等待权威依赖解除' })
 })
 
+test('Given 后台已有待回答的新问题 When 项目尚未派工或此前已交付 Then 项目状态优先提醒回答', () => {
+  for (const schedule of [{ state: 'no_grant' }, { state: 'waiting', deliveryPublished: true as const }]) {
+    expect(summarizeOwnerProjectRow([], undefined, { ...schedule, waitingQuestion: {} }))
+      .toEqual({ stage: '等待中', waitingOn: '你', needsUser: true, nextAction: '在 Owner 对话回答问题' })
+  }
+})
+
 test('Given 等待中但下一动作不是人工决策 When 生成项目行 Then 不算需要用户处理', () => {
   const summary = summarizeOwnerProjectRow([], undefined, { state: 'waiting', reason: '技术评审通过，等待业务验收', nextAction: 'await_business_acceptance' })
   expect(summary).toMatchObject({ stage: '等待中', waitingOn: '系统核对', needsUser: false })
+})
+
+test('Given 当前授权的成果已发布 When 生成项目行 Then 显示已交付并结束系统等待', () => {
+  const summary = summarizeOwnerProjectRow([], undefined, { state: 'waiting', nextAction: 'none', deliveryPublished: true })
+  expect(summary).toEqual({ stage: '已交付', waitingOn: '', needsUser: false, nextAction: '在项目对话查看成果' })
 })
 
 test('Given 没有调度状态 When 生成项目行 Then 说明尚未建立授权且不打扰用户', () => {

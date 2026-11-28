@@ -196,6 +196,6 @@ export function ProjectOwnerPlanPanel({ projectId, taskId, conversational = fals
     {editor.historyError && <p className="mt-2 text-sm text-destructive" role="alert">历史：{editor.historyError}</p>}
     {editor.historyLoaded && <div className="mt-4 max-h-[40vh] space-y-3 overflow-y-auto" aria-label="计划历史"><p className="text-xs text-muted-foreground">历史仅供查阅，不代表当前目标或来源已确认。</p>{editor.history.length ? editor.history.map(plan => <details key={plan.revision} className="rounded-lg bg-muted/40 p-3"><summary className="cursor-pointer text-sm">历史计划 v{plan.planVersion} · {stateLabel(plan.state)}</summary><div className="mt-3"><PlanFacts plan={plan} /></div></details>) : <p className="text-sm">暂无历史版本</p>}</div>}
     </details>}
-    {conversational ? (snapshot?.state === 'proposed' || snapshot?.state === 'confirmed') && <ProjectOwnerExecutionConversation projectId={projectId} taskId={taskId} ownerConversation /> : <ProjectOwnerExecutionConversation projectId={projectId} taskId={taskId} />}
+    {conversational ? (snapshot?.state === 'proposed' || snapshot?.state === 'confirmed') && <ProjectOwnerExecutionConversation projectId={projectId} taskId={taskId} ownerConversation showBlockerNotice={false} /> : <ProjectOwnerExecutionConversation projectId={projectId} taskId={taskId} />}
   </section>
 }

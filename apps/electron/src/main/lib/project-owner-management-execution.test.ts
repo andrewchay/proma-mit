@@ -142,7 +142,7 @@ test('Given员工交付及明确跟进委托 When离页后台运行 Then准确�
     await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'reply'))
     expect(getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'execution_observation')).toBe(false)
     expect(management.getOwnerManagementView(f.project.id).messages.some(item => item.kind === 'management_progress' && item.content.includes('员工已完成本轮工作'))).toBe(true)
-    expect(() => parseProjectOwnerPlanningResponse({ ...response, kind: 'plan_proposal' }, source.context)).toThrow('只允许')
+    expect(() => parseProjectOwnerPlanningResponse({ ...response, kind: 'plan_proposal', proposal: {} }, source.context)).toThrow('只允许')
     const assignmentLink = (store.getProjectDb().prepare("SELECT planning_task_id FROM project_owner_planning_links WHERE project_id=? AND json_extract(payload, '$.purpose')='owner_execution_assignment' ORDER BY rowid DESC LIMIT 1").get(f.project.id) as { planning_task_id: string }).planning_task_id
     await until(() => store.listAgentExecutionsByEntity('task', assignmentLink).length > 0)
     expect(planning.readOwnerPlanningSnapshot(assignmentLink)?.link.purpose).toBe('owner_execution_assignment')

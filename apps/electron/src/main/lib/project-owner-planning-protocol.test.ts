@@ -17,6 +17,43 @@ function proposal(c: ProjectOwnerPlanningContext) {
     proposal: { summary: '形成定位简报', assumptions: ['受众待验证'], risks: [], steps: [{ key: 'brief', title: '需求整理', outcome: '需求简报', acceptanceCriteria: ['范围明确'], dependencies: [], roleKey: 'requirements-analyst', deliveryKind: 'text' as const }] } }
 }
 
+test('Given 主流程的计划字段放错层级 When 本地解析 Then 只恢复唯一结构并严格核对来源和绑定', async () => {
+  const { parseProjectOwnerPlanningResponse } = await import('./project-owner-planning-protocol')
+  const c = context()
+  const raw = proposal(c)
+  const { steps, ...summary } = raw.proposal
+  const criteriaTrace = [{ key: 'goal', source: 'objective', sourceIndex: 0, sourceText: c.goal.goal.objective,
+    criticality: 'critical', stepKey: steps[0]!.key, verification: 'manual_review' }]
+  const expected = parseProjectOwnerPlanningResponse({ ...raw, proposal: { ...raw.proposal, criteriaTrace } }, c)
+  const displaced = { ...raw, proposal: summary, steps, criteriaTrace }
+  expect(parseProjectOwnerPlanningResponse(displaced, c)).toEqual(expected)
+  const nested = { ...raw, proposal: { ...summary, steps: [{ ...steps[0]!, criteriaTrace }] } }
+  expect(parseProjectOwnerPlanningResponse(nested, c)).toEqual(expected)
+  expect(() => parseProjectOwnerPlanningResponse({ ...nested, criteriaTrace }, c)).toThrow('重复计划字段')
+  expect(() => parseProjectOwnerPlanningResponse({ ...nested, proposal: { ...summary, steps: [{ ...steps[0]!, criteriaTrace: [{ ...criteriaTrace[0], stepKey: 'other-step' }] }] } }, c)).toThrow('所属步骤不符')
+  expect(parseProjectOwnerPlanningResponse({ ...raw, proposal: { ...raw.proposal, criteriaTrace, sourceReferences: [] } }, c)).toEqual(expected)
+  const { acceptanceCriteria, ...step } = steps[0]!
+  const withWireExtras = { ...raw, note: '尚未执行任何步骤，本计划待用户确认。', proposal: { ...summary,
+    steps: [{ ...step, 'acceptanceCriteria [': acceptanceCriteria }], criteriaTrace, needsReview: true } }
+  expect(parseProjectOwnerPlanningResponse(withWireExtras, c)).toEqual(expected)
+  expect(parseProjectOwnerPlanningResponse({ ...withWireExtras, note: null, meta: { reason: 'per_user_request_in_scope' } }, c)).toEqual(expected)
+  expect(() => parseProjectOwnerPlanningResponse({ ...withWireExtras, meta: { reason: 'approved' } }, c)).toThrow('未知字段')
+  expect(() => parseProjectOwnerPlanningResponse({ ...withWireExtras, meta: { reason: 'per_user_request_in_scope', allowWrite: true } }, c)).toThrow()
+  expect(() => parseProjectOwnerPlanningResponse({ ...withWireExtras, note: '已批准执行。' }, c)).toThrow('未知字段')
+  expect(() => parseProjectOwnerPlanningResponse({ ...withWireExtras, proposal: { ...withWireExtras.proposal, needsReview: false } }, c)).toThrow('未知字段')
+  expect(() => parseProjectOwnerPlanningResponse({ ...withWireExtras, proposal: { ...withWireExtras.proposal,
+    steps: [{ ...withWireExtras.proposal.steps[0], acceptanceCriteria }] } }, c)).toThrow('重复计划字段')
+  expect(() => parseProjectOwnerPlanningResponse({ ...displaced, proposal: raw.proposal }, c)).toThrow('重复计划字段')
+  expect(parseProjectOwnerPlanningResponse({ ...raw, needs_clarification: null, steps: [], proposal: {
+    ...raw.proposal, stepsNote: null, criteriaTrace,
+  } }, c)).toEqual(expected)
+  expect(() => parseProjectOwnerPlanningResponse({ ...raw, needs_clarification: { question: '确认费用' } }, c)).toThrow('未知字段')
+  expect(() => parseProjectOwnerPlanningResponse({ ...raw, proposal: { ...raw.proposal, stepsNote: '跳过核对' } }, c)).toThrow('未知字段')
+  expect(() => parseProjectOwnerPlanningResponse({ ...displaced, contextFingerprint: 'other' }, c)).toThrow('目标或资料版本不匹配')
+  expect(() => parseProjectOwnerPlanningResponse({ ...displaced, criteriaTrace: [{ ...criteriaTrace[0], sourceText: '伪造的原要求' }] }, c)).toThrow('追溯来源原文与目标不符')
+  expect(() => parseProjectOwnerPlanningResponse({ ...raw, proposal: { ...raw.proposal, sourceReferences: [{ path: 'other.md' }] } }, c)).toThrow('未知字段')
+})
+
 test('Given 已存目标与资料快照 When 构建规划请求 Then data-only、不索路径、未调用模型或创建授权', async () => {
   const protocol = await import('./project-owner-planning-protocol')
   const c = context()
@@ -30,6 +67,12 @@ test('Given 已存目标与资料快照 When 构建规划请求 Then data-only�
   expect(request.systemPrompt).toContain('acceptanceCriteria为1–2条')
   expect(request.systemPrompt).toContain('每个对象属性名后必须使用冒号')
   expect(request.systemPrompt).toContain('"acceptanceCriteria":["明确的验收标准"]')
+  expect(request.systemPrompt).toContain('所有需求追溯统一放在 proposal.criteriaTrace')
+  const example = request.systemPrompt.split('\n').map(line => {
+    try { return JSON.parse(line) } catch { return null }
+  }).find(value => value?.kind === 'plan_proposal')
+  expect(example?.proposal.criteriaTrace[0]?.stepKey).toBe(example?.proposal.steps[0]?.key)
+  expect(example?.proposal.steps[0]).not.toHaveProperty('criteriaTrace')
   expect(request.systemPrompt).toContain('roleKey只能逐字使用本次资料roles数组中已有的key')
   expect(request.systemPrompt).toContain('可用key：["requirements-analyst"]')
   expect(request.userPrompt).toContain(c.goal.goal.objective)
@@ -42,6 +85,8 @@ test('Given 规划把同一源码的缺陷清单交给文本员工 When 入账 T
   const previous = protocol.buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, true, false)
   const recover = (request: typeof current) => protocol.resolveProjectOwnerPlanningRequest(c, createHash('sha256').update(JSON.stringify(request)).digest('hex'))
   expect(recover(previous)).toEqual(previous)
+  const priorFilePrompt = protocol.buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, false)
+  expect(recover(priorFilePrompt)).toEqual(priorFilePrompt)
   expect(recover(current)).toEqual(current)
   expect(protocol.usesOwnerSourceInspectionRouting(previous)).toBe(false)
   expect(protocol.usesOwnerSourceInspectionRouting(current)).toBe(true)
@@ -132,6 +177,47 @@ test('Given反馈绑定准确成果 When Owner 提交修订方案 Then逐项评�
   expect(request.systemPrompt).toContain(artifactHash)
 })
 
+test('Given逐份验收的两份文本 When只修订后一步 Then保留已交付步骤、原依赖与逐份标准', async () => {
+  const protocol = await import('./project-owner-planning-protocol'), c = context()
+  const phrase = '两份文本各自完整可复制'
+  c.goal.goal.objective = phrase
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const original = proposal(c).proposal
+  const left = { ...original.steps[0]!, key: 'checklist', title: '器材清单', deliveryKind: 'text' as const, dependencies: [] }
+  const right = { ...left, key: 'notice', title: '归还通知', dependencies: ['checklist'] }
+  const scope = { source: 'objective' as const, sourceIndex: 0, sourceText: phrase, criticality: 'critical' as const,
+    verification: 'manual_review' as const, verificationScope: 'own_text' as const, assumptions: [] }
+  const leftTrace = { ...scope, key: 'scope-left', stepKey: left.key }
+  const rightTrace = { ...scope, key: 'scope-right', stepKey: right.key }
+  const messageId = '3'.repeat(64), throughMessageId = '4'.repeat(64)
+  const content = '归还通知原文', artifactHash = createHash('sha256').update(content).digest('hex')
+  c.conversation = { conversationId: 'conversation', throughMessageId, historyThroughMessageId: throughMessageId,
+    messages: [{ id: throughMessageId, role: 'user', content: '只改归还通知，清单保留' }], truncated: false, tasks: [], tasksTruncated: false,
+    currentPlan: { revision: 2, state: 'confirmed', proposal: { ...original, projectId: c.goal.goal.projectId, goalVersion: c.goal.goal.goalVersion,
+      mode: 'proposal_only', steps: [left, right], criteriaTrace: [leftTrace, rightTrace] } },
+    deliveryFeedbackBindingVersion: 1,
+    deliveredArtifacts: { version: 2, messageId, planVersion: 1, items: [
+      { stepKey: left.key, title: left.title, artifactHash: 'a'.repeat(64), acceptanceCriteria: ['清单准确'] },
+      { stepKey: right.key, title: right.title, artifactHash, acceptanceCriteria: ['控制在 120 字内'] },
+    ] },
+    deliveryFeedback: { version: 1, messageId, stepKey: right.key, artifactHash, title: right.title,
+      acceptanceCriteria: ['控制在 120 字内'], content, ownerDecision: '验收', reviewerSummary: '已检查' },
+  }
+  const revision = { ...right, key: 'only-revision', outcome: '只输出通知正文', dependencies: [] }
+  const assessment = { summary: '只改选中的通知', changes: [{ criterion: '控制在 120 字内', disposition: 'addressed', proposedChange: '按全文计数' }],
+    authorizationImpact: 'within_confirmed_boundary', authorizationRationale: '只精简通知正文' }
+  const model = { ...proposal(c), proposal: { ...original, steps: [revision],
+    criteriaTrace: [{ ...rightTrace, stepKey: revision.key }], deliveryFeedbackAssessment: assessment } }
+  const parsed = protocol.parseProjectOwnerPlanningResponse(model, c)
+  expect(parsed).toMatchObject({ kind: 'plan_proposal', proposal: {
+    steps: [left, { ...revision, key: right.key, dependencies: right.dependencies }], criteriaTrace: [leftTrace, rightTrace],
+    deliveryFeedbackAssessment: { messageId, artifactHash, stepKey: right.key },
+  } })
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...model, proposal: { ...model.proposal, deliveryFeedbackAssessment: undefined } }, c)).toThrow('成果反馈影响评估')
+  c.conversation.deliveredArtifacts!.items.shift()
+  expect(() => protocol.parseProjectOwnerPlanningResponse(model, c)).toThrow('逐份文本核验必须由每个文本交付步骤分别承接')
+})
+
 test('Given宿主绑定成果反馈 When 模型不回填标识 Then 主进程补齐身份且拒绝自带身份', async () => {
   const protocol = await import('./project-owner-planning-protocol'), c = context()
   const content = '已验收成果正文', artifactHash = createHash('sha256').update(content, 'utf8').digest('hex'), messageId = '3'.repeat(64)
@@ -146,6 +232,20 @@ test('Given宿主绑定成果反馈 When 模型不回填标识 Then 主进程补
     authorizationImpact: 'within_confirmed_boundary' as const, authorizationRationale: '在当前确认范围内；旧执行许可不沿用' } } }
   const parsed = protocol.parseProjectOwnerPlanningResponse(bound, c)
   expect(parsed).toMatchObject({ kind: 'plan_proposal', proposal: { deliveryFeedbackAssessment: { messageId, artifactHash } } })
+  const { deliveryFeedbackAssessment, steps: boundSteps, ...proposalBody } = bound.proposal
+  const misplacedAssessment = { ...bound, proposal: proposalBody, steps: boundSteps, deliveryFeedbackAssessment }
+  expect(protocol.parseProjectOwnerPlanningResponse(misplacedAssessment, c)).toEqual(parsed)
+  expect(() => protocol.parseProjectOwnerPlanningResponse(misplacedAssessment, context())).toThrow('未知字段')
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...misplacedAssessment, proposal: { ...proposalBody, deliveryFeedbackAssessment } }, c)).toThrow('重复计划字段')
+  const displaced = { key: 'goal-exact', source: 'acceptance', sourceIndex: 0, sourceText: c.goal.goal.objective,
+    criticality: 'critical', stepKey: base.proposal.steps[0]!.key, verification: 'manual_review' }
+  const misplacedRevision = { ...bound, proposal: { ...bound.proposal, criteriaTrace: [displaced] } }
+  expect(protocol.parseProjectOwnerPlanningResponse(misplacedRevision, c)).toMatchObject({
+    kind: 'plan_proposal', proposal: { criteriaTrace: [{ source: 'objective', sourceIndex: 0, sourceText: c.goal.goal.objective }] },
+  })
+  const fabricated = { ...bound, proposal: { ...bound.proposal, criteriaTrace: [{ ...displaced, sourceText: '未经授权的任务' }] } }
+  expect(() => protocol.parseProjectOwnerPlanningResponse(fabricated, c)).toThrow('目标追溯来源不存在')
+  expect(() => protocol.parseProjectOwnerPlanningResponse({ ...base, proposal: { ...base.proposal, criteriaTrace: [displaced] } }, context())).toThrow('目标追溯来源不存在')
 
   // 提示词不再向模型提供这两个标识。
   const request = protocol.buildProjectOwnerPlanningRequest(c)
@@ -545,4 +645,202 @@ test('Given已核对的历史提示 When重复读取或来源变化 Then缓存�
   expect(() => protocol.resolveProjectOwnerPlanningRequest(changed, hash)).toThrow('来源指纹不匹配')
   expect(() => protocol.resolveProjectOwnerPlanningRequest(changed, hash)).toThrow('来源指纹不匹配')
   expect(protocol.resolveProjectOwnerPlanningRequest(original, hash)).toEqual(request)
+})
+
+test('Given目标只交付一份正文 When模型重复拆出独立核对 Then合并验收要求并兼容历史计划', async () => {
+  const { buildProjectOwnerPlanningRequest, parseProjectOwnerPlanningResponse, resolveProjectOwnerPlanningRequest, usesSingleTextReviewFolding } = await import('./project-owner-planning-protocol')
+  const c = context()
+  c.goal.goal.objective = '起草一份活动通知，安排员工起草与独立评审，只交付一份正文。'
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const raw = proposal(c)
+  const draft = { ...raw.proposal.steps[0]!, title: '起草报名通知正文', outcome: '通知草稿' }
+  const review = { ...draft, key: 'review', title: '独立核对并定稿通知', outcome: '最终通知正文', dependencies: [draft.key], acceptanceCriteria: ['不虚构报名规则'] }
+  const trace = { key: 'one', source: 'objective', sourceIndex: 0, sourceText: '只交付一份正文', criticality: 'critical', stepKey: review.key, verification: 'manual_review' }
+  const response = { ...raw, proposal: { ...raw.proposal, steps: [draft, review], criteriaTrace: [trace] } }
+  const current = buildProjectOwnerPlanningRequest(c)
+  expect(usesSingleTextReviewFolding(current)).toBe('internal-record')
+  const priorCurrent = { ...current, systemPrompt: current.systemPrompt.split('\n')
+    .filter(line => !line.includes('独立核对产生的内部记录不占交付步骤')).join('\n') }
+  expect(resolveProjectOwnerPlanningRequest(c, createHash('sha256').update(JSON.stringify(priorCurrent)).digest('hex'))).toEqual(priorCurrent)
+  expect(usesSingleTextReviewFolding(priorCurrent)).toBe(true)
+
+  const historical = buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false)
+  const hash = createHash('sha256').update(JSON.stringify(historical)).digest('hex')
+  expect(resolveProjectOwnerPlanningRequest(c, hash)).toEqual(historical)
+  expect(parseProjectOwnerPlanningResponse(response, c, Date.now(), true, true)).toMatchObject({ proposal: { steps: [draft, review] } })
+  const parsed = parseProjectOwnerPlanningResponse(response, c, Date.now(), true, true, true)
+  expect(parsed).toMatchObject({ proposal: { steps: [{ key: draft.key, outcome: review.outcome, acceptanceCriteria: ['范围明确', '不虚构报名规则'] }], criteriaTrace: [{ stepKey: draft.key }] } })
+  c.sources.roles.push({ ...c.sources.roles[0]!, key: 'delivery-verifier', name: '交付核验员' })
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const internalRecord = { ...response, contextFingerprint: c.fingerprint, proposal: { ...response.proposal, steps: [draft,
+    { ...review, roleKey: 'delivery-verifier', title: '独立核对通知正文', outcome: '核对记录，确认正文事实准确、无名额收费、仅一份' }] } }
+  expect(parseProjectOwnerPlanningResponse(internalRecord, c, Date.now(), true, true, true)).toMatchObject({ proposal: { steps: internalRecord.proposal.steps } })
+  expect(parseProjectOwnerPlanningResponse(internalRecord, c, Date.now(), true, true, 'internal-record')).toMatchObject({
+    proposal: { steps: [{ key: draft.key, outcome: '通知正文', acceptanceCriteria: ['范围明确', '不虚构报名规则'] }], criteriaTrace: [{ stepKey: draft.key }] },
+  })
+  const separate = { ...response, contextFingerprint: c.fingerprint, proposal: { ...response.proposal, steps: [draft, { ...review, outcome: '逐项核对报告' }] } }
+  expect(parseProjectOwnerPlanningResponse(separate, c, Date.now(), true, true, true)).toMatchObject({ proposal: { steps: [{ key: draft.key }, { key: review.key }] } })
+  c.sources.roles.push({ ...c.sources.roles[0]!, key: 'legal', name: '法务专员' })
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const specialist = { ...response, contextFingerprint: c.fingerprint, proposal: { ...response.proposal, steps: [draft, { ...review, roleKey: 'legal' }] } }
+  expect(parseProjectOwnerPlanningResponse(specialist, c, Date.now(), true, true, true)).toMatchObject({ proposal: { steps: [{ key: draft.key }, { key: review.key, roleKey: 'legal' }] } })
+  c.goal.goal.constraints = ['另交一份核对记录。']
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  expect(parseProjectOwnerPlanningResponse({ ...internalRecord, contextFingerprint: c.fingerprint }, c, Date.now(), true, true, 'internal-record'))
+    .toMatchObject({ proposal: { steps: internalRecord.proposal.steps } })
+
+})
+
+test.each([false, true])('Given多文件代码目标（要求单独报告=%s） When模型把浏览器实测拆成文本 Then运行验证绑定代码步骤', async separateReport => {
+  const { buildProjectOwnerPlanningRequest, parseProjectOwnerPlanningResponse, resolveProjectOwnerPlanningRequest, usesOwnerBrowserVerificationRouting } = await import('./project-owner-planning-protocol')
+  const c = context()
+  const criterion = '实际浏览器验证三个文件和交互'
+  c.goal.goal.objective = `交付 index.html、styles.css、counter.js，${criterion}。${separateReport ? '交付测试报告。' : ''}`
+  c.sources.roles.push({ ...c.sources.roles[0]!, key: 'delivery-verifier', name: '交付核验员' })
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const raw = proposal(c)
+  const start = { ...raw.proposal.steps[0]!, deliveryKind: 'development', title: '编写 index.html 和 styles.css' }
+  const integrate = { ...start, key: 'integrate', title: '编写 counter.js 并集成', dependencies: [start.key] }
+  const verification = { ...start, key: 'verify', title: '真实浏览器核对与回执', outcome: '三文件加载与交互的验证记录',
+    roleKey: 'delivery-verifier', deliveryKind: 'text', dependencies: [integrate.key], acceptanceCriteria: [criterion] }
+  const trace = { key: 'runtime', source: 'objective', sourceIndex: 0, sourceText: criterion, criticality: 'critical', stepKey: verification.key, verification: 'manual_review' }
+  const response = { ...raw, proposal: { ...raw.proposal, steps: [start, integrate, verification], criteriaTrace: [trace] } }
+  const request = buildProjectOwnerPlanningRequest(c)
+  expect(usesOwnerBrowserVerificationRouting(request)).toBe(!separateReport)
+  const historical = buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false)
+  const historicalHash = createHash('sha256').update(JSON.stringify(historical)).digest('hex')
+  expect(resolveProjectOwnerPlanningRequest(c, historicalHash)).toEqual(historical)
+  expect(parseProjectOwnerPlanningResponse(response, c, Date.now(), true, true)).toMatchObject({ proposal: { steps: [start, integrate, verification] } })
+  expect(parseProjectOwnerPlanningResponse(response, c, Date.now(), true, true, false, false, 'legacy')).toMatchObject({ proposal: { steps: [start, integrate, verification] } })
+  expect(parseProjectOwnerPlanningResponse(response, c, Date.now(), true, true, false, false, usesOwnerBrowserVerificationRouting(request))).toMatchObject({ proposal: separateReport
+    ? { steps: [start, integrate, verification], criteriaTrace: [{ stepKey: verification.key }] }
+    : { steps: [start, { ...integrate, outcome: `${integrate.outcome}；浏览器验证：${verification.outcome}`,
+      acceptanceCriteria: [...integrate.acceptanceCriteria, criterion] }], criteriaTrace: [{ stepKey: integrate.key }] } })
+})
+
+test('Given原目标已给出人数与全部单价 When规划写错合计和余额 Then冻结实算结果且保留旧提示回放', async () => {
+  const { buildProjectOwnerPlanningRequest, parseProjectOwnerPlanningResponse, resolveProjectOwnerPlanningRequest, usesOwnerFixedBudgetGrounding } = await import('./project-owner-planning-protocol')
+  const c = context()
+  c.goal.goal.objective = '两人社区活动的预算清单。场地80元，物料42元，饮用水每人4元，交通每人15元。写清数量、各项小计及总计，对照240元上限计算余额。只交付一份正文。'
+  c.goal.goal.constraints = []
+  c.goal.goal.acceptanceCriteria = []
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const raw = proposal(c)
+  const step = { ...raw.proposal.steps[0]!, outcome: '餐饮合计42元，总计150元、余额90元，预算总额240元',
+    acceptanceCriteria: ['四项均有数量、单价、小计且可复算', '总计150元及余额90元正确并对照240元上限'] }
+  const response = { ...raw, proposal: { ...raw.proposal, steps: [step] } }
+  const request = buildProjectOwnerPlanningRequest(c)
+  expect(request.systemPrompt).toContain('合计 160 元，余额 80 元')
+  const historical = buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false)
+  const replay = resolveProjectOwnerPlanningRequest(c, createHash('sha256').update(JSON.stringify(historical)).digest('hex'))
+  expect(replay).toEqual(historical)
+  expect(usesOwnerFixedBudgetGrounding(replay)).toBeFalse()
+  expect(parseProjectOwnerPlanningResponse(response, c)).toMatchObject({ proposal: { steps: [step] } })
+  expect(parseProjectOwnerPlanningResponse(response, c, Date.now(), true, false, false, false, false,
+    usesOwnerFixedBudgetGrounding(request))).toMatchObject({ proposal: { steps: [{
+      ...step, outcome: '餐饮合计42元，总计160元、余额80元，预算总额240元',
+      acceptanceCriteria: ['四项均有数量、单价、小计且可复算', '总计160元及余额80元正确并对照240元上限'],
+    }] } })
+  c.goal.goal.objective += '使用浏览器验证查看界面。'
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const legacyBrowser = buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, 'legacy', false)
+  expect(resolveProjectOwnerPlanningRequest(c, createHash('sha256').update(JSON.stringify(legacyBrowser)).digest('hex'))).toEqual(legacyBrowser)
+})
+
+test('Given原目标要求走查正式名单 When方案把报名人数预设为截止人数 Then取消模型预设且保留历史方案可读', async () => {
+  const { buildProjectOwnerPlanningRequest, parseProjectOwnerPlanningResponse, resolveProjectOwnerPlanningRequest, usesOwnerRosterGrounding } = await import('./project-owner-planning-protocol')
+  const c = context()
+  c.goal.goal.objective = '14:00开场，报名甲乙丙共三人，乙未到；候补丁13:58到场，确认耗时3分钟，14:00前完成才能正式补位。请走查14:00名单与人数。'
+  c.goal.goal.constraints = []
+  c.goal.goal.acceptanceCriteria = []
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const raw = proposal(c)
+  const step = { ...raw.proposal.steps[0]!, acceptanceCriteria: ['三段齐全且附核对表，走查14:00名单为3人', '保留报名三人事实'] }
+  const response = { ...raw, proposal: { ...raw.proposal, steps: [step] } }
+  const request = buildProjectOwnerPlanningRequest(c)
+  expect(request.systemPrompt).toContain('最早于 14:01 完成')
+  const prior = buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, false)
+  const recovered = resolveProjectOwnerPlanningRequest(c, createHash('sha256').update(JSON.stringify(prior)).digest('hex'))
+  expect(recovered).toEqual(prior)
+  expect(usesOwnerRosterGrounding(recovered)).toBeFalse()
+  expect(parseProjectOwnerPlanningResponse(response, c)).toMatchObject({ proposal: { steps: [step] } })
+  expect(parseProjectOwnerPlanningResponse(response, c, Date.now(), true, false, false, false, false, false,
+    usesOwnerRosterGrounding(request))).toMatchObject({ proposal: { steps: [{
+      ...step, acceptanceCriteria: ['三段齐全且附核对表，走查14:00 正式名单及人数按原目标和确认截止规则复算', '保留报名三人事实'],
+    }] } })
+})
+
+test('Given 单文件文本统计计划另派研发人员实测 When 冻结方案 Then 使用同一文件版本在实施步骤实测', async () => {
+  const { buildProjectOwnerPlanningRequest, parseProjectOwnerPlanningResponse, resolveProjectOwnerPlanningRequest, usesOwnerBrowserVerificationRouting } = await import('./project-owner-planning-protocol')
+  const c = context()
+  const criterion = '使用真实浏览器验证空白、中文、组合字符和多行'
+  c.goal.goal.objective = `只在工作区根目录交付一个自包含的 index.html。${criterion}。`
+  c.sources.roles.push({ ...c.sources.roles[0]!, key: 'delivery-verifier', name: '交付核验员' })
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const raw = proposal(c)
+  const start = { ...raw.proposal.steps[0]!, deliveryKind: 'development', title: '实现单文件 index.html 文本统计' }
+  const verify = { ...start, key: 'verify', title: '浏览器实测空白中文组合字符多行', roleKey: 'delivery-verifier', dependencies: [start.key], acceptanceCriteria: [criterion] }
+  const trace = { key: 'runtime', source: 'objective', sourceIndex: 0, sourceText: criterion, criticality: 'critical', stepKey: verify.key, verification: 'manual_review' }
+  const input = { ...raw, proposal: { ...raw.proposal, steps: [start, verify], criteriaTrace: [trace] } }
+  const request = buildProjectOwnerPlanningRequest(c)
+  expect(usesOwnerBrowserVerificationRouting(request)).toBe('same-file-receipt')
+  expect(parseProjectOwnerPlanningResponse(input, c, Date.now(), true, true, false, false, 'single-file')).toMatchObject({
+    proposal: { steps: [{ key: start.key, acceptanceCriteria: [...start.acceptanceCriteria, criterion] }], criteriaTrace: [{ stepKey: start.key }] },
+  })
+  const historical = buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true)
+  const hash = createHash('sha256').update(JSON.stringify(historical)).digest('hex')
+  expect(resolveProjectOwnerPlanningRequest(c, hash)).toEqual(historical)
+  expect(parseProjectOwnerPlanningResponse(input, c, Date.now(), true, true, false, false, usesOwnerBrowserVerificationRouting(historical))).toMatchObject({
+    proposal: { steps: [start, verify], criteriaTrace: [{ stepKey: verify.key }] },
+  })
+})
+
+test('Given 单文件成果的真实浏览器回执以同一文件版本开头 When 规划冻结 Then 回执跟随文件验收', async () => {
+  const { buildProjectOwnerPlanningRequest, parseProjectOwnerPlanningResponse, resolveProjectOwnerPlanningRequest, usesOwnerBrowserVerificationRouting } = await import('./project-owner-planning-protocol')
+  const c = context()
+  c.goal.goal.objective = '在项目工作区根目录只交付 index.html，一个自包含页面。用真实浏览器核对鼠标和 Tab、Enter 键，提交同一文件版本的回执。'
+  c.sources.roles.push({ ...c.sources.roles[0]!, key: 'delivery-verifier', name: '交付核验员' })
+  c.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: c.goal.revision, goal: c.goal.goal, sources: c.sources })).digest('hex')
+  const raw = proposal(c)
+  const start = { ...raw.proposal.steps[0]!, title: '实现自包含 index.html 计数器', deliveryKind: 'development' }
+  const criterion = '同一文件版本附实际浏览器回执'
+  const review = { ...start, key: 'verify', title: '同一文件版本浏览器实测回执', outcome: '基于冻结文件版本的真实浏览器操作回执',
+    deliveryKind: 'text', roleKey: 'delivery-verifier', dependencies: [start.key], acceptanceCriteria: [criterion] }
+  const input = { ...raw, proposal: { ...raw.proposal, steps: [start, review] } }
+  const routing = usesOwnerBrowserVerificationRouting(buildProjectOwnerPlanningRequest(c))
+  expect(routing).toBe('same-file-receipt')
+  expect(parseProjectOwnerPlanningResponse(input, c, Date.now(), true, true, false, false, routing)).toMatchObject({
+    proposal: { steps: [{ key: start.key, acceptanceCriteria: [...start.acceptanceCriteria, criterion] }] },
+  })
+  const prior = buildProjectOwnerPlanningRequest(c, 'envelope', true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, true, 'single-file')
+  const hash = createHash('sha256').update(JSON.stringify(prior)).digest('hex')
+  const replay = resolveProjectOwnerPlanningRequest(c, hash)
+  expect(replay).toEqual(prior)
+  expect(usesOwnerBrowserVerificationRouting(replay)).toBe('single-file')
+  expect(parseProjectOwnerPlanningResponse(input, c, Date.now(), true, true, false, false, 'single-file')).toMatchObject({ proposal: { steps: [start, review] } })
+  const separate = { ...c, goal: { ...c.goal, goal: { ...c.goal.goal, objective: c.goal.goal.objective + '请单独提交一份浏览器实测回执。' } } }
+  separate.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: separate.goal.revision, goal: separate.goal.goal, sources: separate.sources })).digest('hex')
+  const separateResponse = { ...proposal(separate), proposal: { ...input.proposal } }
+  expect(parseProjectOwnerPlanningResponse(separateResponse, separate, Date.now(), true, true, false, false, routing)).toMatchObject({ proposal: { steps: [start, review] } })
+  const separatePrompt = buildProjectOwnerPlanningRequest(separate)
+  expect(separatePrompt.systemPrompt).toContain('保留独立交付步骤')
+  expect(separatePrompt.systemPrompt).not.toContain('无需将实测另拆为派工')
+  expect(usesOwnerBrowserVerificationRouting(separatePrompt)).toBe(false)
+  const trailing = { ...c, goal: { ...c.goal, goal: { ...c.goal.goal, objective: c.goal.goal.objective + '请把浏览器实测回执与网页分别提交。' } } }
+  trailing.fingerprint = createHash('sha256').update(JSON.stringify({ goalRevision: trailing.goal.revision, goal: trailing.goal.goal, sources: trailing.sources })).digest('hex')
+  const trailingResponse = { ...proposal(trailing), proposal: { ...input.proposal } }
+  const trailingPrompt = buildProjectOwnerPlanningRequest(trailing)
+  expect(usesOwnerBrowserVerificationRouting(trailingPrompt)).toBe(false)
+  const oldBrowserInstructions = buildProjectOwnerPlanningRequest(c).systemPrompt.split('\n').filter(line =>
+    /^(?:实际浏览器验证须|绑定同一文件版本的实测回执|当前仅交付一个网页文件|以同一文件版本)/.test(line))
+  const priorPrompt = { ...trailingPrompt, systemPrompt: trailingPrompt.systemPrompt.split('\n').flatMap(line =>
+    line.startsWith('原目标明确要求单独交付实测回执') ? oldBrowserInstructions : [line]).join('\n') }
+  const priorHash = createHash('sha256').update(JSON.stringify(priorPrompt)).digest('hex')
+  const recoveredPrompt = resolveProjectOwnerPlanningRequest(trailing, priorHash)
+  expect(recoveredPrompt).toEqual(priorPrompt)
+  expect(parseProjectOwnerPlanningResponse(trailingResponse, trailing, Date.now(), true, true, false, false,
+    usesOwnerBrowserVerificationRouting(recoveredPrompt))).toMatchObject({ proposal: { steps: [{ key: start.key, deliveryKind: 'development' }] } })
+  expect(parseProjectOwnerPlanningResponse({ ...input, binding_note: null }, c)).toMatchObject({ kind: 'plan_proposal' })
+  expect(() => parseProjectOwnerPlanningResponse({ ...input, binding_note: '改变项目绑定' }, c)).toThrow('未知字段')
+  expect(() => parseProjectOwnerPlanningResponse({ ...input, binding_note: null, projectId: 'other' }, c)).toThrow('不匹配')
 })

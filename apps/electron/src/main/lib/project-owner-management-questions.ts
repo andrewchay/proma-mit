@@ -46,14 +46,30 @@ function assertQuestionCurrent(question: OwnerManagementQuestion): void {
   const latest = store.getProjectDb().prepare("SELECT l.planning_task_id FROM project_owner_planning_links l WHERE l.project_id = ? AND json_extract(l.payload, '$.purpose') = 'owner_planning' AND json_extract(l.payload, '$.targetTaskId') IS ? AND (json_extract(l.payload, '$.conversationMessageId') IS NULL OR l.planning_task_id = ? OR EXISTS (SELECT 1 FROM project_owner_management_questions q WHERE q.project_id = l.project_id AND json_extract(q.payload, '$.planningTaskId') = l.planning_task_id)) ORDER BY l.rowid DESC LIMIT 1").get(question.projectId, question.taskId ?? null, question.planningTaskId) as { planning_task_id: string } | undefined
   if (latest?.planning_task_id !== question.planningTaskId) throw new OwnerPlanningSourceChangedError('Owner已有更新的问题或规划请求，不能套用旧答复')
 }
+function visibleQuestionRows(projectId: string, taskId?: string): Array<{ id: string; position: number; answered: number }> {
+  return store.getProjectDb().prepare(`SELECT q.id,q.rowid AS position,
+    EXISTS (SELECT 1 FROM project_owner_management_answers a WHERE a.question_id = q.id) AS answered
+    FROM project_owner_management_questions q WHERE q.project_id = ? AND (? IS NULL OR json_extract(q.payload, '$.taskId') = ?)
+    ORDER BY answered,position DESC LIMIT 50`)
+    .all(projectId, taskId ?? null, taskId ?? null) as Array<{ id: string; position: number; answered: number }>
+}
 export function listOwnerManagementQuestions(projectId: string): OwnerManagementQuestion[] {
-  const rows = store.getProjectDb().prepare('SELECT id FROM project_owner_management_questions WHERE project_id = ? ORDER BY rowid DESC LIMIT 50').all(projectId) as { id: string }[]
-  return rows.reverse().map(({ id }) => {
+  return visibleQuestionRows(projectId).sort((left, right) => left.position - right.position).map(({ id }) => {
     const question = readQuestion(projectId, id)
     if (existingAnswer(question)) return { ...question, state: 'answered' as const }
     try { assertQuestionCurrent(question); return question }
     catch { return { ...question, state: 'stale' as const } }
   })
+}
+
+/** 项目列表核对所有任务，任务详情只核对本任务尚无答复的问题。 */
+export function getOpenOwnerManagementQuestion(projectId: string, taskId?: string): OwnerManagementQuestion | undefined {
+  for (const { id, answered } of visibleQuestionRows(projectId, taskId)) {
+    if (answered) break
+    const question = readQuestion(projectId, id)
+    try { assertQuestionCurrent(question); return question }
+    catch (error) { if (!(error instanceof OwnerPlanningSourceChangedError)) throw error }
+  }
 }
 export function getOwnerManagementConversation(projectId: string): OwnerManagementView {
   const changes = require('./project-owner-management-changes') as typeof import('./project-owner-management-changes')
@@ -143,8 +159,14 @@ export function projectOwnerManagementRunResult(projectId: string, executionId: 
           : `方案已准备好。${plan.proposal.summary}\n我正在为方案准备内部安排，不会提前启动员工。请审阅结果与完成标准；需要调整时直接告诉我，确认开始后我会负责执行。`
     appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: 'plan_proposal', content })
   } else {
-    const reason = safeFailureDetail(outcome.detail)
-    appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: 'attention', runEvidence: buildOwnerRunEvidence(receipt), content: `这次规划未得到可继续使用的结果。我已保留记录；${reason ? `失败原因：${reason}。` : ''}${ownerRunEvidenceSummary(receipt)}费用或运行状态未知时不会自动重复调用。` })
+    const qualityReview = snapshot.context.conversation?.deliveryReview?.qualityDecisionVersion === 1
+    const reason = receipt.runtimeResult?.finish_reason === 'length'
+      ? '模型输出达到上限，响应被截断'
+      : safeFailureDetail(outcome.detail)
+    const progress = qualityReview
+      ? '成果验收没有得到可使用的结论，已有成果和独立检查记录已保留。'
+      : '这次规划未得到可继续使用的结果。我已保留记录。'
+    appendOwnerManagementMessage({ projectId, eventId, ...(snapshot.link.targetTaskId ? { taskId: snapshot.link.targetTaskId } : {}), role: 'assistant', kind: 'attention', runEvidence: buildOwnerRunEvidence(receipt), content: `${progress}${reason ? `失败原因：${reason}。` : ''}${ownerRunEvidenceSummary(receipt)}费用或运行状态未知时不会自动重复调用。` })
   }
 }
 

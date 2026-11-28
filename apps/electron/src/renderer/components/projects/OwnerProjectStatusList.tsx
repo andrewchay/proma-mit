@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { OwnerManagementMessage, OwnerExecutionAutonomousScheduleStatus, ProjectOwnerGoalSubject } from '@gravitas/shared'
+import type { OwnerExecutionAutonomousScheduleStatus, ProjectOwnerGoalSubject } from '@gravitas/shared'
 import { summarizeOwnerProjectRow, type OwnerProjectRowSummary } from './project-owner-progress-state'
 
 interface ProjectRow {
@@ -10,6 +10,7 @@ interface ProjectRow {
 interface RowState extends OwnerProjectRowSummary {
   projectId: string
   title: string
+  questionTaskId?: string
   /** 读取失败时不伪造状态：保留错误并让用户重新读取。 */
   error?: string
 }
@@ -22,34 +23,57 @@ interface RowState extends OwnerProjectRowSummary {
  *
  * 只读投影：不触发派工、不改授权，读取失败也不回退成「正常」。
  */
-export function OwnerProjectStatusList({ projects, messagesByProject, loadStatus, onOpen }: {
+export function OwnerProjectStatusList({ projects, loadStatus, onOpen }: {
   projects: ReadonlyArray<ProjectRow>
-  /** 每个项目已加载的对话消息；缺失时按无消息处理，只用调度状态。 */
-  messagesByProject: ReadonlyMap<string, readonly OwnerManagementMessage[]>
   loadStatus: (subject: ProjectOwnerGoalSubject) => Promise<{ ok: true; value: OwnerExecutionAutonomousScheduleStatus } | { ok: false; error: { message: string } }>
-  onOpen: (projectId: string) => void
+  onOpen: (projectId: string, taskId?: string) => void
 }): React.ReactElement | null {
   const [rows, setRows] = useState<RowState[]>([])
   const [loading, setLoading] = useState(true)
-  // 用项目 id 拼成稳定依赖，避免父组件每次渲染都新建数组导致重复请求。
-  const projectKey = projects.map(project => project.id).join(',')
+  // 只有项目集合或标题变化才整体读取；普通更新只刷新对应项目。
+  const projectKey = JSON.stringify(projects.map(({ id, title }) => [id, title]))
 
   useEffect(() => {
     let cancelled = false
+    const currentProjects = new Map(projects.map(project => [project.id, project]))
+    const requests = new Map<string, number>()
     setLoading(true)
-    void Promise.all(projects.map(async (project): Promise<RowState> => {
-      const messages = messagesByProject.get(project.id) ?? []
+    const readRow = async (project: ProjectRow): Promise<RowState | undefined> => {
+      const sequence = (requests.get(project.id) ?? 0) + 1
+      requests.set(project.id, sequence)
+      const base = { projectId: project.id, title: project.title }
+      let row: RowState
       try {
         const result = await loadStatus({ projectId: project.id })
-        if (!result.ok) return { projectId: project.id, title: project.title, ...summarizeOwnerProjectRow(messages, undefined, undefined), error: result.error.message }
-        const schedule = result.value
-        return { projectId: project.id, title: project.title, ...summarizeOwnerProjectRow(messages, schedule.taskId, schedule) }
+        row = result.ok
+          ? { ...base, ...summarizeOwnerProjectRow([], undefined, result.value), questionTaskId: result.value.waitingQuestion?.taskId }
+          : { ...base, ...summarizeOwnerProjectRow([], undefined, undefined), error: result.error.message }
       } catch (cause) {
-        return { projectId: project.id, title: project.title, ...summarizeOwnerProjectRow(messages, undefined, undefined), error: cause instanceof Error ? cause.message : '读取失败' }
+        row = { ...base, ...summarizeOwnerProjectRow([], undefined, undefined), error: cause instanceof Error ? cause.message : '读取失败' }
       }
-    })).then((next) => { if (!cancelled) setRows(next) }).finally(() => { if (!cancelled) setLoading(false) })
-    return () => { cancelled = true }
-    // messagesByProject 变化不影响状态读取；状态由调度决定，消息只用于覆盖等待提示。
+      if (!cancelled && requests.get(project.id) === sequence) return row
+    }
+    void Promise.all(projects.map(readRow)).then(next => {
+      if (!cancelled) {
+        setRows(rows => {
+          const merged = new Map(rows.filter(row => currentProjects.has(row.projectId)).map(row => [row.projectId, row]))
+          for (const row of next) if (row && requests.get(row.projectId) === 1) merged.set(row.projectId, row)
+          return [...merged.values()]
+        })
+        setLoading(false)
+      }
+    })
+    const off = window.electronAPI?.paa?.project?.onOwnerManagementChanged?.(({ projectId }) => {
+      const project = currentProjects.get(projectId)
+      if (!project) return
+      const refresh = readRow(project)
+      const sequence = requests.get(projectId)
+      void refresh.then(row => {
+        if (row && !cancelled) setRows(rows => requests.get(projectId) === sequence
+          ? [...rows.filter(item => item.projectId !== projectId), row] : rows)
+      })
+    })
+    return () => { cancelled = true; off?.() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectKey, loadStatus])
 
@@ -62,7 +86,7 @@ export function OwnerProjectStatusList({ projects, messagesByProject, loadStatus
 
   return <section aria-label="项目状态" className="space-y-2">
     <h2 className="text-sm font-medium">项目状态</h2>
-    {ordered.map(row => <button key={row.projectId} type="button" onClick={() => onOpen(row.projectId)}
+    {ordered.map(row => <button key={row.projectId} type="button" onClick={() => onOpen(row.projectId, row.questionTaskId)}
       className={`flex w-full items-center gap-3 rounded-xl px-4 py-3 text-left shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${row.needsUser ? 'bg-amber-500/10 hover:bg-amber-500/15' : 'bg-muted/50 hover:bg-muted'}`}>
       <span className={`h-2 w-2 shrink-0 rounded-full ${row.needsUser ? 'bg-amber-500' : 'bg-muted-foreground/40'}`} aria-hidden="true" />
       <span className="min-w-0 flex-1">

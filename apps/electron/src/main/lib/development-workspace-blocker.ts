@@ -39,11 +39,16 @@ export function inspectDevelopmentWorkspaceBlocker(repository: string, workspace
   if (top !== root) return { kind: 'not_git_root', workspaceId, workspaceName, repository: root, detail: `工作区不是仓库根目录（仓库根为 ${top}）` }
   // -z 且不 trim：porcelain 的 " M path" 前导空格是状态位，trim 会截断首个路径字符。
   const { trackedFiles, untrackedFiles } = parseStatus(git(root, 'status', '--porcelain=v1', '-z', '--untracked-files=all', '--no-renames'))
+  if (untrackedFiles.length) {
+    const { isUnmodifiedLegacyOwnerPlanningArchive, OWNER_PLANNING_ARCHIVE_PATH } = require('./project-owner-planning-doc-service') as typeof import('./project-owner-planning-doc-service')
+    const archiveIndex = untrackedFiles.indexOf(OWNER_PLANNING_ARCHIVE_PATH)
+    if (archiveIndex >= 0 && isUnmodifiedLegacyOwnerPlanningArchive(root, workspaceId)) untrackedFiles.splice(archiveIndex, 1)
+  }
   if (!trackedFiles.length && !untrackedFiles.length) return { kind: 'ready' }
   return {
     kind: 'dirty_worktree', workspaceId, workspaceName, repository: root,
     trackedFiles: trackedFiles.slice(0, MAX_LISTED), untrackedFiles: untrackedFiles.slice(0, MAX_LISTED),
     detail: `已跟踪文件有 ${trackedFiles.length} 处修改，未跟踪文件有 ${untrackedFiles.length} 个`,
-    remedy: '请先提交、暂存或移走这些文件，然后点击“重新核对工作区”。系统不会自动提交或丢弃你的改动。',
+    remedy: '请先提交这些改动、用 Git stash 保存，或移走未跟踪文件，然后点击“重新核对工作区”。系统不会自动提交或丢弃你的改动。',
   }
 }

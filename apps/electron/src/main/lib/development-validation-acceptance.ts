@@ -82,12 +82,44 @@ export function isOwnerValidationEvidenceExpired(
 
 /** 运行标准可引用完整成功回执的输出，或以准确命令定位同一条已核验回执。 */
 export function containsOwnerValidationEvidenceQuote(validation: OwnerDevelopmentDeliveryArtifact['validationEvidence'] | undefined, quote: string): boolean {
-  return quote.trim().length >= 12 && Boolean(validation?.some(item => {
+  if (!quote.trim()) return false
+  return Boolean(validation?.some(item => {
     const output = item.outputTail
-    return item.attemptState === 'completed' && item.freshness === 'fresh' && item.status === 'passed' && item.exitCode === 0
+    const trusted = item.attemptState === 'completed' && item.freshness === 'fresh' && item.status === 'passed' && item.exitCode === 0
       && item.timedOut === false && item.outputTruncated === false && typeof output === 'string'
-      && (output.includes(quote) || quote === item.command || quote === `"command":${JSON.stringify(item.command)}`)
+    if (!trusted || typeof output !== 'string') return false
+    return ((quote.trim().length >= 12 && output.includes(quote))
+      || quote === item.command || quote === `"command":${JSON.stringify(item.command)}`
+      || quote === `"rawOutputSha256":${JSON.stringify(item.rawOutputSha256)}`
+      || quote === `"validationId":${JSON.stringify(item.validationId)}`
+      || matchesPassedBrowserCheckTitle(item.command, output, quote))
       && Buffer.byteLength(output, 'utf8') === item.rawOutputByteLength
       && createHash('sha256').update(output, 'utf8').digest('hex') === item.rawOutputSha256
   }))
+}
+
+/** 完整的结构化断言标题可短于普通输出片段，仍须属于本次命令中实际通过的断言。 */
+function matchesPassedBrowserCheckTitle(command: string, output: string, quote: string): boolean {
+  const prefix = 'browser:'
+  if (!command.startsWith(prefix)) return false
+  const checkIds = command.slice(prefix.length).split('+')
+  let checks: unknown
+  try { checks = JSON.parse(output) } catch { return false }
+  return Array.isArray(checks) && checks.some((check: unknown) => {
+    if (!check || typeof check !== 'object') return false
+    const { id, title, status } = check as { id?: unknown; title?: unknown; status?: unknown }
+    return status === 'passed' && title === quote && typeof id === 'string' && checkIds.includes(id)
+  })
+}
+
+/** 将逐字引用的状态字段定位到唯一一条通过完整性核验的回执。 */
+export function resolveOwnerValidationMetadataQuote(validation: OwnerDevelopmentDeliveryArtifact['validationEvidence'] | undefined, quote: string): string | undefined {
+  if (!validation?.length) return undefined
+  const matches = validation.filter(item => {
+    const status = { attemptState: item.attemptState, freshness: item.freshness, status: item.status, exitCode: item.exitCode }
+    const metadata = [JSON.stringify(status), JSON.stringify({ command: item.command, validationId: item.validationId, ...status, timedOut: item.timedOut })]
+    return metadata.some(body => quote === body || quote === body.slice(1, -1))
+      && containsOwnerValidationEvidenceQuote([item], item.command)
+  })
+  return matches.length === 1 ? matches[0]!.command : undefined
 }

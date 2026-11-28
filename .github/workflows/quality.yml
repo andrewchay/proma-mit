@@ -9,9 +9,8 @@ permissions:
 jobs:
   quality:
     runs-on: macos-latest
-    # 全仓 `bun run test` 单跑约 10-15 分钟，加上依赖安装与完整类型图常到 18-20 分钟；
-    # 多个 PR 并发占用 macOS runner 时会顶到旧的 20 分钟上限被 cancelled（不是测试失败）。
-    timeout-minutes: 35
+    # 保留完整 macOS 验证；实际流程曾在 35 分钟上限处被取消。
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2

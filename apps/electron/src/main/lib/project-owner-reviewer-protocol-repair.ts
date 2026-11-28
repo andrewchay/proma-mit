@@ -1,5 +1,6 @@
 /** 同一Reviewer命令内最多补正一次输出；不重跑Executor、不修改原文或放宽校验。 */
-import { parseOwnerTechnicalReviewResponse, assertOwnerDevelopmentValidationForVerdict, normalizeOwnerTechnicalReviewReceipt } from './project-owner-technical-review'
+import { parseOwnerTechnicalReviewResponse, assertOwnerDevelopmentValidationForVerdict, normalizeOwnerTechnicalReviewReceipt, OWNER_REVIEW_BINDING_HEADER } from './project-owner-technical-review'
+import { OWNER_STAGED_DEVELOPMENT_REVIEW_INSTRUCTION, ownerDevelopmentEvidenceHint, ownerTextEvidenceHint } from './project-owner-evidence-reference'
 import { ownerDevelopmentArtifactFromPrompt } from './project-owner-development-artifact'
 import { ownerTaskDeliveryKind, readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
 import { getOwnerTaskMaterializationRecord } from './project-owner-task-materialization'
@@ -15,7 +16,7 @@ export function isOwnerReviewerProtocolRepairSession(sessionId: string): boolean
   } catch { return false }
 }
 
-export function ownerReviewerProtocolCorrection(sessionId: string, prompt: string, raw: string): string | null {
+export function ownerReviewerProtocolCorrection(sessionId: string, raw: string): string | null {
   let execution: ReturnType<typeof store.getAgentExecutionBySessionId>
   try { execution = store.getAgentExecutionBySessionId(sessionId) }
   catch { return null }
@@ -28,20 +29,26 @@ export function ownerReviewerProtocolCorrection(sessionId: string, prompt: strin
   const task = source.tasks.find(item => item.taskId === execution.entityId)
   const link = getOwnerTaskMaterializationRecord(execution.projectId, source.materialization.id).links.find(item => item.id === task?.linkId)
   if (!link) return null
-  const development = ownerTaskDeliveryKind(source, execution.entityId) === 'development' ? ownerDevelopmentArtifactFromPrompt(prompt) : null
+  // 适配器会给实际发送的提示加工具说明；协议与快照只从当前 Reviewer 的持久提示读取。
+  const development = ownerTaskDeliveryKind(source, execution.entityId) === 'development' ? ownerDevelopmentArtifactFromPrompt(execution.prompt) : null
   const text = development ? null : assertOwnerReviewerTextDelivery(execution.ownerCommandId)
   if (!development && !text) return null
   try {
     const artifactContent = development?.content ?? text?.content
-    const receipt = normalizeOwnerTechnicalReviewReceipt(raw, artifactContent)
+    const artifactHash = development?.contentHash ?? text?.contentSha256
+    const receipt = normalizeOwnerTechnicalReviewReceipt(raw, artifactContent, development?.validationEvidence,
+      artifactHash ? { prompt: execution.prompt, hash: artifactHash, criteria: link.projection.acceptanceCriteria } : undefined)
     const parsed = parseOwnerTechnicalReviewResponse(receipt, link.projection.acceptanceCriteria,
-      development?.contentHash ?? text?.contentSha256, artifactContent,
+      artifactHash, artifactContent,
       development ? 'development' : 'text', development?.validationEvidence)
     if (development?.validationEvidence) assertOwnerDevelopmentValidationForVerdict(parsed.verdict, development.validationEvidence)
     return null
   } catch (cause) {
     // 只把应用内置校验器的原因交回模型；原始回答仍保留，补正另计请求与费用。
     const reason = cause instanceof Error ? cause.message : '结构化评审校验失败'
-    return `主进程内部校验反馈（不是用户的新要求）：本轮评审没有通过校验：${reason}。请基于同一冻结成果和验证证据重新提交严格JSON。这是一次有界补正，不是已经验收；不要重做代码或更改验收标准。quote只能复制一段连续原文，禁止省略号拼接。缺少验证证据时用blocked、not_verified与quote:null，将已有检查结果写入evidence。验证失败时明确给出未满足项和可执行修改建议，不得强行approved。`
+    const artifactTextHint = text ? ownerTextEvidenceHint(text.content) : ''
+    const stageHint = development && execution.prompt.startsWith(`${OWNER_REVIEW_BINDING_HEADER}\n\n${OWNER_STAGED_DEVELOPMENT_REVIEW_INSTRUCTION}\n\n`)
+      ? ` ${OWNER_STAGED_DEVELOPMENT_REVIEW_INSTRUCTION}` : ''
+    return `主进程内部校验反馈（不是用户的新要求）：本轮评审没有通过校验：${reason}。请基于同一冻结成果和验证证据重新提交严格JSON。这是一次有界补正，不是已经验收；不要重做代码或更改验收标准。沿用本轮评审提示指定的证据格式。编号格式使用当前冻结成果的evidenceId；逐字引用格式的quote只能复制一段连续原文，禁止省略号拼接。缺少验证证据时用blocked、not_verified与空证据值null，将已有检查结果写入evidence。验证失败时明确给出未满足项和可执行修改建议，不得强行approved。${development ? ownerDevelopmentEvidenceHint(development.content, development.validationEvidence) : artifactTextHint}${stageHint}`
   }
 }

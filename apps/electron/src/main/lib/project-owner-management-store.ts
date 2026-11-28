@@ -32,7 +32,7 @@ function read<T>(row: PayloadRow): T {
   return value as T
 }
 
-function assertDeliveryMessage(message: Pick<OwnerManagementMessage, 'role' | 'kind' | 'delivery' | 'deliveryReference' | 'deliveryReviewDecision' | 'chainReview' | 'teamWorkspaceProposal' | 'teamWorkspaceApproval' | 'fileChangeObservationId' | 'webChangeObservationId'>): void {
+function assertDeliveryMessage(message: Pick<OwnerManagementMessage, 'role' | 'kind' | 'delivery' | 'deliveryReference' | 'deliveryReviewDecision' | 'localTextAction' | 'chainReview' | 'teamWorkspaceProposal' | 'teamWorkspaceApproval' | 'fileChangeObservationId' | 'webChangeObservationId'>): void {
   if (message.kind === 'file_change_observation' ? message.role !== 'assistant' || typeof message.fileChangeObservationId !== 'string' || !/^[a-f0-9]{64}$/.test(message.fileChangeObservationId) : message.fileChangeObservationId !== undefined) throw new Error('Owner文件变化观察身份无效')
   if (message.kind === 'web_change_observation' ? message.role !== 'assistant' || typeof message.webChangeObservationId !== 'string' || !/^[a-f0-9]{64}$/.test(message.webChangeObservationId) : message.webChangeObservationId !== undefined) throw new Error('Owner外部变化观察身份无效')
   const proposal = message.teamWorkspaceProposal
@@ -50,6 +50,8 @@ function assertDeliveryMessage(message: Pick<OwnerManagementMessage, 'role' | 'k
     || (message.deliveryReference.stepKey !== undefined && (typeof message.deliveryReference.stepKey !== 'string' || !message.deliveryReference.stepKey.trim() || message.deliveryReference.stepKey.length > 100))
     || !/^[a-f0-9]{64}$/.test(message.deliveryReference.artifactHash))) throw new Error('Owner消息交付引用身份无效')
   if (message.deliveryReviewDecision !== undefined && (message.role !== 'user' || message.kind !== 'conversation' || !message.deliveryReference || !['accepted', 'changes_requested', 'deferred'].includes(message.deliveryReviewDecision))) throw new Error('Owner成果审阅决定无效')
+  if (message.localTextAction !== undefined && (message.localTextAction !== true || message.kind !== 'conversation'
+    || message.role !== 'user' || !message.deliveryReference || message.deliveryReviewDecision === 'deferred')) throw new Error('Owner本地文本操作回执无效')
   if (message.chainReview !== undefined && (message.role !== 'user' || message.kind !== 'conversation' || !/^[a-f0-9]{64}$/.test(message.chainReview.requestHash) || !message.chainReview.draftId || !Number.isSafeInteger(message.chainReview.version) || message.chainReview.version < 1 || !['accept', 'reject', 'later'].includes(message.chainReview.choice))) throw new Error('Owner交付验收决定无效')
   if (message.kind !== 'delivery') {
     if (message.delivery !== undefined) throw new Error('非交付消息不能包含成果包')
@@ -58,6 +60,8 @@ function assertDeliveryMessage(message: Pick<OwnerManagementMessage, 'role' | 'k
   const delivery = message.delivery as OwnerManagementDelivery | undefined
   if (message.role !== 'assistant' || !delivery || delivery.schemaVersion !== 1 || !Number.isSafeInteger(delivery.planVersion)
     || delivery.planVersion < 1 || !Array.isArray(delivery.items) || delivery.items.length < 1 || delivery.items.length > 32) throw new Error('Owner成果包结构无效')
+  if (delivery.localTextRevisionOf !== undefined && (typeof delivery.localTextRevisionOf !== 'string'
+    || !/^[a-f0-9]{64}$/.test(delivery.localTextRevisionOf))) throw new Error('Owner本地修订没有准确的前一版本')
   let totalBytes = 0
   for (const item of delivery.items) {
     if (!item || typeof item.stepKey !== 'string' || !item.stepKey || item.stepKey.length > 100 || typeof item.title !== 'string' || !item.title || item.title.length > 200
@@ -67,6 +71,9 @@ function assertDeliveryMessage(message: Pick<OwnerManagementMessage, 'role' | 'k
       || !deliveryContentMatchesArtifact(item.content, item.artifactHash)
       || typeof item.ownerDecision !== 'string' || !item.ownerDecision.trim() || item.ownerDecision.length > 4000
       || typeof item.reviewerSummary !== 'string' || !item.reviewerSummary.trim() || item.reviewerSummary.length > 2000) throw new Error('Owner成果条目无效')
+    const revision = item.localTextRevision
+    if (revision !== undefined && (!revision || [revision.requestMessageId, revision.previousMessageId, revision.baseMessageId, revision.baseArtifactHash]
+      .some(value => typeof value !== 'string' || !/^[a-f0-9]{64}$/.test(value)))) throw new Error('Owner本地修订来源无效')
     totalBytes += Buffer.byteLength(item.content, 'utf8')
   }
   if (totalBytes > 2_000_000) throw new Error('Owner成果包超出大小限制')
@@ -112,7 +119,7 @@ export function appendOwnerManagementMessage(input: Omit<OwnerManagementMessage,
   const existing = store.getProjectDb().prepare('SELECT payload, integrity_hash FROM project_owner_management_messages WHERE id = ?').get(id) as PayloadRow | undefined
   if (existing) {
     const old = read<OwnerManagementMessage>(existing)
-    if (old.projectId !== input.projectId || old.conversationId !== manager.conversationId || old.content !== input.content || old.planningTaskId !== input.planningTaskId || old.questionId !== input.questionId || old.taskId !== input.taskId || JSON.stringify(old.employeeInteraction) !== JSON.stringify(input.employeeInteraction) || JSON.stringify(old.runEvidence) !== JSON.stringify(input.runEvidence) || old.goalRevision !== input.goalRevision || old.fileChangeObservationId !== input.fileChangeObservationId || old.webChangeObservationId !== input.webChangeObservationId || old.changeId !== input.changeId || JSON.stringify(old.changeDecision) !== JSON.stringify(input.changeDecision) || JSON.stringify(old.executionObservation) !== JSON.stringify(input.executionObservation) || JSON.stringify(old.delivery) !== JSON.stringify(input.delivery) || JSON.stringify(old.deliveryReference) !== JSON.stringify(input.deliveryReference) || old.deliveryReviewDecision !== input.deliveryReviewDecision || JSON.stringify(old.chainReview) !== JSON.stringify(input.chainReview) || JSON.stringify(old.teamWorkspaceProposal) !== JSON.stringify(input.teamWorkspaceProposal) || JSON.stringify(old.teamWorkspaceApproval) !== JSON.stringify(input.teamWorkspaceApproval)) throw new Error('Owner管理消息与已有事件不一致')
+    if (old.projectId !== input.projectId || old.conversationId !== manager.conversationId || old.content !== input.content || old.planningTaskId !== input.planningTaskId || old.questionId !== input.questionId || old.taskId !== input.taskId || JSON.stringify(old.employeeInteraction) !== JSON.stringify(input.employeeInteraction) || JSON.stringify(old.runEvidence) !== JSON.stringify(input.runEvidence) || old.goalRevision !== input.goalRevision || old.fileChangeObservationId !== input.fileChangeObservationId || old.webChangeObservationId !== input.webChangeObservationId || old.changeId !== input.changeId || JSON.stringify(old.changeDecision) !== JSON.stringify(input.changeDecision) || JSON.stringify(old.executionObservation) !== JSON.stringify(input.executionObservation) || JSON.stringify(old.delivery) !== JSON.stringify(input.delivery) || JSON.stringify(old.deliveryReference) !== JSON.stringify(input.deliveryReference) || old.deliveryReviewDecision !== input.deliveryReviewDecision || old.localTextAction !== input.localTextAction || JSON.stringify(old.chainReview) !== JSON.stringify(input.chainReview) || JSON.stringify(old.teamWorkspaceProposal) !== JSON.stringify(input.teamWorkspaceProposal) || JSON.stringify(old.teamWorkspaceApproval) !== JSON.stringify(input.teamWorkspaceApproval)) throw new Error('Owner管理消息与已有事件不一致')
     return old
   }
   const message: OwnerManagementMessage = { ...input, id, conversationId: manager.conversationId, createdAt: Date.now() }
@@ -248,9 +255,9 @@ export function recordOwnerManagementRun(projectId: string, executionId: string,
   if (getOwnerManager(projectId)) enqueue(projectId, purpose === 'owner_execution_assignment' ? 'assignment_result' : 'planning_result', goalRevision, taskId, executionId)
 }
 /** 与本地恢复记录同事务追加独立结果事件；原失败结果事件保持已消费状态。 */
-export function recordOwnerManagementRecoveredAssignment(projectId: string, executionId: string, goalRevision: number, receiptId: string, taskId?: string): void {
+export function recordOwnerManagementRecoveredRun(projectId: string, executionId: string, goalRevision: number, receiptId: string, taskId: string | undefined, purpose: 'owner_planning' | 'owner_execution_assignment'): void {
   if (!/^[a-f0-9]{64}$/.test(receiptId)) throw new Error('Owner恢复回执身份无效')
-  if (getOwnerManager(projectId)) enqueue(projectId, 'assignment_result', goalRevision, taskId, executionId, receiptId)
+  if (getOwnerManager(projectId)) enqueue(projectId, purpose === 'owner_planning' ? 'planning_result' : 'assignment_result', goalRevision, taskId, executionId, receiptId)
 }
 /** 方案内容确认是管理判断的唤醒事实，不授予调用或业务执行许可。 */
 export function recordOwnerManagementPlanConfirmed(plan: ProjectOwnerPlanDraft): void {
@@ -336,21 +343,26 @@ export function recordOwnerManagementObservation(projectId: string, goalRevision
           : `${subject}失败，没有可核验成果。当前记录中的模型用量或实际费用未知，保守预留仍保留；系统不会自动重发。请先在服务商账单按模型与请求时间核对。当前版本不能把外部账单核对结果写回应用，也不会在核对前启动后续步骤。` })
       return true
     }
-    // 独立检查有结论时，Owner 主动说明发现、影响与建议，而不是只报“检查已返回”。
-    // 全部来自权威观察与评审证据，不做超出事实的推断；同一观察只写一次。
     const review = observation.review
     if (observation.trigger === 'terminal' && observation.role === 'reviewer' && observation.executionStatus === 'completed' && review) {
-      const findings = review.findings.map(value => value.trim()).filter(Boolean)
-      const summary = review.summary.trim()
-      const lead = summary ? `（${summary}）` : ''
-      const listed = findings.slice(0, 3).map((value, index) => `${index + 1}) ${value}`).join('；')
-      const more = findings.length > 3 ? `；另有 ${findings.length - 3} 项` : ''
-      const content = review.verdict === 'changes_requested'
-        ? `发现：独立检查未通过${lead}，提出 ${findings.length} 项修改${listed ? `：${listed}${more}` : ''}。\n影响：本轮成果已保留但不能作为交付；受影响部分需要在剩余返工次数与额度内重做，范围不扩大。\n建议：先按上述修改点调整执行内容和验收依据，再重新独立检查；若修改要求超出已确认的目标、资料或费用边界，我会停下来请你决定。`
-        : review.verdict === 'approved'
-          ? `发现：独立检查通过${lead}，${findings.length ? `仍记录 ${findings.length} 项非阻断项：${listed}${more}` : '没有阻断项'}。\n影响：成果可以进入交付，不需要为此改动方案或追加授权。\n建议：我继续整理交付说明（成果位置、依据、限制）；除业务取舍外不需要你再次确认。`
-          : `发现：独立检查结论为 ${review.verdict}${lead}。\n影响：结论不是通过，本轮不能按已通过处理，相关部分仍需在授权内核对或返工。\n建议：先核对检查依据与本轮成果，再决定返工还是请你对边界作决定；我不会自动扩大范围。`
-      appendOwnerManagementMessage({ projectId, eventId: `${eventId}:plan-update`, role: 'assistant', kind: 'management_progress', ...(taskId ? { taskId } : {}), goalRevision, content })
+      const progressEventId = `${eventId}:plan-update`
+      const prior = getOwnerManagementMessage(projectId, digest({ eventId: progressEventId, role: 'assistant', kind: 'management_progress' }))
+      // 升级后重放时，旧版进度仍是历史记录，沿用同一观察事件。
+      if (prior && (prior.taskId !== taskId || prior.goalRevision !== goalRevision)) throw new Error('Owner评审进度与原观察主体不一致')
+      if (!prior) {
+        const findings = review.findings.map(value => value.trim()).filter(Boolean)
+        const summary = review.summary.trim()
+        const lead = summary ? `（${summary}）` : ''
+        const listed = findings.slice(0, 3).map((value, index) => `${index + 1}) ${value}`).join('；')
+        const more = findings.length > 3 ? `；另有 ${findings.length - 3} 项` : ''
+        // 通过意见与最终验收分别记录。模型摘要保留在原观察里供验收核对。
+        const content = review.verdict === 'approved'
+          ? '独立检查已提交通过意见，当前等待最终验收。交付后，成果会在当前对话中显示。'
+          : review.verdict === 'changes_requested'
+            ? `发现：独立检查未通过${lead}，提出 ${findings.length} 项修改${listed ? `：${listed}${more}` : ''}。\n影响：本轮成果已保留但不能作为交付；受影响部分需要在剩余返工次数与额度内重做，范围不扩大。\n建议：先按上述修改点调整执行内容和验收依据，再重新独立检查；若修改要求超出已确认的目标、资料或费用边界，我会停下来请你决定。`
+            : `发现：独立检查结论为 ${review.verdict}${lead}。\n影响：结论不是通过，本轮不能按已通过处理，相关部分仍需在授权内核对或返工。\n建议：先核对检查依据与本轮成果，再决定返工还是请你对边界作决定；我不会自动扩大范围。`
+        appendOwnerManagementMessage({ projectId, eventId: progressEventId, role: 'assistant', kind: 'management_progress', ...(taskId ? { taskId } : {}), goalRevision, content })
+      }
       enqueue(projectId, 'execution_observed', goalRevision, taskId, message.id)
       return true
     }

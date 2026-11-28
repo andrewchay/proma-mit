@@ -3,7 +3,7 @@
 /** 普通Agent已开始输出后的最大静默时间。 */
 export const MODEL_STREAM_IDLE_TIMEOUT_MS = 120_000
 
-/** Owner管理请求允许慢模型静默处理；超时后仍保留未知费用且不重试。 */
+/** Owner管理与受控员工请求允许慢模型静默处理；超时后仍保留未知费用且不重试。 */
 export const OWNER_MODEL_SILENCE_TIMEOUT_MS = 480_000
 
 /** 慢模型大上下文 prefill 的保守吞吐假设。 */

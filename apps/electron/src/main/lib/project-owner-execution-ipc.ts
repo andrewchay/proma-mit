@@ -14,14 +14,18 @@ import {
 } from './project-owner-execution-source'
 import { listOwnerExecutionCommands, previewOwnerExecutionCommandAck, reserveAndQueueOwnerCommand } from './project-owner-execution-command'
 import { dispatchOwnerCommandExecution } from './project-owner-execution-dispatcher'
-import { cancelQueuedOwnerCommand, recoverUnclaimedOwnerCommandPreparations } from './project-owner-execution-stop'
+import { cancelQueuedOwnerCommand, readUnclaimedOwnerDevelopmentWorkspaceBlock, resumeOwnerDevelopmentAfterWorkspaceCheck } from './project-owner-execution-stop'
 import { confirmOwnerPreflightReconciliation, previewOwnerPreflightReconciliation } from './project-owner-execution-preflight-reconciliation'
 import { assertLocalActorEnabled } from './project-owner-plan-service'
 import { getOwnerAutonomousScheduleStatus } from './project-owner-autonomous-scheduler'
-import { getOwnerDispatchControl, listOwnerDispatchControlEvents, setOwnerDispatchPaused } from './project-owner-dispatch-control'
+import { requestOwnerAutonomousScheduleWake } from './project-owner-autonomous-scheduler-events'
+import { assertOwnerDispatchManagementCurrent, getOwnerDispatchControl, listOwnerDispatchControlEvents, setOwnerDispatchPaused } from './project-owner-dispatch-control'
 import { listOwnerExecutionAssignmentRuns, prepareOwnerExecutionAssignment } from './project-owner-execution-assignment-service'
 import { resumeOwnerExecutionStartIntent, saveOwnerExecutionStartIntent } from './project-owner-execution-start-intent'
 import { inspectDevelopmentWorkspaceBlocker } from './development-workspace-blocker'
+import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
+import { getOwnerExecutionRevalidation } from './project-owner-execution-revalidation'
+import { hasProjectWorkspaceBinding } from './project-workspace-bindings'
 import { getAgentSessionMeta } from './agent-session-manager'
 import { getAgentWorkspace } from './agent-workspace-manager'
 import * as store from './project-sqlite-store'
@@ -53,6 +57,24 @@ export function registerProjectOwnerExecutionIpcHandlers(ipc: Registrar): void {
     const subject = parseOwnerExecutionSubject({ projectId: value.projectId, ...(value.taskId === undefined ? {} : { taskId: value.taskId }) })
     return resumeOwnerExecutionStartIntent(value.intentId, subject)
   }))
+  ipc.handle(PROJECT_IPC_CHANNELS.REFRESH_OWNER_DELIVERY_BROWSER, (_, request) => result(async () => {
+    const { projectId, taskId, messageId, stepKey, artifactHash, anchorId, failedValidationId } = ownerExecutionObject(request,
+      ['projectId', 'taskId', 'messageId', 'stepKey', 'artifactHash', 'anchorId', 'failedValidationId'])
+    const subject = parseOwnerExecutionSubject({ projectId, ...(taskId === undefined ? {} : { taskId }) })
+    if (typeof messageId !== 'string' || !/^[a-f0-9]{64}$/.test(messageId) || typeof stepKey !== 'string' || !stepKey.trim() || stepKey.length > 100
+      || typeof artifactHash !== 'string' || !/^[a-f0-9]{64}$/.test(artifactHash) || typeof anchorId !== 'string' || !/^val-[a-f0-9]{64}$/.test(anchorId)
+      || (failedValidationId !== undefined && (typeof failedValidationId !== 'string' || !/^val-[a-f0-9]{64}$/.test(failedValidationId)))) throw new Error('成果补验引用无效')
+    const { refreshOwnerDeliveryBrowser } = await import('./project-owner-management-delivery')
+    return refreshOwnerDeliveryBrowser({ ...subject, messageId, stepKey, artifactHash, anchorId, failedValidationId })
+  }))
+  ipc.handle(PROJECT_IPC_CHANNELS.RETRY_OWNER_QUALITY_DECISION, (_, request) => result(async () => {
+    const { projectId, taskId, executionId, failedValidationId } = ownerExecutionObject(request, ['projectId', 'taskId', 'executionId', 'failedValidationId'])
+    const subject = parseOwnerExecutionSubject({ projectId, ...(taskId === undefined ? {} : { taskId }) })
+    if (typeof executionId !== 'string' || !executionId.trim() || executionId.length > 128) throw new Error('原验收执行ID无效')
+    if (failedValidationId !== undefined && (typeof failedValidationId !== 'string' || !/^val-[a-f0-9]{64}$/.test(failedValidationId))) throw new Error('浏览器失败回执编号无效')
+    const { prepareOwnerQualityRetry } = await import('./project-owner-quality-retry')
+    return prepareOwnerQualityRetry(subject.projectId, subject.taskId, executionId, failedValidationId)
+  }))
   ipc.handle(PROJECT_IPC_CHANNELS.RETRY_OWNER_MARKDOWN_REVIEW, (_, request) => result(async () => {
     const { projectId, reviewerCommandId } = ownerExecutionObject(request, ['projectId', 'reviewerCommandId'])
     const subject = parseOwnerExecutionSubject({ projectId })
@@ -74,13 +96,35 @@ export function registerProjectOwnerExecutionIpcHandlers(ipc: Registrar): void {
     const subject = parseOwnerExecutionSubject({ projectId: value.projectId, ...(value.taskId === undefined ? {} : { taskId: value.taskId }) })
     const execution = store.getAgentExecution(value.executionId)
     if (!execution || execution.projectId !== subject.projectId) throw new Error('执行不属于当前项目')
-    const meta = getAgentSessionMeta(execution.sessionId)
-    const workspace = meta?.workspaceId ? getAgentWorkspace(meta.workspaceId) : undefined
+    const commandId = execution.ownerCommandId
+    const grant = store.getProjectDb().prepare(`SELECT g.task_id,g.revalidation_id,g.dispatch_mode FROM project_owner_execution_commands c
+      JOIN project_owner_execution_grants g ON g.id=c.grant_id AND g.project_id=c.project_id
+      WHERE c.id=? AND c.project_id=? AND c.execution_id=?`).get(commandId ?? '', subject.projectId, execution.id) as
+      { task_id: string | null; revalidation_id: string; dispatch_mode: string } | undefined
+    if (subject.taskId && grant?.task_id !== subject.taskId) throw new Error('执行不属于当前Owner任务')
+    if (!commandId || !grant) throw new Error('执行不属于当前Owner会话')
+    const blockedBeforeClaim = readUnclaimedOwnerDevelopmentWorkspaceBlock(subject.projectId, commandId)
+    let workspaceId = execution.sessionId ? getAgentSessionMeta(execution.sessionId)?.workspaceId : undefined
+    if (blockedBeforeClaim) {
+      const { source, taskId } = readOwnerCommandFrozenSource(commandId)
+      const scope = source.tasks.find(task => task.taskId === taskId)?.developmentScope
+      if (taskId !== execution.entityId || scope?.workspaceId !== source.workspaceId || !hasProjectWorkspaceBinding(subject.projectId, source.workspaceId)) {
+        throw new Error('研发执行与原授权的工作区已变化，无法重新核对')
+      }
+      workspaceId = source.workspaceId
+    }
+    const workspace = workspaceId ? getAgentWorkspace(workspaceId) : undefined
     if (!workspace?.rootPath) throw new Error('执行工作区已失效，无法重新核对')
     const blocker = inspectDevelopmentWorkspaceBlocker(workspace.rootPath, workspace.id, workspace.name)
     if (blocker.kind === 'ready') {
-      // 只恢复「从未认领」的排队准备；已认领或已有会话的执行仍需人工核对，不在这里重放。
-      recoverUnclaimedOwnerCommandPreparations(Date.now(), execution.id)
+      if (blockedBeforeClaim) {
+        assertLocalActorEnabled()
+        const view = getOwnerExecutionRevalidation({ projectId: subject.projectId, ...(grant.task_id ? { taskId: grant.task_id } : {}) })
+        if (view.status !== 'current' || view.revalidation?.id !== grant.revalidation_id) throw new Error('工作区已清理，原执行范围已变化，请重新核对授权。')
+        if (grant.dispatch_mode === 'autonomous') assertOwnerDispatchManagementCurrent(subject.projectId, blockedBeforeClaim.grant_id)
+        resumeOwnerDevelopmentAfterWorkspaceCheck(subject.projectId, commandId)
+        requestOwnerAutonomousScheduleWake(subject.projectId)
+      }
       return { state: 'clean' as const }
     }
     if (blocker.kind === 'not_git_root') {
@@ -139,7 +183,10 @@ export function registerProjectOwnerExecutionIpcHandlers(ipc: Registrar): void {
     }),
   )
   ipc.handle(PROJECT_IPC_CHANNELS.GET_OWNER_AUTONOMOUS_SCHEDULE_STATUS, (_, request) =>
-    result(() => getOwnerAutonomousScheduleStatus(parseOwnerExecutionSubject(request).projectId)),
+    result(() => {
+      const { projectId, taskId } = parseOwnerExecutionSubject(request)
+      return getOwnerAutonomousScheduleStatus(projectId, taskId)
+    }),
   )
   ipc.handle(PROJECT_IPC_CHANNELS.GET_OWNER_DISPATCH_CONTROL, (_, request) => result(() => {
     const value = ownerExecutionObject(request, ['projectId', 'grantId'])

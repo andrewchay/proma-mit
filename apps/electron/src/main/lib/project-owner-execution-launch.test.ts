@@ -480,8 +480,8 @@ test('Given完整文本交付 When执行与不同模型的独立评审 Then准�
   const commandApi = await import('./project-owner-execution-command'), reviews = await import('./project-owner-technical-review')
   const commands = commandApi.listOwnerExecutionCommands(r.f.subject), executor = commands.find(item => item.role === 'executor')!
   const reviewer = commands.find(item => item.role === 'reviewer')!
-  expect(store.getAgentExecution(reviewer.executionId!)!.prompt).toContain('quote只需锚定一处准确原文')
-  expect(store.getAgentExecution(reviewer.executionId!)!.prompt).toContain('否则不能作为quote')
+  expect(store.getAgentExecution(reviewer.executionId!)!.prompt).toContain('证据编号只需指向一处关键原文')
+  expect(store.getAgentExecution(reviewer.executionId!)!.prompt).toContain('证据编号必须指向当前正文')
   expect(executor.textDelivery?.state).toBe('available')
   expect(executor.textDelivery?.artifact?.content).toBe(r.calls[0]!.content)
   expect(executor.executionResultSummary).not.toContain('超出摘要位置的明确范围依据')

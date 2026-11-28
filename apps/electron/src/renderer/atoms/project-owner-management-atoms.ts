@@ -100,7 +100,7 @@ export const sendOwnerMessageAtom = atom(null, async (get, set, subject: Project
   const manager = getOwnerManagementEditor(get(ownerManagementEditorsAtom), subject.projectId).view?.manager
   const editor = getOwnerGoalEditor(get(ownerGoalEditorsAtom), subject)
   const goal = editor.loaded && !editor.loading && !editor.saving && !editor.dirty && !editor.requiresReview && !editor.conflict ? editor.snapshot : null
-  if (old.sending || !manager || !goal || (!old.text.trim() && !old.deliveryReviewDecision)) return false
+  if (old.sending || !manager || !goal || (!old.pending && !old.text.trim() && old.deliveryReviewDecision !== 'accepted')) return false
   const reviewText = old.deliveryReviewDecision === 'accepted' ? '我认可这个成果版本。' : old.deliveryReviewDecision === 'changes_requested' ? '这个成果版本需要修改。' : ''
   const content = [reviewText, old.text.trim()].filter(Boolean).join('\n\n')
   if (content.length > 4000) return false

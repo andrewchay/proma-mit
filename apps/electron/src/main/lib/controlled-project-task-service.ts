@@ -6,6 +6,7 @@ import {
 import { getAgentProviderProtocol } from '@gravitas/shared'
 import { getPilotReviewedPriceEvidenceForModel } from './project-pilot-request-evidence'
 import { readOwnerPlanningSnapshot, resolveOwnerPlanningTask } from './project-owner-planning-source'
+import { OWNER_INITIAL_PLAN_RETRY_PREFIX, OWNER_QUALITY_RETRY_PREFIX } from './project-owner-runtime-binding'
 /** 非代码项目任务：准备不执行；本机显式启动确认不是Pilot grant或硬费用保证。 */
 import { createHash, randomUUID } from 'node:crypto'
 import { realpathSync } from 'node:fs'
@@ -419,6 +420,10 @@ export async function startControlledTask(
 	)
 	const executionId = transactionResult(() => {
     assertLegacyControlledTaskPurpose(taskId)
+    const requestId = readOwnerPlanningSnapshot(taskId, { allowUnknownPromptForHistory: true })?.link.requestId
+    if (requestId?.startsWith(OWNER_QUALITY_RETRY_PREFIX)) throw new Error('成果续验只能使用原项目管理授权启动')
+    if (requestId?.startsWith(OWNER_INITIAL_PLAN_RETRY_PREFIX))
+      throw new Error('首份规划纠正只能使用原项目管理授权启动')
 		const record = row(taskId)
 		if (record.confirmed_preview_hash === previewHash && record.execution_id) {
 			const existing = store.getAgentExecution(record.execution_id)

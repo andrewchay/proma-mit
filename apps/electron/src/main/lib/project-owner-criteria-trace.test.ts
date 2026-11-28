@@ -19,6 +19,22 @@ function step(key: string): ProjectOwnerPlanStep {
 
 const steps = [step('sheet'), step('review')]
 
+test('Given明确只交付一段正文且模型误填逐份字段 When核对计划 Then保留完整正文标准', () => {
+  const sourceText = '全文最多100字，包含标点、空格和换行'
+  const item = { key: 'length', source: 'objective', sourceIndex: 0, sourceText, criticality: 'critical',
+    stepKey: 'notice', verification: 'manual_review', verificationScope: 'own_text', assumptions: [] }
+  const draft = goal({ objective: `写一段闭馆通知。${sourceText}。只交付通知正文。`, constraints: [], acceptanceCriteria: [] })
+  const notice = [{ ...step('notice'), deliveryKind: 'text' as const }]
+  const result = parseCriteriaTrace([item], draft, notice)
+  expect(result[0]).toMatchObject({ sourceText, verification: 'manual_review' })
+  expect(result[0]).not.toHaveProperty('verificationScope')
+  expect(() => parseCriteriaTrace([item], { ...draft, constraints: ['两个文本各自完整可复制'] }, notice)).toThrow('逐份文本核验')
+  for (const multiple of ['只交付两份正文。', '只交付通知正文和清单。', '不要只交付通知正文，清单也需要。', '只交付通知正文，另附清单。']) {
+    expect(() => parseCriteriaTrace([item], { ...draft, objective: `${sourceText}。${multiple}` }, notice)).toThrow('逐份文本核验')
+  }
+  expect(() => parseCriteriaTrace([{ ...item, sourceText: '虚构的上限' }], draft, notice)).toThrow('来源原文与目标不符')
+})
+
 test('Given 硬要求逐条登记 When 解析追溯 Then 接受并保留来源与检验方式', () => {
   const trace = parseCriteriaTrace([
     { key: 'c1', source: 'acceptance', sourceIndex: 0, sourceText: '打印后为一页', criticality: 'critical', stepKey: 'sheet', verification: 'automated', assumptions: ['A4纸与四边15毫米边距'] },
@@ -74,6 +90,24 @@ test('Given 目标正文没有任何步骤承接 When 解析追溯 Then 拒绝�
   ], goal({ objective: '   ' }), steps)).not.toThrow()
 })
 
+test('Given 用户要求每份文本独立满足同一标准 When 登记逐份核验 Then 保留原文并要求覆盖全部文本步骤', () => {
+  const sourceText = '两份文本各自完整可复制'
+  const scopedGoal = goal({ objective: sourceText })
+  const textSteps = steps.map(item => ({ ...item, deliveryKind: 'text' as const }))
+  const base = { ...OBJECTIVE_ITEM, sourceText, verificationScope: 'own_text' }
+  const records = textSteps.map(item => ({ ...base, key: item.key, stepKey: item.key }))
+  expect(parseCriteriaTrace(records, scopedGoal, textSteps).map(item => [item.stepKey, item.sourceText, item.verificationScope])).toEqual([
+    ['sheet', sourceText, 'own_text'], ['review', sourceText, 'own_text'],
+  ])
+  expect(() => parseCriteriaTrace(records.slice(0, 1), scopedGoal, textSteps)).toThrow('每个文本交付步骤')
+  expect(() => parseCriteriaTrace(records, scopedGoal, [textSteps[0]!, { ...textSteps[1]!, deliveryKind: 'development' }])).toThrow('每个文本交付步骤')
+  for (const shared of ['两份文本合计少于120字', '每份报告的名单必须与另一份交付一致', '每份预算的金额加总不得超过 500 元']) {
+    expect(() => parseCriteriaTrace(records.map(item => ({ ...item, sourceText: shared })), goal({ objective: shared }), textSteps)).toThrow('明确逐份')
+  }
+  const long = sourceText + '甲'.repeat(1000 - sourceText.length)
+  expect(() => parseCriteriaTrace(records.map(item => ({ ...item, sourceText: long })), goal({ objective: long }), textSteps)).toThrow('标准过长')
+})
+
 test('Given 追溯键重复或字段非法 When 解析追溯 Then 拒绝', () => {
   const item = { key: 'c1', source: 'acceptance' as const, sourceIndex: 0, sourceText: '打印后为一页', criticality: 'critical' as const, stepKey: 'sheet', verification: 'automated' as const, assumptions: [] }
   expect(() => parseCriteriaTrace([item, item], goal(), steps)).toThrow('重复')
@@ -114,4 +148,24 @@ test('Given 目标来源为空字符串 When 评估覆盖 Then 空白来源不�
   const sparse = goal({ constraints: ['', '  '], acceptanceCriteria: [] })
   const coverage = assessCriteriaCoverage(sparse, [])
   expect(coverage.uncovered.map((item) => `${item.source}:${item.sourceIndex}`)).toEqual(['objective:0'])
+})
+
+test('Given冻结目标明确要求浏览器实测 When模型给研发追溯写 browser_test Then只归一为计划自动检验', () => {
+  const item = { key: 'browser', source: 'objective', sourceIndex: 0, sourceText: '核对网页行为',
+    criticality: 'critical', stepKey: 'page', verification: 'browser_test', assumptions: [] }
+  const browserGoal = goal({ objective: '用真实浏览器核对网页行为' })
+  const development = { ...step('page'), deliveryKind: 'development' as const }
+  expect(parseCriteriaTrace([item], browserGoal, [development])[0]?.verification).toBe('automated')
+  expect(parseCriteriaTrace([{ ...item, verification: 'browser_e2e' }], browserGoal, [development])[0]?.verification).toBe('automated')
+  expect(() => parseCriteriaTrace([item], goal({ objective: '核对网页行为' }), [development])).toThrow('检验方式无效')
+  expect(() => parseCriteriaTrace([item], browserGoal, [{ ...development, deliveryKind: 'text' }])).toThrow('检验方式无效')
+})
+
+test('Given 原目标只交付一份通知正文 When 模型误标逐份核验 Then 保留原文并采用普通正文核验', () => {
+  const sourceText = '只交付一份通知正文'
+  const objective = `面向借用物资的同事。${sourceText}，由独立评审核对日期和字数，不另附附件。`
+  const [trace] = parseCriteriaTrace([{ ...OBJECTIVE_ITEM, sourceText, stepKey: 'review', verificationScope: 'own_text' }],
+    goal({ objective }), [{ ...steps[1]!, deliveryKind: 'text' }])
+  expect(trace?.sourceText).toBe(sourceText)
+  expect(trace?.verificationScope).toBeUndefined()
 })

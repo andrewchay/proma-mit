@@ -19,6 +19,7 @@ import { OwnerModuleStatus } from './OwnerModuleStatus'
 import { getOwnerWaitingLabel, getOwnerWaitingMessage, hasCompletedOwnerDelivery } from './project-owner-progress-state'
 import { deriveOwnerExecutionAttention } from './project-owner-execution-attention'
 import { OwnerExecutionBlockerNotice } from './OwnerExecutionBlockerNotice'
+import { revealOwnerHistoryTarget } from './OwnerDesignHistory'
 
 const field = 'mt-2 w-full min-w-0 rounded-lg bg-background p-3 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
 const button = 'rounded-lg bg-primary px-4 py-2 text-sm text-primary-foreground disabled:opacity-50'
@@ -47,7 +48,7 @@ function OwnerManagedExecutionApprovalSummary({ summary, steps, executionKind }:
 }
 
 /** 对话只编排既有暂停准备接口，模型调用、业务授权和派工仍由各自门禁负责。 */
-export function ProjectOwnerExecutionConversation({ projectId, taskId, ownerConversation = false }: { projectId: string; taskId?: string; ownerConversation?: boolean }): React.ReactElement {
+export function ProjectOwnerExecutionConversation({ projectId, taskId, ownerConversation = false, showBlockerNotice = true }: { projectId: string; taskId?: string; ownerConversation?: boolean; showBlockerNotice?: boolean }): React.ReactElement {
   const subject = useMemo(() => ({ projectId, ...(taskId === undefined ? {} : { taskId }) }), [projectId, taskId])
   // biome-ignore lint/correctness/useExhaustiveDependencies: 主体切换时重建对话展示状态，业务草案仍按主体保留。
   const localAtom = useMemo(() => atom({ started: false, budget: false, dollars: null as string | null, advanced: false, editing: false, assignmentFeedback: '', assignmentFeedbackError: '', appliedAssignmentId: '', replaceArrangement: false }), [subject])
@@ -121,7 +122,7 @@ export function ProjectOwnerExecutionConversation({ projectId, taskId, ownerConv
   const ownerScheduleExpired = Boolean(ownerAutonomyManaged && commandProgress.loaded && scheduleMatchesGrant && schedule?.state === 'expired' && !ownerCompleted)
   const scheduleIdentityComplete = Boolean(scheduleMatchesGrant && schedule?.taskId && schedule.role && Number.isInteger(schedule.reworkOrdinal))
   const matchingScheduleCommands = scheduleIdentityComplete
-    ? ownerCommands.filter(command => command.taskId === schedule?.taskId && command.role === schedule.role && command.reworkOrdinal === schedule.reworkOrdinal)
+    ? ownerCommands.filter(command => !command.reviewReplaced && command.taskId === schedule?.taskId && command.role === schedule.role && command.reworkOrdinal === schedule.reworkOrdinal)
     : []
   const currentOwnerCommand = matchingScheduleCommands.length === 1 ? matchingScheduleCommands[0] : null
   const scheduleState = schedule?.state
@@ -146,7 +147,8 @@ export function ProjectOwnerExecutionConversation({ projectId, taskId, ownerConv
   const ownerAwaitingQuality = Boolean(ownerAutonomyManaged && commandProgress.loaded && scheduleMatchesGrant && scheduleState === 'waiting' && nextAction === 'await_owner_quality')
   const ownerAwaitingAcceptance = Boolean(ownerAutonomyManaged && commandProgress.loaded && scheduleMatchesGrant && scheduleState === 'waiting' && nextAction === 'await_business_acceptance')
   const ownerWaitingForChange = Boolean(ownerAutonomyManaged && commandProgress.loaded && scheduleMatchesGrant && scheduleState === 'waiting' && nextAction === 'none')
-  const ownerHasSpecificWaitingState = ownerWaitingDecision || ownerAwaitingQuality || ownerAwaitingAcceptance || ownerWaitingForChange
+  const ownerWaitingResources = Boolean(ownerAutonomyManaged && commandProgress.loaded && scheduleMatchesGrant && nextAction === 'await_local_resources')
+  const ownerHasSpecificWaitingState = ownerWaitingResources || ownerWaitingDecision || ownerAwaitingQuality || ownerAwaitingAcceptance || ownerWaitingForChange
   const ready = !ownerAutonomyManaged && !ownerCompleted && (ownerConversation ? reviewReady : confirmedReady)
   const savedCurrent = e.view?.status === 'current' && saved?.source.planFingerprint === plan?.planFingerprint && ready && !e.dirty
   const editing = local.editing && !(savedCurrent && saved?.input.requestId === e.requestId && !local.started)
@@ -189,10 +191,10 @@ export function ProjectOwnerExecutionConversation({ projectId, taskId, ownerConv
     return () => window.clearInterval(timer)
   }, [assignmentInProgress, loadAssignments, subject])
   useEffect(() => {
-    if (!ownerAutonomyManaged || ownerNeedsAttention || !['ready', 'running'].includes(scheduleState ?? '')) return
+    if (!ownerAutonomyManaged || ownerNeedsAttention || (!ownerWaitingResources && !['ready', 'running'].includes(scheduleState ?? ''))) return
     const timer = window.setInterval(() => { void loadCommandProgress(subject) }, 4000)
     return () => window.clearInterval(timer)
-  }, [ownerAutonomyManaged, ownerNeedsAttention, scheduleState, loadCommandProgress, subject])
+  }, [ownerAutonomyManaged, ownerNeedsAttention, ownerWaitingResources, scheduleState, loadCommandProgress, subject])
   const requestOwnerAssignment = async (feedback = local.assignmentFeedback): Promise<void> => {
     if (!plan || !e.view || !ready || !e.loaded || e.requiresReview || busy || !e.view.ownerBindingRevision) return
     const link = await prepareAssignment({ subject, input: { requestId: managedByOwner ? `management-assignment:user:${crypto.randomUUID()}` : crypto.randomUUID(), expectedBindingRevision: e.view.ownerBindingRevision, expectedGoalRevision: plan.goalRevision, expectedPlanRevision: plan.revision, expectedPlanFingerprint: plan.planFingerprint, expectedContextFingerprint: plan.contextFingerprint, ...(feedback.trim() ? { feedback: feedback.trim() } : {}) } })
@@ -239,26 +241,23 @@ export function ProjectOwnerExecutionConversation({ projectId, taskId, ownerConv
     await load(subject)
   }
   return <section className="mt-5 min-w-0 space-y-4 rounded-xl bg-muted/30 p-4 shadow-sm [overflow-wrap:anywhere]" aria-label="执行配置对话">
-    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{hasOwnerWaitingNotice ? ownerWaitingLabel : ownerCompleted ? 'Owner 已完成本轮工作' : ownerScheduleExpired ? '执行授权已到期' : ownerAwaitingAcceptance ? '交付已完成，等待你验收' : ownerWaitingDecision ? 'Owner 等待你的决定' : ownerAwaitingQuality ? '成果等待 Owner 质量判断' : ownerWaitingForChange ? 'Owner 等待新的项目进展' : ownerStarted ? 'Owner 正在推进交付' : ownerQueued ? 'Owner 正在启动执行' : ownerNeedsAttention ? 'Owner 执行需要核对' : ownerAutonomyManaged ? 'Owner 正在核对启动状态' : singleConfirmation ? '确认成果范围并开始' : ownerConversation && ready && !hasAssignmentActivity ? 'Owner 尚未形成团队安排' : ownerConversation ? 'Owner 正在组织执行' : managedByOwner ? '确认执行边界' : '接下来，安排计划如何执行'}</h3><OwnerModuleStatus tone={hasOwnerWaitingNotice || ownerWaitingDecision || ownerNeedsAttention || e.requiresReview || latestAssignmentRun?.sourceStatus === 'stale' ? 'danger' : ownerCompleted || ownerStarted || ownerAwaitingAcceptance || savedCurrent || assignmentProposal ? 'accent' : ownerAutonomyManaged || saved || assignments.runs.length || (ownerConversation && ready && !hasAssignmentActivity) ? 'warn' : 'muted'}>{hasOwnerWaitingNotice ? ownerAttentionOnly ? '需要关注' : '等待你处理' : ownerCompleted ? '本轮已交付' : ownerScheduleExpired ? '需要重新确认授权' : ownerAwaitingAcceptance ? '成果待你验收' : ownerWaitingDecision ? '需要你决定' : ownerAwaitingQuality ? '等待质量判断' : ownerWaitingForChange ? '当前没有待派发工作' : ownerStarted ? '员工已开始处理' : ownerQueued ? '工作已排队，等待员工启动' : ownerNeedsAttention ? '执行暂停，需核对状态' : ownerAutonomyManaged ? '授权已生效，正在核对派发' : e.requiresReview ? '来源需核对' : savedCurrent ? '已有当前准备' : assignmentProposal ? (managedByOwner ? '待确认执行边界' : '等待审核安排') : assignments.runs.length ? '安排需核对' : saved ? '准备需重新核对' : ready ? ownerConversation ? '尚无团队安排' : '待Owner提出安排' : '先确认计划'}</OwnerModuleStatus></div>
+    <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-semibold">{hasOwnerWaitingNotice ? ownerWaitingLabel : ownerCompleted ? 'Owner 已完成本轮工作' : ownerScheduleExpired ? '执行授权已到期' : ownerAwaitingAcceptance ? '交付已完成，等待你验收' : ownerWaitingDecision ? 'Owner 等待你的决定' : ownerWaitingResources ? '等待本地资源' : ownerAwaitingQuality ? '成果等待 Owner 质量判断' : ownerWaitingForChange ? 'Owner 等待新的项目进展' : ownerStarted ? 'Owner 正在推进交付' : ownerQueued ? 'Owner 正在启动执行' : ownerNeedsAttention ? 'Owner 执行需要核对' : ownerAutonomyManaged ? 'Owner 正在核对启动状态' : singleConfirmation ? '确认成果范围并开始' : ownerConversation && ready && !hasAssignmentActivity ? 'Owner 尚未形成团队安排' : ownerConversation ? 'Owner 正在组织执行' : managedByOwner ? '确认执行边界' : '接下来，安排计划如何执行'}</h3><OwnerModuleStatus tone={hasOwnerWaitingNotice || ownerWaitingDecision || ownerNeedsAttention || e.requiresReview || latestAssignmentRun?.sourceStatus === 'stale' ? 'danger' : ownerCompleted || ownerStarted || ownerAwaitingAcceptance || savedCurrent || assignmentProposal ? 'accent' : ownerAutonomyManaged || saved || assignments.runs.length || (ownerConversation && ready && !hasAssignmentActivity) ? 'warn' : 'muted'}>{hasOwnerWaitingNotice ? ownerAttentionOnly ? '需要关注' : '等待你处理' : ownerCompleted ? '本轮已交付' : ownerScheduleExpired ? '需要重新确认授权' : ownerAwaitingAcceptance ? '成果待你验收' : ownerWaitingDecision ? '需要你决定' : ownerWaitingResources ? '资源恢复后自动继续' : ownerAwaitingQuality ? '等待质量判断' : ownerWaitingForChange ? '当前没有待派发工作' : ownerStarted ? '员工已开始处理' : ownerQueued ? '工作已排队，等待员工启动' : ownerNeedsAttention ? '执行暂停，需核对状态' : ownerAutonomyManaged ? '授权已生效，正在核对派发' : e.requiresReview ? '来源需核对' : savedCurrent ? '已有当前准备' : assignmentProposal ? (managedByOwner ? '待确认执行边界' : '等待审核安排') : assignments.runs.length ? '安排需核对' : saved ? '准备需重新核对' : ready ? ownerConversation ? '尚无团队安排' : '待Owner提出安排' : '先确认计划'}</OwnerModuleStatus></div>
     {ownerWaitingMessage && <p role="status" className="whitespace-pre-wrap rounded-xl bg-amber-500/10 p-4 text-sm leading-6">{ownerWaitingMessage.content}</p>}
     {ownerConversation && ready && !hasAssignmentActivity && !hasOwnerWaitingNotice && <p role="status" className="rounded-xl bg-amber-500/10 p-4 text-sm leading-6">当前还没有可核对的团队安排或员工启动记录。员工尚未开始；Owner会在项目对话中说明安排结果或阻塞原因。</p>}
     {ownerStarted && <p role="status" className="rounded-xl bg-primary/10 p-4 text-sm leading-6">我已按你确认的结果和范围开始推进，正在协调执行与成果检查。出现需要你决定的事项或交付进展时，我会在这里告诉你。</p>}
     {ownerQueued && <p role="status" className="rounded-xl bg-muted/60 p-4 text-sm leading-6">工作已进入执行队列，正在等待员工启动。开始处理后，我会在这里更新进度。</p>}
-    {executionAttention && !ownerScheduleExpired && <OwnerExecutionBlockerNotice
+    {showBlockerNotice && executionAttention && !ownerScheduleExpired && <OwnerExecutionBlockerNotice
+      key={executionAttention.recheckExecutionId}
       attention={executionAttention}
-      onOpenEvidence={() => document.getElementById('owner-project-progress')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
-      onRecheckWorkspace={() => {
-        const executionId = executionAttention.recheckExecutionId
-        if (!executionId) return
-        void window.electronAPI.paa.project.recheckOwnerDevelopmentWorkspace({ projectId, ...(taskId ? { taskId } : {}), executionId })
-          .then(result => { if (!result.ok) throw new Error(result.error.message); return loadCommandProgress(subject) })
-          .catch(() => { /* 失败时保留原提示，不静默假装已解决 */ })
-      }}
+      subject={subject}
+      onOpenEvidence={() => revealOwnerHistoryTarget('owner-project-progress')}
+      onWorkspaceCleared={() => void loadCommandProgress(subject)}
     />}
     {ownerCompleted && <p role="status" className="rounded-xl bg-primary/10 p-4 text-sm leading-6">执行、独立检查和成果交付均已完成，本轮不再有待启动工作。如需拓展或修改目标，Owner会先核对当前范围和授权。</p>}
     {ownerScheduleExpired && <p role="alert" className="rounded-xl bg-amber-500/10 p-4 text-sm leading-6">执行授权已到期，Owner已暂停新的派发，已有进度和成果都会保留。项目管理授权与执行授权分别核对，重新确认管理预算不会自动续期执行授权；如需继续，请在下方续期执行授权。</p>}
     {ownerScheduleExpired && grant.grant?.state === 'active' && <OwnerExecutionGrantRenewalCard projectId={projectId} taskId={taskId} grant={grant.grant} onRenewed={refresh} />}
     {ownerWaitingDecision && <p role="status" className="rounded-xl bg-amber-500/10 p-4 text-sm leading-6">当前工作已停在需要你决定的事项前；Owner 不会继续派发，直到收到并核对你的答复。</p>}
+    {ownerWaitingResources && <p role="status" className="rounded-xl bg-muted/60 p-4 text-sm leading-6">{commandProgress.schedule?.reason}</p>}
     {ownerAwaitingQuality && <p role="status" className="rounded-xl bg-muted/60 p-4 text-sm leading-6">独立技术评审已返回，Owner 还需完成授权内的成果判断；判断完成后会继续推进，或带着需要你决定的问题回来。</p>}
     {ownerAwaitingAcceptance && <p role="status" className="rounded-xl bg-primary/10 p-4 text-sm leading-6">授权内执行和技术评审已完成，成果现在等待你验收。技术评审不代替你的业务验收。</p>}
     {ownerWaitingForChange && <p role="status" className="rounded-xl bg-muted/60 p-4 text-sm leading-6">当前没有待派发的工作。Owner 会在项目出现相关变化时继续判断下一步。</p>}

@@ -2027,6 +2027,8 @@ export interface ElectronAPI {
       launchOwnerPreparedExecution: import('@gravitas/shared').ProjectOwnerExecutionLaunchApi['launchOwnerPreparedExecution']
       saveOwnerExecutionStartIntent: import('@gravitas/shared').ProjectOwnerExecutionLaunchApi['saveOwnerExecutionStartIntent']
       resumeOwnerExecutionStartIntent: import('@gravitas/shared').ProjectOwnerExecutionLaunchApi['resumeOwnerExecutionStartIntent']
+      refreshOwnerDeliveryBrowser: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['refreshOwnerDeliveryBrowser']
+      retryOwnerQualityDecision: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['retryOwnerQualityDecision']
       retryOwnerMarkdownReview: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['retryOwnerMarkdownReview']
       supplementOwnerCounterReview: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['supplementOwnerCounterReview']
       recheckOwnerDevelopmentWorkspace: import('@gravitas/shared').ProjectOwnerExecutionCommandApi['recheckOwnerDevelopmentWorkspace']
@@ -4956,6 +4958,8 @@ const electronAPI: ElectronAPI = {
       launchOwnerPreparedExecution: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.LAUNCH_OWNER_PREPARED_EXECUTION, request),
       saveOwnerExecutionStartIntent: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SAVE_OWNER_EXECUTION_START_INTENT, request),
       resumeOwnerExecutionStartIntent: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.RESUME_OWNER_EXECUTION_START_INTENT, request),
+      refreshOwnerDeliveryBrowser: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.REFRESH_OWNER_DELIVERY_BROWSER, request),
+      retryOwnerQualityDecision: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.RETRY_OWNER_QUALITY_DECISION, request),
       retryOwnerMarkdownReview: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.RETRY_OWNER_MARKDOWN_REVIEW, request),
       supplementOwnerCounterReview: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.SUPPLEMENT_OWNER_COUNTER_REVIEW, request),
       recheckOwnerDevelopmentWorkspace: (request) => ipcRenderer.invoke(PROJECT_IPC_CHANNELS.RECHECK_OWNER_DEVELOPMENT_WORKSPACE, request),

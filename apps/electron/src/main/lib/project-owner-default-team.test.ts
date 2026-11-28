@@ -1,6 +1,8 @@
 import { afterAll, beforeAll, expect, mock, test } from 'bun:test'
+import { execFileSync } from 'node:child_process'
+import type { AgentWorkspace } from '@gravitas/shared'
 import { randomUUID } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildElectronMock } from './testing/electron-mock'
@@ -28,7 +30,7 @@ afterAll(() => {
   rmSync(directory, { recursive: true, force: true })
 })
 
-function setup(title: string, createWorkspace: () => { id: string }) {
+function setup(title: string, createWorkspace: () => AgentWorkspace) {
   const project = store.createProject({ title, description: '' })
   const workspace = createWorkspace()
   bindWorkspaceToProject(project.id, workspace.id)
@@ -58,4 +60,62 @@ test('Given rootPath存在但不是带HEAD的Git仓库 When 准备默认团队 T
   ensureOwnerDefaultTeam(f.project.id, f.binding, ['requirements-analyst'])
   const team = employees.listAgentEmployees().filter(employee => employee.id !== f.owner.id && employee.workspaceIds?.includes(f.workspace.id))
   expect(team.every(employee => employee.executionProfile === 'controlled')).toBe(true)
+})
+
+test('Given 带Git基线的应用专用仓库误建了文本团队 When 再次安排文件交付 Then 补齐独立研发团队且幂等', () => {
+  const f = setup('恢复文件交付', () => createOwnerDedicatedWorkspace(`Owner-dev-team-${randomUUID().slice(0, 6)}`))
+  ensureOwnerDefaultTeam(f.project.id, f.binding, ['requirements-analyst'])
+  const team = () => employees.listAgentEmployees().filter(employee => employee.id !== f.owner.id && employee.workspaceIds?.includes(f.workspace.id))
+  const oldTeam = team()
+  for (const employee of oldTeam) store.getProjectDb().prepare("UPDATE agent_employees SET execution_profile='controlled' WHERE id=?").run(employee.id)
+  expect(ensureOwnerDefaultTeam(f.project.id, f.binding, ['requirements-analyst'], true)).toBe(true)
+  expect(ensureOwnerDefaultTeam(f.project.id, f.binding, ['requirements-analyst'], true)).toBe(false)
+  expect(team().filter(employee => employee.executionProfile === 'development').map(employee => employee.roleTemplateId).sort()).toEqual(['delivery-verifier', 'requirements-analyst'])
+  expect(team().filter(employee => employee.executionProfile === 'controlled').map(employee => employee.id).sort()).toEqual(oldTeam.map(employee => employee.id).sort())
+})
+
+test('Given 工作区只支持文本 When 计划明确需要文件交付 Then 不提前固化不适合的默认团队', () => {
+  const f = setup('等待Git基线', () => createAgentWorkspace(`受控团队-${randomUUID()}`))
+  expect(ensureOwnerDefaultTeam(f.project.id, f.binding, ['requirements-analyst'], true)).toBe(false)
+  expect(employees.listAgentEmployees().filter(employee => employee.workspaceIds?.includes(f.workspace.id)).map(employee => employee.id)).toEqual([f.owner.id])
+})
+
+test('Given 用户修改过默认员工指令 When 核对文件岗位 Then 保留团队且不新增替代员工', () => {
+  const f = setup('已有用户配置', () => createOwnerDedicatedWorkspace(`Owner-dev-team-${randomUUID().slice(0, 6)}`))
+  ensureOwnerDefaultTeam(f.project.id, f.binding, ['requirements-analyst'])
+  const team = () => employees.listAgentEmployees().filter(employee => employee.id !== f.owner.id && employee.workspaceIds?.includes(f.workspace.id))
+  const employee = team().find(item => item.roleTemplateId === 'requirements-analyst')!
+  store.getProjectDb().prepare("UPDATE agent_employees SET execution_profile='controlled', system_prompt=? WHERE id=?").run('用户配置', employee.id)
+  expect(ensureOwnerDefaultTeam(f.project.id, f.binding, ['requirements-analyst'], true)).toBe(false)
+  expect(team()).toHaveLength(2)
+})
+
+
+test('Given Git工作区与旧应用规划日志 When 保存规划并检查研发基线 Then 归档留在应用目录且只放行原样的旧日志', async () => {
+  const f = setup('规划日志兼容', () => createOwnerDedicatedWorkspace('owner-archive-' + randomUUID().slice(0, 6)))
+  const root = f.workspace.rootPath!
+  const { saveProjectOwnerGoalDraft } = await import('./project-owner-goal-service')
+  const { getProjectOwnerPlanningContext, saveProjectOwnerPlanDraft } = await import('./project-owner-plan-service')
+  const { getAgentWorkspacePath } = await import('./config-paths')
+  const { appendProjectOwnerPlanArchiveAtRoot, archiveProjectOwnerPlanHistory, OWNER_PLANNING_ARCHIVE_PATH } = await import('./project-owner-planning-doc-service')
+  const { inspectDevelopmentWorkspaceBlocker } = await import('./development-workspace-blocker')
+  const { createDevelopmentWorktree } = await import('./agent-development-worktree')
+  const goal = saveProjectOwnerGoalDraft(f.project.id, 0, { objective: '形成可审阅需求简报' })
+  const context = getProjectOwnerPlanningContext(f.project.id)
+  const plan = saveProjectOwnerPlanDraft(f.project.id, goal.revision, 0, {
+    expectedContextFingerprint: context.fingerprint, summary: '确认需求', changeReason: '首次整理', assumptions: [], risks: [],
+    steps: [{ key: 'brief', title: '梳理需求', outcome: '需求简报', acceptanceCriteria: ['范围明确'], dependencies: [], roleKey: 'requirements-analyst' }],
+  })
+  const legacyPath = join(root, OWNER_PLANNING_ARCHIVE_PATH)
+  const inspect = () => inspectDevelopmentWorkspaceBlocker(root, f.workspace.id, f.workspace.name)
+  expect(archiveProjectOwnerPlanHistory(f.project.id, [plan])).toBeNull()
+  expect(existsSync(legacyPath)).toBe(false)
+  expect(readFileSync(join(getAgentWorkspacePath(f.workspace.slug), OWNER_PLANNING_ARCHIVE_PATH), 'utf8')).toContain('梳理需求')
+  appendProjectOwnerPlanArchiveAtRoot(root, f.project.id, f.project.title, [plan])
+  expect(inspect().kind).toBe('ready')
+  expect(existsSync(createDevelopmentWorktree(root, join(directory, 'archive-checkout'), randomUUID(), f.workspace).path)).toBe(true)
+  appendFileSync(legacyPath, '\n用户补充的说明\n')
+  expect(inspect()).toMatchObject({ kind: 'dirty_worktree', untrackedFiles: [OWNER_PLANNING_ARCHIVE_PATH] })
+  execFileSync('git', ['-C', root, 'add', '--', OWNER_PLANNING_ARCHIVE_PATH])
+  expect(inspect()).toMatchObject({ kind: 'dirty_worktree', trackedFiles: [OWNER_PLANNING_ARCHIVE_PATH] })
 })

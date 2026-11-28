@@ -25,10 +25,10 @@ import { resolveDevelopmentWorktree } from './agent-development-worktree'
 import { developmentWorktreeMatchesSnapshot, loadDevelopmentSnapshot, readDevelopmentSnapshotContentsAsync, type DevelopmentSnapshotScope } from './development-snapshot-service'
 import { normalizeRepoRelativePath } from './development-task-service'
 import { DEVELOPMENT_VALIDATION_OUTPUT_TAIL_CHARS, parseDevelopmentValidationRecord } from './development-validation-record'
-import { completeOwnerDevelopmentValidationAttempt, ownerDevelopmentValidationId, reserveOwnerDevelopmentValidationAttempt } from './development-validation-attempt'
+import { completeOwnerDevelopmentValidationAttempt, ownerDevelopmentValidationId, readOwnerDevelopmentValidationAttempt, reserveOwnerDevelopmentValidationAttempt } from './development-validation-attempt'
 import { ownerExecutionHash } from './project-owner-execution-hash'
 import { readOwnerCommandFrozenSource } from './project-owner-employee-runtime'
-import { executeBrowserVerificationCommand, isBrowserVerificationCommand, MARKDOWN_VERIFICATION_COMMAND } from './owner-runtime-verification-command'
+import { executeBrowserVerificationCommand, isBrowserVerificationCommand, MARKDOWN_VERIFICATION_COMMAND, STAGED_FILES_VERIFICATION_COMMAND } from './owner-runtime-verification-command'
 import { isBuildVerificationCommand, resolveOwnerRuntimeBuildCommand } from './owner-runtime-build-command'
 import { buildSeatbeltProfile, SANDBOX_EXEC_PATH } from './pinned-verifier-sandbox'
 
@@ -111,6 +111,7 @@ export async function runDevelopmentValidation(taskId: string, command: string, 
 
 /** 只供 Owner 本机明确确认的计数器补测入口调用，命令参数由程序固定。 */
 export const OWNER_COUNTER_SUPPLEMENT_COMMAND = 'browser:html.loads+counter.increment-reset'
+export const OWNER_COUNTER_KEYBOARD_COMMAND = 'browser:html.loads+counter.mouse-keyboard'
 export function runOwnerCounterSupplement(taskId: string, executionId: string, artifactHash: string): Promise<DevelopmentValidationResult> {
   const world = resolveValidationWorld(taskId, executionId)
   if (world.snapshot.contentHash !== artifactHash || world.scope.targetPaths.length !== 1 || !/\.html?$/i.test(world.scope.targetPaths[0]!))
@@ -119,27 +120,145 @@ export function runOwnerCounterSupplement(taskId: string, executionId: string, a
   return runFrozenDevelopmentValidation(world, OWNER_COUNTER_SUPPLEMENT_COMMAND, { timeoutMs: 20_000, validationId })
 }
 
-export function runOwnerMarkdownSupplement(taskId: string, executionId: string, artifactHash: string, executorId: string): Promise<DevelopmentValidationResult> {
+/** 已授权的浏览器断言重新取证。单独的尝试身份保留原检查且重启不重复运行。 */
+export async function runOwnerCounterKeyboardSupplement(source: {
+  taskId: string; executorExecutionId: string; executorCommandId: string; reviewerCommandId: string
+  grantId: string; stepLinkId: string; sourceHash: string; artifactHash: string
+}): Promise<DevelopmentValidationResult> {
+  const { taskId, executorExecutionId, artifactHash } = source
+  const world = resolveValidationWorld(taskId, executorExecutionId)
+  const command = OWNER_COUNTER_KEYBOARD_COMMAND
+  if (world.snapshot.contentHash !== artifactHash || world.scope.verificationCommands?.length !== 1 || world.scope.verificationCommands[0] !== command) {
+    throw new DevelopmentValidationError('键盘补测要求原快照及已授权的唯一浏览器检查')
+  }
+  const validationId = ownerDevelopmentValidationId(source.reviewerCommandId, command, artifactHash)
+  const attempt = {
+    ownerCommandId: source.executorCommandId, projectId: world.binding.projectId, grantId: source.grantId,
+    taskId, stepLinkId: source.stepLinkId, sourceHash: source.sourceHash, executionId: executorExecutionId,
+    workspaceId: world.binding.workspaceId, command, snapshotContentHash: artifactHash,
+    verificationConfigHash: world.binding.verificationConfigHash, validationId, startedAt: Date.now(),
+  }
+  const reservation = reserveOwnerDevelopmentValidationAttempt(world.sessionDirectory, attempt)
+  const result = reservation.kind === 'reserved'
+    ? await runFrozenDevelopmentValidation(world, command, { timeoutMs: 20_000, validationId, grantId: source.grantId })
+    : readDevelopmentValidationEvidence(taskId, executorExecutionId, validationId).result
+  completeOwnerDevelopmentValidationAttempt(world.sessionDirectory, attempt)
+  return result
+}
+
+export function ownerQualityBrowserRefreshIds(requestId: string, artifactHash: string): [string, string] {
+  return [
+    ownerDevelopmentValidationId(requestId, 'browser:html.loads', artifactHash),
+    ownerDevelopmentValidationId(`${requestId}:retry`, 'browser:html.loads', artifactHash),
+  ]
+}
+
+export function ownerQualityBrowserCheckFailed(evidence: DevelopmentValidationEvidence, artifactHash: string): boolean {
+  const result = evidence.result
+  return evidence.freshness === 'fresh' && result.snapshotContentHash === artifactHash
+    && result.command === 'browser:html.loads' && result.method === 'browser_assertions'
+    && result.status === 'failed' && result.exitCode === 1 && !result.timedOut && !result.outputTruncated
+    && result.checks?.some(check => check.status === 'failed') === true
+}
+
+/** 补验回执必须来自该原始快照下已完成的验证尝试。 */
+export function readOwnerBrowserRefreshAttempt(source: {
+  taskId: string; grantId: string; stepLinkId: string; sourceHash: string;
+  executorExecutionId: string; executorCommandId: string; contentHash: string
+}, validationId: string): DevelopmentValidationEvidence | 'unknown' | undefined {
+  const { taskId, executorExecutionId } = source
+  const world = resolveValidationWorld(taskId, executorExecutionId)
+  const attempt = readOwnerDevelopmentValidationAttempt(world.sessionDirectory, validationId)
+  if (!attempt) return undefined
+  if (attempt.state !== 'completed' || attempt.validationId !== validationId || attempt.taskId !== taskId
+    || attempt.executionId !== executorExecutionId || attempt.ownerCommandId !== source.executorCommandId || attempt.command !== 'browser:html.loads'
+    || attempt.projectId !== world.binding.projectId || attempt.workspaceId !== world.binding.workspaceId
+    || attempt.grantId !== source.grantId || attempt.stepLinkId !== source.stepLinkId || attempt.sourceHash !== source.sourceHash
+    || attempt.snapshotContentHash !== source.contentHash || attempt.verificationConfigHash !== world.binding.verificationConfigHash) return 'unknown'
+  const evidence = readDevelopmentValidationEvidence(taskId, executorExecutionId, validationId)
+  const { result } = evidence
+  const output = JSON.stringify(result.checks)
+  if (result.command !== attempt.command || result.method !== 'browser_assertions' || result.startedAt < attempt.startedAt
+    || !output || createHash('sha256').update(output, 'utf8').digest('hex') !== result.rawOutputSha256
+    || Buffer.byteLength(output, 'utf8') !== result.rawOutputByteLength) return 'unknown'
+  return evidence
+}
+
+// 同一续验请求只补跑原授权的浏览器加载检查，验证尝试留在原执行会话。
+export async function refreshOwnerQualityBrowserEvidence(source: {
+  requestId: string; qualityRetryExecutionId?: string; failedValidationId?: string; taskId: string; executorExecutionId: string; executorCommandId: string
+  grantId: string; stepLinkId: string; sourceHash: string; artifactHash: string
+}): Promise<DevelopmentValidationResult> {
+  const { requestId, taskId, executorExecutionId, artifactHash } = source
+  const world = resolveValidationWorld(taskId, executorExecutionId)
+  const command = 'browser:html.loads'
+  if (world.snapshot.contentHash !== artifactHash || world.scope.verificationCommands?.length !== 1
+    || world.scope.verificationCommands[0] !== command) throw new DevelopmentValidationError('补跑验证必须绑定原成果及原授权的浏览器加载检查')
+  const [firstId, retryId] = ownerQualityBrowserRefreshIds(requestId, artifactHash)
+  let validationId = firstId
+  const prior = readOwnerDevelopmentValidationAttempt(world.sessionDirectory, firstId)
+  if (source.failedValidationId !== undefined) {
+    if (source.failedValidationId !== firstId || prior?.state !== 'completed'
+      || !ownerQualityBrowserCheckFailed(readDevelopmentValidationEvidence(taskId, executorExecutionId, firstId), artifactHash)) {
+      throw new DevelopmentValidationError('重试须绑定第一次浏览器检查的明确失败回执')
+    }
+    validationId = retryId
+  }
+  const attempt = {
+    ownerCommandId: source.executorCommandId, projectId: world.binding.projectId, grantId: source.grantId,
+    taskId, stepLinkId: source.stepLinkId, sourceHash: source.sourceHash, executionId: executorExecutionId,
+    workspaceId: world.binding.workspaceId, command, snapshotContentHash: artifactHash,
+    verificationConfigHash: world.binding.verificationConfigHash, validationId, startedAt: Date.now(),
+  }
+  const reservation = reserveOwnerDevelopmentValidationAttempt(world.sessionDirectory, attempt)
+  let result: DevelopmentValidationResult
+  if (reservation.kind === 'reserved') result = await runFrozenDevelopmentValidation(world, command, { timeoutMs: 20_000, validationId, grantId: source.grantId, qualityRetryExecutionId: source.qualityRetryExecutionId })
+  else {
+    try { result = readDevelopmentValidationEvidence(taskId, executorExecutionId, validationId).result }
+    catch { throw new DevelopmentValidationError('上次浏览器补跑的结果无法核对，已保留尝试记录。本次未发送验收请求。') }
+  }
+  completeOwnerDevelopmentValidationAttempt(world.sessionDirectory, attempt)
+  return result
+}
+
+export function runOwnerMarkdownSupplement(taskId: string, executionId: string, artifactHash: string, executorId: string, previousReviewerId?: string): Promise<DevelopmentValidationResult> {
   const world = resolveValidationWorld(taskId, executionId)
+  const originalCommand = previousReviewerId ? MARKDOWN_VERIFICATION_COMMAND : 'browser:html.loads'
   if (world.snapshot.contentHash !== artifactHash || !world.scope.targetPaths.length
     || world.snapshotScope.priorBrowserTargets?.length || world.scope.targetPaths.some(path => !/\.md$/i.test(path))
-    || world.scope.verificationCommands?.length !== 1 || world.scope.verificationCommands[0] !== 'browser:html.loads') {
-    throw new DevelopmentValidationError('原成果必须是误配置网页验证的 Markdown 快照')
+    || world.scope.verificationCommands?.length !== 1 || world.scope.verificationCommands[0] !== originalCommand) {
+    throw new DevelopmentValidationError('原 Markdown 文件的快照或验证配置已变化')
   }
   return runFrozenDevelopmentValidation(world, MARKDOWN_VERIFICATION_COMMAND, {
-    validationId: ownerDevelopmentValidationId(executorId, MARKDOWN_VERIFICATION_COMMAND, artifactHash),
+    validationId: ownerDevelopmentValidationId(previousReviewerId ?? executorId, MARKDOWN_VERIFICATION_COMMAND, artifactHash),
   })
 }
 
-async function runFrozenDevelopmentValidation(world: ValidationWorld, trimmed: string, options: { timeoutMs?: number; validationId?: string }): Promise<DevelopmentValidationResult> {
+function assertQueuedOwnerValidationGrant(projectId: string, grantId: string, qualityRetryExecutionId?: string): void {
+  const grant = getProjectDb().prepare("SELECT dispatch_mode FROM project_owner_execution_grants WHERE id=? AND project_id=? AND state='active' AND expires_at>?")
+    .get(grantId, projectId, Date.now()) as { dispatch_mode: string } | undefined
+  if (!grant) throw new DevelopmentValidationError('等待浏览器验证期间授权已撤销或过期')
+  if (grant.dispatch_mode === 'autonomous') {
+    const { assertOwnerDispatchManagementCurrent, assertOwnerDispatchNotPaused } = require('./project-owner-dispatch-control') as typeof import('./project-owner-dispatch-control')
+    assertOwnerDispatchManagementCurrent(projectId, grantId, qualityRetryExecutionId)
+    assertOwnerDispatchNotPaused(projectId, grantId)
+  }
+}
+
+async function runFrozenDevelopmentValidation(world: ValidationWorld, trimmed: string, options: { timeoutMs?: number; validationId?: string; grantId?: string; qualityRetryExecutionId?: string }): Promise<DevelopmentValidationResult> {
   if (!developmentWorktreeMatchesSnapshot(world.worktreePath, world.snapshot, world.snapshotScope)) {
     throw new DevelopmentValidationError('工作目录与冻结快照不一致，请先返工或重新交付')
   }
 
   const startedAt = Date.now()
-  const priorFiles = new Map(world.snapshotScope.priorDeliveryFiles?.map(file => [file.path, file.newSha256]))
+  const inheritedFiles = world.snapshotScope.inheritedFiles ?? []
+  const priorFiles = new Map([...world.snapshotScope.priorDeliveryFiles ?? [], ...inheritedFiles].map(file => [file.path, file.newSha256]))
   const unchangedPriorPaths = world.snapshot.files.flatMap(file =>
     file.newSha256 !== null && priorFiles.get(file.path) === file.newSha256 ? [file.path] : [])
+  const inheritedBrowserTargets = [...new Set([
+    ...world.snapshotScope.priorBrowserTargets ?? [],
+    ...inheritedFiles.filter(file => /\.html?$/i.test(file.path)).map(file => file.path),
+  ])].filter(path => unchangedPriorPaths.includes(path))
   // browser: 前缀走受管浏览器内置断言，复用同一套证据格式与门禁；
   // build: 前缀解析成注册表里的固定 argv（模型不能自带参数）；其余仍按 argv 直接执行。
   const browserRun = isBrowserVerificationCommand(trimmed)
@@ -148,9 +267,17 @@ async function runFrozenDevelopmentValidation(world: ValidationWorld, trimmed: s
         targetPaths: world.scope.targetPaths ?? [],
         // 只把前一轮已验收且经过快照核验的文件交给浏览器。任务的读写范围与 HTML 目标保持独立。
         inheritedResourcePaths: unchangedPriorPaths,
-        inheritedBrowserTargets: world.snapshotScope.priorBrowserTargets?.filter(path => unchangedPriorPaths.includes(path)),
+        inheritedBrowserTargets,
         command: trimmed,
         timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        beforeStart: () => {
+          try {
+            if (options.grantId) assertQueuedOwnerValidationGrant(world.binding.projectId, options.grantId, options.qualityRetryExecutionId)
+            if (!validationWorldStillMatches(world)) return '等待浏览器验证期间工作目录或冻结授权范围已变更，未运行验证'
+          } catch (error) {
+            return error instanceof Error ? error.message + '，未运行验证' : '原验证授权不可用，未运行验证'
+          }
+        },
       })
     : undefined
   let commandRun: Awaited<ReturnType<typeof runCommand>> | undefined
@@ -211,12 +338,17 @@ async function runFrozenDevelopmentValidation(world: ValidationWorld, trimmed: s
     } finally { rmSync(scratch, { recursive: true, force: true }) }
   }
   const documentRun = trimmed === MARKDOWN_VERIFICATION_COMMAND ? await verifyMarkdownSnapshot(world) : undefined
+  const stagedFilesRun = trimmed === STAGED_FILES_VERIFICATION_COMMAND
+    ? fileVerificationResult(world.scope.targetPaths.map(path => {
+      const file = world.snapshot.files.find(item => item.path === path)
+      return { path, passed: Boolean(file?.newSha256 && file.newBytes > 0) }
+    })) : undefined
   const { exitCode, timedOut, output, rawOutputSha256, rawOutputByteLength } = browserRun
-    ?? commandRun ?? documentRun ?? await runCommand(trimmed, world.worktreePath, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    ?? commandRun ?? documentRun ?? stagedFilesRun ?? await runCommand(trimmed, world.worktreePath, options.timeoutMs ?? DEFAULT_TIMEOUT_MS)
   const finishedAt = Date.now()
 
   const staleAfter = !validationWorldStillMatches(world)
-  const status: DevelopmentValidationResult['status'] = timedOut ? 'timeout' : staleAfter ? 'stale' : exitCode === 0 ? 'passed' : 'failed'
+  const status: DevelopmentValidationResult['status'] = timedOut ? 'timeout' : staleAfter || browserRun?.notStarted ? 'stale' : exitCode === 0 ? 'passed' : 'failed'
 
   const result: DevelopmentValidationResult = {
     id: options.validationId ?? `val-${randomUUID()}`,
@@ -225,7 +357,7 @@ async function runFrozenDevelopmentValidation(world: ValidationWorld, trimmed: s
     command: trimmed,
     startedAt,
     finishedAt,
-    exitCode,
+    exitCode: timedOut || browserRun?.notStarted ? null : exitCode,
     timedOut,
     status,
     snapshotContentHash: world.snapshot.contentHash,
@@ -253,9 +385,13 @@ async function verifyMarkdownSnapshot(world: ValidationWorld) {
       && createHash('sha256').update(content).digest('hex') === entry?.file.newSha256)
     return { path, passed }
   })
+  return fileVerificationResult(checks)
+}
+
+function fileVerificationResult(checks: Array<{ path: string; passed: boolean }>) {
   const output = JSON.stringify(checks)
   return {
-    exitCode: checks.every(check => check.passed) ? 0 : 1, timedOut: false, output,
+    exitCode: checks.length > 0 && checks.every(check => check.passed) ? 0 : 1, timedOut: false, output,
     rawOutputSha256: createHash('sha256').update(output).digest('hex'), rawOutputByteLength: Buffer.byteLength(output),
   }
 }

@@ -313,7 +313,7 @@ export class AISDKRuntimeCore {
       maxTurns: owner ? 1 : input.maxTurns,
       maxRetries: owner || ownerExecutionMaxOutputTokens !== undefined ? 0 : input.maxRetries,
       ...(owner || ownerExecutionMaxOutputTokens !== undefined ? { sdkMaxRetries: 0 as const } : {}),
-      ...(owner ? { modelSilenceTimeoutMs: OWNER_MODEL_SILENCE_TIMEOUT_MS } : {}),
+      ...(owner || ownerExecutionMaxOutputTokens !== undefined ? { modelSilenceTimeoutMs: OWNER_MODEL_SILENCE_TIMEOUT_MS } : {}),
       signal: input.activeSession.controller.signal,
       errorEvidence,
       estimatedContextTokens: estimateTokenCount(JSON.stringify({
@@ -344,9 +344,11 @@ export class AISDKRuntimeCore {
       && assessStepsToolCallBatchIntegrity(initialSteps).complete && isOwnerReviewerProtocolRepairSession(input.sessionId)) {
       const originalMessages = buildAISDKMessagesFromSteps(initialSteps, input.sessionId, input.modelId)
       const originalUsage = toAISDKResultUsage(await streamRun.result.usage)
+      // 补正可能在发送前失败；不能把首答的请求编号写入补正的失败记录。
+      failedProviderRequestId = undefined
       try {
         await awaitOwnerExecutionRequestsSettled(input.sessionId)
-        const correction = ownerReviewerProtocolCorrection(input.sessionId, input.prompt, await streamRun.result.text)
+        const correction = ownerReviewerProtocolCorrection(input.sessionId, await streamRun.result.text)
         if (correction) {
           earlierMessages.push(...originalMessages)
           const feedback: SDKUserMessage = { type: 'user', message: { content: [{ type: 'text', text: correction }] }, parent_tool_use_id: null, session_id: input.sessionId }
@@ -361,7 +363,10 @@ export class AISDKRuntimeCore {
       } catch (cause) {
         // 补正被门禁拒绝或网络失败时也交回首答供持久化，终态必须失败，不能丢证据或冒充通过。
         const failed: SDKResultMessage = { type: 'result', subtype: 'error_during_execution', session_id: input.sessionId,
-          finish_reason: 'error', errors: [`Reviewer补正未完成：${safeRuntimeErrorDetail(cause)}`], usage: originalUsage }
+          finish_reason: input.activeSession.controller.signal.aborted ? 'abort' : 'error',
+          errors: [`Reviewer补正未完成：${safeRuntimeErrorDetail(cause)}`],
+          ...(failedProviderRequestId ? { provider_request_id: failedProviderRequestId } : {}),
+          usage: originalUsage }
         return [...(earlierMessages.length ? earlierMessages : originalMessages), failed as unknown as SDKMessage]
       }
     }
