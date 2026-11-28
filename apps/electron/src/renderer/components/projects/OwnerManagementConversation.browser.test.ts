@@ -135,9 +135,9 @@ window.dialogueFixture={setBlockedReview:async value=>{blockedReview=value;await
     expect(await progress.innerText()).not.toContain('已等待')
     await page.evaluate('window.dialogueFixture.resume()')
     await page.evaluate('window.dialogueFixture.activateGrant()')
+    await page.getByLabel('Owner最新处理结果').waitFor({ state: 'detached' })
+    await risks.getByText('此前 Owner 曾提出关注事项', { exact: false }).waitFor()
     await progress.getByText('正在生成内部团队安排。', { exact: true }).waitFor()
-    expect(await page.getByLabel('Owner最新处理结果').count()).toBe(0)
-    expect(await page.getByLabel('项目风险').innerText()).toContain('此前 Owner 曾提出关注事项')
     expect(await page.getByLabel('项目风险').innerText()).not.toContain('暂无已记录的风险提示')
     // 旧的普通 reply 也要依据持久化质量决定显示协商入口。
     await page.evaluate('window.dialogueFixture.setBlockedReview("markdown")')
