@@ -190,7 +190,7 @@ const MA_TOOL_GROUPS: MarketingToolGroup[] = [
 // =====================================================================
 
 /**
- * 营销 Skills 分域清单（27 个，与工具三域对齐）。
+ * 营销 Skills 分域清单（31 个，与工具三域对齐）。
  *
  * skills 资源在 apps/electron/marketing-skills/（bundle 打包），
  * 启动时 seedMarketingSkills 同步到 ~/.proma-mit/marketing-skills/，
@@ -198,28 +198,32 @@ const MA_TOOL_GROUPS: MarketingToolGroup[] = [
  * 不进 default-skills → 不出现在 skill 集市、不默认带入新建项目。
  */
 export const MARKETING_SKILL_DOMAINS: Record<string, MarketingToolDomain> = {
-  // —— influencer 达人包（11）——
+  // —— influencer 达人包（13）——
   'ma-kol-scraper': 'influencer',
   'ma-kol-crm': 'influencer',
   'ma-kol-portal': 'influencer',
   'ma-kol-history-review': 'influencer',
   'ma-kol-pyramid': 'influencer',
+  'ma-kol-outreach': 'influencer',
+  'ma-wechat-auto': 'influencer',
   'ma-draft-review': 'influencer',
   'ma-image-audit': 'influencer',
   'ma-content-audit': 'influencer',
   'ma-publish-data-track': 'influencer',
   'ma-pgy-invite': 'influencer',
   'ma-script-studio': 'influencer',
-  // —— paid-media 投放包（5）——
+  // —— paid-media 投放包（6）——
   'ma-paid-media': 'paid-media',
   'ma-campaign-optimizer': 'paid-media',
   'ma-campaign-tester': 'paid-media',
+  'ma-campaign-review': 'paid-media',
   'ma-content-calendar': 'paid-media',
   'ma-platform-role-mapper': 'paid-media',
-  // —— shared 策略创意基座（11，任一订阅即注入）——
+  // —— shared 策略创意基座（12，任一订阅即注入）——
   'ma-marketing': 'shared',
   'ma-brand-dna': 'shared',
   'ma-brand-house': 'shared',
+  'ma-business-strategy': 'shared',
   'ma-market-analysis': 'shared',
   'ma-competitor-analyzer': 'shared',
   'ma-consumer-insight': 'shared',

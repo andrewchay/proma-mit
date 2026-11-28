@@ -24,6 +24,7 @@ import { createKnowledgeVault, indexKnowledgeVault, listKnowledgeNotes } from '.
 import { hasCapability } from './entitlement-gate'
 import { getAgentWorkspacePath, getNewMediaSkillsDir, seedNewMediaSkills } from './config-paths'
 import { newMediaPluginRuntime } from './plugins/new-media-plugin'
+import { MARKETING_SKILL_DOMAINS } from './plugins/marketing-plugin'
 import {
   closeNewMediaDb,
   getNewMediaRecord,
@@ -92,14 +93,24 @@ export async function runPackageSmoke(): Promise<void> {
   await runOwnerExecutionParamProbe()
   await runOwnerRealChain()
   assert(listWorkflowTemplates().some(t => t.id === 'marketing-campaign'), '缺少 Campaign 模板')
-  // 营销 skills 订阅分发烟测：订阅 influencer → 工作区出现 22 个营销 skill
+  // 营销 skills 订阅分发烟测：订阅 influencer → 工作区分发 influencer 域 + shared 域
   // 注意：偏好（settings）与权益（签名快照）缺一不可。签名快照由
   // scripts/package-smoke.ts 用临时密钥签发并经环境变量传入公钥。
+  //
+  // 数量从 MARKETING_SKILL_DOMAINS 现算，不写死——每次增删 skill 都要改这里的话，
+  // 迟早会漏（本文件已经因为写死 22 而漏过一次）。
+  const expectedInfluencerSkills = Object.values(MARKETING_SKILL_DOMAINS).filter(
+    (domain) => domain === 'influencer' || domain === 'shared',
+  ).length
   updateSettings({ marketingCapabilities: ['influencer'] })
   syncMarketingSkillsForWorkspace(workspace.slug)
   const mktPluginSkills = join(getAgentWorkspacePath(workspace.slug), '.marketing-plugin', 'skills')
   assert(existsSync(mktPluginSkills), '营销 skills 未分发到工作区')
-  assert.equal(readdirSync(mktPluginSkills).length, 22, '营销 skills 分发数量不符')
+  assert.equal(
+    readdirSync(mktPluginSkills).length,
+    expectedInfluencerSkills,
+    `营销 skills 分发数量不符（期望 ${expectedInfluencerSkills}）`,
+  )
   updateSettings({ marketingCapabilities: [] })
   syncMarketingSkillsForWorkspace(workspace.slug)
   assert(!existsSync(getMarketingPluginDir(workspace.slug)), '清空订阅后未清理营销 skills')

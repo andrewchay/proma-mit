@@ -74,6 +74,8 @@ export async function executeCreativePilotTool(toolCall: ToolCall): Promise<Tool
 
 请基于品牌需求和平台特性，生成一份详细的 KOL 内容创作 Brief。
 
+**说服设计要求**：Brief 必须内嵌 Cialdini 影响力六原则（互惠/承诺一致/社会认同/权威/喜好/稀缺）中的至少两条，写明落点与执行方式；权威与稀缺要素必须基于真实背书，禁止虚构。
+
 **输出格式（严格 JSON）：**
 {
   "project_overview": "项目概述",
@@ -93,7 +95,8 @@ export async function executeCreativePilotTool(toolCall: ToolCall): Promise<Tool
     "opening_hook": "开头抓人技巧",
     "content_flow": "内容流程建议",
     "cta": "行动号召设计",
-    "engagement_tactics": "互动引导技巧"
+    "engagement_tactics": "互动引导技巧",
+    "persuasion_design": "说服要素设计（Cialdini 六原则至少两条：互惠/承诺一致/社会认同/权威/喜好/稀缺，标注用在哪个环节、怎么落）"
   },
   "platform_specific": "平台特殊要求",
   "brand_integration": "品牌植入建议",
@@ -245,6 +248,7 @@ function formatCreativeResult(
     if (guide.content_flow) parts.push(`- **内容流程**：${guide.content_flow}`)
     if (guide.cta) parts.push(`- **CTA设计**：${guide.cta}`)
     if (guide.engagement_tactics) parts.push(`- **互动技巧**：${guide.engagement_tactics}`)
+    if (guide.persuasion_design) parts.push(`- **说服设计**：${guide.persuasion_design}`)
     parts.push('')
   }
 

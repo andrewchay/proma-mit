@@ -8,7 +8,7 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import { PROJECT_CHAIN_IPC, TERMINAL_IPC_CHANNELS, TYPESAFE_JUDGMENT_IPC_CHANNELS, COMPANION_IPC_CHANNELS, VERIFIER_IPC_CHANNELS } from '@gravitas/shared'
 import { HARNESS_POLICY_IPC_CHANNELS, type HarnessPolicyState } from '@gravitas/shared'
-import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS, INFLUENCER_IPC_CHANNELS, PAID_MEDIA_IPC_CHANNELS, CREATIVE_IPC_CHANNELS, NEW_MEDIA_IPC_CHANNELS, CONFIG_VERSION_IPC_CHANNELS, VIDEO_ASSET_IPC_CHANNELS, CAMPAIGN_IPC_CHANNELS, CONTENT_AUDIT_IPC_CHANNELS, CONTENT_TRACKING_IPC_CHANNELS, PHASE_REPORT_IPC_CHANNELS, AB_TEST_IPC_CHANNELS, KOL_DATA_IPC_CHANNELS } from '@gravitas/shared'
+import { IPC_CHANNELS, CHANNEL_IPC_CHANNELS, CHAT_IPC_CHANNELS, AGENT_IPC_CHANNELS, ENVIRONMENT_IPC_CHANNELS, INSTALLER_IPC_CHANNELS, PROXY_IPC_CHANNELS, GITHUB_RELEASE_IPC_CHANNELS, SYSTEM_PROMPT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, CHAT_TOOL_IPC_CHANNELS, FEISHU_IPC_CHANNELS, DINGTALK_IPC_CHANNELS, WECHAT_IPC_CHANNELS, DYNAMIC_ISLAND_IPC_CHANNELS, SYSTEM_NOTIFICATION_IPC_CHANNELS, PLUGIN_IPC_CHANNELS, RUN_RECORD_IPC_CHANNELS, TOKEN_USAGE_IPC_CHANNELS, GOAL_IPC_CHANNELS, SCHEDULE_IPC_CHANNELS, CALENDAR_SYNC_IPC_CHANNELS, PROJECT_IPC_CHANNELS, AGENT_EMPLOYEE_IPC_CHANNELS, INFLUENCER_IPC_CHANNELS, PAID_MEDIA_IPC_CHANNELS, CREATIVE_IPC_CHANNELS, NEW_MEDIA_IPC_CHANNELS, CONFIG_VERSION_IPC_CHANNELS, VIDEO_ASSET_IPC_CHANNELS, CAMPAIGN_IPC_CHANNELS, CONTENT_AUDIT_IPC_CHANNELS, CONTENT_TRACKING_IPC_CHANNELS, PHASE_REPORT_IPC_CHANNELS, AB_TEST_IPC_CHANNELS, KOL_DATA_IPC_CHANNELS, OUTREACH_IPC_CHANNELS } from '@gravitas/shared'
 
 // Workflow IPC 通道常量本地副本：避免将 zod 等运行时依赖带入 sandbox 环境。
 const WORKFLOW_IPC_CHANNELS = {
@@ -527,6 +527,41 @@ export interface ElectronAPI {
   updateABTestResult: (input: import('@gravitas/shared').UpdateABTestResultInput) => Promise<import('@gravitas/shared').ABTestResult>
   /** 分析 AB 测试并生成放量建议 */
   analyzeABTest: (abTestId: string) => Promise<{ success: boolean; result?: import('@gravitas/shared').CampaignABTest; error?: string }>
+
+  // ===== 达人触达记录 =====
+  /** 列出触达记录 */
+  listOutreachRecords: (input?: import('@gravitas/shared').ListOutreachRecordsInput) => Promise<import('@gravitas/shared').OutreachRecord[]>
+  /** 创建触达记录 */
+  createOutreachRecord: (input: import('@gravitas/shared').CreateOutreachRecordInput) => Promise<import('@gravitas/shared').OutreachRecord>
+  /** 更新触达记录 */
+  updateOutreachRecord: (input: import('@gravitas/shared').UpdateOutreachRecordInput) => Promise<import('@gravitas/shared').OutreachRecord>
+  /** 删除触达记录 */
+  deleteOutreachRecord: (id: string) => Promise<{ success: boolean }>
+  /** 触达统计 */
+  getOutreachStats: (campaignId?: string) => Promise<import('../main/lib/marketing/outreach-service').OutreachStats>
+  /** 检测触达依赖（Quartz / Vision / cliclick） */
+  checkOutreachDeps: () => Promise<import('../main/lib/marketing/outreach-deps-service').DependencyReport>
+  /** 安装单个触达依赖 */
+  installOutreachDep: (dependencyId: string) => Promise<import('../main/lib/marketing/outreach-deps-service').InstallResult>
+  /** 读取微信会话列表（只读） */
+  listWechatSessions: () => Promise<import('../main/lib/marketing/wechat-readonly-service').WechatReadResult>
+  /** 读取某达人对话（只读） */
+  readWechatMessages: (contact: string, limit?: number) => Promise<import('../main/lib/marketing/wechat-readonly-service').WechatReadResult>
+  /** 生成回复草稿（不发送） */
+  generateOutreachDraft: (input: { contact: string; messages: import('../main/lib/marketing/wechat-readonly-service').WechatMessage[]; workspaceSlug?: string }) => Promise<import('../main/lib/marketing/outreach-draft-service').OutreachDraft>
+  /** 读取对话历史（本地库） */
+  getWechatHistory: (contact: string, limit?: number) => Promise<import('../main/lib/marketing/wechat-history-service').StoredWechatMessage[]>
+  /** 把一次 OCR 快照同步进本地历史（去重） */
+  syncWechatConversation: (contact: string, messages: import('../main/lib/marketing/wechat-readonly-service').WechatMessage[]) => Promise<{ inserted: number }>
+  /** 列出已同步会话摘要 */
+  listWechatConversations: () => Promise<import('../main/lib/marketing/wechat-history-service').WechatConversationSummary[]>
+  /** 标记某达人未回复消息为已处理 */
+  markWechatReplied: (contact: string) => Promise<{ updated: number }>
+  /** 清空某达人对话历史 */
+  clearWechatHistory: (contact: string) => Promise<{ success: boolean }>
+  /** 读取品牌侧信息 */
+  getBrandContext: (workspaceSlug: string) => Promise<import('../main/lib/marketing/outreach-brand-context').BrandContext>
+
   /** 列出 Campaign 的视频产物 */
   listVideoAssets: (campaignId: string) => Promise<import('../main/lib/video-asset-service').VideoAssetEntry[]>
   /** 删除视频产物 */
@@ -2645,6 +2680,78 @@ const electronAPI: ElectronAPI = {
 
   analyzeABTest: (abTestId: string) => {
     return ipcRenderer.invoke(AB_TEST_IPC_CHANNELS.ANALYZE, abTestId)
+  },
+
+  // ===== 达人触达记录 =====
+
+  listOutreachRecords: (input?: import('@gravitas/shared').ListOutreachRecordsInput) => {
+    return ipcRenderer.invoke(OUTREACH_IPC_CHANNELS.LIST, input) as Promise<
+      import('@gravitas/shared').OutreachRecord[]
+    >
+  },
+
+  createOutreachRecord: (input: import('@gravitas/shared').CreateOutreachRecordInput) => {
+    return ipcRenderer.invoke(OUTREACH_IPC_CHANNELS.CREATE, input) as Promise<
+      import('@gravitas/shared').OutreachRecord
+    >
+  },
+
+  updateOutreachRecord: (input: import('@gravitas/shared').UpdateOutreachRecordInput) => {
+    return ipcRenderer.invoke(OUTREACH_IPC_CHANNELS.UPDATE, input) as Promise<
+      import('@gravitas/shared').OutreachRecord
+    >
+  },
+
+  deleteOutreachRecord: (id: string) => {
+    return ipcRenderer.invoke(OUTREACH_IPC_CHANNELS.DELETE, id) as Promise<{ success: boolean }>
+  },
+
+  getOutreachStats: (campaignId?: string) => {
+    return ipcRenderer.invoke(OUTREACH_IPC_CHANNELS.STATS, campaignId)
+  },
+
+  checkOutreachDeps: () => {
+    return ipcRenderer.invoke(OUTREACH_IPC_CHANNELS.CHECK_DEPS)
+  },
+
+  installOutreachDep: (dependencyId: string) => {
+    return ipcRenderer.invoke(OUTREACH_IPC_CHANNELS.INSTALL_DEP, dependencyId)
+  },
+
+  listWechatSessions: () => {
+    return ipcRenderer.invoke(OUTREACH_IPC_CHANNELS.WECHAT_SESSIONS)
+  },
+
+  readWechatMessages: (contact: string, limit?: number) => {
+    return ipcRenderer.invoke(OUTREACH_IPC_CHANNELS.WECHAT_MESSAGES, contact, limit)
+  },
+
+  generateOutreachDraft: (input: { contact: string; messages: import('../main/lib/marketing/wechat-readonly-service').WechatMessage[]; workspaceSlug?: string }) => {
+    return ipcRenderer.invoke(OUTREACH_IPC_CHANNELS.GENERATE_DRAFT, input)
+  },
+
+  getWechatHistory: (contact: string, limit?: number) => {
+    return ipcRenderer.invoke(OUTREACH_IPC_CHANNELS.WECHAT_HISTORY, contact, limit)
+  },
+
+  syncWechatConversation: (contact: string, messages: import('../main/lib/marketing/wechat-readonly-service').WechatMessage[]) => {
+    return ipcRenderer.invoke(OUTREACH_IPC_CHANNELS.SYNC_CONVERSATION, contact, messages)
+  },
+
+  listWechatConversations: () => {
+    return ipcRenderer.invoke(OUTREACH_IPC_CHANNELS.WECHAT_CONVERSATIONS)
+  },
+
+  markWechatReplied: (contact: string) => {
+    return ipcRenderer.invoke(OUTREACH_IPC_CHANNELS.MARK_REPLIED, contact)
+  },
+
+  clearWechatHistory: (contact: string) => {
+    return ipcRenderer.invoke(OUTREACH_IPC_CHANNELS.CLEAR_HISTORY, contact)
+  },
+
+  getBrandContext: (workspaceSlug: string) => {
+    return ipcRenderer.invoke(OUTREACH_IPC_CHANNELS.BRAND_CONTEXT, workspaceSlug)
   },
 
   // ===== KOL 数据管理 =====

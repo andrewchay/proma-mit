@@ -616,4 +616,86 @@ describe('Campaign 工作流测试', () => {
     // 空消息
     expect(workflowService.isStepExecutionMessage(undefined, step, 0)).toBe(false)
   })
+
+  // ===== brand_dna 硬门（唯一接入硬校验的步骤） =====
+
+  describe('brand_dna 硬门校验', () => {
+    const gateCampaignId = 'test-campaign-brand-dna-gate'
+
+    it('前置步骤未完成 → 拒绝标记完成，且报错点名缺失步骤', () => {
+      workflowService.loadCampaignWorkflow(gateCampaignId)
+
+      expect(() =>
+        workflowService.updateWorkflowStep({
+          campaignId: gateCampaignId,
+          stepId: 'brand_dna',
+          status: 'completed',
+        }),
+      ).toThrow(/品牌DNA 需要先完成前置分析/)
+    })
+
+    it('前置步骤已完成但产物为空 → 拒绝并提示产物未达标', () => {
+      workflowService.loadCampaignWorkflow(gateCampaignId)
+      for (const stepId of ['market_analysis', 'competitor_analysis', 'user_analysis'] as const) {
+        workflowService.updateWorkflowStep({ campaignId: gateCampaignId, stepId, status: 'completed' })
+      }
+
+      expect(() =>
+        workflowService.updateWorkflowStep({
+          campaignId: gateCampaignId,
+          stepId: 'brand_dna',
+          status: 'completed',
+        }),
+      ).toThrow(/品牌DNA 产物未达标/)
+    })
+
+    it('前置完成 + 产物达标 → 允许标记完成', () => {
+      workflowService.loadCampaignWorkflow(gateCampaignId)
+      for (const stepId of ['market_analysis', 'competitor_analysis', 'user_analysis'] as const) {
+        workflowService.updateWorkflowStep({ campaignId: gateCampaignId, stepId, status: 'completed' })
+      }
+
+      const workspaceDir = join(TEST_DIR, 'agent-workspaces', `campaign-${gateCampaignId}`)
+      const dir = join(workspaceDir, 'brand-dna')
+      mkdirSync(dir, { recursive: true })
+      writeFileSync(
+        join(dir, 'brand-dna.md'),
+        [
+          '品牌传承：创立于 2018 年，从社区水果店起步，传承每日鲜果理念。',
+          '用户需求：通勤人群想吃水果但怕麻烦，痛点是清洗切配耗时，处境是时间碎片化。',
+          '产品服务：鲜切水果盒、季节果篮，功能卖点为当日鲜切、冷链配送，价格带 29-99 元。',
+          '品牌阶段：处于成长期，已完成从单店到连锁的阶段过渡。',
+          '产品现状：产品力稳定，供应链冷链成熟，SKU 约 30 个。',
+          '核心问题：认知问题——目标用户对品牌心智不足。',
+          '核心目标：曝光与破圈拉新，优先级为声量优先。',
+          '核心价值：当日鲜切即食，功能价值可被直接感知。',
+          '附加价值：通勤路上的一份小确幸，情感价值落到具体场景。',
+          '独占性来源：自建冷链 + 门店密度，竞品出三倍预算也难复制。',
+          '情绪价值定位：满足感为主，追求状态是轻快的日常。',
+          '品牌人格：干净、利落、有点幽默。',
+          '品牌语气：像一个懂行但不炫耀的朋友。',
+          '差异化优势：鲜切即食加场景化套餐，核心竞争力是供应链稳定。',
+        ].join('\n'),
+        'utf-8',
+      )
+
+      const workflow = workflowService.updateWorkflowStep({
+        campaignId: gateCampaignId,
+        stepId: 'brand_dna',
+        status: 'completed',
+      })
+      expect(workflow.steps.find((s) => s.id === 'brand_dna')?.status).toBe('completed')
+    })
+
+    it('非 brand_dna 步骤不受硬门影响（保持原行为）', () => {
+      workflowService.loadCampaignWorkflow(gateCampaignId)
+      // 跳过所有前置，直接完成后续步骤仍应放行
+      const workflow = workflowService.updateWorkflowStep({
+        campaignId: gateCampaignId,
+        stepId: 'creative_concept',
+        status: 'completed',
+      })
+      expect(workflow.steps.find((s) => s.id === 'creative_concept')?.status).toBe('completed')
+    })
+  })
 })

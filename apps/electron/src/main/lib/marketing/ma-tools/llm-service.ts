@@ -49,6 +49,14 @@ export interface LLMCompleteOptions {
   modelId?: string
   /** 指定 provider 类型（默认自动选择第一个可用渠道） */
   provider?: ProviderType
+  /**
+   * 推理强度。透传给支持思考的模型（如 GLM-5.3）。
+   *
+   * 不传则用渠道/模型默认值——GLM-5.3 的默认是 `max`，
+   * 写短话术这类简单任务用 `low` 更快更省。
+   * 不支持该参数的模型会忽略，不会报错。
+   */
+  effort?: 'low' | 'high' | 'max'
 }
 
 export interface LLMCompleteResult {
@@ -266,6 +274,11 @@ async function completeOpenAICompatible(
     body.response_format = { type: 'json_object' }
   }
 
+  // 推理强度：智谱/GLM 的 OpenAI 兼容端点认顶层 reasoning_effort
+  if (options.effort) {
+    body.reasoning_effort = options.effort
+  }
+
   const response = await fetchFn(url, {
     method: 'POST',
     headers: {
@@ -329,6 +342,11 @@ async function completeAnthropicCompatible(
 
   if (systemContent) {
     body.system = systemContent
+  }
+
+  // 推理强度：Anthropic 兼容端点（含 GLM-5.3）认 output_config.effort
+  if (options.effort) {
+    body.output_config = { ...(body.output_config as object | undefined), effort: options.effort }
   }
 
   const response = await fetchFn(url, {

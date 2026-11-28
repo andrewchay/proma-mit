@@ -78,6 +78,7 @@ export function CampaignWorkflowSteps({
   const [expandedSteps, setExpandedSteps] = React.useState<Set<string>>(new Set())
   const [executingStep, setExecutingStep] = React.useState<string | null>(null)
   const [updatingStep, setUpdatingStep] = React.useState<string | null>(null)
+  const [stepError, setStepError] = React.useState<string | null>(null)
   const hasInProgressStep = workflow?.steps.some((step) => step.status === 'in_progress') ?? false
 
   // 加载工作流
@@ -164,6 +165,7 @@ export function CampaignWorkflowSteps({
   // 更新步骤状态
   const handleUpdateStep = async (stepId: CampaignWorkflowStepId, status: CampaignWorkflowStep['status']) => {
     setUpdatingStep(stepId)
+    setStepError(null)
     try {
       const input: UpdateWorkflowStepInput = {
         campaignId,
@@ -174,6 +176,9 @@ export function CampaignWorkflowSteps({
       setWorkflow(updated)
     } catch (err) {
       console.error('[WorkflowSteps] 更新步骤失败:', err)
+      // brand_dna 等步骤的硬门拒绝原因需要直接展示给用户，
+      // 否则点了「标记完成」毫无反应，用户不知道缺什么。
+      setStepError(err instanceof Error ? err.message : String(err))
     } finally {
       setUpdatingStep(null)
     }
@@ -339,6 +344,22 @@ export function CampaignWorkflowSteps({
           style={{ width: `${progress}%` }}
         />
       </div>
+
+      {/* 步骤操作被拒绝的提示（如 brand_dna 前置未完成） */}
+      {stepError && (
+        <div className="flex items-start gap-2 px-3 py-2 rounded-md bg-amber-500/10 text-[11px] text-amber-600 dark:text-amber-400 leading-relaxed">
+          <AlertTriangle size={13} className="mt-0.5 shrink-0" />
+          <span className="flex-1 break-words">{stepError}</span>
+          <button
+            type="button"
+            className="shrink-0 opacity-60 hover:opacity-100"
+            onClick={() => setStepError(null)}
+            aria-label="关闭提示"
+          >
+            ×
+          </button>
+        </div>
+      )}
 
       {/* 步骤列表 */}
       <div className="space-y-2">

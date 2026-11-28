@@ -202,38 +202,68 @@ export const DEFAULT_WORKFLOW_STEPS: Omit<CampaignWorkflowStep, 'status' | 'comp
     description: '基于市场/竞品/用户分析，提取品牌核心价值并输出品牌诊断（品牌阶段、产品现状、核心问题、核心目标）',
     toolName: 'ma-brand-dna',
     minArtifactLength: 300,
+    // 14 项字段与 ma-brand-dna/SKILL.md v1.0.5 的字段清单保持一一对应。
+    // 注意：语义锚点是软校验（缺失只提醒不阻断），brand_dna 的硬门在 validateBrandDnaGate。
     artifactRequirements: [
-      { name: '品牌历史', aliases: ['历史', '创立', '发展', '里程碑', '传承', 'heritage'] },
-      { name: '产品服务', aliases: ['产品', '服务', '功能', '卖点', '价格', '产品线'] },
-      { name: '品牌阶段', aliases: ['起步期', '成长期', '成熟期', '焕新期', '阶段', '定位'] },
-      { name: '产品现状', aliases: ['产品力', '供应链', '价格带', 'SKU', '产品诊断'] },
-      { name: '核心问题', aliases: ['认知问题', '转化问题', '口碑问题', '问题', '定义'] },
-      { name: '核心目标', aliases: ['目标', '优先级', '曝光', '破圈', '拉新', '首要目标'] },
-      { name: '差异化优势', aliases: ['差异化', '优势', '差异', '不同', '独特', '核心竞争力'] },
+      { name: '品牌传承', aliases: ['品牌传承', '传承', '历史', '创立', '发展', '里程碑', 'heritage'] },
+      { name: '用户需求', aliases: ['用户需求', '需求', '痛点', '处境', '矛盾', '消费者需求', 'insight', '洞察'] },
+      { name: '产品/服务', aliases: ['产品', '服务', '功能', '卖点', '价格', '价格带', '产品线', 'products'] },
+      { name: '品牌阶段', aliases: ['起步期', '成长期', '成熟期', '焕新期', '阶段', 'stage'] },
+      { name: '产品现状', aliases: ['产品力', '供应链', '价格带', 'SKU', '产品诊断', 'product_status'] },
+      { name: '核心问题', aliases: ['认知问题', '转化问题', '口碑问题', '核心问题', 'core_problem'] },
+      { name: '核心目标', aliases: ['核心目标', '目标', '优先级', '曝光', '破圈', '拉新', 'core_goal'] },
+      { name: '核心价值', aliases: ['核心价值', '功能价值', 'core_values'] },
+      { name: '附加价值', aliases: ['附加价值', '情感价值', 'added_values'] },
+      { name: '独占性来源', aliases: ['独占性', '独占', '独特', '难以复制', '壁垒', 'uniqueness'] },
+      { name: '情绪价值定位', aliases: ['情绪价值', '存在感', '满足感', '圈层', 'emotional_value'] },
+      { name: '品牌人格', aliases: ['品牌人格', '人格', '个性', '性格', 'personality'] },
+      { name: '品牌语气', aliases: ['品牌语气', '语气', '调性', '语言风格', 'tone_of_voice'] },
+      { name: '差异化优势', aliases: ['差异化', '优势', '差异', '不同', '核心竞争力', 'differentiator'] },
     ],
     agentPrompt: `## 步骤 4: 品牌DNA + 品牌诊断
 
-目标：基于市场分析、竞品分析和用户分析的数据支撑，提取品牌核心价值并输出品牌诊断。
+目标：基于市场分析、竞品分析和用户分析的数据支撑，提取品牌核心价值并输出品牌诊断。**必须全量覆盖 14 项字段，不允许只写其中一部分。**
 
-分析框架：
-1. **品牌自身历史**：创立背景、发展历程、里程碑事件、品牌传承
-2. **产品/服务 + 现有传播**：核心产品线、功能卖点、价格带、过往 campaign、slogan、核心文案
-3. **品牌阶段诊断**：起步期 / 成长期 / 成熟期 / 焕新期
-4. **产品现状诊断**：产品力、供应链、价格带、SKU
-5. **核心问题定义**：当前要解决的是认知问题 / 转化问题 / 口碑问题
-6. **核心目标**：基于阶段和问题，确定首要目标（曝光/破圈拉新）及目标优先级
-7. **差异化优势**：结合市场/竞品/用户分析，总结能戳到洞察的核心差异点
+分析框架（七层 14 字段）：
+**传承层**
+1. **品牌传承**（heritage）：创立背景、发展历程、里程碑事件、可继承的文化资产
+
+**需求层**
+2. **用户需求**（user_need）：用户真实处境与矛盾，须引用 user-analysis 的洞察，不能只写人群标签
+
+**事实层**
+3. **产品/服务**（products）：核心产品线、功能卖点、价格带、SKU 结构、过往 campaign/slogan
+4. **品牌阶段**（stage）：起步期 / 成长期 / 成熟期 / 焕新期，并给出判定依据
+5. **产品现状**（product_status）：产品力、供应链、价格带的现状诊断，指出结构性短板与优势
+
+**诊断层**
+6. **核心问题**（core_problem）：认知问题 / 转化问题 / 口碑问题，并说明界定理由
+7. **核心目标**（core_goal）：首要目标（曝光 / 破圈拉新 / 转化）及优先级
+
+**价值层**
+8. **核心价值**（core_values）：消费者能直接感知的产品/功能价值，不是企业价值观
+9. **附加价值**（added_values）：情感、文化、生活方式层面的价值，具体到场景与心理收益
+10. **独占性来源**（uniqueness_assets）：品牌真正独有、花钱难以复制的资产，以及把它大众化的路径
+11. **情绪价值定位**（emotional_value）：满足"存在感"（身份/圈层表达）还是"满足感"（功能回报）
+
+**人格层**
+12. **品牌人格**（personality_traits）：3-5 个有画面感的形容词
+13. **品牌语气**（tone_of_voice）：具体到语言风格的一句话描述
+
+**定位层**
+14. **差异化优势**（differentiator）：结合市场/竞品/用户分析的核心差异点，并说明为何竞品难以复制
 
 执行要求：
 1. 使用 ma-brand-dna 工具分析品牌
 2. 产出必须保存到以下目录：\`brand-dna/\`
-3. 文件命名建议：\`brand-dna.md\`、\`brand-diagnosis.md\`、\`differentiation.md\`
-4. 完成标准（校验时会检查）：
-   - brand-dna.md 必须包含品牌历史、产品/服务、品牌核心价值、差异化优势（至少300字）
-   - brand-diagnosis.md 必须包含品牌阶段、产品现状、核心问题、核心目标（至少300字）
-   - differentiation.md 必须包含差异化优势总结（至少300字）
+3. 文件命名（校验会精确检查）：
+   - \`brand-dna.md\` — 品牌传承、用户需求、产品/服务、核心价值、附加价值、独占性来源、情绪价值定位、品牌人格、品牌语气
+   - \`brand-diagnosis.md\` — 品牌阶段、产品现状、核心问题、核心目标
+   - \`differentiation.md\` — 差异化优势
+4. 每个文件正文不少于 300 字。
 
-前置产物：\`market-analysis/\`、\`competitor-analysis/\`、\`user-analysis/\` 目录中的文件
+前置产物：\`market-analysis/\`、\`competitor-analysis/\`、\`user-analysis/\` 目录中的文件。
+**完成本步前会硬校验这三步是否已完成，未完成将被拒绝。**
 完成后，请返回 "已完成：品牌DNA + 品牌诊断"并附上产物摘要。`,
   },
   {
@@ -1054,11 +1084,74 @@ function resolveMigratedCurrentStepIndex(
 // =====================================================================
 
 /** 更新单个步骤状态 */
-export function updateWorkflowStep(input: UpdateWorkflowStepInput): CampaignWorkflow {
+/** brand_dna 的硬前置步骤：必须先产出市场/竞品/用户分析 */
+const BRAND_DNA_PREREQUISITE_STEPS: CampaignWorkflowStepId[] = [
+  'market_analysis',
+  'competitor_analysis',
+  'user_analysis',
+]
+
+/**
+ * brand_dna 硬门校验（唯一接入硬校验的步骤）。
+ *
+ * 背景：产物校验（completeStepWithValidation / validateStepArtifacts）目前只有测试在调，
+ * 生产链路的「标记完成」直接写库。此处只对 brand_dna 一个步骤做硬拦截，避免全局语义变更：
+ * - 前置步骤必须已 completed（防止跳过市场/竞品/用户分析直接拍脑袋）
+ * - 产物目录必须非空且达标（复用 validateStepArtifacts）
+ *
+ * 返回 null 表示通过；返回字符串表示拒绝原因（面向用户，需可直接展示）。
+ */
+export function validateBrandDnaGate(
+  campaignId: string,
+  workflow?: CampaignWorkflow,
+): string | null {
+  let wf = workflow
+  if (!wf) {
+    try {
+      wf = loadCampaignWorkflow(campaignId)
+    } catch {
+      return null // 工作流不存在时不做拦截，交由后续流程报错
+    }
+  }
+
+  const missingSteps = BRAND_DNA_PREREQUISITE_STEPS.filter((id) => {
+    const s = wf!.steps.find((step) => step.id === id)
+    return !s || s.status !== 'completed'
+  })
+
+  if (missingSteps.length > 0) {
+    const titles = missingSteps.map((id) => wf!.steps.find((s) => s.id === id)?.title ?? id)
+    return `品牌DNA 需要先完成前置分析：${titles.join('、')}。请先依次执行这些步骤，再回来完成本步。`
+  }
+
+  const validation = validateStepArtifacts(campaignId, 'brand_dna')
+  if (!validation.valid) {
+    return `品牌DNA 产物未达标：${validation.missing.join('；')}`
+  }
+
+  return null
+}
+
+/**
+ * 内部选项：`skipGates` 供已自行完成校验的上游（completeStepWithValidation）使用，
+ * 避免同一道门在「手动标记完成」和「自动校验后完成」两条路径上重复判定。
+ */
+export function updateWorkflowStep(
+  input: UpdateWorkflowStepInput,
+  options?: { skipGates?: boolean },
+): CampaignWorkflow {
   const workflow = loadCampaignWorkflow(input.campaignId)
   const stepIndex = workflow.steps.findIndex((s) => s.id === input.stepId)
   if (stepIndex === -1) {
     throw new Error(`步骤不存在: ${input.stepId}`)
+  }
+
+  // brand_dna 是唯一做硬校验的步骤（其余步骤维持原行为，避免全局语义变更）
+  if (!options?.skipGates && input.stepId === 'brand_dna' && input.status === 'completed') {
+    const rejection = validateBrandDnaGate(input.campaignId, workflow)
+    if (rejection) {
+      throw new Error(rejection)
+    }
   }
 
   const step = workflow.steps[stepIndex]!
@@ -1532,12 +1625,17 @@ export function completeStepWithValidation(
     const names = validation.unmetRequirements.map((r) => r.name).join('、')
     finalSummary = `${outputSummary}（已通过，建议补充语义锚点：${names}）`
   }
-  const workflow = updateWorkflowStep({
-    campaignId,
-    stepId,
-    status: 'completed',
-    outputSummary: finalSummary,
-  })
+  // 本函数已跑完 validateStepArtifacts，跳到硬门避免重复判定
+  // （brand_dna 的前置步骤校验在 completeStepWithValidation 入口处单独处理）
+  const workflow = updateWorkflowStep(
+    {
+      campaignId,
+      stepId,
+      status: 'completed',
+      outputSummary: finalSummary,
+    },
+    { skipGates: true },
+  )
   appendHistory(campaignId, stepId, workflow.steps.find(s => s.id === stepId)?.title ?? stepId, 'completed', finalSummary)
   return { success: true, workflow }
 }

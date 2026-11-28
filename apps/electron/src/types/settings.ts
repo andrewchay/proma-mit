@@ -295,6 +295,12 @@ export interface AppSettings {
   /** 已启用的新媒体运营能力；仅控制本地 Skills/Tools，不连接真实平台。 */
   newMediaCapabilities?: string[]
   /**
+   * 达人触达：生成回复草稿时带入的历史对话预算。
+   * 缺省 100_000 字符（约 100k token），覆盖真实对话 3 倍余量。
+   * 调大能减少摘要折叠，但会稀释模型对最近几轮的注意力。
+   */
+  outreachContextCharBudget?: number
+  /**
    * 行为采集设置（为专业版分析能力提供数据基础）。
    * 缺省时按 TELEMETRY_DEFAULT_ENABLED 处理：被动采集开启、情绪打卡关闭。
    */

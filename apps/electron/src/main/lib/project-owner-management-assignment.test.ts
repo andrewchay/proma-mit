@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, expect, mock, spyOn, test } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, expect, mock, spyOn, test } from 'bun:test'
 import { createHash, randomUUID } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 import { existsSync, linkSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
@@ -24,7 +24,7 @@ const { ensureOwnerDefaultTeam } = await import('./project-owner-default-team')
 const { resolveOwnerPlanningSession } = await import('./project-owner-planning-source')
 const { claimOwnerPlanningProviderRequest } = await import('./project-owner-planning-provider')
 const { getOwnerManagementConversation } = await import('./project-owner-management-questions')
-const { reconcileOwnerManagement, startOwnerManagementLoop } = await import('./project-owner-management-loop')
+const { reconcileOwnerManagement, startOwnerManagementLoop: startManagementLoop } = await import('./project-owner-management-loop')
 const { appendOwnerManagementTrace, consumeOwnerManagementEvent, getOwnerManager, getOwnerManagementView, listPendingOwnerManagementEvents, setOwnerManagerStatus } = await import('./project-owner-management-store')
 const { onOwnerManagementChanged } = await import('./project-owner-management-events')
 const delegation = await import('./project-owner-management-delegation')
@@ -43,8 +43,59 @@ let reviseConversationProjectId: string | null = null
 let mixedRecoveryProjectId: string | null = null
 let legacyUntypedRecoveryProjectId: string | null = null
 let legacyParserForRecovery: { mockRestore(): void } | null = null
-beforeAll(async () => {
+const caseCleanups = new Set<() => Promise<void>>()
+function trackCaseCleanup(stop: () => Promise<void>): () => Promise<void> {
+  let stopping: Promise<void> | undefined
+  const stopOnce = () => {
+    if (!stopping) {
+      stopping = stop()
+      void stopping.catch(() => { /* afterEach 等待并报告清理错误。 */ })
+    }
+    return stopping
+  }
+  caseCleanups.add(stopOnce)
+  return stopOnce
+}
+
+function startOwnerManagementLoop(...args: Parameters<typeof startManagementLoop>): () => Promise<void> {
+  return trackCaseCleanup(startManagementLoop(...args))
+}
+
+async function startOwnerScheduleForTest(projectId: string): Promise<() => Promise<void>> {
+  const { runOwnerAutonomousSchedule } = await import('./project-owner-autonomous-scheduler')
+  const { onOwnerAutonomousScheduleWake } = await import('./project-owner-autonomous-scheduler-events')
+  const runs: Array<ReturnType<typeof runOwnerAutonomousSchedule>> = []
+  const unsubscribe = onOwnerAutonomousScheduleWake(id => {
+    if (id !== projectId) return
+    const run = runOwnerAutonomousSchedule(id)
+    runs.push(run)
+    void run.catch(() => { /* 清理时统一校验调度结果。 */ })
+  })
+  return trackCaseCleanup(async () => {
+    unsubscribe()
+    const outcomes = await Promise.allSettled(runs)
+    const failure = outcomes.find(result => result.status === 'rejected')
+    if (failure) throw failure.reason
+  })
+}
+
+// 每个用例只让管理循环扫描本用例的数据，重启测试仍使用原来的目录。
+beforeEach(async () => {
+  process.env.PROMA_TEST_CONFIG_DIR = mkdtempSync(join(directory, 'case-'))
   await store.initProjectDb()
+})
+afterEach(async () => {
+  try {
+    const outcomes = await Promise.allSettled([...caseCleanups].map(stop => stop()))
+    const failure = outcomes.find(result => result.status === 'rejected')
+    if (failure) throw failure.reason
+  } finally {
+    caseCleanups.clear()
+    employees.stopAgentEmployeeHeartbeat()
+    store.closeProjectDb()
+  }
+})
+beforeAll(() => {
   // 排队、来源与最终单发送准入使用产品实现；runner/HTTP和模型回答是隔离替身。
   setHeadlessAgentRunner(async (input, handlers) => {
     const execution = store.getAgentExecutionBySessionId(input.sessionId)
@@ -258,9 +309,7 @@ function authorize(f: ReturnType<typeof fixture>, autonomousExecution = false, m
 
 test('Given旧目标已有执行批次 When用户修订目标并确认新自主额度 Then新Owner方案追加批次且旧批次暂停保留', async () => {
   const f = fixture('complete', false, false), first = authorize(f, true, 6)
-  const scheduler = await import('./project-owner-autonomous-scheduler')
-  const { onOwnerAutonomousScheduleWake } = await import('./project-owner-autonomous-scheduler-events')
-  const stopSchedule = onOwnerAutonomousScheduleWake(id => { if (id === f.project.id) void scheduler.runOwnerAutonomousSchedule(id) })
+  const stopSchedule = await startOwnerScheduleForTest(f.project.id)
   const stop = startOwnerManagementLoop()
   try {
     await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'delivery'))
@@ -315,14 +364,12 @@ test.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')('Give
   failBusinessProjectId = f.project.id
   reviseConversationProjectId = f.project.id
   authorize(f, true, 20, 20_000_000)
-  const scheduler = await import('./project-owner-autonomous-scheduler')
-  const { onOwnerAutonomousScheduleWake } = await import('./project-owner-autonomous-scheduler-events')
   const browser = await import('./owner-runtime-browser-verifier')
   browser.setOwnerRuntimeBrowserRunner(async input => {
     expect(readFileSync(input.filePath, 'utf8')).toContain('五年日记')
     return { checks: input.templates.map(template => ({ id: template.id, title: template.title, status: 'passed' as const, detail: '隔离测试替身：源码存在' })), durationMs: 1, timedOut: false, relativePath: input.filePath }
   })
-  const stopSchedule = onOwnerAutonomousScheduleWake(id => { if (id === f.project.id) void scheduler.runOwnerAutonomousSchedule(id) })
+  const stopSchedule = await startOwnerScheduleForTest(f.project.id)
   const stop = startOwnerManagementLoop()
   const legacyParser = await installLegacyPlanParser(f.project.id)
   try {
@@ -430,9 +477,7 @@ test('Given 原启动因旧任务冲突停住 When 费用已核对且用户再�
 test('Given旧批次请求费用转待核对 When新目标已授权 Then保留旧占额且不发行新执行批次', async () => {
   const f = fixture('complete', false, false)
   authorize(f, true, 6)
-  const scheduler = await import('./project-owner-autonomous-scheduler')
-  const { onOwnerAutonomousScheduleWake } = await import('./project-owner-autonomous-scheduler-events')
-  const stopSchedule = onOwnerAutonomousScheduleWake(id => { if (id === f.project.id) void scheduler.runOwnerAutonomousSchedule(id) })
+  const stopSchedule = await startOwnerScheduleForTest(f.project.id)
   const stop = startOwnerManagementLoop()
   try {
     await until(() => getOwnerManagementConversation(f.project.id).messages.some(item => item.kind === 'delivery'))
@@ -489,8 +534,7 @@ test('Given旧Owner记录导致已确认方案缺员且事件已消费 When重�
   for (const event of listPendingOwnerManagementEvents(f.project.id)) consumeOwnerManagementEvent(event)
   const { appendOwnerManagementMessage } = await import('./project-owner-management-store')
   appendOwnerManagementMessage({ projectId: f.project.id, eventId: 'historical-team-blocked', role: 'assistant', kind: 'attention', content: '当前团队不足以同时完成执行和独立检查' })
-  const scheduler = await import('./project-owner-autonomous-scheduler'), scheduleEvents = await import('./project-owner-autonomous-scheduler-events')
-  const stopWake = scheduleEvents.onOwnerAutonomousScheduleWake(projectId => { if (projectId === f.project.id) void scheduler.runOwnerAutonomousSchedule(projectId) })
+  const stopWake = await startOwnerScheduleForTest(f.project.id)
   const stop = startOwnerManagementLoop()
   try {
     await until(() => getOwnerManagementConversation(f.project.id).messages.some(message => message.kind === 'delivery'), () => getOwnerManagementConversation(f.project.id).messages.at(-1)?.content)
@@ -1012,9 +1056,7 @@ test('Given 用户在项目对话提交新目标及总预算 When Owner规划并
       changeReason: '用户确认结果范围与项目总预算',
     } })
     expect(executionAtoms.ownerExecutionInput(state.get, executionSubject, true)).not.toBeNull()
-    const scheduler = await import('./project-owner-autonomous-scheduler')
-    const scheduleEvents = await import('./project-owner-autonomous-scheduler-events')
-    const stopWake = scheduleEvents.onOwnerAutonomousScheduleWake(projectId => { if (projectId === f.project.id) void scheduler.runOwnerAutonomousSchedule(projectId) })
+    const stopWake = await startOwnerScheduleForTest(f.project.id)
     try {
       await state.set(deliveryAtoms.reviewOwnerManagedExecutionAtom, executionSubject)
       await until(() => store.listAgentExecutionsByProject(f.project.id).some(item => item.ownerCommandId && item.status === 'completed'))
@@ -1057,8 +1099,7 @@ test('Given 首次待审方案及项目绑定资料 When Owner自主安排 Then 
   const input = { ...f.subject, requestId: randomUUID(), maxRequests: Number.MAX_SAFE_INTEGER, autonomousExecution: true as const, maxCostMicros: 15_000_000, expiresAt: Date.now() + 24 * 3600000 }
   const preview = delegation.previewOwnerManagementDelegation(input)
   const issued = delegation.confirmOwnerManagementDelegation({ input, previewHash: preview.previewHash })
-  const scheduler = await import('./project-owner-autonomous-scheduler'), scheduleEvents = await import('./project-owner-autonomous-scheduler-events')
-  const stopWake = scheduleEvents.onOwnerAutonomousScheduleWake(projectId => { if (projectId === f.project.id) void scheduler.runOwnerAutonomousSchedule(projectId) })
+  const stopWake = await startOwnerScheduleForTest(f.project.id)
   const stop = startOwnerManagementLoop()
   try {
     await until(() => {
@@ -1329,9 +1370,8 @@ test('Given 只授权一个任务 When Owner 完成派工验收 Then 相邻任�
   registerProjectOwnerExecutionIpcHandlers({ handle: (name, handler) => { registry.set(name, handler) } })
   const readSchedule = (taskId?: string) => registry.get(PROJECT_IPC_CHANNELS.GET_OWNER_AUTONOMOUS_SCHEDULE_STATUS)!(undefined,
     { projectId: f.project.id, ...(taskId ? { taskId } : {}) })
-  const { runOwnerAutonomousSchedule, getOwnerAutonomousScheduleStatus } = await import('./project-owner-autonomous-scheduler')
-  const { onOwnerAutonomousScheduleWake } = await import('./project-owner-autonomous-scheduler-events')
-  const stopSchedule = onOwnerAutonomousScheduleWake(id => { if (id === f.project.id) void runOwnerAutonomousSchedule(id) })
+  const { getOwnerAutonomousScheduleStatus } = await import('./project-owner-autonomous-scheduler')
+  const stopSchedule = await startOwnerScheduleForTest(f.project.id)
   const stop = startOwnerManagementLoop()
   try {
     const deliveries = () => getOwnerManagementConversation(f.project.id).messages.filter(message => message.kind === 'delivery')
